@@ -130,6 +130,10 @@ describe('claude 命令执行返显', () => {
     line({ type: 'user', timestamp: at, message: { role: 'user', content: `<local-command-stdout>${text}</local-command-stdout>` } });
   const skill = (at = '2026-10-23T01:39:12.000Z'): string =>
     line({ type: 'user', isMeta: true, timestamp: at, message: { role: 'user', content: 'Base directory for this skill: …' } });
+  const bashIn = (text: string, at = '2026-10-23T01:40:00.000Z'): string =>
+    line({ type: 'user', timestamp: at, message: { role: 'user', content: `<bash-input>${text}</bash-input>` } });
+  const bashOut = (stdout: string, stderr = '', at = '2026-10-23T01:40:00.400Z'): string =>
+    line({ type: 'user', timestamp: at, message: { role: 'user', content: `<bash-stdout>${stdout}</bash-stdout><bash-stderr>${stderr}</bash-stderr>` } });
 
   it('内建命令 + 紧随的输出 = 一条执行；ANSI 剥掉', async () => {
     const file = path.join(root, 't.jsonl');
@@ -144,6 +148,22 @@ describe('claude 命令执行返显', () => {
     writeFileSync(file, [cmd('goal', '完成当前计划'), out('Goal set')].join('\n'));
     expect(await commandExecutions(file)).toEqual([
       { name: 'goal', args: '完成当前计划', at: '2026-10-23T01:39:11.452Z', output: 'Goal set' },
+    ]);
+  });
+
+  it('bash 模式：`<bash-input>` + 紧随的 `<bash-stdout>` = 一条执行（sigil `!`，hook 域零事件的唯一证据）', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [bashIn('echo hi'), bashOut('hi')].join('\n'));
+    expect(await commandExecutions(file)).toEqual([
+      { name: 'echo hi', args: '', at: '2026-10-23T01:40:00.000Z', output: 'hi', sigil: '!' },
+    ]);
+  });
+
+  it('bash 空 stdout 也是一次执行；stderr 非空并进输出（前缀标注）', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [bashIn('mkdir x'), bashOut('', 'mkdir: cannot create')].join('\n'));
+    expect(await commandExecutions(file)).toEqual([
+      { name: 'mkdir x', args: '', at: '2026-10-23T01:40:00.000Z', output: '[stderr] mkdir: cannot create', sigil: '!' },
     ]);
   });
 

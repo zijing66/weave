@@ -1436,6 +1436,18 @@ describe('withCommands（命令执行插进对话流）', () => {
     });
   });
 
+  it('bash 模式（sigil `!`）：展示原文拼 `!`，气泡带 commandSigil 染品红', () => {
+    const out = withCommands([conv(1)], [
+      { name: 'echo hi', args: '', at: at(2), output: 'hi', sigil: '!' },
+    ]);
+    expect(out[1]).toMatchObject({
+      role: 'user',
+      text: '!echo hi',
+      commandOutput: 'hi',
+      commandSigil: '!',
+    });
+  });
+
   it('晚于所有事件的执行排在尾巴（正在发生的命令）', () => {
     const out = withCommands([conv(1)], [{ name: 'model', args: 'opus', at: at(9) }]);
     expect(out[out.length - 1]).toMatchObject({ text: '/model opus' });

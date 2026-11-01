@@ -1135,6 +1135,12 @@ export interface CommandExecution {
   at: string;
   /** 宿主回显的输出原文；命令没有输出就省略。 */
   output?: string;
+  /**
+   * 触发符（缺省 `/`）：web 据此拼展示原文（`${sigil}${name} ${args}`）并给气泡
+   * 染色——claude 的 bash 模式（`!cmd`）转录记的是 `<bash-input>`，name = 命令行
+   * 原文、sigil = `!`，气泡与输入框的 bash 形态同色（品红）。
+   */
+  sigil?: '/' | '!';
 }
 
 /**

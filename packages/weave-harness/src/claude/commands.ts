@@ -285,7 +285,7 @@ const execCursors = new Map<
   {
     cur: LineCursor;
     out: CommandExecution[];
-    pending: { name: string; args: string; at: string } | null;
+    pending: { name: string; args: string; at: string; sigil?: '/' | '!' } | null;
   }
 >();
 const EXEC_CURSOR_MAX = 64;
@@ -293,6 +293,8 @@ const EXEC_CURSOR_MAX = 64;
 /**
  * 转录里的命令执行：`<command-name>` 那一条之后若紧跟 `<local-command-stdout>`，
  * 就是一次内建命令（skill 命令后面跟的是 isMeta 展开正文，不算——它已经有 UPS 气泡）。
+ * bash 模式同构：`<bash-input>` 之后紧跟 `<bash-stdout>`（+`<bash-stderr>`）——
+ * bash 不发 UPS、hook 域零事件，转录这两行是它执行过的唯一证据。
  *
  * 按**字节游标**增量累积（同 narration）：`pending`（等 stdout 的那条命令）是跨行
  * 状态，跟着游标一起存——两行可能分在两次读里。文件被截断/换掉 ⇒ 全部作废重来。
@@ -316,7 +318,14 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
   const out = entry.out;
   let pending = entry.pending;
   for (const line of lines) {
-    if (!line.includes('<command-name>') && !line.includes('<local-command-stdout>')) continue;
+    if (
+      !line.includes('<command-name>') &&
+      !line.includes('<local-command-stdout>') &&
+      !line.includes('<bash-input>') &&
+      !line.includes('<bash-stdout>')
+    ) {
+      continue;
+    }
     let row: unknown;
     try {
       row = JSON.parse(line);
@@ -333,11 +342,27 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
       pending = { name: name.slice(1), args: argsOf(content), at };
       continue;
     }
-    const output = /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(content)?.[1];
-    if (output === undefined || pending === null) continue;
+    const bashInput = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(content)?.[1];
+    if (bashInput !== undefined) {
+      pending = { name: bashInput.trim(), args: '', at, sigil: '!' };
+      continue;
+    }
+    const localOut = /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(content)?.[1];
+    const bashOut = localOut ?? /<bash-stdout>([\s\S]*?)<\/bash-stdout>/.exec(content)?.[1] ?? '';
+    if (pending === null) continue;
+    // bash 行的 stdout 与 stderr 同条 content；stderr 非空时并进输出（前缀标注）
+    const stderr = /<bash-stderr>([\s\S]*?)<\/bash-stderr>/.exec(content)?.[1]?.trim() ?? '';
     // ANSI 转义（宿主的着色）进不了对话正文
-    const clean = output.replace(/\u001b\[[0-9;]*m/g, '').trim();
-    out.push({ ...pending, ...(clean !== '' ? { output: clean } : {}) });
+    const clean = bashOut.replace(/\u001b\[[0-9;]*m/g, '').trim();
+    const merged =
+      clean !== '' && stderr !== ''
+        ? `${clean}\n[stderr] ${stderr}`
+        : clean !== ''
+          ? clean
+          : stderr !== ''
+            ? `[stderr] ${stderr}`
+            : '';
+    out.push({ ...pending, ...(merged !== '' ? { output: merged } : {}) });
     pending = null;
   }
   entry.pending = pending;

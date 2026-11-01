@@ -134,6 +134,9 @@ export interface ConvEntry {
   rewound?: boolean;
   /** 命令执行回显（内建命令没有 hook 事件，正文来自转录）：气泡里摆成胶囊 + 输出。 */
   commandOutput?: string;
+  /** 命令回显的触发符（缺省 `/`）：bash 模式（`!`）的气泡染品红——与输入框的
+   *  bash 形态同色，一眼看出这条是宿主本地执行的命令、不是发给模型的 prompt。 */
+  commandSigil?: '/' | '!';
 }
 
 /**
@@ -509,12 +512,14 @@ export function withCommands(
   if (!executions || executions.length === 0) return [...entries];
   const out = [...entries];
   for (const x of executions) {
+    const sigil = x.sigil ?? '/';
     const entry: ConvEntry = {
       key: `x${x.at}:${x.name}`,
       role: 'user',
       at: x.at,
-      text: `/${x.name}${x.args ? ` ${x.args}` : ''}`,
+      text: `${sigil}${x.name}${x.args ? ` ${x.args}` : ''}`,
       ...(x.output ? { commandOutput: x.output } : {}),
+      ...(sigil === '!' ? { commandSigil: '!' as const } : {}),
     };
     const at = out.findIndex((e) => e.at > x.at);
     if (at < 0) out.push(entry);

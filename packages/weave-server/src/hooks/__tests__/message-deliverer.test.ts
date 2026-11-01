@@ -1227,6 +1227,43 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(plainId)?.acked).not.toBe(true);
   });
 
+  it('bash 命令（活动旁证翻牌、无认领事件）同样常驻在途视图——执行完就消失 = 「刚才那条命令呢」', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        commandAckGraceMs: 60_000, // 短窗口拉长：翻牌只能来自 noteActivity
+        visibleTtlMs: 80,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const cmd = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '!git status',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const cmdId = (cmd as { messageId: string }).messageId;
+    expect(deliverer.getMessage(cmdId)).toMatchObject({ status: 'delivered' });
+
+    // bash 执行产生的转录行不进 hook 域，但宿主受理后的任何事件（如 PostToolUse）
+    // 都会触发活动旁证翻牌——翻牌不带 eventId（没有 UPS 这一轮）
+    deliverer.noteActivity(SESSION_ID);
+    expect(deliverer.getMessage(cmdId)).toMatchObject({ status: 'delivered', acked: true });
+
+    await new Promise((r) => setTimeout(r, 160)); // 越过 TTL
+    expect(deliverer.listVisible(SESSION_ID).map((m) => m.id)).toContain(cmdId);
+  });
+
   it('已执行的斜杠命令常驻在途视图（TTL 豁免）——/rewind 类没有认领事件，TTL 一到就消失无从查起', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const sendText = vi.fn().mockResolvedValue(undefined);

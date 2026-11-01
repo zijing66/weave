@@ -935,9 +935,13 @@ export function SessionMessages({
                     <div
                       className={cn(
                         'min-w-0 max-w-[85%] overflow-x-auto rounded-lg border px-2 py-1.5',
-                        pipe
-                          ? 'border-blue-500/30 bg-blue-500/[0.12]'
-                          : 'border-blue-500/15 bg-blue-500/[0.05]',
+                        // bash 命令回显（`!cmd`）：品红——与输入框的 bash 形态同色，
+                        // 一眼看出这条是宿主本地执行的命令、不是发给模型的 prompt
+                        m.commandSigil === '!'
+                          ? 'border-[#ff0087]/50 bg-[#ff0087]/[0.08]'
+                          : pipe
+                            ? 'border-blue-500/30 bg-blue-500/[0.12]'
+                            : 'border-blue-500/15 bg-blue-500/[0.05]',
                         // 被回退的段落：红虚线框 + 整体降不透明度（与回复气泡同口径）
                         m.rewound === true && 'border-dashed border-red-500/40 opacity-50',
                       )}
@@ -1169,7 +1173,16 @@ export function SessionMessages({
                       {t('tasks.outboxBlockedByQuestion')}
                     </p>
                   )}
-                  <div className="min-w-0 max-w-[95%] overflow-x-auto rounded-lg border border-dashed border-blue-500/30 bg-blue-500/[0.07] px-2 py-1.5">
+                  <div
+                    className={cn(
+                      'min-w-0 max-w-[95%] overflow-x-auto rounded-lg border border-dashed px-2 py-1.5',
+                      // bash 命令行（`!`）：品红——与输入框的 bash 形态同色（落定后的
+                      // 回显气泡同款），发出那一刻就能看出这条是命令、不是普通 prompt
+                      outbox.some((m) => commandModeOf(m.text, inputModes)?.kind === 'bash')
+                        ? 'border-[#ff0087]/40 bg-[#ff0087]/[0.06]'
+                        : 'border-blue-500/30 bg-blue-500/[0.07]',
+                    )}
+                  >
                     {outbox.map((m, i) => {
                       const open = outbox.length === 1 || openQueued === m.id;
                       const toggle = (): void => {
@@ -1181,7 +1194,10 @@ export function SessionMessages({
                           className={cn(
                             'flex gap-1.5',
                             open ? 'items-start' : 'items-center',
-                            i > 0 && 'mt-1 border-t border-blue-500/10 pt-1',
+                            i > 0 &&
+                              (commandModeOf(m.text, inputModes)?.kind === 'bash'
+                                ? 'mt-1 border-t border-[#ff0087]/20 pt-1'
+                                : 'mt-1 border-t border-blue-500/10 pt-1'),
                           )}
                         >
                           <div className="min-w-0 flex-1">

@@ -90,6 +90,8 @@ export interface CommandExecutionRow {
   args: string;
   at: string;
   output?: string;
+  /** 触发符（缺省 `/`）：bash 模式是 `!`——气泡按它拼展示原文并染品红。 */
+  sigil?: '/' | '!';
 }
 
 /** 计划模式交出的计划正文（最近一次 ExitPlanMode）：对话面当一条气泡摆出来批阅。 */
