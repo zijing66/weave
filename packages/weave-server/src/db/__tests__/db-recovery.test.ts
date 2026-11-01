@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -20,6 +20,12 @@ describe('openDatabase 的自我保护', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Windows 上残留句柄会让删除抛 EPERM：清不掉只说明有连接没关，不该让用例失败
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* 留下的那份由下一次系统清理带走 */
+    }
   });
 
   it('新库建好即写入 user_version', () => {
@@ -38,7 +44,9 @@ describe('openDatabase 的自我保护', () => {
     again.close();
     const backups = readdirSync(join(dir, 'backups'));
     expect(backups.filter((n) => n.endsWith('.db'))).toHaveLength(1);
-    expect((openDatabase(dbPath).prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+    const upgraded = openDatabase(dbPath);
+    expect((upgraded.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+    upgraded.close();
 
     // 已经是最新版本：再打开不该再备份
     openDatabase(dbPath).close();
