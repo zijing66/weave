@@ -98,6 +98,7 @@ export type {
   OrchestrationInput,
 } from './orchestration';
 export type { UploadFile, SessionUploadsResult, UploadsOverview } from './uploads';
+export type { VisualizationStats } from './visualizations';
 export type {
   LibraryRow,
   MarketUpdateStatus,

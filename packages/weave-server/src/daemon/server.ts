@@ -72,6 +72,8 @@ export interface WeaveServerDeps {
   watch?: WatchService;
   /** Hook event repository; optional so non-ingestion tests can omit it. */
   hookEvents?: HookEventRepository;
+  /** 渲染块 fragment 落点根；缺省 `<data>/visualizations`（测试注入临时目录）。 */
+  visualizationsDir?: string;
   /**
    * 事件接入源（批 4b：类型由 HookAdapter 放宽为结构兼容的 EventSource，
    * `HookAdapter[]` 仍可赋值）；`harnesses` 存在时 POST /hooks 由其派生。

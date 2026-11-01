@@ -1,3 +1,4 @@
+import { getVisualizationsDir } from '@weavecode/server';
 import { t } from '../i18n/index.js';
 
 export type ClaudeMdTemplate = 'minimal' | 'standard' | 'full';
@@ -59,7 +60,7 @@ export function generateClaudeMdSection(input: ClaudeMdGeneratorInput): string {
   }
 
   content += t('claudemd.skills');
-  content += t('claudemd.visualize');
+  content += t('claudemd.visualize', { dir: getVisualizationsDir() });
   content += `${WEAVE_BLOCK_END}\n`;
   return content;
 }

@@ -61,6 +61,11 @@ export const settingsZh = {
   'settings.cleanConfirmTitle': '确认清理',
   'settings.cleanConfirmBtn': '删除',
   'settings.cleaningProgress': '清理中 {done}/{total}',
+  'settings.cleanVisualizationsStat': '渲染块（可视化）{n} 个 · {size}',
+  'settings.cleanVisualizationsUnrefStat': '无引用：{n} 个 · {size}',
+  'settings.cleanVisualizationsDamage':
+    '将删除 {n} 个无引用的渲染块（共 {size}）。对话里仍在引用的会保留；这些是没有引用、且超过 24 小时的，删除后重新生成即可。',
+  'settings.cleanVisualizationsDone': '已清理 {n} 个渲染块',
   'settings.cleanUnrefDone': '已清理 {n} 项',
   'settings.cleanSessionDone': '已清理该对话的 {n} 项附件',
   'settings.cleanFailed': '清理失败：{error}',
@@ -159,6 +164,11 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.cleanConfirmTitle': 'Confirm cleanup',
   'settings.cleanConfirmBtn': 'Delete',
   'settings.cleaningProgress': 'Cleaning {done}/{total}',
+  'settings.cleanVisualizationsStat': 'Render blocks {n} · {size}',
+  'settings.cleanVisualizationsUnrefStat': 'Unreferenced: {n} · {size}',
+  'settings.cleanVisualizationsDamage':
+    'Deletes {n} unreferenced render blocks ({size}). Blocks a conversation still references are kept; these are unreferenced and older than 24 hours, and can be regenerated.',
+  'settings.cleanVisualizationsDone': 'Removed {n} render blocks',
   'settings.cleanUnrefDone': 'Removed {n} items',
   'settings.cleanSessionDone': "Removed {n} attachments from this conversation",
   'settings.cleanFailed': 'Cleanup failed: {error}',

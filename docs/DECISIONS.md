@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-11-02
+
+- **渲染块 fragment 的落点从临时目录搬到 `<data>/visualizations`，并入设置页存储清理（用户问「渲染块的 fragment 放临时路径是否不合理呢？是不是应当放到类似图片与文件的存储数据路径，然后在设置页的存储清理中，由用户统一决定是否清理」）**：临时目录的毛病是 OS 会清、用户看不见也管不了——历史气泡里的可视化会在某次系统清理后永久破图，且设置页「对话附件存储」那本账根本不覆盖它。**定案三步**：① 落点改 `<data>/visualizations`（与 `uploads/` 同级，随数据整档迁移），`weave init` 的指令块文案改写并把绝对路径插值进去（存量项目要重跑 `weave init` 才拿到新文案，旧文案写的 `<tmp>/weave` 仍在白名单里、过渡期照常可读）；② 设置页存储面板多一块「渲染块（可视化）」账目（`GET /visualizations/stats` + `POST /visualizations/cleanup`）；③ 清理判据 = **无对话引用 且 过 24h 宽限期**——引用扫对话事件正文（UPS 的 `raw.prompt` 与 Stop 族的 `raw.last_assistant_message`，走 `HookEventRepository.conversationTextsContaining`），有引用的永不删（历史气泡不破图），刚写出来的不删（事件可能还没入库）。**边界（用户裁决）**：codex 官方 skill 的 `~/.codex/visualizations` 与 weave 无关，不进这块账目、不管。**代价**：fragment 现在落在 `data/` 档，会跟着迁移走、体量由上面那条清理策略收口。回归 = `visualizations-routes.test.ts` 15 例（新增 stats/cleanup/子目录/根缺失 4 例）+ `claudemd-gen.test.ts` 16 例（落点断言改 `<data>/visualizations`）。
+
 ## 2026-11-01
 
 - **发送气泡过长也收纳——与左侧回复气泡同规（用户报「对话框的发送方的气泡，也与左侧气泡一样，过长的也收纳起来，效果一样」）**：复用既有 `Collapsible`（六行门槛 / 三行钳制 / 底部渐隐 / 底部居中箭头唯一入口，全部不动），只把发送气泡的纯 markdown 分支包进去；缺省展开口径镜像回复侧——`newestUserKey`（最新一条 user 条目）与 `newestAssistantKey` 并列进 `isOpen` 的缺省判据，手动账（`expanded` map）优先级不变、两侧共用一本账。**两支不收**：带图分段（`inlineSegs`）收了会把图藏进渐隐里；命令回显（`cmdTokens`/`commandOutput`）的 `<pre>` 自己封顶 `max-h-40`，再套折叠是双重收纳。多选态照旧 `disabled={selecting}`（箭头不渲染、点击归勾选）。

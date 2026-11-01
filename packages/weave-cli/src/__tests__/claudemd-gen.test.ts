@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, it, expect } from 'vitest';
+import { getVisualizationsDir } from '@weavecode/server';
 import { setLocale } from '../i18n/index';
 import {
   generateClaudeMd,
@@ -53,11 +54,12 @@ describe('generateClaudeMd', () => {
     expect(md).not.toContain('live in `skills/`');
   });
 
-  it('渲染块落点写进托管块（每条模板都有）：项目内或临时目录的 weave/ 子目录', () => {
+  it('渲染块落点写进托管块（每条模板都有）：项目内或 weave 数据目录的 visualizations', () => {
+    const dest = getVisualizationsDir();
     for (const t of ['minimal', 'standard', 'full'] as const) {
       const md = generateClaudeMd({ template: t, projectName: 'p' });
       expect(md).toContain('## Render Blocks');
-      expect(md).toContain('system temp dir');
+      expect(md).toContain(dest);
       expect(md).toContain('U+E200');
     }
   });

@@ -117,7 +117,7 @@ export async function handleHooksRoutes(
     pathname === '/uploads' ||
     pathname.startsWith('/uploads/') ||
     pathname.startsWith('/images/') ||
-    pathname === '/visualizations/fragment' ||
+    pathname.startsWith('/visualizations/') ||
     pathname === '/pets' ||
     pathname.startsWith('/pets/');
   if (!isOwnedPath) return false;

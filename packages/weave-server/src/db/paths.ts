@@ -55,6 +55,11 @@ export function getPetsDir(dir?: string): string {
   return path.join(dataRoots(dir).data, 'pets');
 }
 
+/** 渲染块 fragment 的稳定落点（模型产物；与上传同级，随数据迁移、可在设置页清理）。 */
+export function getVisualizationsDir(dir?: string): string {
+  return path.join(dataRoots(dir).data, 'visualizations');
+}
+
 /** Absolute path to the daemon auth file (password hash + secrets, 0600). */
 export function getAuthPath(dir?: string): string {
   return path.join(dataRoots(dir).local, 'auth.json');

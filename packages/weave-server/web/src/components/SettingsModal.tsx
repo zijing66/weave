@@ -12,6 +12,7 @@ import {
   type SessionUploadsResult,
   type TerminalPreset,
   type UploadsOverview,
+  type VisualizationStats,
 } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
@@ -248,6 +249,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   /** 对话附件存储：总览账 + 无引用件预告 + 按会话用量（打开时拉一次，清理后重拉）。 */
   const [overview, setOverview] = useState<UploadsOverview | null>(null);
   const [unref, setUnref] = useState<{ count: number; bytes: number } | null>(null);
+  /** 渲染块 fragment 的统计面（weave 自己的落点；与上传件分开算）。 */
+  const [vizStats, setVizStats] = useState<VisualizationStats | null>(null);
   const [usage, setUsage] = useState<Array<{ sessionId: string; count: number; bytes: number }>>([]);
   const [sessionTitles, setSessionTitles] = useState<Map<string, string>>(new Map());
   /** 按会话多选清理的勾选集；展开钻取的会话 id（null = 全收起）。 */
@@ -319,6 +322,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       .listPets()
       .then(setPets)
       .catch(() => setPets([])); // 老 daemon 无 /pets：下拉空着，不挡设置页
+    api
+      .getVisualizationStats()
+      .then(setVizStats)
+      .catch(() => setVizStats(null)); // 老 daemon 无该端点：这一块不渲染
   }, [open, loadStorage]);
 
   /** 展开某会话：拉单件清单（懒加载），收起即清。 */
@@ -409,6 +416,20 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       void loadStorage();
     }
   }, [unref, loadStorage, show, t]);
+
+  /** 清无引用的渲染块 fragment：有引用的保留（历史气泡不破图），完了重拉统计。 */
+  const runCleanupVisualizations = useCallback(async (): Promise<void> => {
+    setCleaning({ done: 0, total: 1 });
+    try {
+      const r = await api.cleanupVisualizations();
+      show('success', t('settings.cleanVisualizationsDone', { n: r.removed }));
+    } catch (e) {
+      show('error', t('settings.cleanFailed', { error: String(e) }));
+    } finally {
+      setCleaning(null);
+      api.getVisualizationStats().then(setVizStats).catch(() => setVizStats(null));
+    }
+  }, [show, t]);
 
   /** 按会话清：确认后删该会话全部随附件，完了重拉统计。 */
   const runCleanupSession = useCallback(
@@ -909,6 +930,34 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   )}
                 </span>
               </div>
+
+              {/* 渲染块 fragment（模型产物，落 weave 数据目录）：与附件分开算、分开清 */}
+              {vizStats !== null && (
+                <div className="flex items-center gap-2">
+                  <span className="text-11 text-neutral-400">
+                    {t('settings.cleanVisualizationsStat', {
+                      n: vizStats.count,
+                      size: fmtBytes(vizStats.bytes),
+                    })}
+                  </span>
+                  <span className="ml-auto flex items-center gap-2">
+                    <span className="text-10 text-neutral-500">
+                      {t('settings.cleanVisualizationsUnrefStat', {
+                        n: vizStats.unreferenced.count,
+                        size: fmtBytes(vizStats.unreferenced.bytes),
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={vizStats.unreferenced.count === 0 || cleaning !== null}
+                      onClick={() => setConfirmClean('viz')}
+                      className="rounded-lg bg-neutral-800 px-2.5 py-1 text-11 text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+                    >
+                      {t('settings.cleanUnrefBtn')}
+                    </button>
+                  </span>
+                </div>
+              )}
 
               {/* 按会话清理：多选 + 批量清；行可展开钻取单件 */}
               {usage.length > 0 && (
@@ -1497,7 +1546,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           open={confirmClean !== null}
           title={t('settings.cleanConfirmTitle')}
           message={
-            confirmClean === 'unref'
+            confirmClean === 'viz'
+              ? t('settings.cleanVisualizationsDamage', {
+                  n: vizStats?.unreferenced.count ?? 0,
+                  size: fmtBytes(vizStats?.unreferenced.bytes ?? 0),
+                })
+              : confirmClean === 'unref'
               ? t('settings.cleanUnrefDamage', { n: unref?.count ?? 0, size: fmtBytes(unref?.bytes ?? 0) })
               : confirmClean === '__batch__'
                 ? t('settings.cleanBatchDamage', {
@@ -1514,7 +1568,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           }
           confirmLabel={t('settings.cleanConfirmBtn')}
           onConfirm={() => {
-            if (confirmClean === 'unref') void runCleanupUnref();
+            if (confirmClean === 'viz') void runCleanupVisualizations();
+            else if (confirmClean === 'unref') void runCleanupUnref();
             else if (confirmClean === '__batch__') void runCleanupChecked();
             else if (confirmClean) void runCleanupSession(confirmClean);
           }}

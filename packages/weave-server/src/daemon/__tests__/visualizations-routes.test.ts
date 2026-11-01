@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
@@ -184,5 +184,127 @@ describe('渲染块 fragment 端点', () => {
       url,
     );
     expect(handled).toBe(false);
+  });
+});
+
+/**
+ * 设置页存储面板的渲染块账目：只有「无对话引用 且 过了宽限期」的才算可清理；
+ * 被引用过的、刚写出来的都留着（历史气泡不破图）。
+ */
+describe('渲染块统计与清理', () => {
+  let db: ReturnType<typeof openDatabase>;
+  let root: string;
+  let vizRoot: string;
+  let referenced: string[];
+  let deps: WeaveServerDeps;
+
+  const callRoute = async (
+    pathname: string,
+    method = 'GET',
+  ): Promise<{ status: number; body: unknown }> => {
+    const req = Readable.from([]) as unknown as IncomingMessage;
+    req.method = method;
+    let bodyOut: unknown = null;
+    const res = {
+      statusCode: 0,
+      setHeader: () => {},
+      writeHead: (code: number) => {
+        res.statusCode = code;
+      },
+      end: (chunk?: unknown) => {
+        bodyOut = typeof chunk === 'string' ? JSON.parse(chunk) : chunk;
+      },
+    };
+    const url = new URL(pathname, 'http://x');
+    await handleVisualizationRoutes(req, res as unknown as ServerResponse, deps, url.pathname, url);
+    return { status: res.statusCode, body: bodyOut };
+  };
+
+  const writeFragment = (name: string, ageMs = 0): string => {
+    const file = join(vizRoot, name);
+    writeFileSync(file, '<b>x</b>');
+    if (ageMs > 0) {
+      const at = new Date(Date.now() - ageMs);
+      utimesSync(file, at, at);
+    }
+    return file;
+  };
+
+  const DAY = 24 * 60 * 60 * 1000;
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    root = mkdtempSync(join(os.tmpdir(), 'weave-viz-store-'));
+    vizRoot = join(root, 'visualizations');
+    mkdirSync(vizRoot, { recursive: true });
+    referenced = [];
+    deps = {
+      projects: new ProjectRepository(db),
+      visualizationsDir: vizRoot,
+      hookEvents: {
+        conversationTextsContaining: () => referenced,
+      },
+    } as unknown as WeaveServerDeps;
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('stats：只把无引用且过了宽限期的算进可清理', async () => {
+    const stale = writeFragment('stale.html', 2 * DAY);
+    const fresh = writeFragment('fresh.html');
+    const used = writeFragment('used.html', 2 * DAY);
+    referenced = [
+      `\u{e200}visualize\u{e202}${JSON.stringify({ path: used })}\u{e201}`,
+    ];
+
+    const res = await callRoute('/visualizations/stats');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      count: 3,
+      unreferenced: { count: 1 },
+    });
+    expect(existsSync(stale)).toBe(true);
+    expect(existsSync(fresh)).toBe(true);
+  });
+
+  it('cleanup：删掉的正好是无引用且过宽限期的那份', async () => {
+    const stale = writeFragment('stale.html', 2 * DAY);
+    const fresh = writeFragment('fresh.html');
+    const used = writeFragment('used.html', 2 * DAY);
+    referenced = [
+      `\u{e200}visualize\u{e202}${JSON.stringify({ path: used })}\u{e201}`,
+    ];
+
+    const res = await callRoute('/visualizations/cleanup', 'POST');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ removed: 1 });
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(used)).toBe(true);
+  });
+
+  it('子目录里的 fragment 也计入', async () => {
+    mkdirSync(join(vizRoot, 'nested'), { recursive: true });
+    const nested = join(vizRoot, 'nested', 'deep.html');
+    writeFileSync(nested, '<i>d</i>');
+    const at = new Date(Date.now() - 2 * DAY);
+    utimesSync(nested, at, at);
+
+    const stats = await callRoute('/visualizations/stats');
+    expect(stats.body).toMatchObject({ count: 1, unreferenced: { count: 1 } });
+    const cleaned = await callRoute('/visualizations/cleanup', 'POST');
+    expect(cleaned.body).toMatchObject({ removed: 1 });
+    expect(existsSync(nested)).toBe(false);
+  });
+
+  it('落点根不存在时 stats 是空账、cleanup 是空操作', async () => {
+    rmSync(vizRoot, { recursive: true, force: true });
+    const stats = await callRoute('/visualizations/stats');
+    expect(stats.body).toMatchObject({ count: 0, bytes: 0, unreferenced: { count: 0, bytes: 0 } });
+    const cleaned = await callRoute('/visualizations/cleanup', 'POST');
+    expect(cleaned.body).toMatchObject({ removed: 0, freedBytes: 0 });
   });
 });

@@ -275,9 +275,42 @@ export class HookEventRepository {
       };
     });
   }
+
+  /**
+   * 对话正文里含 needle 的全部文本（渲染块引用收集用）：事件类型与正文键同
+   * searchConversationTexts，但不限条数、不排序——要的是「历史上提到过的每一个
+   * 引用」。
+   */
+  conversationTextsContaining(needle: string): string[] {
+    const types = new Set<string>();
+    for (const l of Object.values(HARNESS_LIFECYCLE)) {
+      types.add(l.open);
+      for (const t of l.close) types.add(t);
+    }
+    const typeList = [...types].map((t) => `'${t}'`).join(',');
+    const like = likeEscape(needle);
+    const rows = this.db
+      .prepare(
+        `SELECT payload FROM hook_events
+         WHERE event_type IN (${typeList})
+           AND (COALESCE(json_extract(payload, '$.raw.prompt'), '') LIKE '%' || ? || '%' ESCAPE '\\'
+            OR COALESCE(json_extract(payload, '$.raw.last_assistant_message'), '') LIKE '%' || ? || '%' ESCAPE '\\')`,
+      )
+      .all(like, like) as Array<{ payload: unknown }>;
+    const out: string[] = [];
+    for (const row of rows) {
+      const payload = JSON.parse(String(row.payload)) as {
+        raw?: { prompt?: unknown; last_assistant_message?: unknown };
+      };
+      const text = strOf(payload.raw?.prompt) ?? strOf(payload.raw?.last_assistant_message);
+      if (text) out.push(text);
+    }
+    return out;
+  }
 }
 
 /** 一条聊天正文命中（全文随行带；命中窗口由路由层截）。 */
+
 export interface ConversationTextHit {
   eventId: number;
   projectId: number;
