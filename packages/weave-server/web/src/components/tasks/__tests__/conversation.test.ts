@@ -21,7 +21,6 @@ import {
   buildSegments,
   cmdChipClass,
   cmdMenuMatches,
-  cmdMenuShouldOpen,
   cmdQueryIn,
   commandTokensOf,
   draftSnapshotOf,
@@ -29,7 +28,6 @@ import {
   pickerIntent,
   refSigilsOf,
   serializeDraft,
-  sessionPickerIntent,
   textBeforeCaret,
 } from '../draft-editor';
 import { imageMarkerSegments, pipePathSegments } from '../conv-model';
@@ -664,22 +662,22 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
     const before = (root: Node, container: Fake, off: number): string =>
       textBeforeCaret(root, { startContainer: container, startOffset: off } as unknown as Range);
     const alone = text('@');
-    expect(pickerIntent(before(draft([text('看看 '), alone]), alone, 1))).toBe('open');
-    expect(pickerIntent(before(draft([text('行尾换行\n'), alone]), alone, 1))).toBe('open');
+    expect(pickerIntent(before(draft([text('看看 '), alone]), alone, 1), '@')).toBe('open');
+    expect(pickerIntent(before(draft([text('行尾换行\n'), alone]), alone, 1), '@')).toBe('open');
     // 换行是 <br>：行首那枚 `@` 前面同样是空白（Range.toString() 不吐这个换行）
-    expect(pickerIntent(before(draft([text('上一行'), el('BR'), alone]), alone, 1))).toBe('open');
+    expect(pickerIntent(before(draft([text('上一行'), el('BR'), alone]), alone, 1), '@')).toBe('open');
     // 粘着字的都不弹：邮箱、中文
     const mail = text('foo@');
-    expect(pickerIntent(before(draft([mail]), mail, 4))).toBe('ignore');
+    expect(pickerIntent(before(draft([mail]), mail, 4), '@')).toBe('ignore');
     const cjk = text('看@');
-    expect(pickerIntent(before(draft([cjk]), cjk, 2))).toBe('ignore');
+    expect(pickerIntent(before(draft([cjk]), cjk, 2), '@')).toBe('ignore');
     const esc = text('\\@');
-    expect(pickerIntent(before(draft([esc]), esc, 2))).toBe('escape');
+    expect(pickerIntent(before(draft([esc]), esc, 2), '@')).toBe('escape');
     // 光标落在容器上（不在文本节点里）：只取它前面那些兄弟
     const root = el('DIV', [text(' '), text('@'), text('后面的字')]);
-    expect(pickerIntent(before(root as unknown as Node, root, 2))).toBe('open');
+    expect(pickerIntent(before(root as unknown as Node, root, 2), '@')).toBe('open');
     const glued = el('DIV', [text('看'), text('@')]);
-    expect(pickerIntent(before(glued as unknown as Node, glued, 2))).toBe('ignore');
+    expect(pickerIntent(before(glued as unknown as Node, glued, 2), '@')).toBe('ignore');
   });
 
   it('⑦ 胶囊不是空白：紧跟胶囊的 `@` 不弹，胶囊后面留了空格才弹', () => {
@@ -689,20 +687,20 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
       startContainer: tail,
       startOffset: 1,
     } as unknown as Range);
-    expect(pickerIntent(tight)).toBe('ignore');
+    expect(pickerIntent(tight, '@')).toBe('ignore');
     const spaced = text('@');
     const before = textBeforeCaret(draft([chip, text(' '), spaced]), {
       startContainer: spaced,
       startOffset: 1,
     } as unknown as Range);
-    expect(pickerIntent(before)).toBe('open');
+    expect(pickerIntent(before, '@')).toBe('open');
   });
 
   it('⑧ `#` 会话引用同判据：前面必须空白，`\\#` 是转义', () => {
-    expect(sessionPickerIntent('#')).toBe('open');
-    expect(sessionPickerIntent('看看 #')).toBe('open');
-    expect(sessionPickerIntent('看#')).toBe('ignore');
-    expect(sessionPickerIntent('\\#')).toBe('escape');
+    expect(pickerIntent('#', '#')).toBe('open');
+    expect(pickerIntent('看看 #', '#')).toBe('open');
+    expect(pickerIntent('看#', '#')).toBe('ignore');
+    expect(pickerIntent('\\#', '#')).toBe('escape');
   });
 
   it('⑨ 会话目标胶囊：序列化展开成 `#<id>「<名>」` 收件人标注（发送 = 本会话的 prompt）、进快照（ss/n）', () => {
@@ -1376,7 +1374,7 @@ describe('commandTokensOf（气泡里的命令 token 识别）', () => {
   });
 });
 
-describe('cmdQueryIn / cmdMenuShouldOpen / cmdMenuMatches（菜单触发与候选池）', () => {
+describe('cmdQueryIn / cmdMenuMatches（菜单触发与候选池）', () => {
   const commands = [
     { name: 'compact', description: '', source: 'builtin' as const },
     { name: 'init', description: '', source: 'builtin' as const, inline: true },
@@ -1397,13 +1395,15 @@ describe('cmdQueryIn / cmdMenuShouldOpen / cmdMenuMatches（菜单触发与候�
   });
 
   it('菜单开闸：开头位只要有该触发符的候选就开；句中要有 inline 候选才开', () => {
-    expect(cmdMenuShouldOpen(commands, '/', true)).toBe(true);
-    expect(cmdMenuShouldOpen(commands, '/', false)).toBe(true); // init/deploy 是 inline
-    expect(cmdMenuShouldOpen(commands, '$', false)).toBe(true);
+    const opens = (pool: Parameters<typeof cmdMenuMatches>[0], sigil: '/' | '$', head: boolean): boolean =>
+      cmdMenuMatches(pool, sigil, '', head).length > 0;
+    expect(opens(commands, '/', true)).toBe(true);
+    expect(opens(commands, '/', false)).toBe(true); // init/deploy 是 inline
+    expect(opens(commands, '$', false)).toBe(true);
     // 全是非 inline 的候选时句中不开
     const builtinOnly = [{ name: 'compact', description: '', source: 'builtin' as const }];
-    expect(cmdMenuShouldOpen(builtinOnly, '/', false)).toBe(false);
-    expect(cmdMenuShouldOpen(builtinOnly, '/', true)).toBe(true);
+    expect(opens(builtinOnly, '/', false)).toBe(false);
+    expect(opens(builtinOnly, '/', true)).toBe(true);
   });
 
   it('候选池：句中滤掉非 inline；前缀优先、包含殿后、截 40', () => {

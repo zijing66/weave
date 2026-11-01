@@ -344,9 +344,15 @@ export function hasRefCandidate(text: string): boolean {
  *  （邮箱 `foo@bar`、中文 `看@a.ts`）既不是引用，也就不该弹框。 */
 export type PickerIntent = 'open' | 'escape' | 'ignore';
 
-export function pickerIntent(before: string): PickerIntent {
-  if (!before.endsWith('@')) return 'ignore';
-  if (before.endsWith('\\@')) return 'escape';
+/**
+ * 触发符 → 该不该弹选择器。`@` 归文件、`#` 归会话，两者文法完全同源
+ * （空白或行首、`\` 转义），故只差一个字符。
+ */
+export type PickerSigil = '@' | '#';
+
+export function pickerIntent(before: string, sigil: PickerSigil): PickerIntent {
+  if (!before.endsWith(sigil)) return 'ignore';
+  if (before.endsWith(`\\${sigil}`)) return 'escape';
   const prev = before[before.length - 2];
   if (prev !== undefined && !/\s/.test(prev)) return 'ignore';
   return 'open';
@@ -379,18 +385,6 @@ export function refSigilsOf(
   for (const m of modes) if (!out.includes(m.sigil)) out.push(m.sigil);
   for (const c of commands ?? []) if (c.sigil && !out.includes(c.sigil)) out.push(c.sigil);
   return out;
-}
-
-/** 敲下 `#` 之后该怎么处理（与 `pickerIntent` 同一套形状）：`#` 是会话引用的
- *  触发键——`@` 归文件、`/` 归命令、`!` 归 bash、`$` 归 codex skill，全 harness
- *  空闲的引用惯例符只剩它。markdown 标题（行首 `# `）撞同一枚键：选择器关掉时
- *  会把 `#` 补回去（见 use-draft-editor 的 closeSessionPicker），标题照敲不误。 */
-export function sessionPickerIntent(before: string): PickerIntent {
-  if (!before.endsWith('#')) return 'ignore';
-  if (before.endsWith('\\#')) return 'escape';
-  const prev = before[before.length - 2];
-  if (prev !== undefined && !/\s/.test(prev)) return 'ignore';
-  return 'open';
 }
 
 /** 粘贴回填切成的一小段：一段原文，或一枚认出来的引用（`PickItem` 直接能喂给
@@ -565,18 +559,10 @@ export function cmdQueryIn(before: string): CmdQueryHit | null {
   return { sigil: m[1] as CmdSigil, query: m[2]!, head: before.slice(0, m.index).trim() === '' };
 }
 
-/** 这个位置敲下触发符，菜单有没有可给的候选：开头位全量可用；句中只摆宿主认
- *  mention 的（inline）——内建命令句中发了就是死文本，不如不弹。 */
-export function cmdMenuShouldOpen(
-  commands: readonly HarnessCommandRow[],
-  sigil: CmdSigil,
-  head: boolean,
-): boolean {
-  return commands.some((c) => (c.sigil ?? '/') === sigil && (head || c.inline === true));
-}
-
-/** 菜单候选：位置先筛（同上），再按前缀命中的排前面、包含命中的排后面（都按
- *  大小写不敏感比），截前 40。 */
+/** 菜单候选：位置先筛——开头位全量可用；句中只摆宿主认 mention 的（inline，
+ *  内建命令句中发了就是死文本，不如不弹）——再按前缀命中的排前面、包含命中的
+ *  排后面（都按大小写不敏感比），截前 40。「有没有候选」= 结果非空，调用方据此
+ *  决定弹不弹，不再单留一个判据函数。 */
 export function cmdMenuMatches(
   commands: readonly HarnessCommandRow[],
   sigil: CmdSigil,

@@ -7,7 +7,6 @@ import {
   buildSegments,
   cmdChipClass,
   cmdMenuMatches,
-  cmdMenuShouldOpen,
   cmdQueryIn,
   hasRefCandidate,
   pickerIntent,
@@ -32,10 +31,10 @@ import {
   SESSION_ATTR,
   SESSION_NAME_ATTR,
   SESSION_CHIP_CLASS,
-  sessionPickerIntent,
   type CmdQueryHit,
   type CmdSigil,
   type CmdSource,
+  type PickerSigil,
 } from './draft-editor';
 import { isImageUpload, settledUploads, type StagedFile } from './attach';
 
@@ -160,30 +159,43 @@ const insertText = (text: string): void => {
 /** 换行（移动端那枚按钮）：移动端没有 Shift+Enter 这个手势。 */
 const insertNewline = (): void => insertText('\n');
 
-/** 插一段**粘贴来的**文本：必须走 `execCommand('insertHTML')`——`insertText`
- *  会把插入并进「打字」撤销组，Ctrl+Z 一口气把粘贴连同之前的打字全撤掉；
- *  `insertHTML` 是独立撤销步，与原生粘贴一致（2026-10-31 Chromium 实测）。
- *  文本经 createTextNode 转义成 HTML，换行保持字面 `\n`（pre-wrap 下照常
- *  渲染、序列化单换行；换成 `<br>` 反倒在文本交界被 Chromium 塞进额外的
- *  `\n` 变双倍换行）。不支持时退回手插节点（那条路没有撤销，但不至于插不进）。 */
-const insertPasted = (text: string): void => {
-  const el = draftRef.current;
-  if (!el) return;
+/**
+ * 用 `insertHTML` 插一批节点（粘贴 / 附件 / 引用回填共用）：`insertText` 会把
+ * 插入并进「打字」撤销组，Ctrl+Z 一口气把之前的打字全撤掉；`insertHTML` 是
+ * 独立撤销步，与原生粘贴一致（2026-10-31 Chromium 实测）。savedRange 有值且仍在
+ * 框内时先恢复选区（选择器记下的位置），否则从当前光标插；不支持 insertHTML
+ * 就退回手插节点（那条路没有撤销，但不至于插不进）。
+ */
+const insertNodesUndoably = (el: HTMLDivElement, nodes: Node[], savedRange: Range | null): void => {
   el.focus({ preventScroll: true });
+  if (savedRange && el.contains(savedRange.startContainer)) {
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(savedRange);
+  }
   if (!caretInDraft(el)) {
-    insertNodes([document.createTextNode(text)]);
+    insertNodes(nodes);
     return;
   }
   const wrapper = document.createElement('div');
-  wrapper.appendChild(document.createTextNode(text));
+  nodes.forEach((n) => wrapper.appendChild(n));
   let ok = false;
   try {
     ok = document.execCommand('insertHTML', false, wrapper.innerHTML);
   } catch {
     ok = false;
   }
-  if (!ok) insertNodes([document.createTextNode(text)]);
+  if (!ok) insertNodes(nodes);
   else setDraft(serializeDraft(el));
+};
+
+/** 插一段**粘贴来的**文本：文本经 createTextNode 转义成 HTML，换行保持字面
+ *  `\n`（pre-wrap 下照常渲染、序列化单换行；换成 `<br>` 反倒在文本交界被
+ *  Chromium 塞进额外的 `\n` 变双倍换行）。 */
+const insertPasted = (text: string): void => {
+  const el = draftRef.current;
+  if (!el) return;
+  insertNodesUndoably(el, [document.createTextNode(text)], null);
 };
 
 /** 造一枚胶囊：正文 = 服务端算好的表达式，另存路径/类型/行区间供再次编辑。 */
@@ -307,32 +319,13 @@ const insertAttach = (upload: UploadFile): void => {
     lead = at > 0 && !/\s/.test(value[at - 1] ?? '');
     trail = at < value.length && !/\s/.test(value[at] ?? '');
   }
-  const wrapper = document.createElement('div');
-  if (pad && lead) wrapper.appendChild(document.createTextNode(' '));
-  wrapper.appendChild(chip);
-  if (pad && trail) wrapper.appendChild(document.createTextNode(' '));
-  // execCommand 落在当前选区（insertNodes 同款：先恢复 saved 选区）；wrapper 的
-  // 孩子逐个插，HTML 外壳不进 DOM
+  const nodes: Node[] = [];
+  if (pad && lead) nodes.push(document.createTextNode(' '));
+  nodes.push(chip);
+  if (pad && trail) nodes.push(document.createTextNode(' '));
   const saved = atRange.current;
   atRange.current = null;
-  if (saved && el.contains(saved.startContainer)) {
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(saved);
-  } else {
-    el.focus({ preventScroll: true });
-  }
-  let ok = false;
-  try {
-    ok = document.execCommand('insertHTML', false, wrapper.innerHTML);
-  } catch {
-    ok = false;
-  }
-  if (ok) {
-    setDraft(serializeDraft(el));
-    return;
-  }
-  insertNodes(Array.from(wrapper.childNodes));
+  insertNodesUndoably(el, nodes, saved);
 };
 
 /** 光标前是不是正在敲一条命令（空白后的 `/word` 或 `$word`）：是就把触发符、
@@ -348,12 +341,8 @@ const commandQueryAt = (el: HTMLDivElement): CmdQueryHit | null => {
  *  触发符下没有 inline 候选）就收起（发送/点走/删光都走这一处）。 */
 const syncCmdMenu = (el: HTMLDivElement): void => {
   const hit = commandQueryAt(el);
-  if (
-    !hit ||
-    !commands ||
-    commands.length === 0 ||
-    !cmdMenuShouldOpen(commands, hit.sigil, hit.head)
-  ) {
+  // 池子空 = 这个位置没有可给的候选（开头位全量、句中只认 inline），菜单不弹
+  if (!hit || !commands || cmdMenuMatches(commands, hit.sigil, '', hit.head).length === 0) {
     if (cmdMenu) setCmdMenu(null);
     return;
   }
@@ -487,29 +476,9 @@ const insertRichText = (text: string): void => {
         ? [document.createTextNode(seg.text)]
         : [buildChip(seg.item.ref, seg.item.target)],
     );
-    // 摊平成 HTML 走 insertHTML（独立撤销步）；wrapper 的孩子逐个搬，外壳不进 DOM
-    const wrapper = document.createElement('div');
-    nodes.forEach((n) => wrapper.appendChild(n));
-    el.focus({ preventScroll: true });
     const saved = atRange.current;
     atRange.current = null;
-    if (saved && el.contains(saved.startContainer)) {
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(saved);
-    }
-    if (!caretInDraft(el)) {
-      insertNodes(nodes);
-      return;
-    }
-    let ok = false;
-    try {
-      ok = document.execCommand('insertHTML', false, wrapper.innerHTML);
-    } catch {
-      ok = false;
-    }
-    if (!ok) insertNodes(nodes);
-    else setDraft(serializeDraft(el));
+    insertNodesUndoably(el, nodes, saved);
   }, plain);
 };
 
@@ -541,16 +510,16 @@ const openChip = (chip: HTMLElement): void => {
   });
 };
 
-/** `\@` 是转义：吃掉反斜杠、留下字面 `@`、不弹选择器。 */
-const escapeAt = (el: HTMLDivElement): void => {
+/** `\@` / `\#` 是转义：吃掉反斜杠、留下字面触发符、不弹选择器。 */
+const escapeTrigger = (el: HTMLDivElement, sigil: PickerSigil): void => {
   const sel = window.getSelection();
   const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
   const node = range?.startContainer;
   const off = range?.startOffset ?? 0;
   if (node && node.nodeType === TEXT_NODE && off >= 2) {
     const value = node.nodeValue ?? '';
-    if (value[off - 1] === '@' && value[off - 2] === '\\') {
-      node.nodeValue = `${value.slice(0, off - 2)}@${value.slice(off)}`;
+    if (value[off - 1] === sigil && value[off - 2] === '\\') {
+      node.nodeValue = `${value.slice(0, off - 2)}${sigil}${value.slice(off)}`;
       const after = document.createRange();
       after.setStart(node, off - 1);
       after.collapse(true);
@@ -561,50 +530,46 @@ const escapeAt = (el: HTMLDivElement): void => {
   setDraft(serializeDraft(el));
 };
 
-/** 敲 `@` 直接唤出选择器（`\@` 除外）。返回 true = 这次输入已被接管。 */
-const maybeOpenPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
-  // 只认真的敲进来一个半角 `@`：IME 组字、粘贴、替换都不算
-  if (native.inputType !== 'insertText' || native.data !== '@') return false;
+/**
+ * 敲下引用触发符 → 接管这次输入：`\@`/`\#` 吃掉反斜杠留字面字符，其余唤出
+ * 对应的选择器。@ 与 # 的判据同源（pickerIntent），只差字符、记账 ref 与
+ * 打开的那扇门。
+ */
+const maybeOpenTrigger = (
+  el: HTMLDivElement,
+  native: InputEvent,
+  sigil: PickerSigil,
+  rangeRef: { current: Range | null },
+  open: () => void,
+): boolean => {
+  // 只认真的敲进来一个半角触发符：IME 组字、粘贴、替换都不算
+  if (native.inputType !== 'insertText' || native.data !== sigil) return false;
   const range = caretInDraft(el);
   if (!range) return false;
-  // 光标之前那截文字（含刚敲进来的 `@`）。胶囊按词边界算，`@` 紧跟胶囊之后
+  // 光标之前那截文字（含刚敲进来的触发符）。胶囊按词边界算，`@` 紧跟胶囊之后
   // 照样弹；粘在 `foo` 后面（邮箱）不弹；`\@` 是转义，只吃反斜杠不弹框。
-  const intent = pickerIntent(textBeforeCaret(el, range));
+  const intent = pickerIntent(textBeforeCaret(el, range), sigil);
   if (intent === 'ignore') return false;
   if (intent === 'escape') {
-    escapeAt(el);
+    escapeTrigger(el, sigil);
     return true;
   }
 
-  document.execCommand('delete'); // 收掉这枚 `@`：胶囊自己带
+  document.execCommand('delete'); // 收掉这枚触发符：胶囊自己带
   const caret = window.getSelection();
-  atRange.current = caret?.rangeCount ? caret.getRangeAt(0).cloneRange() : null;
+  rangeRef.current = caret?.rangeCount ? caret.getRangeAt(0).cloneRange() : null;
   setDraft(serializeDraft(el));
-  setPicker({ chip: null });
+  open();
   return true;
 };
 
-/** 敲 `#` 唤出会话选择器（`\#` 除外；判据见 sessionPickerIntent）。返回 true =
- *  这次输入已被接管。 */
-const maybeOpenSessionPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
-  // 只认真的敲进来一个半角 `#`：IME 组字、粘贴、替换都不算
-  if (native.inputType !== 'insertText' || native.data !== '#') return false;
-  const range = caretInDraft(el);
-  if (!range) return false;
-  const intent = sessionPickerIntent(textBeforeCaret(el, range));
-  if (intent === 'ignore') return false;
-  if (intent === 'escape') {
-    escapeHash(el);
-    return true;
-  }
+/** 敲 `@` 直接唤出文件选择器（`\@` 除外）。返回 true = 这次输入已被接管。 */
+const maybeOpenPicker = (el: HTMLDivElement, native: InputEvent): boolean =>
+  maybeOpenTrigger(el, native, '@', atRange, () => setPicker({ chip: null }));
 
-  document.execCommand('delete'); // 收掉这枚 `#`：胶囊自己带
-  const caret = window.getSelection();
-  hashRange.current = caret?.rangeCount ? caret.getRangeAt(0).cloneRange() : null;
-  setDraft(serializeDraft(el));
-  setSessionPickerOpen(true);
-  return true;
-};
+/** 敲 `#` 唤出会话选择器（`\#` 除外）。返回 true = 这次输入已被接管。 */
+const maybeOpenSessionPicker = (el: HTMLDivElement, native: InputEvent): boolean =>
+  maybeOpenTrigger(el, native, '#', hashRange, () => setSessionPickerOpen(true));
 
 /** 关掉会话选择器：把那枚 `#` 补回原位（markdown 标题撞的就是这枚键，不补回去
  *  标题就丢字了——想引用会话就选中一个目标，而不是关掉它）。 */
@@ -620,26 +585,6 @@ const closeSessionPicker = (): void => {
   sel?.removeAllRanges();
   sel?.addRange(saved);
   insertText('#');
-};
-
-/** `\#` 是转义：吃掉反斜杠、留下字面 `#`、不弹选择器。 */
-const escapeHash = (el: HTMLDivElement): void => {
-  const sel = window.getSelection();
-  const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
-  const node = range?.startContainer;
-  const off = range?.startOffset ?? 0;
-  if (node && node.nodeType === TEXT_NODE && off >= 2) {
-    const value = node.nodeValue ?? '';
-    if (value[off - 1] === '#' && value[off - 2] === '\\') {
-      node.nodeValue = `${value.slice(0, off - 2)}#${value.slice(off)}`;
-      const after = document.createRange();
-      after.setStart(node, off - 1);
-      after.collapse(true);
-      sel?.removeAllRanges();
-      sel?.addRange(after);
-    }
-  }
-  setDraft(serializeDraft(el));
 };
 
 /** 整段写回（出队编辑 / 发走清空）：DOM 与镜像一起换。胶囊在这里退化回
@@ -708,7 +653,7 @@ const onChipDragEnd = (): void => {
     buildChip, buildCmdChip, buildAttachChip, insertAttach,
     syncCmdMenu, insertCommand, cmdMatches,
     insertRefs, insertRichText,
-    closePicker, openChip, escapeAt, maybeOpenPicker,
+    closePicker, openChip, maybeOpenPicker,
     buildSessionChip, insertSessionTarget, maybeOpenSessionPicker, closeSessionPicker,
     onChipDragOver, onChipDrop, onChipDragEnd, onChipDragStart,
     setDraftText,
