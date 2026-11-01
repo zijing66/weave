@@ -271,17 +271,22 @@ export function GlobalTasksOverview({
                     >
                       {projectName}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
+                    {/* 标题给最低宽度（与任务视图会话行同口径）：项目列占掉小半屏后
+                        仍有可读宽度，摆不下时是后面那组徽标整体折行，不是标题被挤成几个字 */}
+                    <span className="min-w-[8rem] flex-1 truncate text-xs font-medium text-neutral-200">
                       {sessionLabel(s.title, s.sessionId)}
                     </span>
-                    {s.harness && (
-                      <AgentBadge agent={s.harness} className="shrink-0 px-1 text-10" />
-                    )}
-                    <span className="flex w-20 max-lg:w-auto shrink-0 items-center gap-1.5">
-                      <SessionStatusIcon status={status} harness={s.harness} />
-                      {/* STATUS_BADGE 形如 'bg-x text-y'——取字色段做行内文字色 */}
-                      <span className={cn('text-10', STATUS_BADGE[status].split(' ')[1])}>
-                        {t(STATUS_KEY[status])}
+                    {/* 徽标组整体折行：逐枚折会把一行拆得七零八落 */}
+                    <span className="flex shrink-0 items-center gap-3">
+                      {s.harness && (
+                        <AgentBadge agent={s.harness} className="shrink-0 px-1 text-10" />
+                      )}
+                      <span className="flex w-20 max-lg:w-auto shrink-0 items-center gap-1.5">
+                        <SessionStatusIcon status={status} harness={s.harness} />
+                        {/* STATUS_BADGE 形如 'bg-x text-y'——取字色段做行内文字色 */}
+                        <span className={cn('text-10', STATUS_BADGE[status].split(' ')[1])}>
+                          {t(STATUS_KEY[status])}
+                        </span>
                       </span>
                     </span>
                     <span className="hidden lg:block w-16 shrink-0 text-right text-10 text-neutral-500">
@@ -290,8 +295,8 @@ export function GlobalTasksOverview({
                     <span className="hidden lg:block w-16 shrink-0 text-right text-10 text-neutral-500">
                       {lastSeenLabel(t, s.lastSeenAt, Date.now())}
                     </span>
-                    {/* <lg：事件/时间折到第二行（basis-full 强制换行），数据不丢 */}
-                    <span className="lg:hidden flex basis-full gap-3 text-10 text-neutral-500">
+                    {/* <lg：事件/时间跟着徽标组一起折到第二行（不再独占一行），数据不丢 */}
+                    <span className="lg:hidden flex gap-3 text-10 text-neutral-500">
                       <span>{t('tasks.events', { n: s.eventCount ?? 0 })}</span>
                       <span>{lastSeenLabel(t, s.lastSeenAt, Date.now())}</span>
                     </span>
