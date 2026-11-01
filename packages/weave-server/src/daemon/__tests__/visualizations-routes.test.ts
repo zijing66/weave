@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
@@ -70,7 +70,32 @@ describe('渲染块 fragment 端点', () => {
     writeFileSync(file, '<div id="x">hi</div>');
     const res = await call(`path=${encodeURIComponent(file)}`);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ html: '<div id="x">hi</div>' });
+    expect(res.body).toEqual({ html: '<div id="x">hi</div>', mtimeMs: expect.any(Number) });
+  });
+
+  it('带 mtime 是轮询的条件形：没变只回空壳，变过才搬正文', async () => {
+    const file = join(projectPath, 'live.html');
+    writeFileSync(file, '<b>v1</b>');
+    const first = await call(`path=${encodeURIComponent(file)}`);
+    const mtimeMs = (first.body as { mtimeMs: number }).mtimeMs;
+
+    const same = await call(`path=${encodeURIComponent(file)}&mtime=${mtimeMs}`);
+    expect(same.status).toBe(200);
+    expect(same.body).toEqual({ unchanged: true, mtimeMs });
+
+    // mtime 粒度不靠写入快慢赌一把：直接拨到 5 秒后（平台会截断，以 stat 为准）
+    writeFileSync(file, '<b>v2</b>');
+    utimesSync(file, new Date(mtimeMs + 5000), new Date(mtimeMs + 5000));
+    const changed = await call(`path=${encodeURIComponent(file)}&mtime=${mtimeMs}`);
+    expect(changed.status).toBe(200);
+    expect(changed.body).toMatchObject({ html: '<b>v2</b>' });
+    const newer = Math.floor(statSync(file).mtimeMs);
+    expect(newer).not.toBe(mtimeMs);
+    expect((changed.body as { mtimeMs: number }).mtimeMs).toBe(newer);
+
+    // 坏参数回落成全量（不把 `mtime=abc` 当成「没变」）
+    const junk = await call(`path=${encodeURIComponent(file)}&mtime=abc`);
+    expect(junk.body).toMatchObject({ html: '<b>v2</b>' });
   });
 
   it('家目录派生根（~/.claude）内回显', async () => {

@@ -75,7 +75,7 @@ const shareImage = (to: 'clipboard' | 'download'): void => {
         blob = await renderConversationImage(
           toImageEntries(chosen, t('tasks.convPlan')),
           { stamp: exportStamp, theme },
-          (path) => api.visualizationFragment(path).then((r) => r.html),
+          (path) => api.visualizationFragment(path).then((r) => r.html ?? ''),
         );
       } catch (e) {
         throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));

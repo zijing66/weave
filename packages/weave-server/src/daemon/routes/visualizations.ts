@@ -68,14 +68,23 @@ export async function handleVisualizationRoutes(
     sendJson(res, 404, { error: 'Fragment path is not a file' });
     return true;
   }
+  // fragment 是活文件（模型随时重写）：不缓存，跨机访问才拿得到当下快照
+  res.setHeader('cache-control', 'no-store');
+  // 轮询的条件形：带上客户端手上那份的 mtime，没变就只回一个空壳——热更新
+  // 每几秒一拍，没必要把整份正文（≤1MB）反复搬一遍
+  const mtimeMs = Math.floor(stat.mtimeMs);
+  const sinceRaw = url.searchParams.get('mtime');
+  const since = sinceRaw == null ? NaN : Number(sinceRaw);
+  if (Number.isFinite(since) && since === mtimeMs) {
+    sendJson(res, 200, { unchanged: true, mtimeMs });
+    return true;
+  }
   if (stat.size > VISUALIZATION_PROTOCOL.maxFragmentBytes) {
     sendJson(res, 413, { error: 'Fragment exceeds the 1 MB size limit' });
     return true;
   }
 
   const html = await fsp.readFile(abs, 'utf8');
-  // fragment 是活文件（模型随时重写）：不缓存，跨机访问才拿得到当下快照
-  res.setHeader('cache-control', 'no-store');
-  sendJson(res, 200, { html });
+  sendJson(res, 200, { html, mtimeMs });
   return true;
 }

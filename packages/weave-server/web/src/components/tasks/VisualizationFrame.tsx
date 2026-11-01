@@ -20,6 +20,10 @@ import type { VisualizeRef, VizSeg } from './conv-model';
  * 桥上报，父页调高（clamp 1200px，且不超过当前视口，超出内部滚动）。
  */
 
+/** 热更新的轮询间隔：fragment 是模型边跑边写的活文件，4s 一拍足够跟上节奏，
+ *  又不会让一个会话里几枚块把请求打成筛子。 */
+const VIZ_POLL_MS = 4000;
+
 export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
   const t = useT();
   const theme = useTheme();
@@ -43,13 +47,19 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
     return () => ro.disconnect();
   }, []);
 
+  /** 手上这份内容的 mtime：热更新拿它作条件（变了才换正文）。 */
+  const mtimeRef = useRef<number | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setHtml(null);
+    mtimeRef.current = null;
     api.visualizationFragment(viz.path)
       .then((res) => {
-        if (!cancelled) setHtml(res.html);
+        if (cancelled) return;
+        mtimeRef.current = res.mtimeMs;
+        if (res.html != null) setHtml(res.html);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -58,6 +68,25 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
       cancelled = true;
     };
   }, [viz.path, nonce]);
+
+  // 热更新：模型边跑边重写同一份 fragment，挂载期间按 mtime 轻量轮询，变了才
+  // 换正文（服务端只回标记，不搬整份文件）；后台标签页跳过，卸载即停表。
+  // 换 html 会让 iframe 重载——跨文档留不住滚动位置，这是 v1 认下的代价。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.hidden || mtimeRef.current == null) return;
+      api
+        .visualizationFragment(viz.path, mtimeRef.current)
+        .then((res) => {
+          if (res.unchanged || res.html == null) return;
+          mtimeRef.current = res.mtimeMs;
+          setHtml(res.html);
+        })
+        // 轮询失败静默：手上那份还能看，下一拍再试，不把错误盖上去
+        .catch(() => {});
+    }, VIZ_POLL_MS);
+    return () => clearInterval(timer);
+  }, [viz.path]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
