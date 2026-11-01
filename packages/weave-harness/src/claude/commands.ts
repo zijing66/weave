@@ -27,6 +27,9 @@ import { readNewLines, transcriptSize, type LineCursor } from './transcript-curs
 /**
  * 内建命令快照——自 claude 2.1.296 宿主二进制的命令注册表提取（type:local-jsx/local/prompt
  * 且非 isHidden 的可见项；动态描述取其基础文案）。宿主升级后复核这张表。
+ *
+ * `inline: true` = 该命令在宿主注册表里是 `type:"prompt"`，会被 mention 扫描认出来，
+ * 因此在句子中间敲也有效（其余内建只在整条输入开头分派）。
  */
 const BUILTINS: readonly HarnessCommand[] = [
   { name: 'add-dir', description: 'Add a new working directory', argsHint: '[<path>]', source: 'builtin' },
@@ -62,8 +65,8 @@ const BUILTINS: readonly HarnessCommand[] = [
   { name: 'help', description: 'Show help and available commands', source: 'builtin' },
   { name: 'hooks', description: 'View hook configurations for tool events', argsHint: '[name]', source: 'builtin' },
   { name: 'ide', description: 'Manage IDE integrations and show status', argsHint: '[open]', source: 'builtin' },
-  { name: 'init', description: 'Initialize a CLAUDE.md for this project', source: 'builtin' },
-  { name: 'insights', description: 'Generate a report analyzing your Claude Code sessions', source: 'builtin' },
+  { name: 'init', description: 'Initialize a CLAUDE.md for this project', source: 'builtin', inline: true },
+  { name: 'insights', description: 'Generate a report analyzing your Claude Code sessions', source: 'builtin', inline: true },
   { name: 'install', description: 'Install Claude Code native build', argsHint: '[options]', source: 'builtin' },
   { name: 'install-github-app', description: 'Set up Claude GitHub Actions for a repository', source: 'builtin' },
   { name: 'install-slack-app', description: 'Install the Claude Slack app', source: 'builtin' },
@@ -95,7 +98,7 @@ const BUILTINS: readonly HarnessCommand[] = [
   { name: 'skill-doctor', description: 'Show which loaded skills are unused and costing context', source: 'builtin' },
   { name: 'skills', description: 'List available skills', source: 'builtin' },
   { name: 'status', description: 'Show Claude Code status including version, model, account, API connectivity, and tool statuses', source: 'builtin' },
-  { name: 'statusline', description: "Set up Claude Code's status line UI", source: 'builtin' },
+  { name: 'statusline', description: "Set up Claude Code's status line UI", source: 'builtin', inline: true },
   { name: 'stickers', description: 'Order Claude Code stickers', source: 'builtin' },
   { name: 'stop', description: 'Stop this background session; transcript and worktree are kept', source: 'builtin' },
   { name: 'subtask', description: 'Send a subagent off with your full context; its result comes back here', argsHint: '[<task>]', source: 'builtin' },
@@ -256,10 +259,6 @@ async function enabledPluginSkills(exec: PluginExecutor): Promise<HarnessCommand
   return out;
 }
 
-/** 内建的 prompt 型命令（宿主 mention 扫描只认 prompt 型 ⇒ 句中可用）：
- *  2.1.296 二进制命令注册表里 type:"prompt" 的可见项。升级宿主后随 BUILTINS 复核。 */
-const INLINE_BUILTINS = new Set(['init', 'statusline', 'insights']);
-
 /** 按名字去重（内建优先，其次项目/用户命令与 skill）。 */
 function dedupe(rows: readonly HarnessCommand[]): HarnessCommand[] {
   const seen = new Set<string>();
@@ -318,11 +317,11 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
   const out = entry.out;
   let pending = entry.pending;
   for (const line of lines) {
+    // 四类标记都以 `<` 开头的前缀分三族：先过哨兵再细分，绝大多数行在这里就丢掉
     if (
-      !line.includes('<command-name>') &&
+      !line.includes('<command-') &&
       !line.includes('<local-command-stdout>') &&
-      !line.includes('<bash-input>') &&
-      !line.includes('<bash-stdout>')
+      !line.includes('<bash-')
     ) {
       continue;
     }
@@ -354,14 +353,7 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
     const stderr = /<bash-stderr>([\s\S]*?)<\/bash-stderr>/.exec(content)?.[1]?.trim() ?? '';
     // ANSI 转义（宿主的着色）进不了对话正文
     const clean = bashOut.replace(/\u001b\[[0-9;]*m/g, '').trim();
-    const merged =
-      clean !== '' && stderr !== ''
-        ? `${clean}\n[stderr] ${stderr}`
-        : clean !== ''
-          ? clean
-          : stderr !== ''
-            ? `[stderr] ${stderr}`
-            : '';
+    const merged = [clean, stderr ? `[stderr] ${stderr}` : ''].filter(Boolean).join('\n');
     out.push({ ...pending, ...(merged !== '' ? { output: merged } : {}) });
     pending = null;
   }
@@ -397,7 +389,7 @@ export function createClaudeCommandSurface(deps: { exec?: PluginExecutor } = {})
       if (hit && now - hit.at < LIST_TTL_MS) return hit.rows;
       const home = path.join(homedir, '.claude');
       const rows = dedupe([
-        ...BUILTINS.map((c) => (INLINE_BUILTINS.has(c.name) ? { ...c, inline: true } : c)),
+        ...BUILTINS,
         ...(await readCommands(path.join(projectPath, '.claude', 'commands'))),
         ...(await readCommands(path.join(home, 'commands'))),
         ...(await readSkills(path.join(projectPath, '.claude', 'skills'))),
