@@ -4189,7 +4189,7 @@ describe('MessageDeliverer.askSideQuestion 读屏通道（codex = /side）', () 
     await new Promise((r) => setTimeout(r, 4500));
     expect(texts).toEqual([]); // 问句没发（防落主线程）
     expect(keys).toEqual(['/side', '\r', '\r']); // 只重试了一次开面板
-  });
+  }, 15_000);
 
   it('用户中途关面板 → 落库跳过、零收尾键序（不盲打 ctrl+c）', async () => {
     pushEvent(CODEX_SESSION, 'Stop');

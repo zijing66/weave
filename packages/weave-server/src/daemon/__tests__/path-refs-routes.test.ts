@@ -17,7 +17,9 @@ import type { WeaveServerDeps } from '../server.js';
  * 会话 harness 的能力面取，web 只当不透明字符串；文件数据面（浏览/搜索/预览）
  * 是项目的，在 project-files-routes.test.ts。
  */
-describe('路径引用路由', () => {
+// 首次走到文件索引与 harness 能力面的用例要等模块图与索引建好（本机实测 4–6s，
+// vitest 默认 5s 会卡在边界上）；断言的是状态码，不是耗时。
+describe('路径引用路由', { timeout: 30_000 }, () => {
   let db: ReturnType<typeof openDatabase>;
   let root: string;
   let projectPath: string;
