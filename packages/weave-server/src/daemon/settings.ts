@@ -170,17 +170,29 @@ export const DEFAULT_DECISION_SETTINGS: DecisionSettings = { baseUrl: '', model:
 /** 缺省没有头配置（导出不带自定义头）。 */
 export const DEFAULT_HTML_EXPORT_SETTINGS: HtmlExportSettings = { activeId: null, profiles: [] };
 
-/** 桌面宠物窗：默认关、默认内置蜘蛛、提醒开。 */
+/** 桌面宠物窗：默认关、默认内置蜘蛛、提醒开、默认小号、默认右下角。 */
 export interface PetSettings {
   enabled: boolean;
   petId: string;
   notifications: boolean;
+  /** 窗尺寸档（S=160×192 / M=200×240 / L=280×336）；右键菜单循环切换。 */
+  size: 'small' | 'medium' | 'large';
+  /** 窗屏幕坐标（拖拽后记档；缺省 = exe 落默认位——主屏右下角）。 */
+  pos?: { x: number; y: number };
 }
 
 export const DEFAULT_PET_SETTINGS: PetSettings = {
   enabled: false,
   petId: 'weave-spider',
   notifications: true,
+  size: 'small',
+};
+
+/** 尺寸档 → 窗像素（宽×高；精灵单元比例约 12:13，留气泡余量）。 */
+export const PET_SIZE_PRESETS: Record<PetSettings['size'], { width: number; height: number }> = {
+  small: { width: 160, height: 192 },
+  medium: { width: 200, height: 240 },
+  large: { width: 280, height: 336 },
 };
 
 export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
@@ -305,6 +317,17 @@ function normalizePet(raw: unknown): PetSettings {
       typeof obj.notifications === 'boolean'
         ? obj.notifications
         : DEFAULT_PET_SETTINGS.notifications,
+    size:
+      obj.size === 'small' || obj.size === 'medium' || obj.size === 'large'
+        ? obj.size
+        : DEFAULT_PET_SETTINGS.size,
+    pos:
+      obj.pos &&
+      typeof obj.pos === 'object' &&
+      typeof (obj.pos as { x?: unknown }).x === 'number' &&
+      typeof (obj.pos as { y?: unknown }).y === 'number'
+        ? { x: (obj.pos as { x: number }).x, y: (obj.pos as { y: number }).y }
+        : undefined,
   };
 }
 

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AuthService } from './dashboard-auth.js';
-import { readDaemonSettingsSync } from './settings.js';
+import { PET_SIZE_PRESETS, readDaemonSettingsSync } from './settings.js';
 
 /**
  * 桌面宠物窗托管：spawn `res/pet-window/weave-pet-window.exe`（WebView2 壳，
@@ -16,10 +16,6 @@ const RES_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../res/pet-window',
 );
-
-/** 宠物窗尺寸（pet.html 的画布即此尺寸；精灵单元 192×208 留气泡余量）。 */
-export const PET_WINDOW_WIDTH = 200;
-export const PET_WINDOW_HEIGHT = 240;
 
 /** 崩溃重启的防抖窗：窗内第二次崩不再拉（坏环境反复弹窗比没有更糟）。 */
 const CRASH_RESTART_COOLDOWN_MS = 30_000;
@@ -54,9 +50,13 @@ export function openPetWindow(opts: {
   const settings = readDaemonSettingsSync().pet;
   if (!settings?.enabled) return false;
 
+  const size = PET_SIZE_PRESETS[settings.size] ?? PET_SIZE_PRESETS.small;
+  const pos = settings.pos;
   const args = [
     `${opts.baseUrl}/pet.html`,
-    '--size', `${PET_WINDOW_WIDTH}x${PET_WINDOW_HEIGHT}`,
+    '--size', `${size.width}x${size.height}`,
+    // 记忆位（上次拖到的屏幕坐标）；没记过交给 exe 落默认位（右下角）
+    ...(pos ? ['--pos', `${pos.x},${pos.y}`] : []),
     ...(opts.auth ? ['--cookie', opts.auth.issueSession()] : []),
   ];
 

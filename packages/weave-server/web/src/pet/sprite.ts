@@ -38,6 +38,8 @@ interface Playhead {
   frame: number;
   /** 本帧起始时刻（performance.now()）。 */
   frameStartedAt: number;
+  /** 无限循环（运行中的结网值守态）：主循环播完不回落 idle。 */
+  loopForever?: boolean;
 }
 
 /** 某 anim 某帧的停留时长（ms）。 */
@@ -52,7 +54,7 @@ function frameDuration(anim: PetAnimation, frame: number): number {
   return frame === spec.frames - 1 ? (spec.finalMs ?? 600) : (spec.frameMs ?? 150);
 }
 
-/** 推进 playhead 一帧：主循环 ×MAIN_LOOPS 后回落 idle。 */
+/** 推进 playhead 一帧：主循环 ×MAIN_LOOPS 后回落 idle（loopForever 则一直循环）。 */
 function advance(head: Playhead): void {
   const spec = PET_ANIMATIONS[head.anim];
   head.frame += 1;
@@ -60,7 +62,7 @@ function advance(head: Playhead): void {
   head.frame = 0;
   if (head.anim === 'idle') return; // idle 自循环
   head.loop += 1;
-  if (head.loop >= MAIN_LOOPS) {
+  if (!head.loopForever && head.loop >= MAIN_LOOPS) {
     head.anim = 'idle';
     head.loop = 0;
   }
@@ -68,7 +70,7 @@ function advance(head: Playhead): void {
 
 export interface SpritePlayer {
   /** 切动画（同名不重置——running 中重复 setRunning 不打断步伐）。 */
-  play(anim: PetAnimation): void;
+  play(anim: PetAnimation, opts?: { loopForever?: boolean }): void;
   /** 当前动画名。 */
   current(): PetAnimation;
   /** 按契约时长表自走的帧游标；rAF 循环里每拍调，返回当前帧下标。 */
@@ -78,9 +80,9 @@ export interface SpritePlayer {
 export function createSpritePlayer(initial: PetAnimation = 'idle'): SpritePlayer {
   let head: Playhead = { anim: initial, loop: 0, frame: 0, frameStartedAt: performance.now() };
   return {
-    play(anim) {
-      if (head.anim === anim) return;
-      head = { anim, loop: 0, frame: 0, frameStartedAt: performance.now() };
+    play(anim, opts) {
+      if (head.anim === anim && (opts?.loopForever ?? false) === (head.loopForever ?? false)) return;
+      head = { anim, loop: 0, frame: 0, frameStartedAt: performance.now(), loopForever: opts?.loopForever };
     },
     current() {
       return head.anim;

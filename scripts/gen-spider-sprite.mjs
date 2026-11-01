@@ -109,22 +109,23 @@ function disc(g, x, y, r, c) {
 
 const CX = 24; // 体轴
 const GROUND = 46; // 脚底落点
-const HEAD_CY = 19;
-const HEAD_RX = 5;
-const HEAD_RY = 4;
-const AB_CY = 32;
-const AB_RX = 7;
-const AB_RY = 8;
+// Q 版比例：大头（约占身高一半）+ 圆润短身，眼睛占脸的大半
+const HEAD_CY = 20;
+const HEAD_RX = 8.5;
+const HEAD_RY = 7.5;
+const AB_CY = 34;
+const AB_RX = 6.5;
+const AB_RY = 6.5;
 const SHOULDER_X = HEAD_RX - 1;
 
 // 每侧四条腿（前→后）：膝大幅外拱（蜘蛛标志性的 ∧ 形）、足外张落地
 const LEG_SPEC = [
-  { kx: 8, ky: 10, fx: 11 },
-  { kx: 11, ky: 12, fx: 15 },
-  { kx: 12, ky: 15, fx: 16 },
-  { kx: 9, ky: 17, fx: 12 },
+  { kx: 10, ky: 12, fx: 13 },
+  { kx: 12, ky: 14, fx: 16 },
+  { kx: 13, ky: 17, fx: 17 },
+  { kx: 10, ky: 19, fx: 13 },
 ];
-const SHOULDER_YS = [17, 18.5, 20, 20.5];
+const SHOULDER_YS = [19, 20.5, 22, 22.5];
 
 /** 一条腿三点（side=-1 左 / +1 右）：stride 前后迈、lift 抬脚、kneeDip 膝沉。 */
 function legPoints(i, side, stride, lift, kneeDip) {
@@ -150,7 +151,7 @@ function standingLegs(opt = {}) {
  * 站姿整只：八腿（剪影色）→ 腹部 → 头胸 → 表情。dx/dy 平移、gazeX/Y 视线、
  * blink 眨眼、deadEyes X 眼。
  */
-function drawSpider(g, pose) {
+function drawSpiderInto(g, pose) {
   const { dx = 0, dy = 0, legs, gazeX = 0, gazeY = 0, blink = false, deadEyes = false } = pose;
 
   if (pose.airborne) {
@@ -159,7 +160,7 @@ function drawSpider(g, pose) {
     ellipse(g, CX + dx, GROUND + 2, 8, 1.4, C.SHADOW);
   }
 
-  for (const lp of legs) inkPoly(g, lp, 0.7, C.OUTLINE);
+  for (const lp of legs) inkPoly(g, lp, 0.85, C.OUTLINE);
 
   ellipse(g, CX + dx, AB_CY + dy, AB_RX + 0.7, AB_RY + 0.7, C.OUTLINE);
   ellipse(g, CX + dx, AB_CY + dy, AB_RX, AB_RY, C.BODY);
@@ -170,16 +171,20 @@ function drawSpider(g, pose) {
   ellipse(g, CX + dx, HEAD_CY + dy, HEAD_RX, HEAD_RY, C.BODY);
   ellipse(g, CX + dx, HEAD_CY + dy - HEAD_RY * 0.35, HEAD_RX * 0.55, HEAD_RY * 0.35, C.HIGHLIGHT);
 
-  const eyeY = HEAD_CY + dy - 0.4;
-  for (const ex of [CX - 2.2, CX + 2.2]) {
-    const exx = ex + dx + gazeX * 0.9;
+  // Q 版大眼：两只占脸宽大半，眼白竖椭圆、瞳孔大而亮（含高光点）
+  const eyeY = HEAD_CY + dy - 0.2;
+  for (const ex of [CX - 3.4, CX + 3.4]) {
+    const exx = ex + dx + gazeX * 1.1;
     if (deadEyes) {
-      inkPoly(g, [[exx - 1.1, eyeY - 1.1], [exx + 1.1, eyeY + 1.1]], 0.4, C.OUTLINE);
-      inkPoly(g, [[exx - 1.1, eyeY + 1.1], [exx + 1.1, eyeY - 1.1]], 0.4, C.OUTLINE);
+      inkPoly(g, [[exx - 1.6, eyeY - 1.6], [exx + 1.6, eyeY + 1.6]], 0.5, C.OUTLINE);
+      inkPoly(g, [[exx - 1.6, eyeY + 1.6], [exx + 1.6, eyeY - 1.6]], 0.5, C.OUTLINE);
       continue;
     }
-    ellipse(g, exx, eyeY, 1.15, blink ? 0.4 : 1.15, C.EYEWHITE);
-    if (!blink) disc(g, exx + gazeX * 0.5, eyeY + gazeY * 0.5 + 0.15, 0.65, C.PUPIL);
+    ellipse(g, exx, eyeY, 2.3, blink ? 0.5 : 2.6, C.EYEWHITE);
+    if (!blink) {
+      disc(g, exx + gazeX * 0.9, eyeY + gazeY * 0.9 + 0.3, 1.25, C.PUPIL);
+      disc(g, exx + gazeX * 0.9 - 0.45, eyeY + gazeY * 0.9 - 0.35, 0.4, C.EYEWHITE);
+    }
   }
 }
 
@@ -225,11 +230,11 @@ function poseRunning(f) {
 function poseWaving(f) {
   const phi = (f / 4) * Math.PI * 2;
   const legs = standingLegs({});
-  const wx = CX + 7 + Math.sin(phi) * 1.6;
-  const wy = HEAD_CY - 7 - Math.abs(Math.cos(phi));
+  const wx = CX + 9 + Math.sin(phi) * 1.8;
+  const wy = HEAD_CY - 9 - Math.abs(Math.cos(phi));
   legs[1] = [
     [CX + SHOULDER_X, SHOULDER_YS[0]],
-    [CX + 6, HEAD_CY - 4],
+    [CX + 7, HEAD_CY - 5],
     [wx, wy],
   ];
   return { dy: Math.sin(phi) * 0.25, legs };
@@ -288,9 +293,9 @@ function poseWaiting(f) {
   const phi = (f / 6) * Math.PI * 2;
   const legs = standingLegs({ kneeDip: 0.4 });
   const tipX = CX + Math.sin(phi) * 0.35;
-  const tipY = HEAD_CY + 2.5 + Math.sin(phi) * 0.3;
-  legs[0] = [[CX - SHOULDER_X, SHOULDER_YS[0]], [CX - 3.5, HEAD_CY + 1], [tipX - 0.4, tipY]];
-  legs[1] = [[CX + SHOULDER_X, SHOULDER_YS[0]], [CX + 3.5, HEAD_CY + 1], [tipX + 0.4, tipY]];
+  const tipY = HEAD_CY + 4 + Math.sin(phi) * 0.3;
+  legs[0] = [[CX - SHOULDER_X, SHOULDER_YS[0]], [CX - 4.5, HEAD_CY + 2], [tipX - 0.4, tipY]];
+  legs[1] = [[CX + SHOULDER_X, SHOULDER_YS[0]], [CX + 4.5, HEAD_CY + 2], [tipX + 0.4, tipY]];
   return { dy: 0.3, legs, gazeX: Math.sin(phi) * 0.3 };
 }
 
@@ -320,33 +325,6 @@ function poseReview(f) {
   });
   drawSpiderInto(g, { legs, dy: Math.abs(s) * 0.4, gazeX: 0.8, gazeY: -0.4 });
   return g;
-}
-
-/** 同 drawSpider 但画进指定栅格（poseReview 里先铺了网）。 */
-function drawSpiderInto(g, pose) {
-  const { dx = 0, dy = 0, legs, gazeX = 0, gazeY = 0, blink = false, deadEyes = false } = pose;
-  ellipse(g, CX + dx, GROUND + 2, 8, 1.4, C.SHADOW);
-  for (const lp of legs) inkPoly(g, lp, 0.55, C.OUTLINE);
-  ellipse(g, CX + dx, AB_CY + dy, AB_RX + 0.7, AB_RY + 0.7, C.OUTLINE);
-  ellipse(g, CX + dx, AB_CY + dy, AB_RX, AB_RY, C.BODY);
-  ellipse(g, CX + dx, AB_CY + dy + AB_RY * 0.45, AB_RX * 0.75, AB_RY * 0.45, C.SHADE);
-  ellipse(g, CX + dx - AB_RX * 0.35, AB_CY + dy - AB_RY * 0.35, AB_RX * 0.38, AB_RY * 0.3, C.HIGHLIGHT);
-  ellipse(g, CX + dx, HEAD_CY + dy, HEAD_RX + 0.7, HEAD_RY + 0.7, C.OUTLINE);
-  ellipse(g, CX + dx, HEAD_CY + dy, HEAD_RX, HEAD_RY, C.BODY);
-  ellipse(g, CX + dx, HEAD_CY + dy - HEAD_RY * 0.35, HEAD_RX * 0.55, HEAD_RY * 0.35, C.HIGHLIGHT);
-  const eyeY = HEAD_CY + dy - 0.6;
-  for (const ex of [CX - 2.6, CX + 2.6]) {
-    const exx = ex + dx + gazeX * 0.9;
-    if (deadEyes) {
-      inkPoly(g, [[exx - 1, eyeY - 1], [exx + 1, eyeY + 1]], 0.35, C.OUTLINE);
-      inkPoly(g, [[exx - 1, eyeY + 1], [exx + 1, eyeY - 1]], 0.35, C.OUTLINE);
-      continue;
-    }
-    ellipse(g, exx, eyeY, 0.95, blink ? 0.35 : 0.95, C.EYEWHITE);
-    if (!blink) disc(g, exx + gazeX * 0.45, eyeY + gazeY * 0.45, 0.55, C.PUPIL);
-  }
-  disc(g, CX + dx - 4.4, eyeY + 1.6, 0.55, C.BLUSH);
-  disc(g, CX + dx + 4.4, eyeY + 1.6, 0.55, C.BLUSH);
 }
 
 const POSE_FN = {

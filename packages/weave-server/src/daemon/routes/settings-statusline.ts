@@ -125,6 +125,9 @@ export async function handleSettingsRoutes(
         ...body,
         ai: body.ai ? stripApiKey(body.ai) : current.ai,
         decision: body.decision ? stripApiKey(body.decision) : current.decision,
+        // pet 段字段级合并：右键菜单只发 {size}（或 {enabled:false}）单字段，
+        // 整段替换会把缺席字段打回默认值（enabled 丢 → 窗被误关）。
+        pet: body.pet ? { ...current.pet, ...body.pet } : current.pet,
       } as DaemonSettings);
       // 保留期等事件策略改动即刻生效：重置被动清理天标记，下一条事件写入
       // 就按新配置重扫（否则要等次日跨天）。

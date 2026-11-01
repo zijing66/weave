@@ -97,6 +97,15 @@ public static class Program
             window.Left = x;
             window.Top = y;
         }
+        else
+        {
+            // 默认位：主屏工作区右下角（留 8px 边距；Loaded 后量实际尺寸再落，
+            // 此处 Width/Height 是 DIP 值与工作区同单位，直接算即可）。
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            var wa = SystemParameters.WorkArea;
+            window.Left = Math.Max(8, wa.Right - width - 8);
+            window.Top = Math.Max(8, wa.Bottom - height - 8);
+        }
 
         window.Loaded += async (_, _) =>
         {
@@ -123,12 +132,39 @@ public static class Program
                         SessionCookieName, cookie, target.Host, "/");
                     core.CookieManager.AddOrUpdateCookie(c);
                 }
-                // 页面侧通道：drag-start / close（宠物页拖拽与右键关闭走这里）
+                // 页面侧通道：drag-start / resize:WxH / close（宠物页拖拽、右键调大小
+                // 与关闭走这里）。DragMove 是模态循环，期间页面收不到 mouseup——
+                // 返回后回执 drag-end 让页面记位（screenX/Y 此时已是新位置）。
                 core.WebMessageReceived += (_, e) =>
                 {
-                    if (e.TryGetWebMessageAsString() == "drag-start")
+                    var msg = e.TryGetWebMessageAsString() ?? "";
+                    if (msg == "drag-start")
+                    {
                         window.DragMove();
-                    else if (e.TryGetWebMessageAsString() == "close")
+                        core.PostWebMessageAsString("drag-end");
+                    }
+                    else if (msg.StartsWith("resize:", StringComparison.Ordinal))
+                    {
+                        var parts = msg["resize:".Length..].Split('x');
+                        if (parts.Length == 2
+                            && int.TryParse(parts[0], out var rw) && int.TryParse(parts[1], out var rh))
+                        {
+                            window.Width = Math.Clamp(rw, 80, 2000);
+                            window.Height = Math.Clamp(rh, 80, 2000);
+                        }
+                    }
+                    else if (msg.StartsWith("moveto:", StringComparison.Ordinal))
+                    {
+                        // 贴边偷窥的目标位由页面算好（它知道自己在哪块屏），宿主哑执行
+                        var parts = msg["moveto:".Length..].Split(',');
+                        if (parts.Length == 2
+                            && double.TryParse(parts[0], out var mx) && double.TryParse(parts[1], out var my))
+                        {
+                            window.Left = mx;
+                            window.Top = my;
+                        }
+                    }
+                    else if (msg == "close")
                         window.Close();
                 };
                 core.Navigate(url);
