@@ -77,6 +77,19 @@ function turnCloseSql(alias: string): string {
 }
 
 /**
+ * 「回合开轮」的 SQL 判据（HARNESS_LIFECYCLE.open 并集）：排除 task-notification
+ * 载荷的 UPS——后台任务完成通知以 UserPromptSubmit 形态在 Stop 之后到达，对话面
+ * 同判据跳过它们（conversationOf 不当真回合），这里不排除就会把已收尾的回合重新
+ * 判开，「生成中」挂在早已停止的会话上。
+ */
+function turnUpsSql(alias: string): string {
+  const types = new Set<string>();
+  for (const l of Object.values(HARNESS_LIFECYCLE)) types.add(l.open);
+  const list = [...types].map((t) => `'${t}'`).join(',');
+  return `${alias}.event_type IN (${list}) AND COALESCE(json_extract(${alias}.payload, '$.raw.prompt'), '') NOT LIKE '<task-notification>%'`;
+}
+
+/**
  * 「回合内工具事件」的 SQL 判据（HARNESS_TOOL_EVENTS 并集）：最后收尾之后仍有
  * 工具事件 = 排队回合实际还开着（claude 出队开跑的新回合不再发第二条 UPS，
  * 见 HARNESS_TOOL_EVENTS 注）。事件名一律取表，不散写。
@@ -172,7 +185,7 @@ export class SessionRepository {
       'SELECT s.*, (SELECT COUNT(*) FROM hook_events e WHERE e.session_id = s.session_id) AS event_count, ' +
       '(SELECT e2.source FROM hook_events e2 WHERE e2.session_id = s.session_id ORDER BY e2.id DESC LIMIT 1) AS harness, ' +
       '(SELECT e5.event_type FROM hook_events e5 WHERE e5.session_id = s.session_id ORDER BY e5.id DESC LIMIT 1) AS last_event_type, ' +
-      '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = s.session_id AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
+      `(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = s.session_id AND ${turnUpsSql('e3')}) AS last_ups, ` +
       `(SELECT MAX(e6.id) FROM hook_events e6 WHERE e6.session_id = s.session_id AND ${turnCloseSql('e6')}) AS last_close, ` +
       `(SELECT MAX(e7.id) FROM hook_events e7 WHERE e7.session_id = s.session_id AND ${turnToolSql('e7')}) AS last_tool, ` +
       '(SELECT MAX(e4.id) FROM hook_events e4 WHERE e4.session_id = s.session_id AND e4.event_type IN (\'Stop\', \'StopFailure\', \'SessionEnd\')) AS last_stop ' +
@@ -234,7 +247,7 @@ export class SessionRepository {
     const row = this.db
       .prepare(
         'SELECT ' +
-        '(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = ? AND e3.event_type = \'UserPromptSubmit\') AS last_ups, ' +
+        `(SELECT MAX(e3.id) FROM hook_events e3 WHERE e3.session_id = ? AND ${turnUpsSql('e3')}) AS last_ups, ` +
         `(SELECT MAX(e6.id) FROM hook_events e6 WHERE e6.session_id = ? AND ${turnCloseSql('e6')}) AS last_close, ` +
         `(SELECT MAX(e7.id) FROM hook_events e7 WHERE e7.session_id = ? AND ${turnToolSql('e7')}) AS last_tool`,
       )

@@ -355,6 +355,15 @@ describe('daemon server hooks rules/dispatch/sessions API', () => {
     seed('sess-queued', 'SubagentStop');
     expect(await turnOf('sess-queued')).toBe(false);
 
+    // 后台任务完成通知以 UserPromptSubmit 形态晚到（<task-notification> 载荷）：
+    // 对话面不当真回合（conversationOf 跳过），开轮判据同样不认——否则已收尾的
+    // 回合被重新判开，「生成中」挂在早已停止的会话上
+    seed('sess-queued', 'UserPromptSubmit', {
+      prompt:
+        '<task-notification><task-id>a1</task-id><tool-use-id>t1</tool-use-id><status>completed</status><summary>done</summary></task-notification>',
+    });
+    expect(await turnOf('sess-queued')).toBe(false);
+
     // 单会话版与列表同一判据
     expect(sessions.turnOpenOf('sess-queued')).toBe(false);
     seed('sess-queued', 'PostToolUse');
