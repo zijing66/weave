@@ -22,6 +22,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
+import { PROJECTS_QUERY } from '@/hooks/use-projects';
 import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickTarget } from './FilePicker';
 import { SessionShuttlePicker } from './SessionShuttlePicker';
@@ -66,6 +67,7 @@ import {
 import { VizSegments } from './VisualizationFrame';
 import { CONV_SCROLLER_ATTR } from '@/lib/visualization';
 import {
+  BASH_ECHO_CLASS,
   cmdChipClass,
   commandModeClass,
   commandModeOf,
@@ -169,13 +171,7 @@ export function SessionMessages({
   const [sideOpen, setSideOpen] = useState(false);
   const { sessions, statuses, refresh, modelCatalog } = useSessionStatus();
   /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。 */
-  const { data: projects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => api.listProjects(),
-    staleTime: Infinity,
-    refetchOnWindowFocus: 'always',
-    retry: false,
-  });
+  const { data: projects } = useQuery(PROJECTS_QUERY);
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   // 对话数据域：翻页/SSE 增量/投递认领/贴底跟随（数据形状与刷新节奏都在 hook 里）
   const {
@@ -335,6 +331,35 @@ export function SessionMessages({
   /** 草稿此刻的命令形态（`!` bash 模式 / `/` 命令）：输入框据此换色——这些形态
    *  宿主自己执行、不当作 prompt 提交，发出去之前就该看得出来（claude 同款）。 */
   const draftMode = useMemo(() => commandModeOf(draft, inputModes), [draft, inputModes]);
+
+  /** 队列里哪些行是 bash 命令（`!`）：容器配色与行分隔线共用这一份，
+   *  不再每次渲染对每条 outbox 重跑 trim + 正则。 */
+  const bashQueueIds = useMemo(
+    () =>
+      new Set(
+        outbox.filter((m) => commandModeOf(m.text, inputModes)?.kind === 'bash').map((m) => m.id),
+      ),
+    [outbox, inputModes],
+  );
+
+  /** `#` 选择器的入参：只在它开着时有意义，但新数组引用会打穿子组件的 memo
+   *  （父组件每次击键、每条 SSE 帧都会重渲染）。 */
+  const shuttleCandidates = useMemo(
+    () => (sessions ?? []).filter((s) => s.sessionId !== sessionId),
+    [sessions, sessionId],
+  );
+  const shuttleProjects = useMemo(() => projects ?? [], [projects]);
+  const shuttleProjectId = useMemo(
+    () => sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null,
+    [sessions, sessionId],
+  );
+  const handleShuttlePick = useCallback(
+    (picked: string, name: string) => {
+      insertSessionTarget(picked, name);
+      setSessionPickerOpen(false);
+    },
+    [insertSessionTarget, setSessionPickerOpen],
+  );
 
   /** placeholder 上的引用块触发符：只摆这个 harness 真能敲出来的（`@` 看
    *  pathRefs、`/` 与 `!` 看 inputModes、`$` 看候选清单），`#` 会话引用恒有。 */
@@ -938,7 +963,7 @@ export function SessionMessages({
                         // bash 命令回显（`!cmd`）：品红——与输入框的 bash 形态同色，
                         // 一眼看出这条是宿主本地执行的命令、不是发给模型的 prompt
                         m.commandSigil === '!'
-                          ? 'border-[#ff0087]/50 bg-[#ff0087]/[0.08]'
+                          ? BASH_ECHO_CLASS.bubble
                           : pipe
                             ? 'border-blue-500/30 bg-blue-500/[0.12]'
                             : 'border-blue-500/15 bg-blue-500/[0.05]',
@@ -1178,8 +1203,8 @@ export function SessionMessages({
                       'min-w-0 max-w-[95%] overflow-x-auto rounded-lg border border-dashed px-2 py-1.5',
                       // bash 命令行（`!`）：品红——与输入框的 bash 形态同色（落定后的
                       // 回显气泡同款），发出那一刻就能看出这条是命令、不是普通 prompt
-                      outbox.some((m) => commandModeOf(m.text, inputModes)?.kind === 'bash')
-                        ? 'border-[#ff0087]/40 bg-[#ff0087]/[0.06]'
+                      bashQueueIds.size > 0
+                        ? BASH_ECHO_CLASS.queue
                         : 'border-blue-500/30 bg-blue-500/[0.07]',
                     )}
                   >
@@ -1195,8 +1220,8 @@ export function SessionMessages({
                             'flex gap-1.5',
                             open ? 'items-start' : 'items-center',
                             i > 0 &&
-                              (commandModeOf(m.text, inputModes)?.kind === 'bash'
-                                ? 'mt-1 border-t border-[#ff0087]/20 pt-1'
+                              (bashQueueIds.has(m.id)
+                                ? BASH_ECHO_CLASS.divider
                                 : 'mt-1 border-t border-blue-500/10 pt-1'),
                           )}
                         >
@@ -2172,14 +2197,11 @@ export function SessionMessages({
             全部会话，排除当前会话（自己引用自己没有意义）。 */}
         {sessionPickerOpen && (
           <SessionShuttlePicker
-            sessions={(sessions ?? []).filter((s) => s.sessionId !== sessionId)}
-            projects={projects ?? []}
+            sessions={shuttleCandidates}
+            projects={shuttleProjects}
             statuses={statuses}
-            currentProjectId={sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null}
-            onPick={(picked, name) => {
-              insertSessionTarget(picked, name);
-              setSessionPickerOpen(false);
-            }}
+            currentProjectId={shuttleProjectId}
+            onPick={handleShuttlePick}
             onClose={closeSessionPicker}
           />
         )}

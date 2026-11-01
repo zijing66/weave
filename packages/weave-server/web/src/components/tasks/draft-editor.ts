@@ -505,6 +505,14 @@ export function commandModeClass(mode: CommandInputModeRow): string {
     : 'border-amber-500/50 ring-1 ring-amber-500/20';
 }
 
+/** bash 命令回显的品红类名（与上面同色）：落定气泡、队列行、队列内分隔线共用，
+ *  换色只改这一处——Tailwind 的任意值类必须静态可扫，故按用途各给一条。 */
+export const BASH_ECHO_CLASS = {
+  bubble: 'border-[#ff0087]/50 bg-[#ff0087]/[0.08]',
+  queue: 'border-[#ff0087]/40 bg-[#ff0087]/[0.06]',
+  divider: 'mt-1 border-t border-[#ff0087]/20 pt-1',
+} as const;
+
 /** 气泡里认出命令 token：**整条输入开头**（前面只有空白）的走宿主命令分派、全部
  *  可用；句中的只有宿主 mention 扫描认得出的（能力面 `inline`——claude 的
  *  prompt 型命令与 codex 的 `$skill`，前后必须是空白，与引用表达式同一条判据）。

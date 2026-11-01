@@ -6,6 +6,18 @@ import { useT } from '@/i18n/I18nProvider';
 import { registerInvalidator, subscribeFrame } from '@/lib/sse';
 
 /**
+ * 项目列表的查询配置（缓存域 + 拉取节奏）：列表页、对话页的 `#` 选择器、状态栏
+ * 共用这一份——同一 key 彼此命中同一份缓存，策略演进不必三处各抄一遍。
+ */
+export const PROJECTS_QUERY = {
+  queryKey: ['projects'],
+  queryFn: () => api.listProjects(),
+  staleTime: Infinity,
+  refetchOnWindowFocus: 'always',
+  retry: false,
+} as const;
+
+/**
  * 项目列表 + 归档面（TanStack Query 缓存域）：fetch/缓存/失效归 useQuery，
  * 重拉统一走 refreshProjects()（= invalidateQueries——SSE 帧与变更后的落定都指它）。
  * refetchOnWindowFocus 覆写全局缺省：后台 daemon 侧 reconcile 有 ≤5s 窗口，
@@ -15,13 +27,7 @@ export function useProjects(onBootReady: () => void) {
   const t = useT();
   const { show } = useToast();
   const queryClient = useQueryClient();
-  const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => api.listProjects(),
-    staleTime: Infinity,
-    refetchOnWindowFocus: 'always',
-    retry: false,
-  });
+  const projectsQuery = useQuery(PROJECTS_QUERY);
   const archivedQuery = useQuery({
     queryKey: ['projects', 'archived'],
     queryFn: () => api.listArchivedProjects(),

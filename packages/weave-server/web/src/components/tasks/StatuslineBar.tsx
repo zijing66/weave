@@ -5,6 +5,7 @@ import { buildPreviewItems, type StatuslineTokens } from '@/lib/statusline-previ
 import { registerInvalidator } from '@/lib/sse';
 import { useT } from '@/i18n/I18nProvider';
 import { PowerlineRow } from '@/components/StatuslinePanel';
+import { PROJECTS_QUERY } from '@/hooks/use-projects';
 import { contextWindowOf } from './use-session-controls';
 
 /** Token 数 → 紧凑读数（与生成脚本 `humanize` 同形：M 留一位、k 去 `.0`）。 */
@@ -69,12 +70,7 @@ export function StatuslineBar({
   useEffect(() => registerInvalidator('statusline', load), [load]);
 
   // 项目名/路径取既有的 ['projects'] 缓存域（App 已拉过，同一 key 直接命中）
-  const projects = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => api.listProjects(),
-    staleTime: Infinity,
-    retry: false,
-  }).data;
+  const projects = useQuery(PROJECTS_QUERY).data;
   const project = projects?.find((p) => p.id === projectId);
 
   if (!config) return null;
