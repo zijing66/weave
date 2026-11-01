@@ -56,6 +56,7 @@ import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Switch } from '@/components/ui/switch';
+import { FieldHint } from '@/components/ui/field-hint';
 import { NumberStepper } from '@/components/ui/number-stepper';
 import { Combobox } from '@/components/ui/combobox';
 import { registerInvalidator } from '@/lib/sse';
@@ -154,6 +155,7 @@ function SettingsSection(props: { id: string; icon: LucideIcon; title: string; c
 function FieldLabel(props: { children: ReactNode }) {
   return <span className="block text-11 text-neutral-500">{props.children}</span>;
 }
+
 
 interface SettingsModalProps {
   open: boolean;
@@ -662,8 +664,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Languages className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.language')}
+              <FieldHint>{t('settings.languageHint')}</FieldHint>
             </label>
-            <p className="text-11 text-neutral-500">{t('settings.languageHint')}</p>
             <Combobox
               className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
               value={settings?.locale ?? locale}
@@ -677,8 +679,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <ZoomIn className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.fontScale')}
+              <FieldHint>{t('settings.fontScaleHint')}</FieldHint>
             </label>
-            <p className="text-11 text-neutral-500">{t('settings.fontScaleHint')}</p>
             <div className="flex items-center gap-2">
               <NumberStepper
                 value={scale}
@@ -708,8 +710,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Terminal className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.defaultTerminal')}
+              <FieldHint>{t('settings.defaultTerminalHint')}</FieldHint>
             </label>
-            <p className="text-11 text-neutral-500">{t('settings.defaultTerminalHint')}</p>
             <Combobox
               className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
               value={preset}
@@ -728,13 +730,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
           {preset === 'custom' && (
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-neutral-300">
+              <label className="flex items-center text-xs font-medium text-neutral-300">
                 {t('settings.customCommand')}
+                <FieldHint>
+                  <code className="text-neutral-400">{'{path}'}</code> {t('settings.pathHint')}
+                  <code className="text-neutral-400"> alacritty -e cd {'{path}'}</code>
+                </FieldHint>
               </label>
-              <p className="text-11 text-neutral-500">
-                <code className="text-neutral-400">{'{path}'}</code> {t('settings.pathHint')}
-                <code className="text-neutral-400"> alacritty -e cd {'{path}'}</code>
-              </p>
               <input
                 type="text"
                 value={customCommand}
@@ -754,7 +756,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">
               <Zap className="h-3.5 w-3.5 text-neutral-500" />
-              <label className="text-xs font-medium text-neutral-300">{t('settings.hooks')}</label>
+              <label className="flex items-center text-xs font-medium text-neutral-300">
+                {t('settings.hooks')}
+                <FieldHint>{t('settings.hooksHint')}</FieldHint>
+              </label>
               <span className="ml-auto">
                 <Switch
                   checked={settings?.hooks.enabled ?? true}
@@ -765,14 +770,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </span>
             </div>
-            <p className="text-11 text-neutral-500">{t('settings.hooksHint')}</p>
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">
               <Power className="h-3.5 w-3.5 text-neutral-500" />
-              <label className="text-xs font-medium text-neutral-300">
+              <label className="flex items-center text-xs font-medium text-neutral-300">
                 {t('settings.launchOnLogin')}
+                <FieldHint>{t('settings.launchOnLoginHint')}</FieldHint>
               </label>
               <span className="ml-auto">
                 <Switch
@@ -784,7 +789,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </span>
             </div>
-            <p className="text-11 text-neutral-500">{t('settings.launchOnLoginHint')}</p>
           </div>
           </SettingsSection>
 
@@ -794,8 +798,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Database className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.retentionDays')}
+              <FieldHint>{t('settings.retentionDaysHint')}</FieldHint>
             </label>
-            <p className="text-11 text-neutral-500">{t('settings.retentionDaysHint')}</p>
             <div className="flex items-center gap-2">
               <NumberStepper
                 value={settings?.events?.retentionDays ?? DEFAULT_RETENTION_DAYS}
@@ -815,12 +819,12 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Clock className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.sessionIdleDays')}
+              <FieldHint>
+                {t('settings.sessionIdleDaysHint', {
+                  n: settings?.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS,
+                })}
+              </FieldHint>
             </label>
-            <p className="text-11 text-neutral-500">
-              {t('settings.sessionIdleDaysHint', {
-                n: settings?.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS,
-              })}
-            </p>
             <div className="flex items-center gap-2">
               <NumberStepper
                 value={settings?.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS}
@@ -843,8 +847,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
                 <Database className="h-3.5 w-3.5 text-neutral-500" />
                 {t('settings.cleanStorage')}
+                <FieldHint>{t('settings.cleanStorageHint')}</FieldHint>
               </label>
-              <p className="text-11 text-neutral-500">{t('settings.cleanStorageHint')}</p>
 
               {/* 总览：大数字 + 图/文件占比条（微信存储页的形态） */}
               <div className="rounded-lg border border-edge/[0.08] bg-neutral-950/60 p-2.5">
@@ -1104,8 +1108,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
                 <Globe className="h-3.5 w-3.5 text-neutral-500" />
                 {t('settings.accessUrls')}
+                <FieldHint>{t('settings.accessUrlsHint')}</FieldHint>
               </label>
-              <p className="text-11 text-neutral-500">{t('settings.accessUrlsHint')}</p>
               <ul className="space-y-1">
                 {urls.map((u) => (
                   <li key={u.url} className="flex items-center gap-1.5">
@@ -1156,7 +1160,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">
               <Cat className="h-3.5 w-3.5 text-neutral-500" />
-              <label className="text-xs font-medium text-neutral-300">{t('settings.petEnabled')}</label>
+              <label className="flex items-center text-xs font-medium text-neutral-300">
+                {t('settings.petEnabled')}
+                <FieldHint>{t('settings.petEnabledHint')}</FieldHint>
+              </label>
               <span className="ml-auto">
                 <Switch
                   checked={settings?.pet?.enabled ?? false}
@@ -1169,13 +1176,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </span>
             </div>
-            <p className="text-11 text-neutral-500">{t('settings.petEnabledHint')}</p>
           </div>
 
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Cat className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.petPick')}
+              <FieldHint>{t('settings.petPickHint')}</FieldHint>
             </label>
             {pets.length > 0 ? (
               <select
@@ -1198,13 +1205,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             ) : (
               <p className="text-11 text-neutral-500">{t('settings.petNone')}</p>
             )}
-            <p className="text-11 text-neutral-500">{t('settings.petPickHint')}</p>
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">
               <Bell className="h-3.5 w-3.5 text-neutral-500" />
-              <label className="text-xs font-medium text-neutral-300">{t('settings.petNotify')}</label>
+              <label className="flex items-center text-xs font-medium text-neutral-300">
+                {t('settings.petNotify')}
+                <FieldHint>{t('settings.petNotifyHint')}</FieldHint>
+              </label>
               <span className="ml-auto">
                 <Switch
                   checked={settings?.pet?.notifications ?? true}
@@ -1217,7 +1226,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 />
               </span>
             </div>
-            <p className="text-11 text-neutral-500">{t('settings.petNotifyHint')}</p>
           </div>
           </SettingsSection>
 
@@ -1227,6 +1235,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <Sparkles className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.ai')}
+              <FieldHint>{t('settings.aiHint')}</FieldHint>
             </label>
             <div className="grid grid-cols-2 gap-2">
               <div className="min-w-0 space-y-1">
@@ -1320,7 +1329,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 hide: t('settings.aiApiKeyHide'),
               }}
             />
-            <p className="text-11 text-neutral-500">{t('settings.aiHint')}</p>
           </div>
 
           {/* 决策模型（Jev 兼容 / System One）：编排条件边的判断引擎——配了先问它，
@@ -1391,8 +1399,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
               <FileCode className="h-3.5 w-3.5 text-neutral-500" />
               {t('settings.htmlExport')}
+              <FieldHint>{t('settings.htmlExportHint')}</FieldHint>
             </label>
-            <p className="text-11 text-neutral-500">{t('settings.htmlExportHint')}</p>
             <div className="space-y-2">
               {htmlExport.profiles.map((profile) => (
                 <div

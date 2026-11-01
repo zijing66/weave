@@ -41,6 +41,7 @@ import {
   type PreviewItem,
 } from '@/lib/statusline-preview';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { FieldHint } from '@/components/ui/field-hint';
 import { NumberStepper } from '@/components/ui/number-stepper';
 import { AgentBadge } from '@/components/AgentBadge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -795,7 +796,7 @@ export function StatuslinePanel({
               }
             />
             {t('statusline.powerlineStyle')}
-            <span className="text-neutral-600">{t('statusline.powerlineHint')}</span>
+            <FieldHint className="-translate-y-0.5">{t('statusline.powerlineHint')}</FieldHint>
           </label>
 
           {/* powerline glyphs — Nerd-Font separator between blocks and row caps */}
@@ -829,17 +830,17 @@ export function StatuslinePanel({
                 allowNone
                 onChange={(v) => patch({ powerline: { ...config.powerline, endCap: v } })}
               />
-              <span className="text-neutral-600 text-10">{t('statusline.nerdFontHint')}</span>
+              <FieldHint className="-translate-y-0.5">{t('statusline.nerdFontHint')}</FieldHint>
             </div>
           )}
           <label className="flex items-center gap-2 text-xs text-neutral-400">
             {t('statusline.logo')}
+            <FieldHint className="-translate-y-0.5">{t('statusline.logoHint')}</FieldHint>
             {/* The badge is fixed (text and visibility are not user settings);
                 only its colour below is configurable. */}
             <span className="rounded bg-neutral-900 px-2 py-0.5 font-mono text-neutral-300">
               {config.logoText} v{WEAVE_VERSION}
             </span>
-            <span className="text-neutral-600 text-10">{t('statusline.logoHint')}</span>
             <div className="flex gap-1">
               <ColorPicker
                 value={config.logoColor}
@@ -851,13 +852,13 @@ export function StatuslinePanel({
 
           <label className="flex items-center gap-2 text-xs text-neutral-400">
             {t('statusline.separator')}
+            <FieldHint className="-translate-y-0.5">{t('statusline.separatorHint')}</FieldHint>
             <input
               value={config.separator}
               disabled={!editable}
               onChange={(e) => patch({ separator: e.target.value })}
               className="nerd-font bg-neutral-900 rounded px-2 py-0.5 w-20 disabled:opacity-40"
             />
-            <span className="text-neutral-600">{t('statusline.separatorHint')}</span>
           </label>
 
           {/* bar + label separator — global, because a statusline reads as one design */}

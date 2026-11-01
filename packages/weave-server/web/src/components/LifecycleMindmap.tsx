@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { Combobox } from '@/components/ui/combobox';
+import { FieldHint } from '@/components/ui/field-hint';
 import type { MessageKey } from '@/i18n/dict';
 import {
   buildLifecycleGroups,
@@ -1377,7 +1378,7 @@ export function LifecycleMindmap({
           <span className="text-11 text-neutral-500">
             {events === null ? t('hooks.loading') : t('catbar.items', { n: groups.length })}
           </span>
-          <span className="ml-auto text-11 text-neutral-600">{t('hooks.mindmap.hint')}</span>
+          <FieldHint className="ml-auto">{t('hooks.mindmap.hint')}</FieldHint>
         </div>
       )}
 

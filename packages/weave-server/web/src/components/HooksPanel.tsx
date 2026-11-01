@@ -33,6 +33,7 @@ import { SkeletonRows } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Combobox } from '@/components/ui/combobox';
+import { FieldHint } from '@/components/ui/field-hint';
 import { HooksPluginsSection } from '@/components/HooksPluginsSection';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
@@ -395,7 +396,11 @@ function CaptureSection() {
     <Card>
       <CardHeader className="flex-row items-center gap-2 space-y-0">
         <CardTitle className="text-sm">{t('hooks.capture.title')}</CardTitle>
-        <span className="text-11 text-neutral-500">{t('hooks.capture.hint')}</span>
+        <FieldHint className="-translate-y-0.5">
+          {t('hooks.capture.hint')}
+          <br />
+          {t('hooks.capture.note')}
+        </FieldHint>
       </CardHeader>
       <CardContent className="space-y-2">
         {rows.map((row) => (
@@ -422,7 +427,6 @@ function CaptureSection() {
             </span>
           </div>
         ))}
-        <p className="text-10 text-neutral-600">{t('hooks.capture.note')}</p>
       </CardContent>
     </Card>
   );
@@ -826,9 +830,9 @@ export function HooksPanel({
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
           <CardTitle className="text-sm">{t('hooks.pluginsAndRules')}</CardTitle>
-          <span className="text-11 text-neutral-500">
+          <FieldHint className="-translate-y-0.5">
             {mode === 'project' ? t('hooks.plugins.projectHint') : t('hooks.plugins.hint')}
-          </span>
+          </FieldHint>
         </CardHeader>
         <CardContent className="space-y-3">
           {/* 本地规则：无插件归属的裸规则 */}

@@ -35,6 +35,7 @@ import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { SkeletonCards } from '@/components/ui/skeleton';
 import { StatusPill, statusTone } from '@/components/ui/status-pill';
+import { FieldHint } from '@/components/ui/field-hint';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
@@ -1497,10 +1498,8 @@ function TemplateSection({
         )}
         {icon}
         <span className="text-xs font-semibold text-neutral-300">{title}</span>
+        {hint && <FieldHint className="-translate-y-0.5">{hint}</FieldHint>}
         {tag ?? (count !== undefined && <Badge variant="other">{count}</Badge>)}
-        {hint && (
-          <span className="ml-auto text-11 text-neutral-500 max-lg:ml-0">{hint}</span>
-        )}
       </div>
       {open && <div className="space-y-0.5">{children}</div>}
     </section>
