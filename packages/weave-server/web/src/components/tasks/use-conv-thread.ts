@@ -409,6 +409,14 @@ export function useConvThread(deps: {
     }
     return null;
   }, [thread]);
+  /** 最新那条发送气泡：与回复同规——缺省只展开它，更早的收成三行。 */
+  const newestUserKey = useMemo(() => {
+    for (let i = thread.length - 1; i >= 0; i--) {
+      const e = thread[i]!;
+      if (e.role === 'user') return e.key;
+    }
+    return null;
+  }, [thread]);
   /** 队尾那条**还没送出去的**（排队中 / 失败 / 超时）——只有它能出队回输入框改。
    *  已发出的不取回：它已经在会话那边了，放回输入框再发一遍就是重复发送
    *  （暂停闸成因行同理——那条能删能重发，但不给「改完再发」）。 */
@@ -531,7 +539,7 @@ export function useConvThread(deps: {
     status,
     filter, setFilter,
     entries, setEntries, headDone, loadingEarlier, loadEarlier,
-    thread, outbox, visible, newestAssistantKey, newestQueuedId, now,
+    thread, outbox, visible, newestAssistantKey, newestUserKey, newestQueuedId, now,
     error, setError,
     threadRef, contentRef, scrollFix,
     stick, atBottom, lastScroll,

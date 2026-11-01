@@ -4,7 +4,7 @@ CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用�
 
 ## 2026-11-01
 
-- **浅色主题下 placeholder 命令提示段近乎隐形——`text-neutral-700` 跨过了浅色词表的文字/底色分界（用户报「对话输入框中的 placeholder 关于命令的提示，部分文字和其他文字颜色不一致，在浅色主题效果下 文字颜色较浅」）**：根因在 `tailwind.config.js` 的 `NEUTRAL_LIGHT` 非镜像表——浅色下 neutral **100–600 是文字侧、700–950 是底色侧**，`text-neutral-700` 在暗色下是 `#404040`（比主文案 `#525252` 退后半档，层次正确），浅色下却是 `#d4d4d4`（底色档极浅灰），白底输入框上几乎隐形。全站 `text-neutral-700` 作文字只有 3 处（都是「比相邻 neutral-600 更次要」的小字），作背景/描边却有几十处且浅色下全对 ⇒ **不能动词表，改这 3 处文字用法**。**定案 = `text-neutral-600/70`**：暗色 `#525252@70%` 叠 `#0a0a0a` ≈ `#404040`（与原 700 观感一致），浅色 `#666666@70%` 叠白 ≈ `#848484`（可读且仍退后）——透明度后缀靠 colors 的 `<alpha-value>` 管道天然可用。落点 = SessionMessages placeholder 的 refHints 段 + ConfigTree/ConfigValueRow 的 `spec.group` 徽标（同族同病）；FilePicker:946 的 `text-neutral-800` 是禁用态刻意调暗，不动。**教训入档：浅色下 neutral ≥700 是底色侧，不作文字色；要「比 600 更退」用 `600/透明度`，不要往 700+ 走。** 回归 = web tsc 绿 + conversation.test 122 例绿；playwright 浅/暗双主题实测 placeholder 与配置页徽标颜色（`rgba(102,102,102,.7)` / `rgba(82,82,82,.7)`）。
+- **发送气泡过长也收纳——与左侧回复气泡同规（用户报「对话框的发送方的气泡，也与左侧气泡一样，过长的也收纳起来，效果一样」）**：复用既有 `Collapsible`（六行门槛 / 三行钳制 / 底部渐隐 / 底部居中箭头唯一入口，全部不动），只把发送气泡的纯 markdown 分支包进去；缺省展开口径镜像回复侧——`newestUserKey`（最新一条 user 条目）与 `newestAssistantKey` 并列进 `isOpen` 的缺省判据，手动账（`expanded` map）优先级不变、两侧共用一本账。**两支不收**：带图分段（`inlineSegs`）收了会把图藏进渐隐里；命令回显（`cmdTokens`/`commandOutput`）的 `<pre>` 自己封顶 `max-h-40`，再套折叠是双重收纳。多选态照旧 `disabled={selecting}`（箭头不渲染、点击归勾选）。
 
 ## 2026-10-31
 

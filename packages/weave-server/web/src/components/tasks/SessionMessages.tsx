@@ -177,7 +177,7 @@ export function SessionMessages({
   const {
     filter, setFilter,
     entries, loadingEarlier,
-    thread, outbox, visible, newestAssistantKey, newestQueuedId, now,
+    thread, outbox, visible, newestAssistantKey, newestUserKey, newestQueuedId, now,
     error,
     threadRef,
     contentRef,
@@ -196,8 +196,9 @@ export function SessionMessages({
     minimized,
   });
 
-  /** 这条此刻展开没有：手动账优先，没记过账就看是不是最新那条。 */
-  const isOpen = (key: string): boolean => expanded.get(key) ?? key === newestAssistantKey;
+  /** 这条此刻展开没有：手动账优先，没记过账就看是不是最新那条（回复与发送各认各的最新）。 */
+  const isOpen = (key: string): boolean =>
+    expanded.get(key) ?? (key === newestAssistantKey || key === newestUserKey);
   const toggleOpen = (key: string): void =>
     setExpanded((prev) => new Map(prev).set(key, !isOpen(key)));
   /** 本条待发的附件（上传中/已落盘/失败三态都在这一份里）；发走或关弹窗即清。 */
@@ -1106,9 +1107,20 @@ export function SessionMessages({
                           )}
                         </div>
                       ) : (
-                        <div className="[&_p]:whitespace-pre-wrap">
-                          <AssistantMarkdown text={m.text} />
-                        </div>
+                        /* 长发送气泡与左侧回复同规收纳：超过六行收成三行 + 底部渐隐，
+                            箭头是唯一收/展入口（缺省只展开最新那条）。带图分段与命令
+                            回显两支不收——前者收了会把图藏进渐隐里，后者的 `<pre>`
+                            自己封顶 max-h-40。 */
+                        <Collapsible
+                          text={m.text}
+                          open={isOpen(m.key)}
+                          onToggle={() => toggleOpen(m.key)}
+                          disabled={selecting}
+                        >
+                          <div className="[&_p]:whitespace-pre-wrap">
+                            <AssistantMarkdown text={m.text} />
+                          </div>
+                        </Collapsible>
                       )}
                       {/* 判死落定（会话进程不在）：说人话，别把英文技术串端上来 */}
                       {pipe?.reason === 'offline' ? (
