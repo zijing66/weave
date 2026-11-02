@@ -252,6 +252,13 @@ function backupIfMigrating(db: DatabaseSync, dbPath: string): void {
   if (dbPath === ':memory:') return;
   const current = userVersionOf(db);
   if (current >= SCHEMA_VERSION) return;
+  // 要动结构了才做全库体检：quick_check 是逐页扫描，1GB 级的库要几十秒，放在
+  // 每次启动上等于把冷启动拖成分钟级。schema 本身坏掉的情况 SQLite 自己会在
+  // 解析时抛（正是用户遇到的那条 malformed database schema），走隔离重建。
+  const check = db.prepare('PRAGMA quick_check').get() as { quick_check?: string } | undefined;
+  if (check?.quick_check !== undefined && check.quick_check !== 'ok') {
+    throw new Error(`malformed database schema (${check.quick_check})`);
+  }
   const objects = db.prepare('SELECT count(*) AS n FROM sqlite_master').get() as
     | { n: number }
     | undefined;
@@ -336,12 +343,8 @@ function openAndMigrate(dbPath: string): DatabaseSync {
     db.exec('PRAGMA busy_timeout = 5000');
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA foreign_keys = ON');
-    // 打开就是坏的（页损坏/截断）：在跑任何迁移前挑明，交给上层隔离重建。
-    // quick_check 只扫结构一致性，比 integrity_check 快得多，启动用足够。
-    const check = db.prepare('PRAGMA quick_check').get() as { quick_check?: string } | undefined;
-    if (check?.quick_check !== undefined && check.quick_check !== 'ok') {
-      throw new Error(`malformed database schema (${check.quick_check})`);
-    }
+    // 注意：这里不做全库 quick_check——见 backupIfMigrating 里的说明（1GB 级
+    // 的库每次启动逐页扫要几十秒）。schema 坏掉由 SQLite 解析时自己抛。
     backupIfMigrating(db, dbPath);
     rebuildOrchestrations(db);
     db.exec(SCHEMA);
