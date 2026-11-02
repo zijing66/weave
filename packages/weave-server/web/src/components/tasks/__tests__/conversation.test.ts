@@ -251,6 +251,21 @@ describe('attachDeliveries', () => {
     expect(outbox.map((m) => m.id)).toEqual(['m-old']);
   });
 
+  it('⑦ 已执行的内建命令（无认领事件）：后继 prompt 一来就退场，还没有后继时保留', () => {
+    const cmd = delivery({
+      id: 'm-cmd',
+      text: '/rewind',
+      at: at(30),
+      status: 'delivered',
+      acked: true,
+      ackedEventId: null,
+      settledAt: at(30),
+    });
+    expect(attachDeliveries([userEntry], [cmd]).outbox.map((m) => m.id)).toEqual(['m-cmd']);
+    const later: ConvEntry = { key: 'e2', eventId: 2, role: 'user', at: at(40), text: '下一句' };
+    expect(attachDeliveries([userEntry, later], [cmd]).outbox).toEqual([]);
+  });
+
   it('④ 直投消息只出现一条：摘掉来源标记的条目认领得到它自己的投递行', () => {
     const entries = conversationOf(
       [event(1, 'UserPromptSubmit', { prompt: '[weave] 帮我看看这个' })],
@@ -345,7 +360,11 @@ describe('removableOf（队列里的行能不能删）', () => {
   });
 
   it('③ 已发出且拿到回执（delivered + acked）不删——会话确实收到了，只是气泡还没到', () => {
-    expect(removableOf(delivery({ status: 'delivered', acked: true }))).toBe(false);
+    expect(removableOf(delivery({ status: 'delivered', acked: true, ackedEventId: 3 }))).toBe(false);
+  });
+
+  it('③b 已执行的内建命令（回执没有认领事件，永远等不到气泡）可以手动移除', () => {
+    expect(removableOf(delivery({ status: 'delivered', acked: true, ackedEventId: null }))).toBe(true);
   });
 
   it('④ 暂停闸的成因行都能删：没送出去的、已发出却没回执的（它就是压住整队的队头，等超时才给按钮等于锁住用户）', () => {

@@ -450,9 +450,24 @@ export function attachDeliveries(
   // 没被气泡认领的一律留在队列里：「已送达」只说明交给了会话，不代表它已落进对话
   // （气泡随会话自己的 UPS 事件来）。认领即退场，同一条消息不会两处都露。
   const outbox = deliveries
-    .filter((m) => !taken.has(m.id))
+    .filter((m) => !taken.has(m.id) && !supersededCommand(m, entries))
     .sort((a, b) => a.at.localeCompare(b.at));
   return { thread: out, outbox };
+}
+
+/**
+ * 已执行的内建命令（宿主不回 UPS，`ackedEventId` 空）只是「这条执行过了」的短时
+ * 回执。后面又来了用户 prompt ⇒ 它早已完成、也不该再占着对话尾巴的最新位置
+ * （/rewind 之后新 prompt 下面还挂着一条「已执行 /rewind」）。它们没有认领事件可
+ * 退场，只能按后继 prompt 撤。
+ */
+function supersededCommand(
+  m: SessionMessageRow,
+  entries: readonly ConvEntry[],
+): boolean {
+  if (m.status !== 'delivered' || m.acked !== true || m.ackedEventId != null) return false;
+  const at = Date.parse(m.at);
+  return entries.some((e) => e.role === 'user' && Date.parse(e.at) > at);
 }
 
 /** 能不能从队列里移除。**在飞的 delivering 也能删**——投递卡住时它就是队头，压着
@@ -464,7 +479,11 @@ export function attachDeliveries(
  *  条多半压根没进去，留着只是化石。 */
 export function removableOf(m: SessionMessageRow): boolean {
   if (m.status === 'running') return false;
-  if (m.status === 'delivered') return m.acked !== true;
+  if (m.status === 'delivered') {
+    // 已回执但没有认领事件 = 宿主自己执行的内建命令（/rewind 之类），永远不会有
+    // 气泡来接它；留着只会占在对话尾巴上，给手动移除。
+    return m.acked !== true || m.ackedEventId == null;
+  }
   return true;
 }
 
