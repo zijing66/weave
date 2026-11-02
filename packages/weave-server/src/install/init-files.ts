@@ -35,6 +35,20 @@ import { WEAVE_VERSION } from '../version.js';
  * 做「盘上 vs 期望」的比对与按 git 归类分流。
  */
 
+/**
+ * 版本标记不参与漂移判定：`@version weave@<版本>` 每次发版都变，但它只说明
+ * 「这份文件是 weave 写的」，不代表脚本行为变了——不剥掉的话，每升一版所有
+ * 项目都会挂上「3 个初始化文件待更新」。写盘仍用完整内容（标记照写）。
+ */
+const VERSION_MARKERS = [
+  /^\s*\*\s*@version weave@\S+\s*$/gm,
+  /^\s*const WEAVE_VERSION = .*$/gm,
+] as const;
+
+function withoutVersionMarkers(text: string): string {
+  return VERSION_MARKERS.reduce((out, re) => out.replace(re, ''), text);
+}
+
 export interface InitFileUpdate {
   /** 项目根相对路径（posix）。 */
   relPath: string;
@@ -215,7 +229,9 @@ export async function detectInitFileUpdates(projectPath: string): Promise<InitFi
     out.push({
       relPath: entry.relPath,
       targetPath,
-      outdated: expectedContent !== null && expectedContent !== onDisk,
+      outdated:
+        expectedContent !== null &&
+        withoutVersionMarkers(expectedContent) !== withoutVersionMarkers(onDisk ?? ''),
       syncClass: null,
       expectedContent,
     });

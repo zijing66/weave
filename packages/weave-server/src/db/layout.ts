@@ -7,9 +7,11 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { dataRoots, getDataDir, type DataRoots } from './paths.js';
+import { dataRoots, getDataDir, getVersionStampPath, type DataRoots } from './paths.js';
+import { WEAVE_VERSION } from '../version.js';
 
 /**
  * 旧版「顶层散放」→ 三档目录（`data/` `local/` `cache/`，见 `dataRoots`）的一次性搬迁。
@@ -95,7 +97,22 @@ export function ensureDataLayout(root: string = getDataDir()): LayoutMigration {
   const r = migrateDataLayout(root);
   if (r.moved.length > 0) console.log(`[weave] data layout: moved ${r.moved.join(', ')}`);
   if (r.kept.length > 0) console.log(`[weave] data layout: kept ${r.kept.join(', ')} (target exists)`);
+  writeVersionStamp(root);
   return r;
+}
+
+/**
+ * 落当前版本号（`<cache>/version`）：statusline 脚本每次运行读它显示版本，
+ * 生成物里因此不用内联版本号——发版不再让所有项目的脚本判成「需要更新」。
+ */
+export function writeVersionStamp(root: string = getDataDir()): void {
+  try {
+    const file = getVersionStampPath(root);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${WEAVE_VERSION}\n`, 'utf8');
+  } catch {
+    /* 写不进去只是状态栏版本空着，不该挡住启动 */
+  }
 }
 
 export function migrateDataLayout(root: string = getDataDir()): LayoutMigration {

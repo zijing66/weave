@@ -133,6 +133,14 @@ export function getTmpDir(dir?: string): string {
   return path.join(dataRoots(dir).cache, 'tmp');
 }
 
+/**
+ * 当前 weave 版本的落盘点（daemon 启动时写、statusline 脚本运行时读）：
+ * 生成物里不内联版本号，发版才不会被判成「文件需要更新」。
+ */
+export function getVersionStampPath(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'version');
+}
+
 /** 项目文件索引快照（`<projectId>.json`，见 daemon/project-files.ts）。 */
 export function getIndexDir(dir?: string): string {
   return path.join(dataRoots(dir).cache, 'index');

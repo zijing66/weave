@@ -10,8 +10,9 @@ import {
   readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { getVersionStampPath } from '../../db/paths.js';
 import { generateStatuslineScript } from '../generator.js';
 import {
   DEFAULT_STATUSLINE_CONFIG,
@@ -55,6 +56,9 @@ beforeAll(() => {
   savedXdg = process.env.XDG_CONFIG_HOME;
   process.env.APPDATA = slCacheHome;
   process.env.XDG_CONFIG_HOME = slCacheHome;
+  // 脚本运行时读版本文件（不内联版本号）：测试里替 daemon 把它写出来
+  mkdirSync(dirname(getVersionStampPath()), { recursive: true });
+  writeFileSync(getVersionStampPath(), `${WEAVE_VERSION}\n`);
 });
 afterAll(() => {
   if (savedAppdata === undefined) delete process.env.APPDATA;
@@ -108,10 +112,12 @@ describe('statusline — generator', () => {
     expect(script).toContain('toLocaleTimeString');
   });
 
-  it('embeds the logo text and the weave version', () => {
+  it('embeds the logo text; version 走运行时读取而不是内联（发版不再改脚本内容）', () => {
     const script = generateStatuslineScript(DEFAULT_STATUSLINE_CONFIG);
     expect(script).toContain(DEFAULT_STATUSLINE_CONFIG.logoText);
-    expect(script).toContain(`const WEAVE_VERSION = "${WEAVE_VERSION}"`);
+    // 版本号在 daemon 写的文件里：脚本只带路径，不带值
+    expect(script).toContain(JSON.stringify(getVersionStampPath()));
+    expect(script).not.toContain(`const WEAVE_VERSION = "${WEAVE_VERSION}"`);
   });
 
   it('renders the version into the logo rather than a toggle', () => {

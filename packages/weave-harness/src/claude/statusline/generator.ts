@@ -15,6 +15,12 @@ import {
 export interface GenerateStatuslineOptions {
   cacheDir: string;
   version: string;
+  /**
+   * 版本号落在哪个文件（daemon 启动时写入）：脚本运行时读它显示当前版本。
+   * 不内联版本号是为了让脚本内容对发版免疫——否则每升一版，所有项目的
+   * statusline.cjs 都被判成「需要更新」。
+   */
+  versionFile?: string;
 }
 
 /**
@@ -131,7 +137,14 @@ const GIT_SYNC_TTL = ${GIT_SYNC_TTL_SEC};
 const GIT_RETRY_TTL = ${GIT_RETRY_TTL_SEC};
 const CACHE_DIR = ${embeddedCacheDir};
 // Stamped into the row-0 logo so the running version is always visible.
-const WEAVE_VERSION = ${JSON.stringify(opts.version)};
+// 读 daemon 写的版本文件而不是内联常量：脚本内容因此不随发版变化。
+const WEAVE_VERSION = (() => {
+  try {
+    return require('node:fs').readFileSync(${JSON.stringify(opts.versionFile ?? '')}, 'utf8').trim() || 'unknown';
+  } catch {
+    return 'unknown'; // daemon 还没写过版本文件（首次运行前）
+  }
+})();
 // Powerline glyphs (Nerd Font), configurable via CONFIG.powerline: undefined
 // falls back to the classic triangle set; an empty cap string disables the cap.
 const PL = CONFIG.powerline || {};

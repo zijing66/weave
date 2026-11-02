@@ -1,6 +1,6 @@
 import { generateStatuslineScript as generate } from '@weavecode/harness';
 import type { StatuslineConfig } from './config.js';
-import { getStatuslineDir } from '../db/paths.js';
+import { getStatuslineDir, getVersionStampPath } from '../db/paths.js';
 import { WEAVE_VERSION } from '../version.js';
 
 /**
@@ -27,5 +27,6 @@ export function generateStatuslineScript(
   return generate(config, {
     cacheDir: opts.cacheDir ?? statuslineCacheDir(),
     version: WEAVE_VERSION,
+    versionFile: getVersionStampPath(),
   });
 }
