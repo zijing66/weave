@@ -453,34 +453,37 @@ export function ProjectList({
                   setMenu({ x: e.clientX, y: e.clientY, project: p });
                 }}
                 className={cn(
-                  'min-w-0 flex-1 flex items-start gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors duration-200',
+                  'min-w-0 flex-1 flex flex-col gap-0.5 rounded-lg px-1.5 py-1.5 text-left transition-colors duration-200',
                   'hover:bg-edge/[0.04]',
                 )}
               >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm" title={p.name}>
+                {/* 第一行：名字占满可伸缩宽度，统计徽标贴右不收缩 */}
+                <span className="flex w-full min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm" title={p.name}>
                     {p.name}
                   </span>
-                  <span className="block truncate text-11 text-neutral-500" title={p.path}>
-                    {p.path}
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                    <SessionBadges counts={stats} />
+                    <HealthBadge projectId={p.id} />
                   </span>
-                  {/* 已接入 harness（init 选择结果，服务端派生）：起会话的 harness
-                      选项同一份事实。 */}
-                  {(p.harnesses?.length ?? 0) > 0 && (
-                    <span
-                      className="mt-1 flex flex-wrap items-center gap-1"
-                      title={t('project.harnessesTip')}
-                    >
-                      {p.harnesses!.map((h) => (
-                        <AgentBadge key={h.id} agent={h.id} />
-                      ))}
-                    </span>
-                  )}
                 </span>
-                <span className="ml-auto flex shrink-0 items-center gap-1.5 mt-1.5">
-                  <SessionBadges counts={stats} />
-                  <HealthBadge projectId={p.id} />
+                {/* 路径与 harness 徽标各占整卡宽度：挤在文字列里会被右侧统计列
+                    压窄——路径过度截断、两枚徽标还没满行就折行 */}
+                <span className="block w-full truncate text-11 text-neutral-500" title={p.path}>
+                  {p.path}
                 </span>
+                {/* 已接入 harness（init 选择结果，服务端派生）：起会话的 harness
+                    选项同一份事实。 */}
+                {(p.harnesses?.length ?? 0) > 0 && (
+                  <span
+                    className="flex w-full flex-wrap items-center gap-1"
+                    title={t('project.harnessesTip')}
+                  >
+                    {p.harnesses!.map((h) => (
+                      <AgentBadge key={h.id} agent={h.id} />
+                    ))}
+                  </span>
+                )}
               </button>
               </div>
               {/* 快捷操作簇（批 8）：卡内独立一行换行展示，不与文字同行重叠。

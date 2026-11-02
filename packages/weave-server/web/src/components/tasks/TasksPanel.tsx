@@ -1278,9 +1278,11 @@ export function TasksPanel({
         style={isDesktop ? { width: listW } : undefined}
         className="flex w-full max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-edge/[0.06] pr-0 lg:pr-3"
       >
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-neutral-200">{t('tasks.listTitle')}</h3>
-          <span className="text-11 text-neutral-500">
+        <div className="flex min-w-0 items-center gap-2">
+          <h3 className="shrink-0 whitespace-nowrap text-sm font-semibold text-neutral-200">
+            {t('tasks.listTitle')}
+          </h3>
+          <span className="shrink-0 text-11 text-neutral-500">
             {sessions === null ? t('hooks.loading') : String(sessions.length)}
           </span>
           {/* 新建会话：不依赖已开终端——落点由终端后端自决（复用本项目的 pane
@@ -1299,7 +1301,7 @@ export function TasksPanel({
             }
             onClick={(e) => onNewSession(e.currentTarget)}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 transition-colors',
+              'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 transition-colors',
               !canNewSession
                 ? 'cursor-not-allowed text-neutral-600'
                 : 'text-neutral-200 hover:bg-neutral-800',
@@ -1311,7 +1313,8 @@ export function TasksPanel({
               className="h-3 w-3"
               icon={<Plus className="h-3 w-3" />}
             />
-            {t('tasks.newSession')}
+            {/* 窄屏先退中文、只留图标：文字换行会把按钮挤成两行（tooltip 仍有全称） */}
+            <span className="max-lg:hidden">{t('tasks.newSession')}</span>
           </button>
           {/* harness 筛选：只过滤列表行与计数；选中态与右栏不受影响。 */}
           <Combobox
