@@ -42,14 +42,22 @@ async function readPetManifest(dir: string): Promise<{
   }
   const id = typeof manifest.id === 'string' ? manifest.id : '';
   if (!id || id !== path.basename(dir)) return null;
-  const stat = await fsp.stat(path.join(dir, 'pet.json')).catch(() => null);
+  // updatedAt 是前端 spritesheet URL 的缓存键（该响应带 immutable），必须取
+  // manifest 与**实际被回吐的那张图** mtime 的最大值——只换图不换 manifest 也要换键。
+  const [msStat, webpStat, pngStat] = await Promise.all([
+    fsp.stat(path.join(dir, 'pet.json')).catch(() => null),
+    fsp.stat(path.join(dir, 'spritesheet.webp')).catch(() => null),
+    fsp.stat(path.join(dir, 'spritesheet.png')).catch(() => null),
+  ]);
   return {
     id,
     displayName: typeof manifest.displayName === 'string' ? manifest.displayName : id,
     description: typeof manifest.description === 'string' ? manifest.description : '',
     spriteVersionNumber:
       typeof manifest.spriteVersionNumber === 'number' ? manifest.spriteVersionNumber : 1,
-    updatedAt: stat ? Math.floor(stat.mtimeMs) : 0,
+    updatedAt: Math.floor(
+      Math.max(msStat?.mtimeMs ?? 0, webpStat?.mtimeMs ?? 0, pngStat?.mtimeMs ?? 0),
+    ),
   };
 }
 

@@ -14,8 +14,9 @@
         background: transparent;
         overflow: hidden;
         user-select: none;
-        cursor: pointer;
+        cursor: grab;
       }
+      body.dragging,
       body:active {
         cursor: grabbing;
       }
@@ -24,34 +25,102 @@
         width: 100%;
         height: 100%;
       }
-      /* 提醒气泡：宠物头顶浮一层，状态变迁时出现、几秒后淡出 */
-      #bubble {
+      /* 提醒气泡栈：宠物上方一列，待答常驻、其余提醒到点淡出 */
+      #bubbles {
         position: absolute;
         top: 4px;
         left: 50%;
         transform: translateX(-50%);
-        max-width: 92%;
+        width: 92%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        pointer-events: none;
+      }
+      #bubbles .bubble {
+        max-width: 100%;
         box-sizing: border-box;
         padding: 3px 8px;
         border-radius: 8px;
         background: rgba(23, 23, 23, 0.92);
         color: #fafafa;
         font: 11px/1.4 system-ui, sans-serif;
-        white-space: nowrap;
+        /* 最多两行，超出再省略（会话名长起来单行放不下） */
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
         overflow: hidden;
-        text-overflow: ellipsis;
+        overflow-wrap: anywhere;
         opacity: 0;
         transition: opacity 0.25s ease;
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      #bubbles .bubble.show {
+        opacity: 1;
+      }
+      /* 休息打呼：三个 z 依次上浮淡出，悬在宠物头右上方 */
+      #zzz {
+        position: absolute;
+        width: 24px;
+        height: 20px;
+        display: none;
         pointer-events: none;
       }
-      #bubble.show {
-        opacity: 1;
+      #zzz.show {
+        display: block;
+      }
+      #zzz span {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        color: #c9bcff;
+        font: 9px/1 system-ui, sans-serif;
+        text-shadow: 0 0 2px rgba(0, 0, 0, 0.55);
+        opacity: 0;
+        animation: zzz-float 2.4s ease-out infinite;
+      }
+      #zzz span:nth-child(2) {
+        left: 5px;
+        bottom: 4px;
+        font-size: 11px;
+        animation-delay: 0.8s;
+      }
+      #zzz span:nth-child(3) {
+        left: 11px;
+        bottom: 8px;
+        font-size: 13px;
+        animation-delay: 1.6s;
+      }
+      #zzz.frozen span {
+        animation-play-state: paused;
+      }
+      @keyframes zzz-float {
+        0% {
+          opacity: 0;
+          transform: translate(0, 0) scale(0.8);
+        }
+        25% {
+          opacity: 0.9;
+        }
+        100% {
+          opacity: 0;
+          transform: translate(3px, -12px) scale(1.1);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #zzz span {
+          animation: none;
+          opacity: 0.85;
+        }
       }
     </style>
   </head>
   <body>
     <canvas id="stage"></canvas>
-    <div id="bubble"></div>
+    <div id="bubbles"></div>
+    <div id="zzz"><span>z</span><span>z</span><span>z</span></div>
     <script type="module" src="/src/pet/main.ts"></script>
   </body>
 </html>

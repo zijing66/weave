@@ -341,6 +341,13 @@ export const PET_SPRITE_CONTRACT = {
     waiting: { row: 6, frames: 6, frameMs: 150, finalMs: 260 },
     running: { row: 7, frames: 6, frameMs: 120, finalMs: 220 },
     review: { row: 8, frames: 6, frameMs: 150, finalMs: 280 },
+    // v2 增补行（借 v2 预留的行 9/10，11 行资产向前兼容 v1 消费方按缺行跳过）：
+    enter: { row: 9, frames: 8, frameMs: 90, finalMs: 200 }, // 入场：丝降 → 触底弹跳 → 落定
+    sleep: { row: 10, frames: 6, frameMs: 420, finalMs: 900 }, // 睡觉：蜷腿闭眼呼吸（循环值守）
+    /**
+     * 特别玩法：enter 以 reverse 播放 = 离场（升丝离开）。reverse 只对 enter
+     * 定义，web player 按 opts.reverse 走倒帧；时长表原样适用。
+     */
   } as const,
 } as const;
 

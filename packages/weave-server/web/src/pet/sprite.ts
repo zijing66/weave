@@ -17,6 +17,8 @@ export const PET_ANIMATIONS = {
   waiting: { row: 6, frames: 6, frameMs: 150, finalMs: 260 },
   running: { row: 7, frames: 6, frameMs: 120, finalMs: 220 },
   review: { row: 8, frames: 6, frameMs: 150, finalMs: 280 },
+  enter: { row: 9, frames: 8, frameMs: 90, finalMs: 200 },
+  sleep: { row: 10, frames: 6, frameMs: 420, finalMs: 900 },
 } as const;
 
 export type PetAnimation = keyof typeof PET_ANIMATIONS;
@@ -40,6 +42,10 @@ interface Playhead {
   frameStartedAt: number;
   /** 无限循环（运行中的结网值守态）：主循环播完不回落 idle。 */
   loopForever?: boolean;
+  /** 倒放（离场 = enter 反着走：升丝离开）。播完停在帧 0。 */
+  reverse?: boolean;
+  /** advance 置位：本段自然完结（主循环走完 / reverse 到头）。tick 触发 onDone 后清。 */
+  done?: boolean;
 }
 
 /** 某 anim 某帧的停留时长（ms）。 */
@@ -54,9 +60,17 @@ function frameDuration(anim: PetAnimation, frame: number): number {
   return frame === spec.frames - 1 ? (spec.finalMs ?? 600) : (spec.frameMs ?? 150);
 }
 
-/** 推进 playhead 一帧：主循环 ×MAIN_LOOPS 后回落 idle（loopForever 则一直循环）。 */
+/** 推进 playhead 一帧：主循环 ×MAIN_LOOPS 后回落 idle（loopForever/reverse 各自终点）。 */
 function advance(head: Playhead): void {
   const spec = PET_ANIMATIONS[head.anim];
+  if (head.reverse) {
+    if (head.frame > 0) {
+      head.frame -= 1;
+      return;
+    }
+    head.done = true; // 倒放收尾：停在首帧，由 onDone 接管（不清 anim）
+    return;
+  }
   head.frame += 1;
   if (head.frame < spec.frames) return;
   head.frame = 0;
@@ -65,24 +79,37 @@ function advance(head: Playhead): void {
   if (!head.loopForever && head.loop >= MAIN_LOOPS) {
     head.anim = 'idle';
     head.loop = 0;
+    head.done = true; // 主循环播完的「回落」点：一次性 onDone 钩给业务（离场淡出等）
+    return;
   }
 }
 
 export interface SpritePlayer {
   /** 切动画（同名不重置——running 中重复 setRunning 不打断步伐）。 */
-  play(anim: PetAnimation, opts?: { loopForever?: boolean }): void;
+  play(anim: PetAnimation, opts?: { loopForever?: boolean; reverse?: boolean }): void;
   /** 当前动画名。 */
   current(): PetAnimation;
   /** 按契约时长表自走的帧游标；rAF 循环里每拍调，返回当前帧下标。 */
   tick(now: number): number;
+  /** 段落自然完结（主循环 ×N 走完 / reverse 走到头）时的回调；一次性，触发即清。 */
+  onDone(cb: () => void): void;
 }
 
 export function createSpritePlayer(initial: PetAnimation = 'idle'): SpritePlayer {
   let head: Playhead = { anim: initial, loop: 0, frame: 0, frameStartedAt: performance.now() };
+  let doneCb: (() => void) | null = null;
   return {
     play(anim, opts) {
-      if (head.anim === anim && (opts?.loopForever ?? false) === (head.loopForever ?? false)) return;
-      head = { anim, loop: 0, frame: 0, frameStartedAt: performance.now(), loopForever: opts?.loopForever };
+      const sameReverse = (opts?.reverse ?? false) === (head.reverse ?? false);
+      if (head.anim === anim && (opts?.loopForever ?? false) === (head.loopForever ?? false) && sameReverse) return;
+      head = {
+        anim,
+        loop: 0,
+        frame: opts?.reverse ? PET_ANIMATIONS[anim].frames - 1 : 0,
+        frameStartedAt: performance.now(),
+        loopForever: opts?.loopForever,
+        reverse: opts?.reverse,
+      };
     },
     current() {
       return head.anim;
@@ -94,9 +121,18 @@ export function createSpritePlayer(initial: PetAnimation = 'idle'): SpritePlayer
         head.frameStartedAt += frameDuration(head.anim, head.frame);
         // 追帧兜底：落后太多（后台节流回来）直接对齐当下，不连环快放
         if (now - head.frameStartedAt > 5_000) head.frameStartedAt = now;
+        if (head.done) {
+          head.done = false;
+          const cb = doneCb;
+          doneCb = null;
+          cb?.();
+        }
         guard += 1;
       }
       return head.frame;
+    },
+    onDone(cb) {
+      doneCb = cb;
     },
   };
 }

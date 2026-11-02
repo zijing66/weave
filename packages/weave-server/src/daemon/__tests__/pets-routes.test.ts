@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { handlePetRoutes } from '../routes/pets.js';
@@ -128,6 +128,25 @@ describe('GET /pets（桌面宠物只读面）', () => {
     const body = JSON.parse(String(out)) as { pets: Array<{ id: string }>; root: string };
     expect(body.pets.map((p) => p.id)).toEqual(['alpha', 'beta']);
     expect(body.root).toBe(path.join(dataRoot, 'weave', 'data', 'pets'));
+  });
+
+  it('updatedAt = manifest 与图 mtime 的较大者（只换图也换缓存键）', async () => {
+    seedPet('alpha');
+    const dir = path.join(dataRoot, 'weave', 'data', 'pets', 'alpha');
+    const old = new Date(Date.UTC(2020, 0, 1));
+    const sheetAt = new Date(Date.UTC(2021, 5, 1));
+    utimesSync(path.join(dir, 'pet.json'), old, old);
+    utimesSync(path.join(dir, 'spritesheet.png'), sheetAt, sheetAt);
+
+    const { handlePetRoutes: fresh } = await import('../routes/pets.js');
+    const req = Readable.from([Buffer.from('')]) as unknown as IncomingMessage;
+    req.method = 'GET';
+    let out: unknown = null;
+    const res = { statusCode: 0, setHeader: () => undefined, writeHead: () => undefined, end: (c?: unknown) => { out = c; } };
+    const url = new URL('/pets', 'http://x');
+    await fresh(req, res as unknown as ServerResponse, {} as WeaveServerDeps, url.pathname, url);
+    const body = JSON.parse(String(out)) as { pets: Array<{ updatedAt: number }> };
+    expect(body.pets[0]?.updatedAt).toBe(sheetAt.getTime());
   });
 
   it('spritesheet：png 回落 + immutable 缓存头；缺失回 404', async () => {

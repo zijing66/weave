@@ -1,5 +1,8 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 
@@ -18,6 +21,21 @@ public static class Program
     public const string WindowTitle = "weave-pet-window";
     public const string SessionCookieName = "weave_session";
 
+    private const int WM_NCLBUTTONDOWN = 0xA1;
+    private const int HTCAPTION = 2;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+
     [STAThread]
     public static void Main(string[] args)
     {
@@ -29,6 +47,7 @@ public static class Program
 
         var url = args[0];
         string? cookie = null;
+        string? devtoolsPort = null;
         int width = 200, height = 240, x = -1, y = -1;
         for (int i = 1; i + 1 < args.Length; i += 2)
         {
@@ -54,28 +73,52 @@ public static class Program
             {
                 cookie = args[i + 1];
             }
+            else if (args[i] == "--devtools-port")
+            {
+                devtoolsPort = args[i + 1];
+            }
         }
 
         var app = new Application();
-        var window = BuildWindow(url, cookie, width, height, x, y);
+        var window = BuildWindow(url, cookie, width, height, x, y, devtoolsPort);
 
-        // daemon 回收通道：stdin 一行（或 EOF）→ UI 线程关窗。后台线程读，
-        // 绝不挡 app.Run。
+        // daemon 回收通道：stdin 任一字节（含 EOF）→ UI 线程关窗。WinExe 子系统
+        // 下 Console.ReadLine 吃 pipe 喂数不返回（实测），改读裸流一字节。
         _ = Task.Run(() =>
         {
-            try { Console.ReadLine(); } catch { /* stdin 已关 */ }
+            try
+            {
+                using var sin = Console.OpenStandardInput();
+                _ = sin.ReadByte();
+            }
+            catch { /* stdin 已关 */ }
             window.Dispatcher.BeginInvoke(() => window.Close());
         });
 
         app.Run(window);
     }
 
-    private static Window BuildWindow(string url, string? cookie, int width, int height, int x, int y)
+    /// <summary>
+    /// 窗口位置回执：WebView2 的 window.screenX/Y 不随宿主挪窗更新（实测加载后
+    /// 恒为初值），页面据此做贴边吸附与记位，所以位置必须由宿主报真值。
+    /// </summary>
+    private static void PostPos(Microsoft.Web.WebView2.Core.CoreWebView2 core, Window window)
+    {
+        core.PostWebMessageAsString($"pos:{window.Left:0},{window.Top:0}");
+    }
+
+    private static Window BuildWindow(string url, string? cookie, int width, int height, int x, int y, string? devtoolsPort)
     {
         var webView = new Microsoft.Web.WebView2.Wpf.WebView2
         {
             DefaultBackgroundColor = System.Drawing.Color.Transparent,
         };
+
+        // 1/255 透明底：分层窗(AllowsTransparency)的命中测试按 alpha 判，WebView2
+        // 区域在 WPF 图层里 alpha=0 ⇒ 整窗点击穿透（右键/拖拽全收不到）。铺一层
+        // 肉眼不可见的极淡 alpha 让整窗参与命中测试。
+        var hitTestBrush = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
+        hitTestBrush.Freeze();
 
         var window = new Window
         {
@@ -85,7 +128,7 @@ public static class Program
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
             AllowsTransparency = true,
-            Background = System.Windows.Media.Brushes.Transparent,
+            Background = hitTestBrush,
             Topmost = true,
             ShowInTaskbar = false,
             ShowActivated = false,
@@ -116,7 +159,11 @@ public static class Program
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "weave", "cache", "pet-window-profile");
                 Directory.CreateDirectory(userDataFolder);
-                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder,
+                    string.IsNullOrEmpty(devtoolsPort)
+                        ? null
+                        : new CoreWebView2EnvironmentOptions(
+                            $"--remote-debugging-port={devtoolsPort}"));
                 await webView.EnsureCoreWebView2Async(env);
                 var core = webView.CoreWebView2;
                 core.Settings.AreDevToolsEnabled = false;
@@ -138,10 +185,19 @@ public static class Program
                 core.WebMessageReceived += (_, e) =>
                 {
                     var msg = e.TryGetWebMessageAsString() ?? "";
-                    if (msg == "drag-start")
+                    if (msg == "pos-query")
                     {
-                        window.DragMove();
-                        core.PostWebMessageAsString("drag-end");
+                        PostPos(core, window);
+                    }
+                    else if (msg == "drag-start")
+                    {
+                        // 不用 Window.DragMove：鼠标点在 WebView2 子窗上，WPF 自己
+                        // 没收到按下（DragMove 会因「左键未按住」失败）。发
+                        // NCLBUTTONDOWN/HTCAPTION 让系统按拖标题栏处理，模态移动。
+                        var hwnd = new WindowInteropHelper(window).Handle;
+                        ReleaseCapture();
+                        SendMessage(hwnd, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                        core.PostWebMessageAsString($"drag-end:{window.Left:0},{window.Top:0}");
                     }
                     else if (msg.StartsWith("resize:", StringComparison.Ordinal))
                     {
@@ -153,6 +209,23 @@ public static class Program
                             window.Height = Math.Clamp(rh, 80, 2000);
                         }
                     }
+                    else if (msg.StartsWith("region:", StringComparison.Ordinal))
+                    {
+                        // 命中区 = 精灵实际像素包围盒（页面按当前帧算）：窗区域外的
+                        // 部分既不显示也不吃鼠标，点空白处直接穿透到桌面。
+                        var parts = msg["region:".Length..].Split(',');
+                        if (parts.Length == 4
+                            && int.TryParse(parts[0], out var rx)
+                            && int.TryParse(parts[1], out var ry)
+                            && int.TryParse(parts[2], out var rw)
+                            && int.TryParse(parts[3], out var rh)
+                            && rw > 0 && rh > 0)
+                        {
+                            var hwnd = new WindowInteropHelper(window).Handle;
+                            // SetWindowRgn 接管区域所有权：成功后不要自己删
+                            SetWindowRgn(hwnd, CreateRectRgn(rx, ry, rx + rw, ry + rh), true);
+                        }
+                    }
                     else if (msg.StartsWith("moveto:", StringComparison.Ordinal))
                     {
                         // 贴边偷窥的目标位由页面算好（它知道自己在哪块屏），宿主哑执行
@@ -162,6 +235,7 @@ public static class Program
                         {
                             window.Left = mx;
                             window.Top = my;
+                            PostPos(core, window);
                         }
                     }
                     else if (msg == "close")

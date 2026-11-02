@@ -1,6 +1,10 @@
 #!/usr/bin/env node
-// 程序化生成内置默认宠 weave-spider 的精灵图（codex v2 契约：8 列 × 9 行标准
-// 动画、单元 192×208、整图 1536×1872）。零依赖：RGBA 直编 PNG（zlib deflate）。
+// 程序化生成内置默认宠 weave-spider 的精灵图（codex v2 契约：8 列 × 11 行
+// 动画、单元 192×208、整图 1536×2288）。零依赖：RGBA 直编 PNG（zlib deflate）。
+//
+// 视角 = 第三人称 RPG 顶视（3/4 俯角）：腹在后（画面上方）、头胸在前（下方），
+// 八腿向四周铺开、脚下有落地投影——不是正视图。结网行（review）= 一张静态网，
+// 缩小的小蜘蛛在网上面爬。
 // 资产入库 packages/weave-templates/src/resources/pets/weave-spider/，
 // daemon 启动时缺失才播种到 <data>/pets/。改画风重跑本脚本即可。
 import { deflateSync } from 'node:zlib';
@@ -30,6 +34,8 @@ const ROWS = {
   waiting: { row: 6, frames: 6 },
   running: { row: 7, frames: 6 },
   review: { row: 8, frames: 6 },
+  enter: { row: 9, frames: 8 },
+  sleep: { row: 10, frames: 6 },
 };
 
 // idx → [r,g,b,a]：1 描边/四肢剪影 2 身体主色 3 腹侧暗部 4 高光斑
@@ -104,36 +110,40 @@ function disc(g, x, y, r, c) {
 }
 
 // ---------------------------------------------------------------------------
-// 蜘蛛解剖常量与姿态
+// 蜘蛛解剖常量与姿态（3/4 顶视：腹在后上、头胸在前下）
 // ---------------------------------------------------------------------------
 
 const CX = 24; // 体轴
-const GROUND = 46; // 脚底落点
-// Q 版比例：大头（约占身高一半）+ 圆润短身，眼睛占脸的大半
-const HEAD_CY = 20;
-const HEAD_RX = 8.5;
-const HEAD_RY = 7.5;
-const AB_CY = 34;
-const AB_RX = 6.5;
-const AB_RY = 6.5;
-const SHOULDER_X = HEAD_RX - 1;
+const GROUND = 47; // 近端脚底落点（远端脚在更高处，透视使然）
+const AB_CY = 29; // 腹（后）
+const AB_RX = 9;
+const AB_RY = 8;
+const HEAD_CY = 38.5; // 头胸（前，离镜头更近）
+const HEAD_RX = 6.4;
+const HEAD_RY = 5.4;
 
-// 每侧四条腿（前→后）：膝大幅外拱（蜘蛛标志性的 ∧ 形）、足外张落地
+// 每侧四条腿（前→后）：肩在头胸两侧，膝外拱，足落在「地面投影」的远→近一线上。
+// fy 越大 = 越靠近镜头（画面越下）。
 const LEG_SPEC = [
-  { kx: 10, ky: 12, fx: 13 },
-  { kx: 12, ky: 14, fx: 16 },
-  { kx: 13, ky: 17, fx: 17 },
-  { kx: 10, ky: 19, fx: 13 },
+  { sx: 3.6, sy: 40.2, kx: 9.5, ky: 38.5, fx: 8.5, fy: 46.5 }, // 前（朝镜头）
+  { sx: 4.4, sy: 39.2, kx: 14.5, ky: 35.0, fx: 16.5, fy: 46.0 }, // 前侧
+  { sx: 4.4, sy: 37.6, kx: 16.5, ky: 29.0, fx: 20.0, fy: 41.0 }, // 后侧
+  { sx: 3.6, sy: 36.4, kx: 13.5, ky: 24.0, fx: 15.5, fy: 34.0 }, // 后（远离镜头）
 ];
-const SHOULDER_YS = [19, 20.5, 22, 22.5];
+
+/** 腿画两遍：深色外轮廓 + 体色芯——纯深色腿在深色桌面上会消失。 */
+function drawLegs(g, legs) {
+  for (const lp of legs) inkPoly(g, lp, 0.95, C.OUTLINE);
+  for (const lp of legs) inkPoly(g, lp, 0.5, C.BODY);
+}
 
 /** 一条腿三点（side=-1 左 / +1 右）：stride 前后迈、lift 抬脚、kneeDip 膝沉。 */
 function legPoints(i, side, stride, lift, kneeDip) {
   const spec = LEG_SPEC[i];
   return [
-    [CX + side * SHOULDER_X, SHOULDER_YS[i]],
+    [CX + side * spec.sx, spec.sy],
     [CX + side * spec.kx, spec.ky + kneeDip],
-    [CX + side * spec.fx - side * stride, GROUND - lift],
+    [CX + side * spec.fx - side * stride, spec.fy - lift],
   ];
 }
 
@@ -148,43 +158,55 @@ function standingLegs(opt = {}) {
 }
 
 /**
- * 站姿整只：八腿（剪影色）→ 腹部 → 头胸 → 表情。dx/dy 平移、gazeX/Y 视线、
- * blink 眨眼、deadEyes X 眼。
+ * 站姿整只（3/4 顶视）：落地投影 → 八腿 → 腹（后）→ 头胸（前）→ 表情。
+ * dx/dy 平移、gazeX/Y 视线、blink 眨眼、deadEyes X 眼。
  */
 function drawSpiderInto(g, pose) {
   const { dx = 0, dy = 0, legs, gazeX = 0, gazeY = 0, blink = false, deadEyes = false } = pose;
 
-  if (pose.airborne) {
-    ellipse(g, CX, GROUND + 2, 6, 1.2, C.SHADOW_WEAK);
-  } else {
-    ellipse(g, CX + dx, GROUND + 2, 8, 1.4, C.SHADOW);
+  if (!pose.noShadow) {
+    if (pose.airborne) {
+      ellipse(g, CX, GROUND - 1, 7, 1.1, C.SHADOW_WEAK);
+    } else {
+      ellipse(g, CX + dx, GROUND - 1, 11, 1.9, C.SHADOW);
+    }
   }
 
-  for (const lp of legs) inkPoly(g, lp, 0.85, C.OUTLINE);
+  drawLegs(g, legs);
 
+  // 腹（后）：大、圆，顶部高光、底部暗部
   ellipse(g, CX + dx, AB_CY + dy, AB_RX + 0.7, AB_RY + 0.7, C.OUTLINE);
   ellipse(g, CX + dx, AB_CY + dy, AB_RX, AB_RY, C.BODY);
-  ellipse(g, CX + dx, AB_CY + dy + AB_RY * 0.45, AB_RX * 0.75, AB_RY * 0.45, C.SHADE);
-  ellipse(g, CX + dx - AB_RX * 0.35, AB_CY + dy - AB_RY * 0.35, AB_RX * 0.38, AB_RY * 0.3, C.HIGHLIGHT);
+  ellipse(g, CX + dx, AB_CY + dy + AB_RY * 0.5, AB_RX * 0.72, AB_RY * 0.42, C.SHADE);
+  ellipse(g, CX + dx - AB_RX * 0.3, AB_CY + dy - AB_RY * 0.42, AB_RX * 0.5, AB_RY * 0.3, C.HIGHLIGHT);
+  // 背面斑纹：三点（顶视才看得到的腹部花纹）
+  disc(g, CX + dx - 2.6, AB_CY + dy - 2.2, 0.55, C.HIGHLIGHT);
+  disc(g, CX + dx, AB_CY + dy - 3.1, 0.55, C.HIGHLIGHT);
+  disc(g, CX + dx + 2.6, AB_CY + dy - 2.2, 0.55, C.HIGHLIGHT);
 
+  // 头胸（前，压在腹上）
   ellipse(g, CX + dx, HEAD_CY + dy, HEAD_RX + 0.7, HEAD_RY + 0.7, C.OUTLINE);
   ellipse(g, CX + dx, HEAD_CY + dy, HEAD_RX, HEAD_RY, C.BODY);
-  ellipse(g, CX + dx, HEAD_CY + dy - HEAD_RY * 0.35, HEAD_RX * 0.55, HEAD_RY * 0.35, C.HIGHLIGHT);
+  ellipse(g, CX + dx, HEAD_CY + dy - HEAD_RY * 0.42, HEAD_RX * 0.62, HEAD_RY * 0.32, C.HIGHLIGHT);
 
-  // Q 版大眼：两只占脸宽大半，眼白竖椭圆、瞳孔大而亮（含高光点）
-  const eyeY = HEAD_CY + dy - 0.2;
-  for (const ex of [CX - 3.4, CX + 3.4]) {
-    const exx = ex + dx + gazeX * 1.1;
+  // 眼：两只主眼朝前（画面下方），两枚小眼在上方——俯角下眼睛落在头胸前缘
+  const eyeY = HEAD_CY + dy + 1.0;
+  for (const ex of [CX - 2.7, CX + 2.7]) {
+    const exx = ex + dx + gazeX * 1.0;
     if (deadEyes) {
-      inkPoly(g, [[exx - 1.6, eyeY - 1.6], [exx + 1.6, eyeY + 1.6]], 0.5, C.OUTLINE);
-      inkPoly(g, [[exx - 1.6, eyeY + 1.6], [exx + 1.6, eyeY - 1.6]], 0.5, C.OUTLINE);
+      inkPoly(g, [[exx - 1.4, eyeY - 1.4], [exx + 1.4, eyeY + 1.4]], 0.45, C.OUTLINE);
+      inkPoly(g, [[exx - 1.4, eyeY + 1.4], [exx + 1.4, eyeY - 1.4]], 0.45, C.OUTLINE);
       continue;
     }
-    ellipse(g, exx, eyeY, 2.3, blink ? 0.5 : 2.6, C.EYEWHITE);
+    ellipse(g, exx, eyeY, 2.0, blink ? 0.45 : 2.15, C.EYEWHITE);
     if (!blink) {
-      disc(g, exx + gazeX * 0.9, eyeY + gazeY * 0.9 + 0.3, 1.25, C.PUPIL);
-      disc(g, exx + gazeX * 0.9 - 0.45, eyeY + gazeY * 0.9 - 0.35, 0.4, C.EYEWHITE);
+      disc(g, exx + gazeX * 0.8, eyeY + gazeY * 0.8 + 0.25, 1.1, C.PUPIL);
+      disc(g, exx + gazeX * 0.8 - 0.4, eyeY + gazeY * 0.8 - 0.3, 0.36, C.EYEWHITE);
     }
+  }
+  for (const ex of [CX - 4.7, CX + 4.7]) {
+    disc(g, ex + dx, HEAD_CY + dy - 3.0, 0.7, deadEyes ? C.OUTLINE : C.EYEWHITE);
+    if (!deadEyes) disc(g, ex + dx + gazeX * 0.4, HEAD_CY + dy - 3.0 + gazeY * 0.4, 0.34, C.PUPIL);
   }
 }
 
@@ -193,36 +215,36 @@ function drawSpiderInto(g, pose) {
 // ---------------------------------------------------------------------------
 
 function poseIdle(f) {
-  const breathe = [0, 0.45, 0.75, 0.45, 0.15, 0.3][f] ?? 0;
+  const breathe = [0, 0.4, 0.7, 0.4, 0.12, 0.28][f] ?? 0;
   return {
     dy: breathe,
-    legs: standingLegs({ kneeDip: breathe * 0.55 }),
+    legs: standingLegs({ kneeDip: breathe * 0.5 }),
     blink: f === 4,
   };
 }
 
-/** 侧跑（dir=-1 左 / +1 右）：两组对相腿相位交替 + 身体起伏。 */
+/** 侧跑（dir=-1 左 / +1 右）：对相腿交替 + 身体沿视线方向轻移。 */
 function poseRunSide(f, dir) {
   const phi = (f / 8) * Math.PI * 2;
   const s = Math.sin(phi);
   const c = Math.cos(phi);
-  const stride = [s * 3, -s * 3, -s * 3, s * 3];
-  const lift = [-Math.min(0, c) * 2, Math.min(0, c) * 2, Math.min(0, c) * 2, -Math.min(0, c) * 2];
+  const stride = [s * 2.6, -s * 2.6, -s * 2.6, s * 2.6];
+  const lift = [-Math.min(0, c) * 1.8, Math.min(0, c) * 1.8, Math.min(0, c) * 1.8, -Math.min(0, c) * 1.8];
   return {
     dx: dir * 1,
-    dy: Math.abs(s) * 0.7,
+    dy: Math.abs(s) * 0.6,
     legs: standingLegs({ stride, lift }),
-    gazeX: dir * 0.8,
+    gazeX: dir * 0.9,
   };
 }
 
-/** 忙碌跑（正面原地碎步）：待答/运行中之间用。 */
+/** 忙碌跑（原地碎步）：待答/运行中之间用。 */
 function poseRunning(f) {
   const phi = (f / 6) * Math.PI * 2;
   const s = Math.sin(phi);
   return {
-    dy: Math.abs(s) * 0.9,
-    legs: standingLegs({ stride: [s * 1.6, -s * 1.6, -s * 1.6, s * 1.6] }),
+    dy: Math.abs(s) * 0.8,
+    legs: standingLegs({ stride: [s * 1.4, -s * 1.4, -s * 1.4, s * 1.4] }),
     gazeX: s * 0.4,
   };
 }
@@ -230,22 +252,22 @@ function poseRunning(f) {
 function poseWaving(f) {
   const phi = (f / 4) * Math.PI * 2;
   const legs = standingLegs({});
-  const wx = CX + 9 + Math.sin(phi) * 1.8;
-  const wy = HEAD_CY - 9 - Math.abs(Math.cos(phi));
+  const wave = Math.sin(phi);
+  // 前右腿抬起、朝画面上方挥（顶视里「举手」= 朝远离镜头方向伸）
   legs[1] = [
-    [CX + SHOULDER_X, SHOULDER_YS[0]],
-    [CX + 7, HEAD_CY - 5],
-    [wx, wy],
+    [CX + LEG_SPEC[0].sx, LEG_SPEC[0].sy],
+    [CX + 8.5, 34.5],
+    [CX + 11 + wave * 1.6, 29.5 - Math.abs(wave) * 1.6],
   ];
-  return { dy: Math.sin(phi) * 0.25, legs };
+  return { dy: Math.sin(phi) * 0.2, legs };
 }
 
-const JUMP_DY = [1, -4, -9, -3, 1];
+const JUMP_DY = [1, -3.5, -8, -2.5, 1];
 const JUMP_LIFTS = [
   [0, 0, 0, 0],
-  [3, 3, 3, 3],
-  [6, 7, 7, 6],
-  [2, 3, 3, 2],
+  [2.5, 2.5, 2.5, 2.5],
+  [5.5, 6.5, 6.5, 5.5],
+  [2, 2.5, 2.5, 2],
   [0, 0, 0, 0],
 ];
 
@@ -254,80 +276,203 @@ function poseJumping(f) {
     dy: JUMP_DY[f],
     legs: standingLegs({ lift: JUMP_LIFTS[f] }),
     airborne: f === 1 || f === 2 || f === 3,
-    gazeY: f === 2 ? -0.7 : f === 3 ? 0.5 : 0,
+    gazeY: f === 2 ? -0.6 : f === 3 ? 0.4 : 0,
   };
 }
 
-/** 翻肚 KO：腹朝上横躺、腿朝天抽搐渐歇、X 眼。 */
+/** 翻肚 KO：仰面朝天、八腿蜷曲抽动、X 眼（顶视里 = 身子压扁、腿朝上戳）。 */
 function poseFailed(f) {
   const g = blank();
   const amp = (f < 4 ? 1 : (7 - f) / 3) * 1.2;
-  ellipse(g, CX, GROUND + 2, 9, 1.4, C.SHADOW);
-  // 朝天乱蹬的腿（四对圆头折线，端点随 f 抖动）
+  ellipse(g, CX, GROUND - 1, 10, 1.8, C.SHADOW);
+  // 压扁的腹（仰面时腹在上方摊开）+ 头胸
+  ellipse(g, CX, 30, 9.6, 6.4, C.OUTLINE);
+  ellipse(g, CX, 30, 8.9, 5.7, C.BODY);
+  ellipse(g, CX, 31.6, 6.6, 2.6, C.SHADE);
+  ellipse(g, CX - 2.6, 27.6, 3.4, 1.8, C.HIGHLIGHT);
+  ellipse(g, CX, 39.5, 6.6, 4.6, C.OUTLINE);
+  ellipse(g, CX, 39.5, 5.9, 3.9, C.BODY);
+  // 朝天蹬的腿画在身体之后：从体侧伸出、明显高过躯干轮廓（端点随 f 抖）
   for (const side of [-1, 1]) {
     for (let i = 0; i < 4; i++) {
-      const bx = 27 + side * (5 - i * 2.2);
+      const bx = CX + side * (6.4 - i * 0.5);
+      const by = 31 + i * 1.1;
       const phase = Math.sin((f / 8) * Math.PI * 2 + i * 1.4) * amp;
-      const tipX = bx + side * (1.5 + phase);
-      const tipY = GROUND - 6 - 4 + i - Math.abs(phase);
-      inkPoly(g, [[bx, GROUND - 4 + i * 0.4], [tipX, tipY]], 0.55, C.OUTLINE);
+      drawLegs(g, [[
+        [bx, by],
+        [CX + side * (8.6 - i * 1.1), by - 5.4],
+        [CX + side * (5.6 - i * 1.6 + phase), by - 9.2 - Math.abs(phase)],
+      ]]);
     }
   }
-  // 躺平的腹部（略偏右）+ 腹纹
-  ellipse(g, 27, 41, 8.7, 5.7, C.OUTLINE);
-  ellipse(g, 27, 41, 8, 5, C.BODY);
-  ellipse(g, 27, 43.2, 6, 2.2, C.SHADE);
-  ellipse(g, 24.5, 39, 3, 1.8, C.HIGHLIGHT);
-  // X 眼 + 腮红贴在横躺的「头端」
-  for (const ex of [16.5, 21]) {
-    inkPoly(g, [[ex - 1, 40 - 1], [ex + 1, 40 + 1]], 0.35, C.OUTLINE);
-    inkPoly(g, [[ex - 1, 40 + 1], [ex + 1, 40 - 1]], 0.35, C.OUTLINE);
+  // X 眼
+  for (const ex of [CX - 2.7, CX + 2.7]) {
+    inkPoly(g, [[ex - 1, 39 - 1], [ex + 1, 39 + 1]], 0.35, C.OUTLINE);
+    inkPoly(g, [[ex - 1, 39 + 1], [ex + 1, 39 - 1]], 0.35, C.OUTLINE);
   }
-  disc(g, 14.5, 42, 0.55, C.BLUSH);
-  disc(g, 22.8, 42, 0.55, C.BLUSH);
+  disc(g, CX - 4.4, 40.5, 0.5, C.BLUSH);
+  disc(g, CX + 4.4, 40.5, 0.5, C.BLUSH);
   return g;
 }
 
-/** 前腿合十（等待你的回答）：两前腿在胸前并拢、身体微前倾。 */
+/** 前腿合十（等待你的回答）：两条前腿在身前并拢、身体微前倾。 */
 function poseWaiting(f) {
   const phi = (f / 6) * Math.PI * 2;
-  const legs = standingLegs({ kneeDip: 0.4 });
-  const tipX = CX + Math.sin(phi) * 0.35;
-  const tipY = HEAD_CY + 4 + Math.sin(phi) * 0.3;
-  legs[0] = [[CX - SHOULDER_X, SHOULDER_YS[0]], [CX - 4.5, HEAD_CY + 2], [tipX - 0.4, tipY]];
-  legs[1] = [[CX + SHOULDER_X, SHOULDER_YS[0]], [CX + 4.5, HEAD_CY + 2], [tipX + 0.4, tipY]];
-  return { dy: 0.3, legs, gazeX: Math.sin(phi) * 0.3 };
+  const legs = standingLegs({ kneeDip: 0.35 });
+  const tipX = CX + Math.sin(phi) * 0.3;
+  const tipY = HEAD_CY + 5.2 + Math.sin(phi) * 0.25;
+  legs[0] = [[CX - LEG_SPEC[0].sx, LEG_SPEC[0].sy], [CX - 5.2, HEAD_CY + 3], [tipX - 0.5, tipY]];
+  legs[1] = [[CX + LEG_SPEC[0].sx, LEG_SPEC[0].sy], [CX + 5.2, HEAD_CY + 3], [tipX + 0.5, tipY]];
+  return { dy: 0.25, legs, gazeX: Math.sin(phi) * 0.3 };
 }
 
-/** 织网检视（刚完成）：吐丝 + 头顶斜上拉出一小片网。 */
-function poseReview(f) {
-  const g = blank();
-  const s = Math.sin((f / 6) * Math.PI * 2);
-  // 网骨：右上角三根辐条 + 两道弧
-  const webX = 38;
-  const webY = 9;
-  for (const a of [0.3, 1.2, 2.1]) {
-    inkPoly(g, [[webX, webY], [webX - Math.cos(a) * 8, webY + Math.sin(a) * 8]], 0.3, C.SILK);
-  }
-  for (const r of [3.5, 6.5]) {
-    const r2 = r * r;
-    for (let t = 0; t <= 14; t++) {
-      const a = 0.3 + ((2.1 - 0.3) * t) / 14;
-      const x = webX - Math.cos(a) * r;
-      const y = webY + Math.sin(a) * r;
-      px(g, x, y, C.SILK);
+/** 缩小整只：把整格按 scale 最近邻缩到 (toX,toY) 锚点（锚点 = 体轴/腹部中心）。 */
+function blitScaled(g, src, scale, toX, toY) {
+  const minTx = Math.floor(toX - CX * scale);
+  const maxTx = Math.ceil(toX + (GW - CX) * scale);
+  const minTy = Math.floor(toY - AB_CY * scale);
+  const maxTy = Math.ceil(toY + (GH - AB_CY) * scale);
+  for (let ty = minTy; ty <= maxTy; ty++) {
+    for (let tx = minTx; tx <= maxTx; tx++) {
+      const sx = Math.floor(CX + (tx - toX) / scale);
+      const sy = Math.floor(AB_CY + (ty - toY) / scale);
+      if (sx < 0 || sy < 0 || sx >= GW || sy >= GH) continue;
+      const c = src[sy * GW + sx];
+      if (c) px(g, tx, ty, c);
     }
   }
-  // 吐丝线：嘴 → 网心
-  inkPoly(g, [[CX + 2, HEAD_CY + 3], [webX - 5, webY + 4]], 0.28, C.SILK);
-  const legs = standingLegs({
-    stride: [s * 0.8, -s * 0.8, -s * 0.8, s * 0.8],
+}
+
+// 网：六根辐条的圆网（少量线，静态），居中、尽量铺满单元格
+const WEB_HUB = [24, 26];
+const WEB_RAYS = [
+  [42, 26],
+  [33, 39],
+  [15, 39],
+  [6, 26],
+  [15, 13],
+  [33, 13],
+];
+const WEB_RINGS = [0.4, 0.65, 0.88];
+
+/** 画整张网（辐条 + 环，环首尾相连）。 */
+function drawWeb(g) {
+  disc(g, WEB_HUB[0], WEB_HUB[1], 0.8, C.SILK);
+  for (const [ex, ey] of WEB_RAYS) {
+    inkPoly(g, [[WEB_HUB[0], WEB_HUB[1]], [ex, ey]], 0.62, C.SILK);
+  }
+  for (const k of WEB_RINGS) {
+    for (let i = 0; i < WEB_RAYS.length; i++) {
+      const a = WEB_RAYS[i];
+      const b = WEB_RAYS[(i + 1) % WEB_RAYS.length];
+      const p1 = [WEB_HUB[0] + (a[0] - WEB_HUB[0]) * k, WEB_HUB[1] + (a[1] - WEB_HUB[1]) * k];
+      const p2 = [WEB_HUB[0] + (b[0] - WEB_HUB[0]) * k, WEB_HUB[1] + (b[1] - WEB_HUB[1]) * k];
+      inkPoly(g, [p1, p2], 0.52, C.SILK);
+    }
+  }
+}
+
+/** 小蜘蛛的爬行路线（6 帧）：踩 0.45 环各线段中点，顺时针绕网一整圈。 */
+const WEB_PATH = [
+  [30.1, 29.4], [24, 32.8], [17.9, 29.4], [17.9, 22.6], [24, 19.3], [30.1, 22.6],
+];
+/** 每帧朝向 = 指向下一站的方位（跟着路线转，不是一味看右）。 */
+const WEB_GAZE = [
+  [-0.8, 0.45], [-0.8, -0.45], [0, -0.9], [0.8, -0.45], [0.8, 0.45], [0, 0.9],
+];
+/** 缩小后整只的视觉中心（相对腹部锚点的偏移，unit）——落点按它对齐环线。 */
+const VIS_CY = (AB_CY + HEAD_CY) / 2;
+
+/**
+ * 结网（运行中循环值守）：网是**静态**一整张；只有**缩小的小蜘蛛在网上面爬**
+ * （主循环播完从头再爬，player 对该行 loopForever）。
+ */
+function poseReview(f) {
+  const g = blank();
+  drawWeb(g);
+  // 缩小的小蜘蛛踩着网线顺时针爬（没有地面投影——它不在「地上」）
+  const [ax, ay] = WEB_PATH[f];
+  const [gx, gy] = WEB_GAZE[f];
+  const step = Math.sin((f / 6) * Math.PI * 2);
+  const small = blank();
+  drawSpiderInto(small, {
+    legs: standingLegs({ stride: [step * 1.2, -step * 1.2, -step * 1.2, step * 1.2] }),
+    gazeX: gx,
+    gazeY: gy,
+    noShadow: true,
   });
-  drawSpiderInto(g, { legs, dy: Math.abs(s) * 0.4, gazeX: 0.8, gazeY: -0.4 });
+  const scale = 0.4;
+  blitScaled(g, small, scale, ax, ay - (VIS_CY - AB_CY) * scale);
+  return g;
+}
+
+/** 折线整体平移（poseEnter 腿随身体下移用）。 */
+function offsetPts(pts, ox, oy) {
+  return pts.map(([x, y]) => [x + ox, y + oy]);
+}
+
+/** 入场（顺播）= 垂丝悬降（离场 = 同行倒放 = 升丝离开）：dy 大→小、腿微垂。
+ * 画进自己的栅格（要额外画一根从画布顶拉下来的蛛丝）。 */
+function poseEnter(f) {
+  const g = blank();
+  const DY = [14, 10, 6.5, 3.5, 1.5, 0.4, 0, 0];
+  const dy = DY[f];
+  inkPoly(g, [[CX, 0], [CX, HEAD_CY + dy - HEAD_RY - 2]], 0.3, C.SILK);
+  ellipse(g, CX, GROUND - 1, dy < 2 ? 11 : 8, dy < 2 ? 1.9 : 1.4, dy < 2 ? C.SHADOW : C.SHADOW_WEAK);
+  const legs = standingLegs({ lift: [1.5, 1, 0.5, 0], kneeDip: f >= 6 ? 0.7 : 0 });
+  drawLegs(g, legs.map((lp) => offsetPts(lp, 0, dy)));
+  // 腹
+  ellipse(g, CX, AB_CY + dy, AB_RX + 0.7, AB_RY + 0.7, C.OUTLINE);
+  ellipse(g, CX, AB_CY + dy, AB_RX, AB_RY, C.BODY);
+  ellipse(g, CX - AB_RX * 0.3, AB_CY + dy - AB_RY * 0.42, AB_RX * 0.5, AB_RY * 0.3, C.HIGHLIGHT);
+  // 头胸
+  ellipse(g, CX, HEAD_CY + dy, HEAD_RX + 0.7, HEAD_RY + 0.7, C.OUTLINE);
+  ellipse(g, CX, HEAD_CY + dy, HEAD_RX, HEAD_RY, C.BODY);
+  const eyeY = HEAD_CY + dy + 1.0;
+  for (const ex of [CX - 2.7, CX + 2.7]) {
+    ellipse(g, ex, eyeY, 2.0, 2.15, C.EYEWHITE);
+    disc(g, ex, eyeY + 0.25, 1.1, C.PUPIL);
+    disc(g, ex - 0.4, eyeY - 0.3, 0.36, C.EYEWHITE);
+  }
+  for (const ex of [CX - 4.7, CX + 4.7]) disc(g, ex, HEAD_CY + dy - 3.0, 0.7, C.EYEWHITE);
+  return g;
+}
+
+/** 睡觉：蜷低、闭眼（眯缝）、慢呼吸——循环值守行，播完自身循环由玩家驱动。 */
+function poseSleep(f) {
+  const g = blank();
+  const breathe = [0, 0.5, 0.9, 0.9, 0.5, 0][f];
+  ellipse(g, CX, GROUND - 1, 10, 1.7, C.SHADOW);
+  ellipse(g, CX, AB_CY + 3 - breathe * 0.5, AB_RX + 0.8, (AB_RY + 0.8) * (1 + breathe * 0.05), C.OUTLINE);
+  ellipse(g, CX, AB_CY + 3 - breathe * 0.5, AB_RX + 0.1, (AB_RY + 0.1) * (1 + breathe * 0.05), C.BODY);
+  ellipse(g, CX, AB_CY + 3 - breathe * 0.5 - AB_RY * 0.4, AB_RX * 0.5, AB_RY * 0.3, C.HIGHLIGHT);
+  // 头胸缩在腹前，眼睛闭成两道弧
+  ellipse(g, CX, HEAD_CY - 1 - breathe * 0.4, HEAD_RX + 0.6, HEAD_RY * 0.85, C.OUTLINE);
+  ellipse(g, CX, HEAD_CY - 1 - breathe * 0.4, HEAD_RX - 0.1, HEAD_RY * 0.8, C.BODY);
+  for (const ex of [CX - 2.7, CX + 2.7]) {
+    inkPoly(g, [[ex - 1.8, HEAD_CY + 0.6], [ex + 1.8, HEAD_CY + 0.6]], 0.4, C.HIGHLIGHT);
+  }
+  // 收在体侧的腿：贴轮廓画在身体之后，才看得出是只蜷起来的蜘蛛
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const bx = CX + side * (AB_RX - 1.4 + (i % 2) * 1.0);
+      const by = AB_CY + 2 + i * 1.7;
+      drawLegs(g, [[[bx, by], [bx + side * 3.0, by + 0.8]]]);
+    }
+  }
+  // 呼吸泡：f=2/3 大泡漂在头前方，f=4/5 更小的泡飘更高
+  if (f === 2 || f === 3) {
+    ellipse(g, CX + HEAD_RX + 2.2, HEAD_CY + 1, f === 2 ? 1.1 : 1.5, f === 2 ? 0.9 : 1.25, C.SILK);
+    ellipse(g, CX + HEAD_RX + (f === 2 ? 4.6 : 6), HEAD_CY - 2, f === 2 ? 0.65 : 1.0, C.SILK);
+  } else if (f === 4) {
+    ellipse(g, CX + HEAD_RX + 5, HEAD_CY - 5, 0.85, 0.75, C.SILK);
+  }
   return g;
 }
 
 const POSE_FN = {
+  enter: poseEnter,
+  sleep: poseSleep,
   idle: poseIdle,
   'running-right': (f) => poseRunSide(f, 1),
   'running-left': (f) => poseRunSide(f, -1),
@@ -343,7 +488,7 @@ const POSE_FN = {
 // 组装精灵图
 // ---------------------------------------------------------------------------
 
-/** 全部行 × 帧 → 单个 RGBA 缓冲（1536×1872；unit 网格放大 U 倍）。 */
+/** 全部行 × 帧 → 单个 RGBA 缓冲（1536×2288；unit 网格放大 U 倍）。 */
 function buildSheet() {
   const W = COLS * CELL_W;
   const H = Object.keys(ROWS).length * CELL_H;
@@ -352,7 +497,7 @@ function buildSheet() {
     const fn = POSE_FN[name];
     for (let f = 0; f < spec.frames; f++) {
       const drawn = fn(f);
-      // poseFailed/poseReview 直接返回画好的栅格；其余返回 pose 对象 → 站姿渲染
+      // poseFailed/poseReview/poseEnter/poseSleep 直接返回画好的栅格；其余返回 pose 对象 → 站姿渲染
       const g = drawn instanceof Uint8Array ? drawn : (() => {
         const gg = blank();
         drawSpiderInto(gg, drawn);
@@ -458,7 +603,7 @@ writeFileSync(
       id: 'weave-spider',
       displayName: 'Weave Spider',
       description: 'The default weave pet — a small spider that weaves alongside you.',
-      spriteVersionNumber: 1,
+      spriteVersionNumber: 2,
       spritesheetPath: 'spritesheet.png',
     },
     null,
