@@ -481,6 +481,8 @@ async function main(): Promise<void> {
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
+  // shutdown 定义在下方（要等各子系统都建好）：路由经这个容器拿到它
+  const shutdownRef: { fn?: () => void } = {};
 
   // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
   const requestHandler = weaveRequestHandler({
@@ -525,6 +527,7 @@ async function main(): Promise<void> {
     pluginStates: new PluginStateRepository(db),
     toolkit,
     auth,
+    requestShutdown: () => shutdownRef.fn?.(),
   });
   const server = http.createServer(requestHandler);
 
@@ -545,11 +548,31 @@ async function main(): Promise<void> {
     clearInterval(cronTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
-    void hookPipeline.stop();
     server.close();
     tls?.server.close();
-    process.exit(0);
+    // WAL 并回主库再退（与生产入口同口径）：升级/重启后不必回放孤儿 -wal
+    const closeDb = (): void => {
+      try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        db.close();
+      } catch {
+        /* 已关/已坏：退出即可，句柄由 OS 收 */
+      }
+    };
+    const forceExit = setTimeout(() => {
+      closeDb();
+      process.exit(0);
+    }, 3_000);
+    hookPipeline
+      .stop()
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(forceExit);
+        closeDb();
+        process.exit(0);
+      });
   };
+  shutdownRef.fn = shutdown;
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 

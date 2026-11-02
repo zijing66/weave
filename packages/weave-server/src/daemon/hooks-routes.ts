@@ -118,6 +118,7 @@ export async function handleHooksRoutes(
     pathname.startsWith('/uploads/') ||
     pathname.startsWith('/images/') ||
     pathname.startsWith('/visualizations/') ||
+    pathname === '/daemon/shutdown' ||
     pathname === '/pets' ||
     pathname.startsWith('/pets/');
   if (!isOwnedPath) return false;
@@ -128,6 +129,18 @@ export async function handleHooksRoutes(
   // ---- 会话列表 / 改名 ----
   // POST /dashboard/refresh — 空载荷的「重推一次」触发：SSE 连接早于仪表盘挂载，
   // 首连推送的分块会被错过；挂载时打这一枪让服务端按需重发（数据仍走 SSE）。
+  // ---- 本机停机：全局安装前的优雅停机（先并 WAL 再退），未接管的 daemon 回 503 ----
+  if (pathname === '/daemon/shutdown' && req.method === 'POST') {
+    if (!deps.requestShutdown) {
+      sendJson(res, 503, { error: 'Shutdown is not available' });
+      return true;
+    }
+    sendJson(res, 200, { ok: true });
+    // 先把响应写出去，再跑停机链（它会 close 数据库并 exit）
+    setTimeout(() => deps.requestShutdown?.(), 0);
+    return true;
+  }
+
   if (pathname === '/dashboard/refresh' && req.method === 'POST') {
     deps.dashboardRefresh?.();
     sendJson(res, 200, { ok: true });

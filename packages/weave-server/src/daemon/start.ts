@@ -510,6 +510,8 @@ export function startDaemon(): void {
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
+  // shutdown 定义在下方（要等各子系统都建好）：路由经这个容器拿到它
+  const shutdownRef: { fn?: () => void } = {};
 
   // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
   const requestHandler = weaveRequestHandler({
@@ -542,6 +544,7 @@ export function startDaemon(): void {
     questionTracker,
     sideQuestions: sideQuestionDeps,
     sessionWatches,
+    requestShutdown: () => shutdownRef.fn?.(),
     watchEngine,
     orchestrations,
     orchestrationRuns,
@@ -606,6 +609,7 @@ export function startDaemon(): void {
         process.exit(0);
       });
   };
+  shutdownRef.fn = shutdown;
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 

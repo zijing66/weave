@@ -74,6 +74,8 @@ export interface WeaveServerDeps {
   hookEvents?: HookEventRepository;
   /** 渲染块 fragment 落点根；缺省 `<data>/visualizations`（测试注入临时目录）。 */
   visualizationsDir?: string;
+  /** 本机停机入口（`POST /daemon/shutdown`）：走 start.ts 的 shutdown 链，先并 WAL 再退。 */
+  requestShutdown?: () => void;
   /**
    * 事件接入源（批 4b：类型由 HookAdapter 放宽为结构兼容的 EventSource，
    * `HookAdapter[]` 仍可赋值）；`harnesses` 存在时 POST /hooks 由其派生。

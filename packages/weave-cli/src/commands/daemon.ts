@@ -11,6 +11,7 @@ import {
   accessUrls,
 } from '@weavecode/server';
 import { logger } from '@weavecode/core';
+import { localTokenHeader } from './daemon-auth.js';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
@@ -149,6 +150,30 @@ async function fetchHealth(port: number): Promise<{ pid: number; port: number; u
  * 停止守护进程。活体优先：/health 报的是当前监听者的真实 pid；状态文件的
  * pid 可能陈尸（kill 它会误伤 pid 回收后的无关进程），只在探针失败时兜底。
  */
+/**
+ * 请 daemon 自己退（本机令牌门后的停机端点）：Windows 上 process.kill 就是
+ * TerminateProcess，shutdown 链里的 wal_checkpoint 一行都跑不到。端点不通
+ * （旧版 daemon / 端口变了）返回 false，调用方退回强杀。
+ */
+async function requestGracefulStop(port: number): Promise<boolean> {
+  const headers = localTokenHeader();
+  if (!headers['x-weave-local']) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(`http://${DAEMON_HOST}:${port}/daemon/shutdown`, {
+      method: 'POST',
+      headers,
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function stopAction(): Promise<void> {
   const state = readDaemonState();
   const port = state?.port ?? DEFAULT_PORT;
@@ -162,11 +187,16 @@ async function stopAction(): Promise<void> {
 
   let killedPid: number | undefined;
   if (pid) {
-    try {
-      process.kill(pid);
+    // 先走优雅路径（shutdown 链会把 WAL 并回主库）；回不了才强杀
+    if (await requestGracefulStop(port)) {
       killedPid = pid;
-    } catch {
-      // 已死/陈尸 pid——落空即清理状态。
+    } else {
+      try {
+        process.kill(pid);
+        killedPid = pid;
+      } catch {
+        // 已死/陈尸 pid——落空即清理状态。
+      }
     }
   }
   clearDaemonState();
