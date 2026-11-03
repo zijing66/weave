@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { registerInvalidator } from '@/lib/sse';
 import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
@@ -328,58 +329,64 @@ export function ToolkitSection({
           </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            title={t('toolkit.uninstallTip')}
-            disabled={isBusy}
-            onClick={() => void uninstall(p)}
-            className="rounded p-1 text-neutral-500 hover:bg-red-950/40 hover:text-red-300 disabled:opacity-40 [&_svg]:pointer-events-none"
-          >
-            <FeedbackIcon
-              state={fb.stateOf(rowKey(p))}
-              className="h-3.5 w-3.5"
-              icon={<Trash2 className="h-3.5 w-3.5" />}
-            />
-          </button>
+          <Tooltip label={t('toolkit.uninstallTip')}>
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => void uninstall(p)}
+              className="rounded p-1 text-neutral-500 hover:bg-red-950/40 hover:text-red-300 disabled:opacity-40 [&_svg]:pointer-events-none"
+            >
+              <FeedbackIcon
+                state={fb.stateOf(rowKey(p))}
+                className="h-3.5 w-3.5"
+                icon={<Trash2 className="h-3.5 w-3.5" />}
+              />
+            </button>
+          </Tooltip>
           {userManaged ? (
             p.installed ? (
-              <button
-                type="button"
-                disabled={isBusy}
-                onClick={() => void cycleUserEnable(p, NEXT_STATE[userState])}
-                title={t('toolkit.enableTip', { state: t(STATE_LABEL[userState]) })}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
-                  userState === 'on'
-                    ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
-                    : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
-                )}
+              <Tooltip
+                label={t('toolkit.enableTip', { state: t(STATE_LABEL[userState]) })}
               >
-                <FeedbackIcon
-                  state={fb.stateOf(rowKey(p))}
-                  className="h-3 w-3"
-                  icon={<Power className="h-3 w-3" />}
-                />
-                {t(STATE_LABEL[userState])}
-              </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => void cycleUserEnable(p, NEXT_STATE[userState])}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                    userState === 'on'
+                      ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
+                      : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
+                  )}
+                >
+                  <FeedbackIcon
+                    state={fb.stateOf(rowKey(p))}
+                    className="h-3 w-3"
+                    icon={<Power className="h-3 w-3" />}
+                  />
+                  {t(STATE_LABEL[userState])}
+                </button>
+              </Tooltip>
             ) : (
-              <button
-                type="button"
-                disabled={isBusy}
-                onClick={() => void installUser(p)}
-                title={t('toolkit.installTip')}
-                className="rounded bg-blue-900/50 px-2 py-0.5 text-10 text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
-              >
-                {isBusy ? t('toolkit.installing') : t('toolkit.install')}
-              </button>
+              <Tooltip label={t('toolkit.installTip')}>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => void installUser(p)}
+                  className="rounded bg-blue-900/50 px-2 py-0.5 text-10 text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
+                >
+                  {isBusy ? t('toolkit.installing') : t('toolkit.install')}
+                </button>
+              </Tooltip>
             )
           ) : (
-            <Switch
-              checked={p.enabled}
-              disabled={isBusy}
-              onChange={(v) => void toggle(p, v)}
-              title={t('toolkit.toggleTip')}
-            />
+            <Tooltip label={t('toolkit.toggleTip')}>
+              <Switch
+                checked={p.enabled}
+                disabled={isBusy}
+                onChange={(v) => void toggle(p, v)}
+              />
+            </Tooltip>
           )}
         </span>
       </div>
@@ -415,22 +422,27 @@ export function ToolkitSection({
       {visible.length > 0 && (
         <div className="flex items-center gap-1">
           <span className="text-11 text-neutral-500">{t('toolkit.hint')}</span>
-          <button
-            type="button"
-            onClick={() => {
-              userTouchedFold.current = true;
-              setCollapsed(anyExpanded ? new Set(allFoldKeys) : new Set());
-            }}
-            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
-            title={anyExpanded ? t('toolkit.collapseAllGroups') : t('toolkit.expandAllGroups')}
+          <Tooltip
+            label={anyExpanded ? t('toolkit.collapseAllGroups') : t('toolkit.expandAllGroups')}
+            side="top"
+            className="ml-auto"
           >
-            {anyExpanded ? (
-              <ChevronsDownUp className="h-3 w-3" />
-            ) : (
-              <ChevronsUpDown className="h-3 w-3" />
-            )}
-            {anyExpanded ? t('toolkit.collapseAll') : t('toolkit.expandAll')}
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                userTouchedFold.current = true;
+                setCollapsed(anyExpanded ? new Set(allFoldKeys) : new Set());
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
+            >
+              {anyExpanded ? (
+                <ChevronsDownUp className="h-3 w-3" />
+              ) : (
+                <ChevronsUpDown className="h-3 w-3" />
+              )}
+              {anyExpanded ? t('toolkit.collapseAll') : t('toolkit.expandAll')}
+            </button>
+          </Tooltip>
         </div>
       )}
 

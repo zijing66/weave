@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { Combobox } from '@/components/ui/combobox';
+import { Tooltip } from '@/components/ui/tooltip';
 import { FieldHint } from '@/components/ui/field-hint';
 import type { MessageKey } from '@/i18n/dict';
 import {
@@ -1439,15 +1440,20 @@ export function LifecycleMindmap({
               <span className="text-xs font-semibold text-neutral-200">
                 {t('hooks.mindmap.detailTitle')}
               </span>
-              <button
-                type="button"
-                onClick={() => setDetailNode(null)}
-                title={t('hooks.mindmap.closeDetail')}
-                aria-label={t('hooks.mindmap.closeDetail')}
-                className="ml-auto rounded p-0.5 text-neutral-500 transition-colors hover:text-neutral-100"
+              <Tooltip
+                label={t('hooks.mindmap.closeDetail')}
+                side="top"
+                className="ml-auto"
               >
-                <X className="h-3.5 w-3.5" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailNode(null)}
+                  aria-label={t('hooks.mindmap.closeDetail')}
+                  className="rounded p-0.5 text-neutral-500 transition-colors hover:text-neutral-100"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
             </div>
             <div className="space-y-2 overflow-y-auto px-3 py-2 text-11">
               {renderDetail(detailNode)}

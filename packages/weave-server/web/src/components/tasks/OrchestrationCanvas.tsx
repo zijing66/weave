@@ -38,6 +38,7 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useBackPop } from '@/lib/back-pop';
 import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackground';
 import { useSessionStatus } from './session-status-store';
@@ -593,23 +594,24 @@ export function OrchestrationCanvas({
           canvasFull && 'fixed inset-0 z-[80] h-auto rounded-none border-0 bg-neutral-900',
         )}
       >
-        <button
-          type="button"
-          onClick={() => setCanvasFull((v) => !v)}
-          title={t(canvasFull ? 'orch.canvasExitFull' : 'orch.canvasFull')}
-          aria-label={t(canvasFull ? 'orch.canvasExitFull' : 'orch.canvasFull')}
-          className={cn(
-            'absolute top-2 z-30 rounded border border-edge/[0.1] bg-neutral-900/90 p-1 text-neutral-400 transition-colors hover:text-neutral-100',
-            // 右上角有面板就让位：检查器（w-80）> 总览的连线信息/首节点面板（w-64/w-60）。
-            (selNode && draft) || selEdge
-              ? 'right-[21rem]'
-              : entryPick != null || edgeInfo != null
-                ? 'right-[17.5rem]'
-                : 'right-2',
-          )}
-        >
-          {canvasFull ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
-        </button>
+        <Tooltip label={t(canvasFull ? 'orch.canvasExitFull' : 'orch.canvasFull')} side="top">
+          <button
+            type="button"
+            onClick={() => setCanvasFull((v) => !v)}
+            aria-label={t(canvasFull ? 'orch.canvasExitFull' : 'orch.canvasFull')}
+            className={cn(
+              'absolute top-2 z-30 rounded border border-edge/[0.1] bg-neutral-900/90 p-1 text-neutral-400 transition-colors hover:text-neutral-100',
+              // 右上角有面板就让位：检查器（w-80）> 总览的连线信息/首节点面板（w-64/w-60）。
+              (selNode && draft) || selEdge
+                ? 'right-[21rem]'
+                : entryPick != null || edgeInfo != null
+                  ? 'right-[17.5rem]'
+                  : 'right-2',
+            )}
+          >
+            {canvasFull ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+          </button>
+        </Tooltip>
         {draft === null && (list === null || list.length === 0) ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="text-xs text-neutral-600">
@@ -754,15 +756,16 @@ export function OrchestrationCanvas({
                       ? t('orch.webhookEntry')
                       : sessionLabel(sessionById.get(entryPick)?.title ?? null, entryPick)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setEntryPick(null)}
-                    title={t('common.close')}
-                    aria-label={t('common.close')}
-                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <Tooltip label={t('common.close')} side="top">
+                    <button
+                      type="button"
+                      onClick={() => setEntryPick(null)}
+                      aria-label={t('common.close')}
+                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
                 </div>
                 {entryOrchestrations(entryPick).map((row) => (
                   <button
@@ -813,15 +816,16 @@ export function OrchestrationCanvas({
                       ) ?? '',
                     )}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setEdgeInfo(null)}
-                    title={t('common.close')}
-                    aria-label={t('common.close')}
-                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <Tooltip label={t('common.close')} side="top">
+                    <button
+                      type="button"
+                      onClick={() => setEdgeInfo(null)}
+                      aria-label={t('common.close')}
+                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
                 </div>
                 {(() => {
                   const [fromKey, toKey] = edgeInfo.split('->');
@@ -1186,15 +1190,16 @@ export function OrchestrationCanvas({
                   <span className="min-w-0 flex-1 truncate text-11 font-medium text-neutral-100">
                     {sessionLabel(sessionById.get(selNode)?.title ?? null, selNode)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setSel(null)}
-                    title={t('common.close')}
-                    aria-label={t('common.close')}
-                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <Tooltip label={t('common.close')} side="top">
+                    <button
+                      type="button"
+                      onClick={() => setSel(null)}
+                      aria-label={t('common.close')}
+                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
                 </div>
                 <div className="flex flex-wrap items-center gap-1">
                   <button
@@ -1219,30 +1224,31 @@ export function OrchestrationCanvas({
                 </div>
                 {/* 中间节点可勾「自然回合触发下游」（入口恒可，不用勾）。 */}
                 {!graphDirections(draft.nodes, draft.edges).entries.some((n) => n.id === selNode) && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      patch((d) => ({
-                        ...d,
-                        nodes: d.nodes.map((n) =>
-                          n.id === selNode ? { ...n, autoFire: !n.autoFire } : n,
-                        ),
-                      }))
-                    }
-                    title={t('orch.autoFireHint')}
-                    className={cn(
-                      'w-full rounded border px-1.5 py-1 text-11 transition-colors',
-                      draft.nodes.find((n) => n.id === selNode)?.autoFire
-                        ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
-                        : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
-                    )}
-                  >
-                    {t(
-                      draft.nodes.find((n) => n.id === selNode)?.autoFire
-                        ? 'orch.autoFireOn'
-                        : 'orch.autoFireOff',
-                    )}
-                  </button>
+                  <Tooltip label={t('orch.autoFireHint')}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch((d) => ({
+                          ...d,
+                          nodes: d.nodes.map((n) =>
+                            n.id === selNode ? { ...n, autoFire: !n.autoFire } : n,
+                          ),
+                        }))
+                      }
+                      className={cn(
+                        'w-full rounded border px-1.5 py-1 text-11 transition-colors',
+                        draft.nodes.find((n) => n.id === selNode)?.autoFire
+                          ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
+                          : 'border-edge/[0.1] text-neutral-400 hover:bg-edge/[0.06]',
+                      )}
+                    >
+                      {t(
+                        draft.nodes.find((n) => n.id === selNode)?.autoFire
+                          ? 'orch.autoFireOn'
+                          : 'orch.autoFireOff',
+                      )}
+                    </button>
+                  </Tooltip>
                 )}
                 <div className="space-y-1 border-t border-edge/[0.06] pt-1">
                   <span className="text-11 text-neutral-500">{t('orch.edgesLabel')}</span>
@@ -1275,15 +1281,16 @@ export function OrchestrationCanvas({
                     {' → '}
                     {nodeLabel(selEdge.to)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setSel(null)}
-                    title={t('common.close')}
-                    aria-label={t('common.close')}
-                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <Tooltip label={t('common.close')} side="top">
+                    <button
+                      type="button"
+                      onClick={() => setSel(null)}
+                      aria-label={t('common.close')}
+                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
                 </div>
                 <textarea
                   value={selEdge.text}
@@ -1409,15 +1416,16 @@ export function OrchestrationCanvas({
                   <span className="min-w-0 flex-1 truncate text-11 font-medium text-neutral-100">
                     {nodeLabel(selNode)}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setSel(null)}
-                    title={t('common.close')}
-                    aria-label={t('common.close')}
-                    className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
+                  <Tooltip label={t('common.close')} side="top">
+                    <button
+                      type="button"
+                      onClick={() => setSel(null)}
+                      aria-label={t('common.close')}
+                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
                 </div>
                 {graphDirections(draft.nodes, draft.edges).entries.some((n) => n.id === selNode) ? (
                   <>

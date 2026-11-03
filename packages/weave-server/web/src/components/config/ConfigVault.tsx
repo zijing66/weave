@@ -3,6 +3,7 @@ import { Copy, Check, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import type { ConfigProfileMeta } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { Tooltip } from '@/components/ui/tooltip';
 import type { ActionState } from '@/lib/action-feedback';
 import { useT } from '@/i18n/I18nProvider';
 
@@ -192,43 +193,47 @@ export function ConfigVault({
                     />
                     {t('cfg.compare')}
                   </button>
-                  <button
-                    disabled={stateOf(`cfg-saveinto:${profile.id}`) === 'loading'}
-                    onClick={() => onSaveInto(profile.id)}
-                    title={t('cfg.saveIntoHint')}
-                    className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-0.5 text-11 text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
-                  >
+                  <Tooltip label={t('cfg.saveIntoHint')}>
+                    <button
+                      disabled={stateOf(`cfg-saveinto:${profile.id}`) === 'loading'}
+                      onClick={() => onSaveInto(profile.id)}
+                      className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-0.5 text-11 text-neutral-200 hover:bg-neutral-700 disabled:opacity-40"
+                    >
                     <FeedbackIcon
                       state={stateOf(`cfg-saveinto:${profile.id}`)}
                       className="h-3 w-3"
                       icon={<Save className="h-3 w-3" />}
                     />
                     {t('cfg.saveInto')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setRenamingId(profile.id);
-                      setRenameText(profile.name);
-                    }}
-                    title={t('cfg.profileName')}
-                    className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                  <button
-                    onClick={() => onDuplicate(profile.id)}
-                    title={t('cfg.profileDuplicate')}
-                    className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
-                  >
-                    <Copy className="h-3 w-3" />
-                  </button>
-                  <button
-                    onClick={() => onRemove(profile.id)}
-                    title={t('cfg.profileRemove')}
-                    className="p-0.5 rounded text-neutral-600 hover:text-red-300 hover:bg-neutral-800"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t('cfg.profileName')}>
+                    <button
+                      onClick={() => {
+                        setRenamingId(profile.id);
+                        setRenameText(profile.name);
+                      }}
+                      className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t('cfg.profileDuplicate')}>
+                    <button
+                      onClick={() => onDuplicate(profile.id)}
+                      className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t('cfg.profileRemove')}>
+                    <button
+                      onClick={() => onRemove(profile.id)}
+                      className="p-0.5 rounded text-neutral-600 hover:text-red-300 hover:bg-neutral-800"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </Tooltip>
                 </li>
               );
             })}

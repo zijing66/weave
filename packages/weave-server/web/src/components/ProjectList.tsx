@@ -18,6 +18,7 @@ import {
 import { api, type HarnessCheck, type ProjectRow, type TerminalTarget } from '@/lib/api';
 import { AgentBadge } from '@/components/AgentBadge';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { cssPx } from '@/lib/font-scale';
 import { useBackPop } from '@/lib/back-pop';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -25,6 +26,7 @@ import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { Tooltip } from '@/components/ui/tooltip';
 import { StorageSettingsModal } from '@/components/StorageSettingsModal';
 import { useToast } from '@/components/Toast';
 import { errorText, type ActionState } from '@/lib/action-feedback';
@@ -374,16 +376,17 @@ export function ProjectList({
         </p>
         {/* 查看归档入口：有归档项目才出现，点击弹 3 列卡片弹窗 */}
         {archivedProjects.length > 0 && (
-          <button
-            type="button"
-            aria-label={t('project.archivedCount', { n: archivedProjects.length })}
-            title={t('project.archivedCount', { n: archivedProjects.length })}
-            onClick={() => setArchivedOpen(true)}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-11 text-neutral-500 transition-colors hover:text-neutral-200 hover:bg-neutral-800/50"
-          >
-            <Archive className="h-3 w-3" />
-            {archivedProjects.length}
-          </button>
+          <Tooltip label={t('project.archivedCount', { n: archivedProjects.length })} side="top">
+            <button
+              type="button"
+              aria-label={t('project.archivedCount', { n: archivedProjects.length })}
+              onClick={() => setArchivedOpen(true)}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-11 text-neutral-500 transition-colors hover:text-neutral-200 hover:bg-neutral-800/50"
+            >
+              <Archive className="h-3 w-3" />
+              {archivedProjects.length}
+            </button>
+          </Tooltip>
         )}
       </div>
       {projects.length === 0 && (
@@ -424,14 +427,15 @@ export function ProjectList({
               <div className="flex items-start">
                 {/* 拖拽手柄：「这张卡可拖」的显式 affordance；listeners 只挂它，
                     行点选/右键不误触（PointerSensor 5px 位移阈值激活）。 */}
-                <span
-                  {...attributes}
-                  {...listeners}
-                  title={t('project.dragToReorder')}
-                  className="ml-1 mt-2 shrink-0 cursor-grab touch-none rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-300 active:cursor-grabbing"
-                >
-                  <GripVertical className="h-3.5 w-3.5" />
-                </span>
+                <Tooltip label={t('project.dragToReorder')}>
+                  <span
+                    {...attributes}
+                    {...listeners}
+                    className="ml-1 mt-2 shrink-0 cursor-grab touch-none rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-300 active:cursor-grabbing"
+                  >
+                    <GripVertical className="h-3.5 w-3.5" />
+                  </span>
+                </Tooltip>
               <button
                 onClick={() => {
                   // 长按刚开的菜单：这一击是抬手补的，不当点选
@@ -499,7 +503,7 @@ export function ProjectList({
                 )}
                 <span className="relative">
                   <QuickButton
-                    title={`${pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}\n\n${t('app.scopeCoverageTooltip')}`}
+                    tooltip={`${pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}\n\n${t('app.scopeCoverageTooltip')}`}
                     onClick={() => onSyncNow?.(p)}
                   >
                     <FeedbackIcon
@@ -519,7 +523,7 @@ export function ProjectList({
                     <span className="pointer-events-none absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-orange-500" />
                   )}
                 </span>
-                <QuickButton title={t('project.openInExplorer')} onClick={() => onOpenExplorer(p)}>
+                <QuickButton tooltip={t('project.openInExplorer')} onClick={() => onOpenExplorer(p)}>
                   <FeedbackIcon
                     state={openExplorerStateOf?.(p.id) ?? 'idle'}
                     className="h-3.5 w-3.5"
@@ -528,7 +532,7 @@ export function ProjectList({
                 </QuickButton>
                 {/* 项目文件浏览器（只读）：OS 资源管理器管磁盘，这枚管项目内浏览+搜索+预览 */}
                 {onOpenFiles && (
-                  <QuickButton title={t('project.filesBrowser')} onClick={() => onOpenFiles(p)}>
+                  <QuickButton tooltip={t('project.filesBrowser')} onClick={() => onOpenFiles(p)}>
                     <FolderTree className="h-3.5 w-3.5" />
                   </QuickButton>
                 )}
@@ -538,7 +542,7 @@ export function ProjectList({
                     pane 与会话都不计）。 */}
                 <span className="relative">
                   <QuickButton
-                    title={
+                    tooltip={
                       terminals > 0
                         ? `${t('project.terminalsOpen', { n: terminals })}\n\n${t('project.terminalMenu')}`
                         : t('project.openInTerminal')
@@ -562,7 +566,7 @@ export function ProjectList({
                   )}
                 </span>
                 <QuickButton
-                  title={t('project.storageButton')}
+                  tooltip={t('project.storageButton')}
                   onClick={() => setStorageTarget(p)}
                 >
                   <FolderCog className="h-3.5 w-3.5" />
@@ -590,13 +594,14 @@ export function ProjectList({
                   {t('project.archivedSection')}
                 </span>
                 <span className="text-xs text-neutral-500">{archivedProjects.length}</span>
-                <button
-                  onClick={() => setArchivedOpen(false)}
-                  className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-                  title={t('common.close')}
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                <Tooltip label={t('common.close')} className="ml-auto" side="top">
+                  <button
+                    onClick={() => setArchivedOpen(false)}
+                    className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </Tooltip>
               </header>
               {/* max-h-[60%] 不用 60vh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
               <div className="p-4 max-h-[60%] overflow-y-auto">
@@ -620,19 +625,20 @@ export function ProjectList({
                           {t('project.archivedOn', { date: new Date(p.archivedAt).toLocaleString() })}
                         </p>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => onRestore?.(p)}
-                        title={t('project.restoreTooltip')}
-                        className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg border border-edge/[0.08] bg-edge/[0.03] px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-100"
-                      >
-                        <FeedbackIcon
-                          state={restoreStateOf?.(p.id) ?? 'idle'}
-                          className="h-3.5 w-3.5"
-                          icon={<ArchiveRestore className="h-3.5 w-3.5" />}
-                        />
-                        {t('project.restore')}
-                      </button>
+                      <Tooltip label={t('project.restoreTooltip')}>
+                        <button
+                          type="button"
+                          onClick={() => onRestore?.(p)}
+                          className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg border border-edge/[0.08] bg-edge/[0.03] px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-100"
+                        >
+                          <FeedbackIcon
+                            state={restoreStateOf?.(p.id) ?? 'idle'}
+                            className="h-3.5 w-3.5"
+                            icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+                          />
+                          {t('project.restore')}
+                        </button>
+                      </Tooltip>
                     </div>
                   ))}
                 </div>
@@ -697,8 +703,9 @@ export function ProjectList({
           <div
             ref={termMenuRef}
             style={{
-              left: Math.min(termMenu.x, window.innerWidth - 288),
-              top: Math.min(termMenu.y, window.innerHeight - 260),
+              // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+              left: cssPx(Math.min(termMenu.x, window.innerWidth - 288)),
+              top: cssPx(Math.min(termMenu.y, window.innerHeight - 260)),
             }}
             className="fixed z-50 w-72 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac p-1"
           >
@@ -779,7 +786,7 @@ export function ProjectList({
                         </button>
                         <span className="flex shrink-0 items-center gap-1 pt-1">
                           <QuickButton
-                            title={t('tasks.terminalTargetFocus')}
+                            tooltip={t('tasks.terminalTargetFocus')}
                             onClick={() => focusTerminal(termMenu.project, target.id)}
                           >
                             <ArrowUpRight className="h-3.5 w-3.5" />
@@ -787,7 +794,7 @@ export function ProjectList({
                           {closable && (
                             <QuickButton
                               danger
-                              title={t('tasks.terminalTargetClose')}
+                              tooltip={t('tasks.terminalTargetClose')}
                               onClick={() => closeTargets(termMenu.project, [target])}
                             >
                               <Power className="h-3.5 w-3.5" />
@@ -869,13 +876,13 @@ function MenuButton({
 
 /** Row quick-action icon button — tooltip 与 aria-label 同词，点击不触发行选中。 */
 function QuickButton({
-  title,
+  tooltip,
   pressed,
   onClick,
   danger,
   children,
 }: {
-  title: string;
+  tooltip: string;
   pressed?: boolean;
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   /** 破坏性动作（关终端）：常显红色，不是 hover 才红。 */
@@ -883,24 +890,25 @@ function QuickButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      aria-pressed={pressed}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick(e);
-      }}
-      className={cn(
-        'pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08]',
-        danger
-          ? 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
-          : 'text-neutral-400 hover:text-neutral-100',
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip label={tooltip}>
+      <button
+        type="button"
+        aria-label={tooltip}
+        aria-pressed={pressed}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick(e);
+        }}
+        className={cn(
+          'pointer-events-auto [&_svg]:pointer-events-none inline-flex h-5 w-5 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08]',
+          danger
+            ? 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
+            : 'text-neutral-400 hover:text-neutral-100',
+        )}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }
 

@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, type ProjectFileEntry } from '@/lib/api';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
 import { FieldHint } from '@/components/ui/field-hint';
 import { cn } from '@/lib/utils';
@@ -998,15 +999,16 @@ export function FilePicker({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-edge/[0.06] px-2 py-1">
         {!isDesktop && (
-          <button
-            type="button"
-            title={t('tasks.fileBack')}
-            aria-label={t('tasks.fileBack')}
-            onClick={() => setScreen('list')}
-            className="rounded p-0.5 text-neutral-400 hover:text-neutral-100"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.fileBack')}>
+            <button
+              type="button"
+              aria-label={t('tasks.fileBack')}
+              onClick={() => setScreen('list')}
+              className="rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         )}
         <span
           className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-300"
@@ -1016,30 +1018,32 @@ export function FilePicker({
         </span>
         {current?.kind === 'file' && !IMAGE_EXT.test(current.name) && preview?.text != null && (
           <>
-            <button
-              type="button"
-              title={t('tasks.fileFind')}
-              aria-label={t('tasks.fileFind')}
-              onClick={() => setBar(bar === 'find' ? null : 'find')}
-              className={cn(
-                'rounded p-0.5 hover:text-neutral-100',
-                bar === 'find' ? 'text-blue-300' : 'text-neutral-400',
-              )}
-            >
-              <TextSearch className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              title={t('tasks.fileGoToLine')}
-              aria-label={t('tasks.fileGoToLine')}
-              onClick={() => setBar(bar === 'line' ? null : 'line')}
-              className={cn(
-                'rounded p-0.5 hover:text-neutral-100',
-                bar === 'line' ? 'text-blue-300' : 'text-neutral-400',
-              )}
-            >
-              <Hash className="h-3.5 w-3.5" />
-            </button>
+            <Tooltip label={t('tasks.fileFind')}>
+              <button
+                type="button"
+                aria-label={t('tasks.fileFind')}
+                onClick={() => setBar(bar === 'find' ? null : 'find')}
+                className={cn(
+                  'rounded p-0.5 hover:text-neutral-100',
+                  bar === 'find' ? 'text-blue-300' : 'text-neutral-400',
+                )}
+              >
+                <TextSearch className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip label={t('tasks.fileGoToLine')}>
+              <button
+                type="button"
+                aria-label={t('tasks.fileGoToLine')}
+                onClick={() => setBar(bar === 'line' ? null : 'line')}
+                className={cn(
+                  'rounded p-0.5 hover:text-neutral-100',
+                  bar === 'line' ? 'text-blue-300' : 'text-neutral-400',
+                )}
+              >
+                <Hash className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
           </>
         )}
       </div>
@@ -1075,24 +1079,26 @@ export function FilePicker({
               <span className="shrink-0 text-10 tabular-nums text-neutral-500">
                 {hits == null ? '' : hits === 0 ? t('tasks.fileNoMatch') : t('tasks.fileMatchCount', { n: hits })}
               </span>
-              <button
-                type="button"
-                title={t('tasks.filePrevMatch')}
-                aria-label={t('tasks.filePrevMatch')}
-                onClick={() => stepMatch(-1)}
-                className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
-              >
-                <ChevronUp className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                title={t('tasks.fileNextMatch')}
-                aria-label={t('tasks.fileNextMatch')}
-                onClick={() => stepMatch(1)}
-                className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
-              >
-                <ChevronDown className="h-3.5 w-3.5" />
-              </button>
+              <Tooltip label={t('tasks.filePrevMatch')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.filePrevMatch')}
+                  onClick={() => stepMatch(-1)}
+                  className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('tasks.fileNextMatch')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.fileNextMatch')}
+                  onClick={() => stepMatch(1)}
+                  className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
             </>
           ) : (
             <button
@@ -1103,15 +1109,16 @@ export function FilePicker({
               {t('tasks.fileGo')}
             </button>
           )}
-          <button
-            type="button"
-            title={t('tasks.fileClearSearch')}
-            aria-label={t('tasks.fileClearSearch')}
-            onClick={() => setBar(null)}
-            className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.fileClearSearch')}>
+            <button
+              type="button"
+              aria-label={t('tasks.fileClearSearch')}
+              onClick={() => setBar(null)}
+              className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
       )}
       {current?.kind === 'dir' ? (
@@ -1216,16 +1223,17 @@ export function FilePicker({
       >
         {/* 头：面包屑 + 搜索 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
-          <button
-            type="button"
-            title={t('tasks.fileUp')}
-            aria-label={t('tasks.fileUp')}
-            disabled={crumb.length === 0}
-            onClick={goUp}
-            className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.fileUp')}>
+            <button
+              type="button"
+              aria-label={t('tasks.fileUp')}
+              disabled={crumb.length === 0}
+              onClick={goUp}
+              className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
             {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
             <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
@@ -1265,15 +1273,16 @@ export function FilePicker({
               </button>
             )}
           </div>
-          <button
-            type="button"
-            title={t('tasks.messagesClose')}
-            aria-label={t('tasks.messagesClose')}
-            onClick={onClose}
-            className="rounded p-1 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.messagesClose')} side="top">
+            <button
+              type="button"
+              aria-label={t('tasks.messagesClose')}
+              onClick={onClose}
+              className="rounded p-1 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
 
         {/* 体：父目录 | 当前目录 | 预览。窄屏一屏一栏（列表 ⇄ 预览）。

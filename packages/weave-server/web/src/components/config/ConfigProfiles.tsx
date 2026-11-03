@@ -3,6 +3,7 @@ import { Copy, Check, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import type { ConfigProfileMeta } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * 本地快照条：把当前文件另存一份、重命名、复制、删除、切换。
@@ -158,30 +159,33 @@ export function ConfigProfiles({
                     {t('cfg.profileActivate')}
                   </button>
                 )}
-                <button
-                  onClick={() => {
-                    setRenamingId(profile.id);
-                    setRenameText(profile.name);
-                  }}
-                  title={t('cfg.profileName')}
-                  className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
-                >
-                  <Pencil className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={() => onDuplicate(profile.id)}
-                  title={t('cfg.profileDuplicate')}
-                  className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
-                >
-                  <Copy className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={() => onRemove(profile.id)}
-                  title={t('cfg.profileRemove')}
-                  className="p-0.5 rounded text-neutral-600 hover:text-red-300 hover:bg-neutral-800"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
+                <Tooltip label={t('cfg.profileName')}>
+                  <button
+                    onClick={() => {
+                      setRenamingId(profile.id);
+                      setRenameText(profile.name);
+                    }}
+                    className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </Tooltip>
+                <Tooltip label={t('cfg.profileDuplicate')}>
+                  <button
+                    onClick={() => onDuplicate(profile.id)}
+                    className="p-0.5 rounded text-neutral-600 hover:text-neutral-200 hover:bg-neutral-800"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
+                </Tooltip>
+                <Tooltip label={t('cfg.profileRemove')}>
+                  <button
+                    onClick={() => onRemove(profile.id)}
+                    className="p-0.5 rounded text-neutral-600 hover:text-red-300 hover:bg-neutral-800"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </Tooltip>
               </li>
             );
           })}

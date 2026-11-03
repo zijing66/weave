@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronLeft, Folder, Search, X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { useMediaQuery } from '@/lib/use-media-query';
@@ -250,15 +251,16 @@ export function SessionShuttlePicker({
         {/* 头：标题 + 搜索。窄屏会话屏换「← 项目名」——箭头即回项目列表。 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
           {drilldown && screen === 'sessions' && (
-            <button
-              type="button"
-              title={t('tasks.fileBack')}
-              aria-label={t('tasks.fileBack')}
-              onClick={() => setScreen('projects')}
-              className="-ml-1 rounded p-1 text-neutral-400 hover:text-neutral-100"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
+            <Tooltip label={t('tasks.fileBack')}>
+              <button
+                type="button"
+                aria-label={t('tasks.fileBack')}
+                onClick={() => setScreen('projects')}
+                className="-ml-1 rounded p-1 text-neutral-400 hover:text-neutral-100"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
           )}
           <p className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200">
             {drilldown && screen === 'sessions'
@@ -285,15 +287,16 @@ export function SessionShuttlePicker({
               </button>
             )}
           </div>
-          <button
-            type="button"
-            title={t('common.close')}
-            aria-label={t('common.close')}
-            onClick={onClose}
-            className="rounded p-1 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('common.close')}>
+            <button
+              type="button"
+              aria-label={t('common.close')}
+              onClick={onClose}
+              className="rounded p-1 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
 
         {/* 体：项目 | 会话（层级）；搜索态右栏独占（平铺结果，每行带所属项目）。

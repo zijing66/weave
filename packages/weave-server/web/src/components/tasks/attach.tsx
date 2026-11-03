@@ -2,6 +2,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { AlertTriangle, FileCode, Image as ImageIcon, X } from 'lucide-react';
 import { API_BASE, type UploadFile } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 附件口径（与服务端 UPLOAD_* 同值）：图就这四种，其余按「文件」收。 */
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
@@ -101,16 +102,18 @@ export function StagedTile({
   const thumb = isImage && item.state === 'done' && item.upload;
   return (
     <span className="relative inline-flex shrink-0">
-      <button
-        type="button"
-        title={
+      <Tooltip
+        label={
           item.state === 'error'
             ? `${item.name} — ${item.error ?? ''}`
             : [item.name, sizeLabel(item.size)].filter(Boolean).join(' · ')
         }
-        onClick={() => {
-          if (item.state === 'done' && item.upload) onOpen(item.upload);
-        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            if (item.state === 'done' && item.upload) onOpen(item.upload);
+          }}
         className={cn(
           'relative flex shrink-0 items-center overflow-hidden rounded border bg-neutral-950',
           isImage ? 'h-10 w-10 justify-center' : 'h-10 max-w-[10rem] gap-1 px-1.5',
@@ -149,16 +152,18 @@ export function StagedTile({
             <AlertTriangle className="h-3.5 w-3.5 text-red-300" />
           </span>
         )}
-      </button>
-      <button
-        type="button"
-        title={removeLabel}
-        aria-label={removeLabel}
-        onClick={onRemove}
-        className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
-      >
-        <X className="h-2.5 w-2.5" />
-      </button>
+        </button>
+      </Tooltip>
+      <Tooltip label={removeLabel}>
+        <button
+          type="button"
+          aria-label={removeLabel}
+          onClick={onRemove}
+          className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-800 text-neutral-300 hover:border-red-500/50 hover:text-red-300 max-lg:h-5 max-lg:w-5"
+        >
+          <X className="h-2.5 w-2.5" />
+        </button>
+      </Tooltip>
     </span>
   );
 }

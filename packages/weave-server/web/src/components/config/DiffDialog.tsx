@@ -6,6 +6,7 @@ import { DiffRows } from '@/components/ui/diff-rows';
 import { useT } from '@/i18n/I18nProvider';
 import { useBackPop } from '@/lib/back-pop';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 左右分栏的一行渲染（mod = 左旧右新，孤侧补空行）。 */
 function SplitRows({ rows }: { rows: readonly SplitDiffRow[] }) {
@@ -91,13 +92,14 @@ export function DiffDialog({
           <span className="text-11 text-neutral-500">
             <span className="text-emerald-400">+{added}</span> / <span className="text-red-400">-{removed}</span>
           </span>
-          <button
-            onClick={onClose}
-            className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-            title={t('common.close')}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <Tooltip label={t('common.close')} className="ml-auto">
+            <button
+              onClick={onClose}
+              className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </header>
 
         <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 border-b border-edge/[0.06] text-11 text-neutral-500">

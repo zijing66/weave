@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
+import { Tooltip } from '@/components/ui/tooltip';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { api, type SideQuestionRow } from '@/lib/api';
@@ -27,6 +28,7 @@ import {
 import { subscribeHook } from '@/lib/sse';
 import { usePullLoad } from '@/lib/pull-load';
 import { useBackPop } from '@/lib/back-pop';
+import { cssPx } from '@/lib/font-scale';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useTheme } from '@/lib/theme';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -461,15 +463,16 @@ export function SideQuestionDialog({
                 <MessageCircleQuestion className="h-3.5 w-3.5 shrink-0 text-violet-400" />
                 {t('tasks.sideTitle')} · {label}
               </p>
-              <button
-                type="button"
-                title={t('tasks.messagesClose')}
-                aria-label={t('tasks.messagesClose')}
-                onClick={onClose}
-                className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              <Tooltip label={t('tasks.messagesClose')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('tasks.messagesClose')}
+                  onClick={onClose}
+                  className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
             </div>
             <p className="pb-2 text-11 leading-relaxed text-neutral-500">{t('tasks.sideHint')}</p>
 
@@ -544,15 +547,16 @@ export function SideQuestionDialog({
                                   {row.question}
                                 </span>
                               </button>
-                              <button
-                                type="button"
-                                title={t('tasks.convCopy')}
-                                aria-label={t('tasks.convCopy')}
-                                onClick={() => copyRows([row])}
-                                className="shrink-0 rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-200"
-                              >
-                                <Copy className="h-3 w-3" />
-                              </button>
+                              <Tooltip label={t('tasks.convCopy')}>
+                                <button
+                                  type="button"
+                                  aria-label={t('tasks.convCopy')}
+                                  onClick={() => copyRows([row])}
+                                  className="shrink-0 rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-200"
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </button>
+                              </Tooltip>
                             </>
                           )}
                           {row.status === 'pending' && (
@@ -634,20 +638,21 @@ export function SideQuestionDialog({
                     <Copy className="h-3 w-3" />
                     {t('tasks.convCopy')}
                   </button>
-                  <button
-                    type="button"
-                    disabled={picked.size === 0}
-                    onClick={openShareMenu}
-                    title={t('tasks.convShare')}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
-                  >
-                    <FeedbackIcon
-                      state={fb.stateOf('sideImg')}
-                      className="h-3 w-3"
-                      icon={<ImageIcon className="h-3 w-3" />}
-                    />
-                    {t('tasks.convShare')}
-                  </button>
+                  <Tooltip label={t('tasks.convShare')} side="top">
+                    <button
+                      type="button"
+                      disabled={picked.size === 0}
+                      onClick={openShareMenu}
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
+                    >
+                      <FeedbackIcon
+                        state={fb.stateOf('sideImg')}
+                        className="h-3 w-3"
+                        icon={<ImageIcon className="h-3 w-3" />}
+                      />
+                      {t('tasks.convShare')}
+                    </button>
+                  </Tooltip>
                   <button
                     type="button"
                     onClick={() => {
@@ -697,8 +702,9 @@ export function SideQuestionDialog({
             data-side-menu
             className="fixed z-[60] rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
             style={{
-              left: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
-              top: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H)),
+              // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+              left: cssPx(Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8))),
+              top: cssPx(Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H))),
             }}
             onClick={(e) => e.stopPropagation()}
           >

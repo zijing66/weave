@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, type ProjectFileEntry } from '@/lib/api';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
@@ -607,15 +608,16 @@ export function FileBrowserModal({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-edge/[0.06] px-2 py-1">
         {!isDesktop && (
-          <button
-            type="button"
-            title={t('tasks.fileBack')}
-            aria-label={t('tasks.fileBack')}
-            onClick={() => setScreen('list')}
-            className="rounded p-0.5 text-neutral-400 hover:text-neutral-100"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.fileBack')}>
+            <button
+              type="button"
+              aria-label={t('tasks.fileBack')}
+              onClick={() => setScreen('list')}
+              className="rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         )}
         <span
           className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-300"
@@ -625,30 +627,32 @@ export function FileBrowserModal({
         </span>
         {current?.kind === 'file' && previewKindOf(current.name) === 'text' && preview?.text != null && (
           <>
-            <button
-              type="button"
-              title={t('tasks.fileFind')}
-              aria-label={t('tasks.fileFind')}
-              onClick={() => setBar(bar === 'find' ? null : 'find')}
-              className={cn(
-                'rounded p-0.5 hover:text-neutral-100',
-                bar === 'find' ? 'text-blue-300' : 'text-neutral-400',
-              )}
-            >
-              <TextSearch className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              title={t('tasks.fileGoToLine')}
-              aria-label={t('tasks.fileGoToLine')}
-              onClick={() => setBar(bar === 'line' ? null : 'line')}
-              className={cn(
-                'rounded p-0.5 hover:text-neutral-100',
-                bar === 'line' ? 'text-blue-300' : 'text-neutral-400',
-              )}
-            >
-              <Hash className="h-3.5 w-3.5" />
-            </button>
+            <Tooltip label={t('tasks.fileFind')}>
+              <button
+                type="button"
+                aria-label={t('tasks.fileFind')}
+                onClick={() => setBar(bar === 'find' ? null : 'find')}
+                className={cn(
+                  'rounded p-0.5 hover:text-neutral-100',
+                  bar === 'find' ? 'text-blue-300' : 'text-neutral-400',
+                )}
+              >
+                <TextSearch className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip label={t('tasks.fileGoToLine')}>
+              <button
+                type="button"
+                aria-label={t('tasks.fileGoToLine')}
+                onClick={() => setBar(bar === 'line' ? null : 'line')}
+                className={cn(
+                  'rounded p-0.5 hover:text-neutral-100',
+                  bar === 'line' ? 'text-blue-300' : 'text-neutral-400',
+                )}
+              >
+                <Hash className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
           </>
         )}
       </div>
@@ -684,24 +688,26 @@ export function FileBrowserModal({
               <span className="shrink-0 text-10 tabular-nums text-neutral-500">
                 {hits == null ? '' : hits === 0 ? t('tasks.fileNoMatch') : t('tasks.fileMatchCount', { n: hits })}
               </span>
-              <button
-                type="button"
-                title={t('tasks.filePrevMatch')}
-                aria-label={t('tasks.filePrevMatch')}
-                onClick={() => stepMatch(-1)}
-                className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
-              >
-                <ChevronUp className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                title={t('tasks.fileNextMatch')}
-                aria-label={t('tasks.fileNextMatch')}
-                onClick={() => stepMatch(1)}
-                className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
-              >
-                <ChevronDown className="h-3.5 w-3.5" />
-              </button>
+              <Tooltip label={t('tasks.filePrevMatch')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.filePrevMatch')}
+                  onClick={() => stepMatch(-1)}
+                  className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('tasks.fileNextMatch')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.fileNextMatch')}
+                  onClick={() => stepMatch(1)}
+                  className="shrink-0 rounded p-0.5 text-neutral-400 hover:text-neutral-100"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
             </>
           ) : (
             <button
@@ -712,15 +718,16 @@ export function FileBrowserModal({
               {t('tasks.fileGo')}
             </button>
           )}
-          <button
-            type="button"
-            title={t('tasks.fileClearSearch')}
-            aria-label={t('tasks.fileClearSearch')}
-            onClick={() => setBar(null)}
-            className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.fileClearSearch')}>
+            <button
+              type="button"
+              aria-label={t('tasks.fileClearSearch')}
+              onClick={() => setBar(null)}
+              className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
       )}
       {current?.kind === 'dir' ? (
@@ -833,16 +840,17 @@ export function FileBrowserModal({
       >
         {/* 头：面包屑 + 搜索 + 全屏 + 关闭 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
-          <button
-            type="button"
-            title={t('tasks.fileUp')}
-            aria-label={t('tasks.fileUp')}
-            disabled={crumb.length === 0}
-            onClick={goUp}
-            className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.fileUp')}>
+            <button
+              type="button"
+              aria-label={t('tasks.fileUp')}
+              disabled={crumb.length === 0}
+              onClick={goUp}
+              className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
             {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
             <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
@@ -882,25 +890,30 @@ export function FileBrowserModal({
             )}
           </div>
           {/* 全屏：样式与 SessionMessages 那枚同款（图标四角括线 + 文字） */}
-          <button
-            type="button"
-            title={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
-            aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
-            onClick={() => setFullscreen((f) => !f)}
-            className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+          <Tooltip
+            label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+            side="top"
           >
-            {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
-            {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
-          </button>
-          <button
-            type="button"
-            title={t('tasks.messagesClose')}
-            aria-label={t('tasks.messagesClose')}
-            onClick={onClose}
-            className="rounded p-1 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+            <button
+              type="button"
+              aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+              onClick={() => setFullscreen((f) => !f)}
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:py-1.5"
+            >
+              {fullscreen ? <Minimize className="h-3 w-3" /> : <Maximize className="h-3 w-3" />}
+              {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+            </button>
+          </Tooltip>
+          <Tooltip label={t('tasks.messagesClose')} side="top">
+            <button
+              type="button"
+              aria-label={t('tasks.messagesClose')}
+              onClick={onClose}
+              className="rounded p-1 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
 
         {/* 体：父目录 | 当前目录 | 预览。窄屏一屏一栏（列表 ⇄ 预览）。

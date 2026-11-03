@@ -530,3 +530,25 @@
 .react-flow__controls .react-flow__controls-button svg {
   fill: currentColor;
 }
+
+/* 会话头行容器查询：侧栏可拖、容器窄 ≠ 视口窄。窄时新建会话按钮文字先退场
+   （图标 + tooltip 兜底），下拉收缩截断、刷新按钮恒居右不退场。 */
+.tasks-head {
+  container-type: inline-size;
+}
+.tasks-head .new-session-label {
+  display: none;
+}
+@container (min-width: 180px) {
+  .tasks-head .new-session-label {
+    display: inline;
+  }
+}
+.tasks-head .new-session-count {
+  display: none;
+}
+@container (min-width: 260px) {
+  .tasks-head .new-session-count {
+    display: inline;
+  }
+}

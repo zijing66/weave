@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 最短转圈时长：本地 daemon 几十毫秒落定，裸闪一下看不见——撑住体感才有「转了」。 */
 const MIN_SPIN_MS = 300;
@@ -23,30 +24,29 @@ export function RefreshIconButton({
 }) {
   const [spinning, setSpinning] = useState(false);
   return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      disabled={spinning}
-      onClick={() => {
-        const result = onClick();
-        if (!(result instanceof Promise)) return;
-        setSpinning(true);
-        void Promise.all([
-          result.then(
-            () => undefined,
-            () => undefined,
-          ),
-          new Promise((resolve) => setTimeout(resolve, MIN_SPIN_MS)),
-        ]).then(() => setSpinning(false));
-      }}
-      className={cn(
-        'pointer-events-auto inline-flex items-center text-neutral-500 transition-colors hover:text-neutral-200',
-        'disabled:pointer-events-none [&_svg]:pointer-events-none',
-        className,
-      )}
-    >
-      <RefreshCw className={cn('h-3.5 w-3.5', spinning && 'animate-spin')} />
-    </button>
+    // ml-auto 这类 flex 子项布局类必须落在 Tooltip 的包裹 span 上（它才是
+    // 父级 flex 的子项）；落在内部 button 上被 span 隔着不生效。
+    <Tooltip label={title} className={className}>
+      <button
+        type="button"
+        aria-label={title}
+        disabled={spinning}
+        onClick={() => {
+          const result = onClick();
+          if (!(result instanceof Promise)) return;
+          setSpinning(true);
+          void Promise.all([
+            result.then(
+              () => undefined,
+              () => undefined,
+            ),
+            new Promise((resolve) => setTimeout(resolve, MIN_SPIN_MS)),
+          ]).then(() => setSpinning(false));
+        }}
+        className="pointer-events-auto inline-flex items-center text-neutral-500 transition-colors hover:text-neutral-200 disabled:pointer-events-none [&_svg]:pointer-events-none"
+      >
+        <RefreshCw className={cn('h-3.5 w-3.5', spinning && 'animate-spin')} />
+      </button>
+    </Tooltip>
   );
 }

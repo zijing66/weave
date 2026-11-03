@@ -5,6 +5,7 @@ import { Check, ChevronDown, Search } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
+import { cssPx } from '@/lib/font-scale';
 import { cn } from '@/lib/utils';
 
 /** 下拉里的一行：value 唯一；label 缺省用 value；hint 是第二行灰字（说明/真名）。 */
@@ -115,6 +116,8 @@ export function Combobox({
     const anchor = anchorRef.current;
     if (!anchor) return;
     const r = anchor.getBoundingClientRect();
+    // 全程视觉 px（锚点矩形 + 视口），只在落 style 前经 cssPx 除回 CSS 值——
+    // 根 zoom 会把 fixed 的 CSS 值再乘一次，不换算弹层会飞离锚点。
     const width = Math.max(r.width, 220);
     const left = align === 'end' ? r.right - width : r.left;
     const below = window.innerHeight - r.bottom;
@@ -122,11 +125,11 @@ export function Combobox({
     // 向下弹至少要露出一段可用的列表（120px 首屏）；不够且上方更宽裕才向上弹。
     const openUp = below < 120 && above > below;
     setRect({
-      left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
+      left: cssPx(Math.max(8, Math.min(left, window.innerWidth - width - 8))),
       ...(openUp
-        ? { bottom: window.innerHeight - r.top + 4, maxH: Math.min(320, above - 8) }
-        : { top: r.bottom + 4, maxH: Math.min(320, below - 8) }),
-      width,
+        ? { bottom: cssPx(window.innerHeight - r.top + 4), maxH: cssPx(Math.min(320, above - 8)) }
+        : { top: cssPx(r.bottom + 4), maxH: cssPx(Math.min(320, below - 8)) }),
+      width: cssPx(width),
     });
   }, [align, open]);
 

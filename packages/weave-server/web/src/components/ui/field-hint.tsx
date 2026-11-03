@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { HelpCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { cssPx } from '@/lib/font-scale';
+import { useMediaQuery } from '@/lib/use-media-query';
 
 /**
  * 字段/标题说明的小问号：说明收进悬停提示，不再占标题下方一整行。
@@ -19,16 +21,21 @@ export function FieldHint(props: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [box, setBox] = useState<{ left: number; top: number; width: number } | null>(null);
   const shownAt = useRef(0);
+  // 触屏没有 hover：tap 合成的 mouseenter 不会跟着 mouseleave，tooltip 会挂着
+  // 关不掉——coarse 指针只走点击切换（下方 onClick 的盖章逻辑）。
+  const coarse = useMediaQuery('(pointer: coarse)');
   const show = (): void => {
+    if (coarse) return;
     shownAt.current = Date.now();
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
     const width = Math.min(280, window.innerWidth - 24);
     const half = width / 2 + 12;
+    // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
     setBox({
-      left: Math.min(Math.max(r.left + r.width / 2, half), window.innerWidth - half),
-      top: r.bottom + 6,
-      width,
+      left: cssPx(Math.min(Math.max(r.left + r.width / 2, half), window.innerWidth - half)),
+      top: cssPx(r.bottom + 6),
+      width: cssPx(width),
     });
   };
   const hide = (): void => setBox(null);
@@ -54,6 +61,25 @@ export function FieldHint(props: { children: ReactNode; className?: string }) {
         onMouseLeave={hide}
         onBlur={hide}
         onClick={() => {
+          // 触屏：tap 合成的 mouseenter 已被 show 里的 coarse 闸挡掉，这里就是
+          // 唯一入口——点击切换（开着的关、关着的开）。
+          if (coarse) {
+            if (box) hide();
+            else {
+              shownAt.current = Date.now();
+              const r = ref.current?.getBoundingClientRect();
+              if (r) {
+                const width = Math.min(280, window.innerWidth - 24);
+                const half = width / 2 + 12;
+                setBox({
+                  left: cssPx(Math.min(Math.max(r.left + r.width / 2, half), window.innerWidth - half)),
+                  top: cssPx(r.bottom + 6),
+                  width: cssPx(width),
+                });
+              }
+            }
+            return;
+          }
           if (box && Date.now() - shownAt.current > GESTURE_GAP_MS) hide();
           else show();
         }}

@@ -11,6 +11,7 @@ import {
 } from '@/lib/visualization';
 import { useTheme } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 import type { VisualizeRef, VizSeg } from './conv-model';
 
 /**
@@ -138,14 +139,15 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
             className="block w-full border-0"
             style={{ height: Math.min(Math.max(height ?? 160, VIZ_MIN_HEIGHT), cap) }}
           />
-          <button
-            type="button"
-            onClick={refresh}
-            title={t('tasks.vizRefresh')}
-            className="absolute right-1.5 top-1.5 rounded border border-edge/[0.12] bg-neutral-950/80 p-1 text-neutral-500 hover:text-neutral-200"
-          >
-            <RefreshCw className="h-3 w-3" />
-          </button>
+          <Tooltip label={t('tasks.vizRefresh')}>
+            <button
+              type="button"
+              onClick={refresh}
+              className="absolute right-1.5 top-1.5 rounded border border-edge/[0.12] bg-neutral-950/80 p-1 text-neutral-500 hover:text-neutral-200"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
+          </Tooltip>
         </div>
       )}
     </div>

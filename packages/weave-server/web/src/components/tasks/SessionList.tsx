@@ -6,6 +6,7 @@ import { getDispatchDrag } from '@/lib/dnd';
 import { sessionLabel } from '@/lib/hook-payload';
 import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Bell, BellRing, Check, Copy, FileWarning, HelpCircle, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -401,42 +402,44 @@ export function SessionList({
     // 转录没了 = `--resume` 接不回来（服务端判；行内提示 + 打开禁用）
     const noTranscript = s.transcriptPresent === false;
     return (
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onSelect(s.sessionId)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onSelect(s.sessionId);
-          }
-        }}
-        onDoubleClick={(e) => {
-          // tooltip 承诺「双击改名」——行上直接双击即进编辑（铅笔为 hover 备选）
-          e.stopPropagation();
-          if (editingId !== s.sessionId) startRename(s);
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDroppingId(s.sessionId);
-        }}
-        onDragLeave={() => setDroppingId((prev) => (prev === s.sessionId ? null : prev))}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDroppingId(null);
-          const id = getDispatchDrag(e.dataTransfer);
-          if (id !== null) onDropDispatch(id, s.sessionId);
-        }}
-        title={droppingId === s.sessionId ? t('tasks.dropTip') : sessionLabel(s.title, s.sessionId)}
-        className={cn(
-          'group flex flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
-          selected
-            ? 'border-blue-500/50 bg-blue-500/10'
-            : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10] hover:bg-edge/[0.04]',
-          highlightId === s.sessionId && 'border-rose-400/70',
-          droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
-        )}
+      <Tooltip
+        label={droppingId === s.sessionId ? t('tasks.dropTip') : sessionLabel(s.title, s.sessionId)}
       >
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelect(s.sessionId)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onSelect(s.sessionId);
+            }
+          }}
+          onDoubleClick={(e) => {
+            // tooltip 承诺「双击改名」——行上直接双击即进编辑（铅笔为 hover 备选）
+            e.stopPropagation();
+            if (editingId !== s.sessionId) startRename(s);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDroppingId(s.sessionId);
+          }}
+          onDragLeave={() => setDroppingId((prev) => (prev === s.sessionId ? null : prev))}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDroppingId(null);
+            const id = getDispatchDrag(e.dataTransfer);
+            if (id !== null) onDropDispatch(id, s.sessionId);
+          }}
+          className={cn(
+            'group flex min-w-0 flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
+            selected
+              ? 'border-blue-500/50 bg-blue-500/10'
+              : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10] hover:bg-edge/[0.04]',
+            highlightId === s.sessionId && 'border-rose-400/70',
+            droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
+          )}
+        >
         {/* 状态图标：运行中 = harness 跑马灯动效（claude 星芒旋 /
             codex 六边形脉动），打开 = 同形静态，失败/关闭 = 状态点 */}
         <SessionStatusIcon status={status} harness={s.harness} />
@@ -469,21 +472,19 @@ export function SessionList({
                   （服务端计数）与草稿 blue（纯前端——草稿只存 sessionStorage）。
                   纯指示、不可点：对话入口就是行本身。 */}
               {inflight > 0 && (
-                <span
-                  title={t('tasks.messageInflight', { n: inflight })}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-amber-300"
-                >
-                  <MessageSquareText className="h-3 w-3" />
-                  {inflight > 9 ? '9+' : inflight}
-                </span>
+                <Tooltip label={t('tasks.messageInflight', { n: inflight })}>
+                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-amber-300">
+                    <MessageSquareText className="h-3 w-3" />
+                    {inflight > 9 ? '9+' : inflight}
+                  </span>
+                </Tooltip>
               )}
               {draftIds.has(s.sessionId) && (
-                <span
-                  title={t('tasks.draftUnsent')}
-                  className="inline-flex shrink-0 items-center rounded border border-blue-400/40 bg-blue-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-blue-300"
-                >
-                  <MessageSquareText className="h-3 w-3" />
-                </span>
+                <Tooltip label={t('tasks.draftUnsent')}>
+                  <span className="inline-flex shrink-0 items-center rounded border border-blue-400/40 bg-blue-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-blue-300">
+                    <MessageSquareText className="h-3 w-3" />
+                  </span>
+                </Tooltip>
               )}
               {/* 能力位由服务端派生（canOpenTerminal = harness 的 resume 槽有
                   openArgs），这里只渲染它——不自带 harness 白名单；路由侧仍做
@@ -530,47 +531,49 @@ export function SessionList({
                   一律不露，宁可少一个按钮也不给一条恒 409 的路。红色常显 +
                   二次确认（见 TasksPanel 的 closePaneTarget）：杀宿主的键。 */}
               {!!s.pidAlive && (
-                <button
-                  type="button"
-                  title={t('tasks.closePaneTooltip')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClosePane(s.sessionId);
-                  }}
-                  className={cn(ACTION_BTN, 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300')}
-                >
-                  <FeedbackIcon
-                    state={closePaneState}
-                    className="h-3 w-3"
-                    icon={<Power className="h-3 w-3" />}
-                  />
-                </button>
+                <Tooltip label={t('tasks.closePaneTooltip')}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onClosePane(s.sessionId);
+                    }}
+                    className={cn(ACTION_BTN, 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300')}
+                  >
+                    <FeedbackIcon
+                      state={closePaneState}
+                      className="h-3 w-3"
+                      icon={<Power className="h-3 w-3" />}
+                    />
+                  </button>
+                </Tooltip>
               )}
               {/* 阻塞问答入口：该会话被 AskUserQuestion / 计划 / 权限确认
                   挂起时才出现（无待答不占位）——amber + 问题数角标，点开
                   远程作答弹窗。 */}
               {questionOf?.(s.sessionId) && (
-                <button
-                  type="button"
-                  title={t('tasks.answerActiveTooltip', { n: pendingCount })}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSetAnswerFor(s.sessionId);
-                  }}
-                  className={cn(
-                    ACTION_BTN,
-                    'relative',
-                    'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
-                  )}
-                >
-                  <HelpCircle className="h-3 w-3 text-amber-300" />
-                  <span
-                    aria-hidden
-                    className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-8 font-semibold leading-none text-black"
+                <Tooltip label={t('tasks.answerActiveTooltip', { n: pendingCount })}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSetAnswerFor(s.sessionId);
+                    }}
+                    className={cn(
+                      ACTION_BTN,
+                      'relative',
+                      'border-amber-400/40 bg-amber-500/10 text-amber-300 hover:border-amber-400/60 hover:text-amber-200',
+                    )}
                   >
-                    {pendingCount}
-                  </span>
-                </button>
+                    <HelpCircle className="h-3 w-3 text-amber-300" />
+                    <span
+                      aria-hidden
+                      className="absolute -right-1 -top-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-500 px-0.5 text-8 font-semibold leading-none text-black"
+                    >
+                      {pendingCount}
+                    </span>
+                  </button>
+                </Tooltip>
               )}
               {/* 对话入口不在这儿：点行本体就把它摆进右栏（`onSelect` 同一实现），
                   这枚按钮曾与行点击重复，已移除；只剩在途消息的角标（行首）。 */}
@@ -579,21 +582,23 @@ export function SessionList({
                   ∞）——每 fire 一次刷新即减一，不是初始配置的次数；
                   次数用尽订阅消失、铃铛自然回空。 */}
               {cap?.watch && (
-                <button
-                  type="button"
-                  title={
+                <Tooltip
+                  label={
                     watch
                       ? t('tasks.watchActiveTooltip', {
                           n: watch.remaining === null ? '∞' : String(watch.remaining),
                         })
                       : t('tasks.watchTooltip')
                   }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setWatchPickerFor(s.sessionId);
-                  }}
-                  className={cn(ACTION_BTN, 'relative')}
                 >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setWatchPickerFor(s.sessionId);
+                    }}
+                    className={cn(ACTION_BTN, 'relative')}
+                  >
                   <FeedbackIcon
                     state={watchStateOf?.(s.sessionId) ?? 'idle'}
                     className="h-3 w-3"
@@ -613,71 +618,73 @@ export function SessionList({
                       {watch.remaining === null ? '∞' : watch.remaining}
                     </span>
                   )}
-                </button>
+                  </button>
+                </Tooltip>
               )}
-              <button
-                type="button"
-                title={t('tasks.renameTip')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  startRename(s);
-                }}
-                className={ACTION_BTN}
-              >
-                <Pencil className="h-3 w-3" />
-              </button>
-              <button
-                type="button"
-                title={copiedId === s.sessionId ? t('tasks.copied') : t('tasks.copySessionId')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  copyId(s.sessionId);
-                }}
-                className={ACTION_BTN}
-              >
-                {copiedId === s.sessionId ? (
-                  <Check className="h-3 w-3 text-emerald-400" />
-                ) : (
-                  <Copy className="h-3 w-3" />
-                )}
-              </button>
-              <button
-                type="button"
-                title={t('tasks.deleteTooltip')}
-                aria-label={t('tasks.deleteSession')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(s.sessionId);
-                }}
-                className={cn(ACTION_BTN, 'hover:text-red-400')}
-              >
-                <FeedbackIcon
-                  state={deleteStateOf?.(s.sessionId) ?? 'idle'}
-                  className="h-3 w-3"
-                  icon={<Trash2 className="h-3 w-3" />}
-                />
-              </button>
+              <Tooltip label={t('tasks.renameTip')}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startRename(s);
+                  }}
+                  className={ACTION_BTN}
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              </Tooltip>
+              <Tooltip label={copiedId === s.sessionId ? t('tasks.copied') : t('tasks.copySessionId')}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyId(s.sessionId);
+                  }}
+                  className={ACTION_BTN}
+                >
+                  {copiedId === s.sessionId ? (
+                    <Check className="h-3 w-3 text-emerald-400" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </button>
+              </Tooltip>
+              <Tooltip label={t('tasks.deleteTooltip')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.deleteSession')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(s.sessionId);
+                  }}
+                  className={cn(ACTION_BTN, 'hover:text-red-400')}
+                >
+                  <FeedbackIcon
+                    state={deleteStateOf?.(s.sessionId) ?? 'idle'}
+                    className="h-3 w-3"
+                    icon={<Trash2 className="h-3 w-3" />}
+                  />
+                </button>
+              </Tooltip>
             </span>
             {/* 第 2 行：徽标组（basis-full 恒换行，状态 Badge 固定第 2 行） */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 basis-full">
               {s.pendingTitle && (
-                <Badge
-                  title={t('tasks.renamePendingTip')}
-                  className="shrink-0 bg-amber-900/40 text-amber-300"
-                >
-                  {t('tasks.pendingTitle')}
-                </Badge>
+                <Tooltip label={t('tasks.renamePendingTip')}>
+                  <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
+                    {t('tasks.pendingTitle')}
+                  </Badge>
+                </Tooltip>
               )}
               {/* 转录没了：会话行还在（采集出来的），但 `--resume` 接不回来——
                   说在行上，别让人点了才知道（悬停给「怎么补救」）。 */}
               {noTranscript && (
-                <Badge
-                  title={t('tasks.transcriptMissingTip')}
-                  className="shrink-0 gap-1 bg-rose-900/40 text-rose-300"
-                >
-                  <FileWarning className="h-3 w-3" />
-                  {t('tasks.transcriptMissing')}
-                </Badge>
+                <Tooltip label={t('tasks.transcriptMissingTip')}>
+                  <Badge className="shrink-0 gap-1 bg-rose-900/40 text-rose-300">
+                    <FileWarning className="h-3 w-3" />
+                    {t('tasks.transcriptMissing')}
+                  </Badge>
+                </Tooltip>
               )}
               <span className="shrink-0 text-10 text-neutral-500">
                 {t('tasks.events', { n: s.eventCount ?? 0 })}
@@ -703,7 +710,8 @@ export function SessionList({
             </div>
           </>
         )}
-      </div>
+        </div>
+      </Tooltip>
     );
   };
 

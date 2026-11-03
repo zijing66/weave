@@ -3,6 +3,7 @@ import { api, type HookPlugin } from '@/lib/api';
 import { subscribeHook } from '@/lib/sse';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import { ChevronDown, ChevronRight, Package, RotateCw } from 'lucide-react';
@@ -141,18 +142,21 @@ export function HooksPluginsSection({
           >
             <div className="flex items-center gap-2 px-2 py-1.5">
               {expandable && (
-                <button
-                  type="button"
-                  onClick={() => setCollapsed((prev) => toggleIn(prev, p.id))}
-                  title={collapsedHere ? t('hooks.plugins.expand') : t('hooks.plugins.collapse')}
-                  className="shrink-0 text-neutral-500 hover:text-neutral-300 [&_svg]:pointer-events-none"
+                <Tooltip
+                  label={collapsedHere ? t('hooks.plugins.expand') : t('hooks.plugins.collapse')}
                 >
-                  {collapsedHere ? (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  )}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setCollapsed((prev) => toggleIn(prev, p.id))}
+                    className="shrink-0 text-neutral-500 hover:text-neutral-300 [&_svg]:pointer-events-none"
+                  >
+                    {collapsedHere ? (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </Tooltip>
               )}
               <Package
                 className={cn(
@@ -186,28 +190,32 @@ export function HooksPluginsSection({
                   </Badge>
                 )}
                 {projectId === undefined && (
-                  <button
-                    type="button"
-                    onClick={() => setUninstallTarget(p)}
-                    title={t('hooks.plugins.uninstallTip')}
-                    className="rounded px-1 text-11 text-neutral-600 hover:text-red-400 [&_svg]:pointer-events-none"
-                  >
-                    <FeedbackIcon
-                      state={fb.stateOf(`uninstall:${p.id}`)}
-                      className="h-3 w-3"
-                      icon={<span className="text-11">✕</span>}
-                    />
-                  </button>
+                  <Tooltip label={t('hooks.plugins.uninstallTip')}>
+                    <button
+                      type="button"
+                      onClick={() => setUninstallTarget(p)}
+                      className="rounded px-1 text-11 text-neutral-600 hover:text-red-400 [&_svg]:pointer-events-none"
+                    >
+                      <FeedbackIcon
+                        state={fb.stateOf(`uninstall:${p.id}`)}
+                        className="h-3 w-3"
+                        icon={<span className="text-11">✕</span>}
+                      />
+                    </button>
+                  </Tooltip>
                 )}
-                <Switch
-                  checked={p.status !== 'disabled'}
-                  onChange={(v) => void toggle(p, v)}
-                  title={
+                <Tooltip
+                  label={
                     p.status === 'rejected'
                       ? t('hooks.plugins.rejectedTip')
                       : t('hooks.plugins.toggleTip')
                   }
-                />
+                >
+                  <Switch
+                    checked={p.status !== 'disabled'}
+                    onChange={(v) => void toggle(p, v)}
+                  />
+                </Tooltip>
               </span>
             </div>
             {expandable && !collapsedHere && (
@@ -222,15 +230,16 @@ export function HooksPluginsSection({
           {t('hooks.plugins.hotReload')}
         </p>
         {/* 手动纳管运行期新建的根：启动时不存在的根挂不上 watcher（不热重载） */}
-        <button
-          type="button"
-          onClick={rescan}
-          title={t('hooks.plugins.rescanTip')}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-10 text-neutral-500 hover:bg-edge/[0.06] hover:text-neutral-200"
-        >
-          <FeedbackIcon state={fb.stateOf('rescan')} className="h-3 w-3" icon={<RotateCw className="h-3 w-3" />} />
-          {t('hooks.plugins.rescan')}
-        </button>
+        <Tooltip label={t('hooks.plugins.rescanTip')}>
+          <button
+            type="button"
+            onClick={rescan}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-10 text-neutral-500 hover:bg-edge/[0.06] hover:text-neutral-200"
+          >
+            <FeedbackIcon state={fb.stateOf('rescan')} className="h-3 w-3" icon={<RotateCw className="h-3 w-3" />} />
+            {t('hooks.plugins.rescan')}
+          </button>
+        </Tooltip>
       </div>
 
       {/* 卸载确认弹窗：替代原生 window.confirm */}

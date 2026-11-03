@@ -6,6 +6,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { NumberStepper } from '@/components/ui/number-stepper';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 可选触发类型（顺序即展示序）；标签/说明全走 i18n 表。 */
 const KINDS: WatchOn[] = ['idle', 'turnEnd', 'messageFailed'];
@@ -93,15 +94,16 @@ export function WatchPicker({
           <p className="min-w-0 truncate text-xs font-medium text-neutral-200">
             {t('tasks.watchPickerTitle')} · {label}
           </p>
-          <button
-            type="button"
-            title={t('tasks.messagesClose')}
-            aria-label={t('tasks.messagesClose')}
-            onClick={onClose}
-            className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.messagesClose')}>
+            <button
+              type="button"
+              aria-label={t('tasks.messagesClose')}
+              onClick={onClose}
+              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
         <p className="pb-2 text-11 leading-relaxed text-neutral-500">
           {t('tasks.watchPickerHint')}

@@ -9,6 +9,7 @@ import {
   type PluginRuntime,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { countEffectiveSkills } from '@/lib/skill-stats';
@@ -164,13 +165,13 @@ function SkillCard({
   return (
     <Card>
       <CardHeader className="items-center gap-2">
-        <button
-          onClick={() =>
-            onOpenDetail(row.name, row.scope, row.source, row.pluginKey, row.agent)
-          }
-          className="flex items-center gap-2 text-left flex-1 min-w-0 max-lg:flex-wrap"
-          title={t('skillGrid.openDetail', { name: row.name })}
-        >
+        <Tooltip label={t('skillGrid.openDetail', { name: row.name })} className="flex-1 min-w-0">
+          <button
+            onClick={() =>
+              onOpenDetail(row.name, row.scope, row.source, row.pluginKey, row.agent)
+            }
+            className="flex w-full items-center gap-2 text-left min-w-0 max-lg:flex-wrap"
+          >
           <FileCode className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           <CardTitle className="truncate">{row.name}</CardTitle>
           <AgentBadge agent={row.agent} className="ml-1" />
@@ -201,33 +202,36 @@ function SkillCard({
             </Badge>
           )}
           {showForm && (
-            <span
-              className={cn(
-                'ml-1 shrink-0 rounded px-1 py-0.5 text-10',
-                row.form === 'link'
-                  ? 'bg-neutral-800 text-neutral-400'
-                  : 'bg-amber-900/30 text-amber-300',
-              )}
-              title={t('repo.formTip')}
-            >
-              {row.form === 'link' ? t('repo.formLink') : t('repo.formCopy')}
-            </span>
+            <Tooltip label={t('repo.formTip')}>
+              <span
+                className={cn(
+                  'ml-1 shrink-0 rounded px-1 py-0.5 text-10',
+                  row.form === 'link'
+                    ? 'bg-neutral-800 text-neutral-400'
+                    : 'bg-amber-900/30 text-amber-300',
+                )}
+              >
+                {row.form === 'link' ? t('repo.formLink') : t('repo.formCopy')}
+              </span>
+            </Tooltip>
           )}
-        </button>
-        {canUninstall && !readOnly && (
-          <button
-            type="button"
-            disabled={uninstallState === 'loading'}
-            onClick={() => (row.scope === 'user' ? setConfirming(true) : runUninstall())}
-            className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-            title={t('skillGrid.uninstall', { name: row.name })}
-          >
-            <FeedbackIcon
-              state={uninstallState}
-              className="h-3.5 w-3.5"
-              icon={<Trash2 className="h-3.5 w-3.5" />}
-            />
           </button>
+        </Tooltip>
+        {canUninstall && !readOnly && (
+          <Tooltip label={t('skillGrid.uninstall', { name: row.name })}>
+            <button
+              type="button"
+              disabled={uninstallState === 'loading'}
+              onClick={() => (row.scope === 'user' ? setConfirming(true) : runUninstall())}
+              className="text-neutral-500 hover:text-red-400 shrink-0 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+            >
+              <FeedbackIcon
+                state={uninstallState}
+                className="h-3.5 w-3.5"
+                icon={<Trash2 className="h-3.5 w-3.5" />}
+              />
+            </button>
+          </Tooltip>
         )}
       </CardHeader>
       {row.scope === 'user' && (
@@ -630,20 +634,21 @@ function GroupedSkills({
         </h2>
         <div className="ml-auto flex items-center gap-1">
           <EffectivePill effective={effective} total={total} />
-          <button
-            onClick={toggleAll}
-            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
-            title={
-              anyExpanded ? t('skillGrid.collapseAllGroups') : t('skillGrid.expandAllGroups')
-            }
+          <Tooltip
+            label={anyExpanded ? t('skillGrid.collapseAllGroups') : t('skillGrid.expandAllGroups')}
           >
-            {anyExpanded ? (
-              <ChevronsDownUp className="h-3 w-3" />
-            ) : (
-              <ChevronsUpDown className="h-3 w-3" />
-            )}
-            {anyExpanded ? t('skillGrid.collapseAll') : t('skillGrid.expandAll')}
-          </button>
+            <button
+              onClick={toggleAll}
+              className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
+            >
+              {anyExpanded ? (
+                <ChevronsDownUp className="h-3 w-3" />
+              ) : (
+                <ChevronsUpDown className="h-3 w-3" />
+              )}
+              {anyExpanded ? t('skillGrid.collapseAll') : t('skillGrid.expandAll')}
+            </button>
+          </Tooltip>
         </div>
       </div>
 

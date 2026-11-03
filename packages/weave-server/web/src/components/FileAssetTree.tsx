@@ -9,6 +9,7 @@ import {
 } from '@/lib/api';
 import { canUninstall } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
 import { cn } from '@/lib/utils';
 import { BUCKET_ORDER, tagsOf, NAMESPACE_TAG, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
@@ -189,15 +190,16 @@ function AssetTreeNode({
     const uninstallState = fb.stateOf(uninstallKey);
     return (
       <div className="group/row relative">
-        <button
-          type="button"
-          onClick={() => onOpenFile(a.relPath)}
-          style={{ paddingLeft: pad, paddingRight: 30 }}
-          className="w-full flex items-center gap-1.5 rounded-md py-1 text-left text-xs font-mono text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50 [&_svg]:pointer-events-none"
-          title={
-            a.isSymlink ? t('fileTree.symlinkTitle', { path: a.absPath }) : a.absPath
-          }
+        <Tooltip
+          label={a.isSymlink ? t('fileTree.symlinkTitle', { path: a.absPath }) : a.absPath}
+          className="w-full"
         >
+          <button
+            type="button"
+            onClick={() => onOpenFile(a.relPath)}
+            style={{ paddingLeft: pad, paddingRight: 30 }}
+            className="w-full flex items-center gap-1.5 rounded-md py-1 text-left text-xs font-mono text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50 [&_svg]:pointer-events-none"
+          >
           {a.isSymlink ? (
             <FileSymlink className="h-3 w-3 shrink-0 text-amber-400" />
           ) : isMd ? (
@@ -235,30 +237,32 @@ function AssetTreeNode({
               {t('fileTree.custom')}
             </Badge>
           )}
-        </button>
-        {uninstallable && onUninstall && (
-          <button
-            type="button"
-            disabled={uninstallState === 'loading'}
-            onClick={() =>
-              void fb.run(
-                uninstallKey,
-                async () => {
-                  await onUninstall?.(row);
-                  show('success', t('fileTree.uninstalled', { name }));
-                },
-                { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
-              )
-            }
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 opacity-0 group-hover/row:opacity-100 max-lg:opacity-100 hover:text-red-400 hover:bg-neutral-800 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-            title={t('fileTree.uninstall', { name })}
-          >
-            <FeedbackIcon
-              state={uninstallState}
-              className="h-3 w-3"
-              icon={<Trash2 className="h-3 w-3" />}
-            />
           </button>
+        </Tooltip>
+        {uninstallable && onUninstall && (
+          <Tooltip label={t('fileTree.uninstall', { name })}>
+            <button
+              type="button"
+              disabled={uninstallState === 'loading'}
+              onClick={() =>
+                void fb.run(
+                  uninstallKey,
+                  async () => {
+                    await onUninstall?.(row);
+                    show('success', t('fileTree.uninstalled', { name }));
+                  },
+                  { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
+                )
+              }
+              className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-500 opacity-0 group-hover/row:opacity-100 max-lg:opacity-100 hover:text-red-400 hover:bg-neutral-800 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+            >
+              <FeedbackIcon
+                state={uninstallState}
+                className="h-3 w-3"
+                icon={<Trash2 className="h-3 w-3" />}
+              />
+            </button>
+          </Tooltip>
         )}
       </div>
     );
@@ -428,19 +432,22 @@ export function FileAssetTree({
           {active.size ? `${visible.length} / ${assets.length}` : assets.length}
         </span>
         {allDirPaths.length > 0 && (
-          <button
-            type="button"
-            onClick={toggleAll}
-            className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
-            title={anyCollapsed ? t('fileTree.expandAllDirs') : t('fileTree.collapseAllDirs')}
+          <Tooltip
+            label={anyCollapsed ? t('fileTree.expandAllDirs') : t('fileTree.collapseAllDirs')}
           >
-            {anyCollapsed ? (
-              <ChevronsUpDown className="h-2.5 w-2.5" />
-            ) : (
-              <ChevronsDownUp className="h-2.5 w-2.5" />
-            )}
-            {anyCollapsed ? t('fileTree.expandAll') : t('fileTree.collapseAll')}
-          </button>
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
+            >
+              {anyCollapsed ? (
+                <ChevronsUpDown className="h-2.5 w-2.5" />
+              ) : (
+                <ChevronsDownUp className="h-2.5 w-2.5" />
+              )}
+              {anyCollapsed ? t('fileTree.expandAll') : t('fileTree.collapseAll')}
+            </button>
+          </Tooltip>
         )}
       </div>
 

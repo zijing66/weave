@@ -4,6 +4,7 @@ import { api, type ConfigFileId, type ConfigModelOption, type ConfigModelsRespon
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 
 const INPUT_CLS =
   'w-full rounded-md bg-neutral-900 border border-edge/[0.08] px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-mac-accent/50';
@@ -120,14 +121,15 @@ export function ConfigModelCard({
               }
               className={cn(INPUT_CLS, !showKey && 'masked-input')}
             />
-            <button
-              type="button"
-              onClick={() => setShowKey((v) => !v)}
-              title={showKey ? t('cfg.modelsApiKeyHide') : t('cfg.modelsApiKeyShow')}
-              className="shrink-0 rounded-md bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
-            >
-              {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-            </button>
+            <Tooltip label={showKey ? t('cfg.modelsApiKeyHide') : t('cfg.modelsApiKeyShow')}>
+              <button
+                type="button"
+                onClick={() => setShowKey((v) => !v)}
+                className="shrink-0 rounded-md bg-neutral-800 px-2 py-1 text-neutral-300 hover:bg-neutral-700"
+              >
+                {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </Tooltip>
           </div>
         </label>
       </div>

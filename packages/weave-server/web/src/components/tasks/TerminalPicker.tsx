@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { TerminalTarget } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useBackPop } from '@/lib/back-pop';
 
 /** 弹窗壳（标题栏 + 蒙版 + 面板）：观感一致靠共用一份，不靠两处对齐。 */
@@ -42,15 +43,16 @@ function PickerShell({
       >
         <div className="flex items-center justify-between gap-2 pb-2">
           <p className="text-xs font-medium text-neutral-200">{title}</p>
-          <button
-            type="button"
-            title={t('tasks.terminalPickCancel')}
-            aria-label={t('tasks.terminalPickCancel')}
-            onClick={onClose}
-            className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.terminalPickCancel')}>
+            <button
+              type="button"
+              aria-label={t('tasks.terminalPickCancel')}
+              onClick={onClose}
+              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
         {children}
       </div>

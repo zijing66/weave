@@ -9,6 +9,7 @@ import { useConvScreenOpen } from '@/lib/conv-screen';
 import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
 import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * 右下角 AI 助手浮层：**配置齐（地址 + 模型 + key）才出现按钮**，点开是与 weave
@@ -101,14 +102,15 @@ export function AiAssistant() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        title={open ? t('ai.close') : t('ai.open')}
-        className="fixed bottom-4 right-4 z-50 grid h-11 w-11 place-items-center rounded-full border border-edge/[0.08] bg-neutral-900/90 text-neutral-300 shadow-mac backdrop-blur transition-colors hover:bg-neutral-800 hover:text-neutral-100"
-      >
-        <Bot className="h-5 w-5" />
-      </button>
+      <Tooltip label={open ? t('ai.close') : t('ai.open')} side="top">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="fixed bottom-4 right-4 z-50 grid h-11 w-11 place-items-center rounded-full border border-edge/[0.08] bg-neutral-900/90 text-neutral-300 shadow-mac backdrop-blur transition-colors hover:bg-neutral-800 hover:text-neutral-100"
+        >
+          <Bot className="h-5 w-5" />
+        </button>
+      </Tooltip>
       {open &&
         createPortal(
           // 双锚（left/right）：zoom 下单锚定宽会左溢，双锚宽度自动求解永不出屏
@@ -118,22 +120,24 @@ export function AiAssistant() {
             <header className="h-11 shrink-0 flex items-center gap-2 border-b border-edge/[0.06] px-4 frosted">
               <Bot className="h-4 w-4 text-violet-400" />
               <span className="text-sm font-semibold text-neutral-200">{t('ai.title')}</span>
-              <button
-                type="button"
-                onClick={() => setMessages([])}
-                title={t('ai.clear')}
-                className="ml-auto rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                title={t('ai.close')}
-                className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <Tooltip label={t('ai.clear')} side="top" className="ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setMessages([])}
+                  className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('ai.close')} side="top">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </Tooltip>
             </header>
 
             <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
@@ -199,23 +203,25 @@ export function AiAssistant() {
                 className="min-h-0 flex-1 resize-none rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
               />
               {busy ? (
-                <button
-                  type="button"
-                  onClick={() => abortRef.current?.abort()}
-                  title={t('ai.stop')}
-                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
-                >
-                  <Square className="h-3.5 w-3.5" />
-                </button>
+                <Tooltip label={t('ai.stop')} side="top">
+                  <button
+                    type="button"
+                    onClick={() => abortRef.current?.abort()}
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+                  >
+                    <Square className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
               ) : (
-                <button
-                  type="submit"
-                  disabled={input.trim() === ''}
-                  title={t('ai.send')}
-                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                </button>
+                <Tooltip label={t('ai.send')} side="top">
+                  <button
+                    type="submit"
+                    disabled={input.trim() === ''}
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
               )}
             </form>
           </div>

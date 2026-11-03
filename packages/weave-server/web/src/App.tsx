@@ -33,6 +33,7 @@ import { MarketModal } from '@/components/MarketModal';
 import { FileViewer } from '@/components/FileViewer';
 import { FileBrowserModal } from '@/components/FileBrowserModal';
 import { Resizer } from '@/components/Resizer';
+import { Tooltip } from '@/components/ui/tooltip';
 import { SettingsModal } from '@/components/SettingsModal';
 import { CommandPalette } from '@/components/CommandPalette';
 import { cn } from '@/lib/utils';
@@ -785,16 +786,17 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
         <div className="h-full flex flex-col rounded-none lg:rounded-2xl border border-edge/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
           <div className="h-11 shrink-0 flex items-center gap-2 lg:gap-3 px-4 border-b border-edge/[0.06] frosted">
             {/* <lg：左右栏收进滑出抽屉，顶栏放两个入口 */}
-            <button
-              onClick={() => setMobilePanel('projects')}
-              className={cn(
-                'rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors',
-                isDesktop && 'hidden',
-              )}
-              title={t('app.mobileProjects')}
-            >
-              <PanelLeft className="h-4 w-4" />
-            </button>
+            <Tooltip label={t('app.mobileProjects')} side="top">
+              <button
+                onClick={() => setMobilePanel('projects')}
+                className={cn(
+                  'rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors',
+                  isDesktop && 'hidden',
+                )}
+              >
+                <PanelLeft className="h-4 w-4" />
+              </button>
+            </Tooltip>
             <TrafficLight />
             {/* 组合标（图形 + 手写 WEAVE 单词）：图形部分固定品牌色，单词吃 currentColor。 */}
             <WeaveLogo className="h-[18px] w-auto text-neutral-200" />
@@ -803,22 +805,24 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
               {t('app.projectCount', { n: projects.length })}
             </span>
             {/* 资源市场（独立弹层页，Ctrl/Cmd+P）：安装落点在弹层内选定，不跟随锚定项目。 */}
-            <button
-              onClick={() => setMarketOpen(true)}
-              className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title={`${t('app.openMarket')} (Ctrl+P)`}
-            >
-              <Library className="h-4 w-4" />
-            </button>
+            <Tooltip label={`${t('app.openMarket')} (Ctrl+P)`} side="top">
+              <button
+                onClick={() => setMarketOpen(true)}
+                className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              >
+                <Library className="h-4 w-4" />
+              </button>
+            </Tooltip>
             {/* 全局搜索（Ctrl/Cmd+K；顶栏按钮兼作移动端入口）。 */}
-            <button
-              onClick={() => setPaletteOpen(true)}
-              className="ml-auto p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title={t('search.open')}
-              aria-label={t('search.open')}
-            >
-              <Search className="h-4 w-4" />
-            </button>
+            <Tooltip label={t('search.open')} side="top" className="ml-auto">
+              <button
+                onClick={() => setPaletteOpen(true)}
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                aria-label={t('search.open')}
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            </Tooltip>
             {/* GitHub 访问链接（含 star 数；取不到就只显示图标）——设置按钮左边。
                 不挂 title：图标语义自明，悬停提示属噪音（保留 aria-label 供读屏）。 */}
             <a
@@ -837,50 +841,56 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 （auto 恒 SunMoon 半日半月）——三态图标互不相同，每点一次必变；
                 「按下去变成哪个」的画法在 auto+系统深色时会与钉死深色长得一样，
                 点一下界面还不变，分不清自己处在哪个态。 */}
-            <button
-              onClick={() =>
-                setThemePreference(
-                  themePref === 'dark' ? 'light' : themePref === 'light' ? 'auto' : 'dark',
-                )
-              }
-              className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title={
+            <Tooltip
+              label={
                 themePref === 'dark'
                   ? t('app.themeDark')
                   : themePref === 'light'
                     ? t('app.themeLight')
                     : t('app.themeAuto')
               }
-              aria-label={
-                themePref === 'dark'
-                  ? t('app.themeDark')
-                  : themePref === 'light'
-                    ? t('app.themeLight')
-                    : t('app.themeAuto')
-              }
+              side="top"
             >
-              {themePref === 'dark' ? (
-                <Moon className="h-4 w-4" />
-              ) : themePref === 'light' ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <SunMoon className="h-4 w-4" />
-              )}
-            </button>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title={t('app.settingsTooltip')}
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => void logout()}
-              className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-              title={t('auth.logout')}
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+              <button
+                onClick={() =>
+                  setThemePreference(
+                    themePref === 'dark' ? 'light' : themePref === 'light' ? 'auto' : 'dark',
+                  )
+                }
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                aria-label={
+                  themePref === 'dark'
+                    ? t('app.themeDark')
+                    : themePref === 'light'
+                      ? t('app.themeLight')
+                      : t('app.themeAuto')
+                }
+              >
+                {themePref === 'dark' ? (
+                  <Moon className="h-4 w-4" />
+                ) : themePref === 'light' ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <SunMoon className="h-4 w-4" />
+                )}
+              </button>
+            </Tooltip>
+            <Tooltip label={t('app.settingsTooltip')} side="top">
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            </Tooltip>
+            <Tooltip label={t('auth.logout')} side="top">
+              <button
+                onClick={() => void logout()}
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </Tooltip>
           </div>
 
           <div className="flex flex-1 overflow-hidden">
@@ -915,11 +925,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       // 窄屏外层 display:contents（无盒子，面板退回按表头定位于整行宽），
                       // 桌面才成为定位盒让面板挂在这枚标签上。
                       <span className="contents lg:relative lg:inline-block lg:shrink-0">
-                        <button
-                          onClick={() => setUpdatesOpen((v) => !v)}
-                          aria-expanded={updatesOpen}
-                          title={t('app.updateListTip')}
-                          className={cn(
+                        <Tooltip label={t('app.updateListTip')} side="top">
+                          <button
+                            onClick={() => setUpdatesOpen((v) => !v)}
+                            aria-expanded={updatesOpen}
+                            className={cn(
                             'shrink-0 inline-flex items-center gap-1 rounded-full bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium hover:bg-orange-900/60',
                             updatesOpen && 'ring-1 ring-orange-500/50',
                           )}
@@ -930,7 +940,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                           <ChevronDown
                             className={cn('h-3 w-3 transition-transform', updatesOpen && 'rotate-180')}
                           />
-                        </button>
+                          </button>
+                        </Tooltip>
                         {updatesOpen && (
                           <>
                             <div className="fixed inset-0 z-20" onClick={() => setUpdatesOpen(false)} />
@@ -964,24 +975,28 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       </span>
                     )}
                     {!globalMode && updates && updates.available > 0 && (
-                      <button
-                        onClick={() =>
-                          void fb.run(
-                            'sync:all',
-                            async () => {
-                              const { updated } = await handleSyncAll();
-                              if (updated > 0) show('success', t('toast.synced', { n: updated }));
-                              else show('info', t('toast.nothingToSync'));
-                            },
-                            { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
-                          )
-                        }
-                        title={`${t('app.syncAllTooltip', { n: updates.available })}\n\n${t('app.scopeCoverageTooltip')}`}
-                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
+                      <Tooltip
+                        label={`${t('app.syncAllTooltip', { n: updates.available })}\n\n${t('app.scopeCoverageTooltip')}`}
+                        side="top"
                       >
-                        <FeedbackIcon state={fb.stateOf('sync:all')} className="h-3 w-3" />
-                        {t('app.syncAll')}
-                      </button>
+                        <button
+                          onClick={() =>
+                            void fb.run(
+                              'sync:all',
+                              async () => {
+                                const { updated } = await handleSyncAll();
+                                if (updated > 0) show('success', t('toast.synced', { n: updated }));
+                                else show('info', t('toast.nothingToSync'));
+                              },
+                              { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
+                            )
+                          }
+                          className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
+                        >
+                          <FeedbackIcon state={fb.stateOf('sync:all')} className="h-3 w-3" />
+                          {t('app.syncAll')}
+                        </button>
+                      </Tooltip>
                     )}
                     {/* 会进 git 的 init 文件漂移了：同步域不代写，提醒去终端跑 init。 */}
                     {!globalMode && updates?.needsInit && (
@@ -1123,13 +1138,14 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
               <span className="text-sm font-semibold tracking-tight text-neutral-200">
                 {t('app.mobileProjects')}
               </span>
-              <button
-                onClick={() => setMobilePanel(null)}
-                className="ml-auto rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-                title={t('app.mobileDrawerClose')}
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <Tooltip label={t('app.mobileDrawerClose')} className="ml-auto" side="top">
+                <button
+                  onClick={() => setMobilePanel(null)}
+                  className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </Tooltip>
             </div>
             <div className="flex-1 overflow-y-auto">{projectListEl}</div>
           </aside>

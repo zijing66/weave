@@ -43,6 +43,7 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { FieldHint } from '@/components/ui/field-hint';
 import { NumberStepper } from '@/components/ui/number-stepper';
+import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -173,37 +174,41 @@ function GlyphPicker({
     <div className="flex items-center gap-1">
       <span className="text-neutral-500">{label}</span>
       {presets.map((p) => (
-        <button
+        <Tooltip
           key={p.nameKey}
-          onClick={() => onChange(p.char)}
-          disabled={!editable}
-          title={`${t(p.nameKey)} (U+${p.char.codePointAt(0)!.toString(16).toUpperCase()})`}
-          className={cn(
-            // nerd-font = bundled Nerd Font + mono fallback; plain font-mono
-            // shows tofu here on machines without a system Nerd Font
-            'nerd-font w-6 h-6 rounded flex items-center justify-center disabled:opacity-30',
-            current === p.char
-              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-edge/30'
-              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900',
-          )}
+          label={`${t(p.nameKey)} (U+${p.char.codePointAt(0)!.toString(16).toUpperCase()})`}
         >
-          {p.char}
-        </button>
+          <button
+            onClick={() => onChange(p.char)}
+            disabled={!editable}
+            className={cn(
+              // nerd-font = bundled Nerd Font + mono fallback; plain font-mono
+              // shows tofu here on machines without a system Nerd Font
+              'nerd-font w-6 h-6 rounded flex items-center justify-center disabled:opacity-30',
+              current === p.char
+                ? 'bg-neutral-800 text-neutral-100 ring-1 ring-edge/30'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900',
+            )}
+          >
+            {p.char}
+          </button>
+        </Tooltip>
       ))}
       {allowNone && (
-        <button
-          onClick={() => onChange('')}
-          disabled={!editable}
-          title={t('statusline.disableCap')}
-          className={cn(
-            'rounded px-1.5 h-6 text-10 disabled:opacity-30',
-            value === ''
-              ? 'bg-neutral-800 text-neutral-100 ring-1 ring-edge/30'
-              : 'text-neutral-500 hover:text-neutral-300',
-          )}
-        >
-          {t('statusline.none')}
-        </button>
+        <Tooltip label={t('statusline.disableCap')}>
+          <button
+            onClick={() => onChange('')}
+            disabled={!editable}
+            className={cn(
+              'rounded px-1.5 h-6 text-10 disabled:opacity-30',
+              value === ''
+                ? 'bg-neutral-800 text-neutral-100 ring-1 ring-edge/30'
+                : 'text-neutral-500 hover:text-neutral-300',
+            )}
+          >
+            {t('statusline.none')}
+          </button>
+        </Tooltip>
       )}
     </div>
   );
@@ -245,69 +250,73 @@ function ColorPicker({
   return (
     <div className="flex gap-1 items-center">
       {allowNone && (
-        <button
-          type="button"
-          onClick={onNone}
-          disabled={!editable}
-          title={t('statusline.noBackground')}
-          className={cn(
-            'h-3.5 w-3.5 rounded border border-edge/20 disabled:opacity-30',
-            noneSelected ? 'ring-2 ring-edge/60 bg-neutral-800' : 'opacity-40',
-          )}
-        >
-          <span className="block h-px bg-neutral-500 rotate-45" />
-        </button>
+        <Tooltip label={t('statusline.noBackground')}>
+          <button
+            type="button"
+            onClick={onNone}
+            disabled={!editable}
+            className={cn(
+              'h-3.5 w-3.5 rounded border border-edge/20 disabled:opacity-30',
+              noneSelected ? 'ring-2 ring-edge/60 bg-neutral-800' : 'opacity-40',
+            )}
+          >
+            <span className="block h-px bg-neutral-500 rotate-45" />
+          </button>
+        </Tooltip>
       )}
 
       {COLORS.map((c) => (
-        <button
-          key={c}
-          type="button"
-          onClick={() => onChange(c)}
-          disabled={!editable}
-          title={c}
-          style={{ backgroundColor: cssSolid(c) }}
-          className={cn(
-            'h-3.5 w-3.5 rounded-full disabled:opacity-30',
-            value === c ? 'ring-2 ring-edge/60' : 'opacity-50',
-          )}
-        />
+        <Tooltip key={c} label={c}>
+          <button
+            type="button"
+            onClick={() => onChange(c)}
+            disabled={!editable}
+            style={{ backgroundColor: cssSolid(c) }}
+            className={cn(
+              'h-3.5 w-3.5 rounded-full disabled:opacity-30',
+              value === c ? 'ring-2 ring-edge/60' : 'opacity-50',
+            )}
+          />
+        </Tooltip>
       ))}
 
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={!editable}
-        title={
+      <Tooltip
+        label={
           value && !isNamedColor(value)
             ? t('statusline.moreColorsCurrent', { color: colorLabel(value) })
             : t('statusline.moreColors')
         }
-        style={value && !isNamedColor(value) ? { backgroundColor: cssSolid(value) } : undefined}
-        className={cn(
-          'h-3.5 w-3.5 rounded-full border border-edge/25 text-8 leading-none disabled:opacity-30',
-          value && !isNamedColor(value) ? 'ring-2 ring-edge/60' : 'opacity-50 text-neutral-400',
-        )}
       >
-        {value && !isNamedColor(value) ? '' : '+'}
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          disabled={!editable}
+          style={value && !isNamedColor(value) ? { backgroundColor: cssSolid(value) } : undefined}
+          className={cn(
+            'h-3.5 w-3.5 rounded-full border border-edge/25 text-8 leading-none disabled:opacity-30',
+            value && !isNamedColor(value) ? 'ring-2 ring-edge/60' : 'opacity-50 text-neutral-400',
+          )}
+        >
+          {value && !isNamedColor(value) ? '' : '+'}
+        </button>
+      </Tooltip>
 
       {open && editable && (
         <div className="relative">
           <div className="absolute z-20 left-0 top-5 w-64 rounded border border-edge/15 bg-neutral-950 p-2 shadow-xl">
             <div className="grid grid-cols-[repeat(16,minmax(0,1fr))] gap-[2px]">
               {ANSI256_GRID.map((hex, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  title={`ansi256:${i}`}
-                  onClick={() => {
-                    onChange(`ansi256:${i}` as StatuslineColor);
-                    setOpen(false);
-                  }}
-                  style={{ backgroundColor: hex }}
-                  className="h-3 w-3 rounded-sm hover:ring-1 hover:ring-edge/70"
-                />
+                <Tooltip key={i} label={`ansi256:${i}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(`ansi256:${i}` as StatuslineColor);
+                      setOpen(false);
+                    }}
+                    style={{ backgroundColor: hex }}
+                    className="h-3 w-3 rounded-sm hover:ring-1 hover:ring-edge/70"
+                  />
+                </Tooltip>
               ))}
             </div>
             <div className="mt-2 flex items-center gap-1">
@@ -604,43 +613,45 @@ export function StatuslinePanel({
   return (
     <Card className={cn('flex flex-col', open && 'h-[600px] overflow-hidden')}>
       <CardHeader className="shrink-0 items-center">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 text-left"
-          title={open ? t('common.collapse') : t('common.expand')}
-        >
-          {open ? (
-            <ChevronDown className="h-4 w-4 text-neutral-500" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-neutral-500" />
-          )}
-          <CardTitle>{t('statusline.title')}</CardTitle>
-          <AgentBadge agent="claude" />
-          <span
-            className="rounded-full bg-emerald-900/40 px-1.5 py-0.5 text-10 text-emerald-300"
-            title={t('statusline.tuiHint')}
+        <Tooltip label={open ? t('common.collapse') : t('common.expand')} side="top">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex items-center gap-2 text-left"
           >
-            {t('statusline.tuiBadge')}
-          </span>
-        </button>
+            {open ? (
+              <ChevronDown className="h-4 w-4 text-neutral-500" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-neutral-500" />
+            )}
+            <CardTitle>{t('statusline.title')}</CardTitle>
+            <AgentBadge agent="claude" />
+            <span
+              className="rounded-full bg-emerald-900/40 px-1.5 py-0.5 text-10 text-emerald-300"
+              title={t('statusline.tuiHint')}
+            >
+              {t('statusline.tuiBadge')}
+            </span>
+          </button>
+        </Tooltip>
         <div className="ml-auto flex items-center gap-2 text-xs">
           <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-neutral-400">
             {isGlobal ? t('statusline.scopeGlobal') : t('statusline.scopeProject')}
           </span>
           {isGlobal && (
-            <button
-              onClick={() => void restoreFactory()}
-              className={cn(
-                'rounded px-2 py-1 transition-colors',
-                resetArmed
-                  ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
-                  : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
-              )}
-              title={t('statusline.resetHint')}
-            >
-              {resetArmed ? t('statusline.resetConfirm') : t('statusline.reset')}
-            </button>
+            <Tooltip label={t('statusline.resetHint')} side="top">
+              <button
+                onClick={() => void restoreFactory()}
+                className={cn(
+                  'rounded px-2 py-1 transition-colors',
+                  resetArmed
+                    ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
+                    : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
+                )}
+              >
+                {resetArmed ? t('statusline.resetConfirm') : t('statusline.reset')}
+              </button>
+            </Tooltip>
           )}
           <button
             onClick={() => void persist()}
@@ -713,44 +724,46 @@ export function StatuslinePanel({
                     {t('statusline.localCustom')}
                   </span>
                   <span className="text-neutral-600">{t('statusline.ownConfig')}</span>
-                  <button
-                    onClick={() => {
-                      if (confirmSwitch !== 'follow') {
-                        setConfirmSwitch('follow');
-                        return;
-                      }
-                      setConfirmSwitch(null);
-                      patch({ source: 'global' });
-                    }}
-                    className={cn(
-                      'ml-auto shrink-0 rounded px-2 py-0.5 transition-colors',
-                      confirmSwitch === 'follow'
-                        ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
-                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
-                    )}
-                    title={t('statusline.followHint')}
-                  >
-                    {confirmSwitch === 'follow' ? t('statusline.followConfirm') : t('statusline.follow')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirmSwitch !== 'sync') {
-                        setConfirmSwitch('sync');
-                        return;
-                      }
-                      setConfirmSwitch(null);
-                      adoptGlobal();
-                    }}
-                    className={cn(
-                      'shrink-0 rounded px-2 py-0.5 transition-colors',
-                      confirmSwitch === 'sync'
-                        ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
-                        : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
-                    )}
-                    title={t('statusline.syncHint')}
-                  >
-                    {confirmSwitch === 'sync' ? t('statusline.syncConfirm') : t('statusline.sync')}
-                  </button>
+                  <Tooltip label={t('statusline.followHint')} className="ml-auto shrink-0">
+                    <button
+                      onClick={() => {
+                        if (confirmSwitch !== 'follow') {
+                          setConfirmSwitch('follow');
+                          return;
+                        }
+                        setConfirmSwitch(null);
+                        patch({ source: 'global' });
+                      }}
+                      className={cn(
+                        'shrink-0 rounded px-2 py-0.5 transition-colors',
+                        confirmSwitch === 'follow'
+                          ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
+                          : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
+                      )}
+                    >
+                      {confirmSwitch === 'follow' ? t('statusline.followConfirm') : t('statusline.follow')}
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t('statusline.syncHint')}>
+                    <button
+                      onClick={() => {
+                        if (confirmSwitch !== 'sync') {
+                          setConfirmSwitch('sync');
+                          return;
+                        }
+                        setConfirmSwitch(null);
+                        adoptGlobal();
+                      }}
+                      className={cn(
+                        'shrink-0 rounded px-2 py-0.5 transition-colors',
+                        confirmSwitch === 'sync'
+                          ? 'bg-red-900/60 text-red-200 ring-1 ring-red-500/60'
+                          : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
+                      )}
+                    >
+                      {confirmSwitch === 'sync' ? t('statusline.syncConfirm') : t('statusline.sync')}
+                    </button>
+                  </Tooltip>
                 </>
               )}
             </div>
@@ -1095,30 +1108,33 @@ function Capsule({
       style={style}
       className={cn('shrink-0 max-w-[260px]', isDragging && 'opacity-50 ring-1 ring-edge/30')}
     >
-      <button
-        {...attributes}
-        {...listeners}
-        onClick={() => {
-          // dnd-kit also fires a click after a real drag — ignore that tail
-          if (Date.now() - lastDragEnd.current < 250) return;
-          onOpen(line, segKey);
-        }}
-        title={
+      <Tooltip
+        label={
           on
             ? t('statusline.capsuleTitle', { name: t(meta.labelKey) })
             : t('statusline.capsuleTitleOff', { name: t(meta.labelKey) })
         }
-        className={cn(
-          'rounded-full px-2.5 py-1 text-xs whitespace-pre select-none transition',
-          on
-            ? 'shadow-mac-sm'
-            : 'border border-dashed border-neutral-600 bg-neutral-800/60 text-neutral-500',
-          editable ? 'cursor-grab active:cursor-grabbing hover:brightness-110' : 'cursor-default',
-        )}
-        style={bg || fg ? { backgroundColor: bg, color: fg } : undefined}
       >
-        <span className="block truncate">{text}</span>
-      </button>
+        <button
+          {...attributes}
+          {...listeners}
+          onClick={() => {
+            // dnd-kit also fires a click after a real drag — ignore that tail
+            if (Date.now() - lastDragEnd.current < 250) return;
+            onOpen(line, segKey);
+          }}
+          className={cn(
+            'rounded-full px-2.5 py-1 text-xs whitespace-pre select-none transition',
+            on
+              ? 'shadow-mac-sm'
+              : 'border border-dashed border-neutral-600 bg-neutral-800/60 text-neutral-500',
+            editable ? 'cursor-grab active:cursor-grabbing hover:brightness-110' : 'cursor-default',
+          )}
+          style={bg || fg ? { backgroundColor: bg, color: fg } : undefined}
+        >
+          <span className="block truncate">{text}</span>
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -1168,14 +1184,15 @@ function CapsuleRow({
           {t('statusline.blockCount', { n: row.length })}
         </span>
         {linesLen > 1 && (
-          <button
-            onClick={() => onRemoveRow(li)}
-            disabled={!editable}
-            className="ml-auto text-neutral-500 hover:text-red-400 disabled:opacity-30"
-            title={t('statusline.removeRow')}
-          >
-            <span className="text-xs leading-none">✕</span>
-          </button>
+          <Tooltip label={t('statusline.removeRow')} className="ml-auto">
+            <button
+              onClick={() => onRemoveRow(li)}
+              disabled={!editable}
+              className="text-neutral-500 hover:text-red-400 disabled:opacity-30"
+            >
+              <span className="text-xs leading-none">✕</span>
+            </button>
+          </Tooltip>
         )}
       </div>
       <SortableContext items={row} strategy={horizontalListSortingStrategy}>
@@ -1196,13 +1213,14 @@ function CapsuleRow({
             />
           ))}
           {editable && (
-            <button
-              onClick={() => onAdd(li)}
-              className="rounded-full border border-dashed border-neutral-600 px-2.5 py-1 text-xs text-neutral-400 transition-colors hover:border-neutral-400 hover:text-neutral-200"
-              title={t('statusline.addBlockHint')}
-            >
-              {t('statusline.addBlock')}
-            </button>
+            <Tooltip label={t('statusline.addBlockHint')}>
+              <button
+                onClick={() => onAdd(li)}
+                className="rounded-full border border-dashed border-neutral-600 px-2.5 py-1 text-xs text-neutral-400 transition-colors hover:border-neutral-400 hover:text-neutral-200"
+              >
+                {t('statusline.addBlock')}
+              </button>
+            </Tooltip>
           )}
         </div>
       </SortableContext>
@@ -1270,13 +1288,11 @@ function SegmentModal({
           <span className="text-10 text-neutral-500">
             {t('statusline.rowN', { n: editing.line + 1 })}
           </span>
-          <button
-            onClick={onClose}
-            className="ml-auto text-neutral-500 hover:text-neutral-300"
-            title={t('statusline.closeEsc')}
-          >
-            ✕
-          </button>
+          <Tooltip label={t('statusline.closeEsc')} className="ml-auto">
+            <button onClick={onClose} className="text-neutral-500 hover:text-neutral-300">
+              ✕
+            </button>
+          </Tooltip>
         </div>
 
         {/* type tags — pick a new type; a type placed elsewhere shows its row */}
@@ -1286,14 +1302,13 @@ function SegmentModal({
             const isCurrent = s.key === key;
             const otherRow = at >= 0 && at !== editing.line;
             return (
-              <button
-                key={s.key}
-                type="button"
-                onClick={() => {
-                  if (!isCurrent) onPick(s.key);
-                }}
-                title={otherRow ? t('statusline.tagOtherRow', { n: at + 1 }) : s.key}
-                className={cn(
+              <Tooltip key={s.key} label={otherRow ? t('statusline.tagOtherRow', { n: at + 1 }) : s.key}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isCurrent) onPick(s.key);
+                  }}
+                  className={cn(
                   'rounded-full border px-1.5 py-0.5 text-10 transition-colors',
                   isCurrent
                     ? 'border-blue-500/50 bg-blue-900/50 text-blue-200'
@@ -1308,7 +1323,8 @@ function SegmentModal({
                     {t('statusline.rowShort', { n: at + 1 })}
                   </span>
                 )}
-              </button>
+                </button>
+              </Tooltip>
             );
           })}
         </div>
@@ -1331,35 +1347,37 @@ function SegmentModal({
               >
                 {seg.enabled ? t('statusline.enabled') : t('statusline.disabled')}
               </button>
-              <button
-                onClick={() => onPatch(key, { bold: !seg.bold })}
-                className={cn(
-                  'rounded px-2 py-0.5',
-                  seg.bold
-                    ? 'bg-neutral-800 text-neutral-100 font-bold'
-                    : 'text-neutral-500 hover:text-neutral-300',
-                )}
-                title={t('statusline.bold')}
-              >
-                B
-              </button>
-              <label
-                className={cn(
-                  'flex cursor-pointer items-center gap-1 rounded px-2 py-0.5',
-                  seg.merge
-                    ? 'bg-neutral-800 text-neutral-200'
-                    : 'text-neutral-500 hover:text-neutral-300',
-                )}
-                title={t('statusline.mergeHint')}
-              >
-                <input
-                  type="checkbox"
-                  checked={seg.merge}
-                  onChange={(e) => onPatch(key, { merge: e.target.checked })}
-                  className="hidden"
-                />
-                {t('statusline.merge')}
-              </label>
+              <Tooltip label={t('statusline.bold')}>
+                <button
+                  onClick={() => onPatch(key, { bold: !seg.bold })}
+                  className={cn(
+                    'rounded px-2 py-0.5',
+                    seg.bold
+                      ? 'bg-neutral-800 text-neutral-100 font-bold'
+                      : 'text-neutral-500 hover:text-neutral-300',
+                  )}
+                >
+                  B
+                </button>
+              </Tooltip>
+              <Tooltip label={t('statusline.mergeHint')}>
+                <label
+                  className={cn(
+                    'flex cursor-pointer items-center gap-1 rounded px-2 py-0.5',
+                    seg.merge
+                      ? 'bg-neutral-800 text-neutral-200'
+                      : 'text-neutral-500 hover:text-neutral-300',
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={seg.merge}
+                    onChange={(e) => onPatch(key, { merge: e.target.checked })}
+                    className="hidden"
+                  />
+                  {t('statusline.merge')}
+                </label>
+              </Tooltip>
               <input
                 value={seg.icon}
                 onChange={(e) => onPatch(key, { icon: e.target.value })}
@@ -1373,19 +1391,19 @@ function SegmentModal({
               <div className="flex items-center gap-1.5 text-xs text-neutral-400">
                 <span className="w-10 text-neutral-600">{t('statusline.fieldStyle')}</span>
                 {BAR_STYLES.map((st) => (
-                  <button
-                    key={st.key}
-                    onClick={() => onPatch(key, { style: st.key })}
-                    className={cn(
-                      'rounded px-1.5 py-0.5',
-                      (seg.style ?? 'both') === st.key
-                        ? 'bg-neutral-800 text-neutral-100'
-                        : 'text-neutral-500 hover:text-neutral-300',
-                    )}
-                    title={t(st.labelKey)}
-                  >
-                    {t(st.labelKey)}
-                  </button>
+                  <Tooltip key={st.key} label={t(st.labelKey)}>
+                    <button
+                      onClick={() => onPatch(key, { style: st.key })}
+                      className={cn(
+                        'rounded px-1.5 py-0.5',
+                        (seg.style ?? 'both') === st.key
+                          ? 'bg-neutral-800 text-neutral-100'
+                          : 'text-neutral-500 hover:text-neutral-300',
+                      )}
+                    >
+                      {t(st.labelKey)}
+                    </button>
+                  </Tooltip>
                 ))}
               </div>
             )}
@@ -1393,19 +1411,19 @@ function SegmentModal({
               <div className="flex items-center gap-1.5 text-xs text-neutral-400">
                 <span className="w-10 text-neutral-600">{t('statusline.fieldMetric')}</span>
                 {TOKEN_METRICS.map((m) => (
-                  <button
-                    key={m.key}
-                    onClick={() => onPatch(key, { metric: m.key })}
-                    className={cn(
-                      'rounded px-1.5 py-0.5',
-                      (seg.metric ?? 'session') === m.key
-                        ? 'bg-neutral-800 text-neutral-100'
-                        : 'text-neutral-500 hover:text-neutral-300',
-                    )}
-                    title={t(m.titleKey)}
-                  >
-                    {t(m.labelKey)}
-                  </button>
+                  <Tooltip key={m.key} label={t(m.titleKey)}>
+                    <button
+                      onClick={() => onPatch(key, { metric: m.key })}
+                      className={cn(
+                        'rounded px-1.5 py-0.5',
+                        (seg.metric ?? 'session') === m.key
+                          ? 'bg-neutral-800 text-neutral-100'
+                          : 'text-neutral-500 hover:text-neutral-300',
+                      )}
+                    >
+                      {t(m.labelKey)}
+                    </button>
+                  </Tooltip>
                 ))}
               </div>
             )}
@@ -1414,19 +1432,19 @@ function SegmentModal({
               <div className="flex items-center gap-1.5 text-xs text-neutral-400">
                 <span className="w-10 text-neutral-600">{t('statusline.fieldWindow')}</span>
                 {RATE_WINDOWS.map((w) => (
-                  <button
-                    key={w.key}
-                    onClick={() => onPatch(key, { window: w.key })}
-                    className={cn(
-                      'rounded px-1.5 py-0.5',
-                      (seg.window ?? 'five_hour') === w.key
-                        ? 'bg-neutral-800 text-neutral-100'
-                        : 'text-neutral-500 hover:text-neutral-300',
-                    )}
-                    title={t(w.titleKey)}
-                  >
-                    {t(w.labelKey)}
-                  </button>
+                  <Tooltip key={w.key} label={t(w.titleKey)}>
+                    <button
+                      onClick={() => onPatch(key, { window: w.key })}
+                      className={cn(
+                        'rounded px-1.5 py-0.5',
+                        (seg.window ?? 'five_hour') === w.key
+                          ? 'bg-neutral-800 text-neutral-100'
+                          : 'text-neutral-500 hover:text-neutral-300',
+                      )}
+                    >
+                      {t(w.labelKey)}
+                    </button>
+                  </Tooltip>
                 ))}
               </div>
             )}
@@ -1470,13 +1488,14 @@ function SegmentModal({
             </div>
 
             <div className="flex items-center justify-between border-t border-edge/[0.06] pt-2">
-              <button
-                onClick={onUnplace}
-                className="rounded px-2 py-1 text-xs text-red-400/80 hover:bg-red-900/30 hover:text-red-300"
-                title={t('statusline.unplaceHint')}
-              >
-                {t('statusline.unplace')}
-              </button>
+              <Tooltip label={t('statusline.unplaceHint')}>
+                <button
+                  onClick={onUnplace}
+                  className="rounded px-2 py-1 text-xs text-red-400/80 hover:bg-red-900/30 hover:text-red-300"
+                >
+                  {t('statusline.unplace')}
+                </button>
+              </Tooltip>
               <button
                 onClick={onClose}
                 className="rounded bg-blue-900/50 px-3 py-1 text-xs text-blue-200 hover:bg-blue-900/70"

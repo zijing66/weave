@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useBackPop } from '@/lib/back-pop';
+import { cssPx } from '@/lib/font-scale';
 import { commitOf, indexOf } from './enum-slider-core';
 
 /** 当前档文字色 = 宿主状态栏 thinking 块的紫（claude statusline 的 `#bb9af7`），
@@ -116,10 +117,12 @@ export function EnumSlider({
             style={{
               // 右沿对齐按钮右沿（箭头在按钮右端，浮层跟着它走）、右贴视口时夹回 8px；
               // 下方放得下就向下弹，贴底放不下再向上弹（bottom 钳回视口内）。
-              right: Math.max(8, window.innerWidth - anchor.right),
+              // 锚点矩形是视觉 px，落 style 前经 cssPx 除回 CSS 值（根 zoom 会把
+              // fixed 的 CSS 值再乘一次）。
+              right: cssPx(Math.max(8, window.innerWidth - anchor.right)),
               ...(anchor.bottom + 6 + 140 <= window.innerHeight
-                ? { top: anchor.bottom + 6 }
-                : { bottom: Math.max(8, window.innerHeight - anchor.top + 6) }),
+                ? { top: cssPx(anchor.bottom + 6) }
+                : { bottom: cssPx(Math.max(8, window.innerHeight - anchor.top + 6)) }),
             }}
             onClick={(e) => e.stopPropagation()}
           >

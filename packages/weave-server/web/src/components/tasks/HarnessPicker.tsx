@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '@/i18n/I18nProvider';
 import { useBackPop } from '@/lib/back-pop';
+import { cssPx } from '@/lib/font-scale';
 import { harnessUiOf } from '@/lib/harness-meta';
 import type { ProjectHarness } from '@/lib/api';
 import { HarnessIcon } from './HarnessIcon';
@@ -61,8 +62,9 @@ export function HarnessPicker({
     <div
       ref={panelRef}
       style={{
-        left: Math.min(x, window.innerWidth - 272),
-        top: Math.min(y, window.innerHeight - 168),
+        // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+        left: cssPx(Math.min(x, window.innerWidth - 272)),
+        top: cssPx(Math.min(y, window.innerHeight - 168)),
       }}
       className="fixed z-50 w-64 rounded-lg border border-edge/[0.08] bg-neutral-900 p-1 shadow-mac"
     >

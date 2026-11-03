@@ -54,6 +54,18 @@ export function useFontScale(): number {
   return useSyncExternalStore(subscribe, fontScale);
 }
 
+/**
+ * fixed 弹层坐标换算（全站唯一换算点）：`getBoundingClientRect` 给的是**视觉 px**，
+ * 而根 zoom 会把 fixed 元素的 CSS 值再乘一次——写进 style 前一律除回来，
+ * 否则缩放 ≠100% 时弹层整体飞离锚点（左定位偏 left×25%、右定位偏得少但同样错）。
+ * 锚点矩形、视口宽高（innerWidth/innerHeight 本就是视觉 px）全程用视觉值算，
+ * 只在最终落 style 那一步过这里。
+ */
+export function cssPx(visual: number): number {
+  const z = current / 100;
+  return z === 1 ? visual : visual / z;
+}
+
 /** 单测（node）里没有 document：那里只 import 类型，不落缩放。 */
 if (typeof document !== 'undefined') {
   current = stored();

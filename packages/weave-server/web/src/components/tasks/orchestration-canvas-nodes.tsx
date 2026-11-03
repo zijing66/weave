@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import type { SessionStatus } from './session-status';
 import { ORCH_COL_W, ORCH_GROUP_HEADER_H, ORCH_NODE_H, ORCH_NODE_W } from './orchestration-canvas-layout';
@@ -180,26 +181,26 @@ export function PortColumn({
   return (
     <div className="relative w-9 shrink-0">
       {ports.map((port, i) => (
-        <button
-          key={port.neighbor}
-          type="button"
-          title={port.hint}
-          aria-label={port.hint}
-          onClick={(e) => {
-            // 点连接点 = 选中它管的连线，不要顺带把节点也选中。
-            e.stopPropagation();
-            if (port.edgeId) onPick?.(port.edgeId);
-          }}
-          style={{ top: `${((i + 1) / (ports.length + 1)) * 100}%` }}
-          className={cn(
-            'nodrag absolute left-1/2 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-9 font-semibold ring-1 transition-colors',
-            side === 'in'
-              ? 'bg-teal-950/70 text-teal-300/90 ring-teal-500/25 hover:bg-teal-900/80'
-              : 'bg-teal-800/50 text-teal-100 ring-teal-400/40 hover:bg-teal-700/70',
-          )}
-        >
-          {i + 1}
-        </button>
+        <Tooltip key={port.neighbor} label={port.hint}>
+          <button
+            type="button"
+            aria-label={port.hint}
+            onClick={(e) => {
+              // 点连接点 = 选中它管的连线，不要顺带把节点也选中。
+              e.stopPropagation();
+              if (port.edgeId) onPick?.(port.edgeId);
+            }}
+            style={{ top: `${((i + 1) / (ports.length + 1)) * 100}%` }}
+            className={cn(
+              'nodrag absolute left-1/2 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-9 font-semibold ring-1 transition-colors',
+              side === 'in'
+                ? 'bg-teal-950/70 text-teal-300/90 ring-teal-500/25 hover:bg-teal-900/80'
+                : 'bg-teal-800/50 text-teal-100 ring-teal-400/40 hover:bg-teal-700/70',
+            )}
+          >
+            {i + 1}
+          </button>
+        </Tooltip>
       ))}
     </div>
   );
@@ -262,18 +263,19 @@ export function SessionNode({ data }: NodeProps<SessionFlowNode>) {
             )}
           </span>
         </span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpen(sessionId);
-          }}
-          title={t('orch.openChat')}
-          aria-label={t('orch.openChat')}
-          className="nodrag shrink-0 rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-edge/[0.08] hover:text-neutral-200 group-hover:opacity-100 max-lg:opacity-100"
-        >
-          <MessageSquare className="h-3 w-3" />
-        </button>
+        <Tooltip label={t('orch.openChat')}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen(sessionId);
+            }}
+            aria-label={t('orch.openChat')}
+            className="nodrag shrink-0 rounded p-1 text-neutral-500 opacity-0 transition-opacity hover:bg-edge/[0.08] hover:text-neutral-200 group-hover:opacity-100 max-lg:opacity-100"
+          >
+            <MessageSquare className="h-3 w-3" />
+          </button>
+        </Tooltip>
       </div>
       <PortColumn ports={outPorts} side="out" onPick={onPickPort} />
     </div>

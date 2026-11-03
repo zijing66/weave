@@ -1,6 +1,7 @@
 import { Minus, Plus } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 数字微调器（− 值 +）：提醒次数/保留天数/状态栏间隔这类小范围数值的统一
  *  调整面——按钮步进 + 可直接键入，越界钳回 [min, max]。增减按钮**常显**
@@ -36,16 +37,17 @@ export function NumberStepper({
         disabled && 'opacity-40',
       )}
     >
-      <button
-        type="button"
-        aria-label={t('common.decrease')}
-        title={t('common.decrease')}
-        disabled={disabled || value <= min}
-        onClick={() => onChange(clamp(value - step))}
-        className="flex w-6 items-center justify-center rounded-l bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
-      >
-        <Minus className="h-3 w-3" />
-      </button>
+      <Tooltip label={t('common.decrease')}>
+        <button
+          type="button"
+          aria-label={t('common.decrease')}
+          disabled={disabled || value <= min}
+          onClick={() => onChange(clamp(value - step))}
+          className="flex w-6 items-center justify-center rounded-l bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
+        >
+          <Minus className="h-3 w-3" />
+        </button>
+      </Tooltip>
       <input
         type="number"
         min={min}
@@ -56,16 +58,17 @@ export function NumberStepper({
         onChange={(e) => onChange(clamp(Number(e.target.value) || min))}
         className="w-14 bg-transparent px-1 text-center text-xs text-neutral-100 focus:outline-none disabled:opacity-40 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
-      <button
-        type="button"
-        aria-label={t('common.increase')}
-        title={t('common.increase')}
-        disabled={disabled || (max !== undefined && value >= max)}
-        onClick={() => onChange(clamp(value + step))}
-        className="flex w-6 items-center justify-center rounded-r bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
-      >
-        <Plus className="h-3 w-3" />
-      </button>
+      <Tooltip label={t('common.increase')}>
+        <button
+          type="button"
+          aria-label={t('common.increase')}
+          disabled={disabled || (max !== undefined && value >= max)}
+          onClick={() => onChange(clamp(value + step))}
+          className="flex w-6 items-center justify-center rounded-r bg-edge/[0.04] text-neutral-400 transition-colors hover:bg-edge/[0.08] hover:text-neutral-100 disabled:pointer-events-none disabled:opacity-30"
+        >
+          <Plus className="h-3 w-3" />
+        </button>
+      </Tooltip>
     </span>
   );
 }

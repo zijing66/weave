@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
@@ -54,16 +55,17 @@ function Num({
   return (
     <label className="flex shrink-0 items-center gap-1 text-11 text-neutral-400">
       <span className="sr-only">{label}</span>
-      <input
-        type="number"
-        value={value}
-        min={min}
-        max={max}
-        aria-label={label}
-        title={label}
-        onChange={(e) => onChange(Number.parseInt(e.target.value, 10) || 0)}
-        className="w-14 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 focus:border-blue-500/40 focus:outline-none"
-      />
+      <Tooltip label={label}>
+        <input
+          type="number"
+          value={value}
+          min={min}
+          max={max}
+          aria-label={label}
+          onChange={(e) => onChange(Number.parseInt(e.target.value, 10) || 0)}
+          className="w-14 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+        />
+      </Tooltip>
     </label>
   );
 }
@@ -117,15 +119,16 @@ export function OrchestrationCronDialog({
           <p className="min-w-0 truncate text-xs font-medium text-neutral-200">
             {t('orch.cronTitle')}
           </p>
-          <button
-            type="button"
-            title={t('common.close')}
-            aria-label={t('common.close')}
-            onClick={onClose}
-            className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('common.close')}>
+            <button
+              type="button"
+              aria-label={t('common.close')}
+              onClick={onClose}
+              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
 
         <div className="flex flex-wrap gap-1 pb-2">
@@ -222,27 +225,27 @@ export function OrchestrationCronDialog({
             {DOWS.map((dow) => {
               const on = fields.weekdays.includes(dow.id);
               return (
-                <button
-                  key={dow.id}
-                  type="button"
-                  title={t(dow.label)}
-                  aria-pressed={on}
-                  onClick={() =>
-                    patch({
-                      weekdays: on
-                        ? fields.weekdays.filter((d) => d !== dow.id)
-                        : [...fields.weekdays, dow.id],
-                    })
-                  }
-                  className={cn(
-                    'h-6 w-6 rounded-full border text-11 transition-colors',
-                    on
-                      ? 'border-teal-400/50 bg-teal-500/15 text-teal-200'
-                      : 'border-edge/[0.1] text-neutral-500 hover:text-neutral-200',
-                  )}
-                >
-                  {t(dow.label)}
-                </button>
+                <Tooltip key={dow.id} label={t(dow.label)}>
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() =>
+                      patch({
+                        weekdays: on
+                          ? fields.weekdays.filter((d) => d !== dow.id)
+                          : [...fields.weekdays, dow.id],
+                      })
+                    }
+                    className={cn(
+                      'h-6 w-6 rounded-full border text-11 transition-colors',
+                      on
+                        ? 'border-teal-400/50 bg-teal-500/15 text-teal-200'
+                        : 'border-edge/[0.1] text-neutral-500 hover:text-neutral-200',
+                    )}
+                  >
+                    {t(dow.label)}
+                  </button>
+                </Tooltip>
               );
             })}
           </div>

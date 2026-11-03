@@ -31,6 +31,7 @@ import type { Harness } from '@weavecode/core/harness';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { Switch } from '@/components/ui/switch';
 import { Combobox } from '@/components/ui/combobox';
 import { FieldHint } from '@/components/ui/field-hint';
@@ -419,11 +420,9 @@ function CaptureSection() {
             )}
             <span className="ml-auto flex shrink-0 items-center gap-2">
               <FeedbackIcon state={fb.stateOf(`capture:${row.harness}`)} className="h-3 w-3" />
-              <Switch
-                checked={row.installed}
-                onChange={(v) => toggle(row, v)}
-                title={t('hooks.capture.toggleTip')}
-              />
+              <Tooltip label={t('hooks.capture.toggleTip')}>
+                <Switch checked={row.installed} onChange={(v) => toggle(row, v)} />
+              </Tooltip>
             </span>
           </div>
         ))}
@@ -703,32 +702,36 @@ export function HooksPanel({
           </span>
           <Badge variant="helper">{eventLabel}</Badge>
           {rule.handler.type !== 'classify' && (
+            <Tooltip label={t('hooks.edit')}>
+              <button
+                type="button"
+                onClick={() => openEdit(rule)}
+                className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+          )}
+          <Tooltip
+            label={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}
+          >
             <button
               type="button"
-              title={t('hooks.edit')}
-              onClick={() => openEdit(rule)}
-              className="rounded p-1 text-neutral-500 transition-colors hover:text-neutral-200"
+              onClick={() => void deleteRule(rule.id)}
+              className={cn(
+                'rounded px-1.5 py-1 text-11 font-medium transition-colors',
+                confirmDeleteId === rule.id
+                  ? 'bg-red-900/60 text-red-300'
+                  : 'text-neutral-500 hover:text-red-300',
+              )}
             >
-              <Pencil className="h-3.5 w-3.5" />
+              {confirmDeleteId === rule.id ? (
+                t('hooks.confirmDelete')
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
             </button>
-          )}
-          <button
-            type="button"
-            title={confirmDeleteId === rule.id ? t('hooks.confirmDelete') : t('hooks.delete')}
-            onClick={() => void deleteRule(rule.id)}
-            className={cn(
-              'rounded px-1.5 py-1 text-11 font-medium transition-colors',
-              confirmDeleteId === rule.id
-                ? 'bg-red-900/60 text-red-300'
-                : 'text-neutral-500 hover:text-red-300',
-            )}
-          >
-            {confirmDeleteId === rule.id ? (
-              t('hooks.confirmDelete')
-            ) : (
-              <Trash2 className="h-3.5 w-3.5" />
-            )}
-          </button>
+          </Tooltip>
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-10 text-neutral-500">
           <Badge variant="command" className="gap-1">
@@ -928,24 +931,26 @@ export function HooksPanel({
                     {form.editingId ? t('hooks.form.editTitle') : t('hooks.form.createTitle')}
                   </h3>
                   {!form.editingId && (
-                    <button
-                      type="button"
-                      onClick={applyQuickTemplate}
-                      title={t('hooks.quickTemplateTip')}
-                      className="rounded-md border border-edge/[0.08] px-2 py-1 text-11 text-neutral-300 transition-colors hover:bg-neutral-800"
-                    >
-                      {t('hooks.quickTemplate')}
-                    </button>
+                    <Tooltip label={t('hooks.quickTemplateTip')}>
+                      <button
+                        type="button"
+                        onClick={applyQuickTemplate}
+                        className="rounded-md border border-edge/[0.08] px-2 py-1 text-11 text-neutral-300 transition-colors hover:bg-neutral-800"
+                      >
+                        {t('hooks.quickTemplate')}
+                      </button>
+                    </Tooltip>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={closeForm}
-                  title={t('hooks.cancel')}
-                  className="rounded-md p-1 text-neutral-500 transition-colors hover:text-neutral-200"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                <Tooltip label={t('hooks.cancel')} side="top">
+                  <button
+                    type="button"
+                    onClick={closeForm}
+                    className="rounded-md p-1 text-neutral-500 transition-colors hover:text-neutral-200"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
               </div>
               <div className="space-y-3 overflow-y-auto px-4 py-3">
                 {formError && <p className="text-xs text-red-400">{formError}</p>}
@@ -1025,20 +1030,20 @@ export function HooksPanel({
                     <span className="text-11 text-neutral-500">{t('hooks.field.handler')}</span>
                     <div className="flex w-fit max-w-full flex-wrap rounded-lg border border-edge/[0.06] bg-neutral-900/60 p-0.5">
                       {HANDLER_TYPES.map((type) => (
-                        <button
-                          key={type}
-                          type="button"
-                          title={t(HANDLER_TIP_KEYS[type])}
-                          onClick={() => setHandlerType(type)}
-                          className={cn(
-                            'rounded-md px-2.5 py-1 text-11 font-medium transition-colors duration-150',
-                            form.state.handlerType === type
-                              ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
-                              : 'text-neutral-500 hover:text-neutral-300',
-                          )}
-                        >
-                          {t(HANDLER_LABEL_KEYS[type])}
-                        </button>
+                        <Tooltip key={type} label={t(HANDLER_TIP_KEYS[type])}>
+                          <button
+                            type="button"
+                            onClick={() => setHandlerType(type)}
+                            className={cn(
+                              'rounded-md px-2.5 py-1 text-11 font-medium transition-colors duration-150',
+                              form.state.handlerType === type
+                                ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
+                                : 'text-neutral-500 hover:text-neutral-300',
+                            )}
+                          >
+                            {t(HANDLER_LABEL_KEYS[type])}
+                          </button>
+                        </Tooltip>
                       ))}
                     </div>
                   </div>

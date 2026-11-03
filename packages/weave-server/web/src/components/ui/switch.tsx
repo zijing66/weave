@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** macOS 风格的迷你开关（hooks 规则节点/规则列表/插件区段共用）。 */
 export function Switch({
@@ -9,17 +10,17 @@ export function Switch({
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
-  title: string;
+  /** 提示文案；缺省不弹提示。 */
+  title?: string;
   /** 行级防重入：忙碌中禁点（可选，缺省恒可用）。 */
   disabled?: boolean;
 }) {
-  return (
+  const button = (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-disabled={disabled || undefined}
-      title={title}
       disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
@@ -40,4 +41,5 @@ export function Switch({
       />
     </button>
   );
+  return title ? <Tooltip label={title}>{button}</Tooltip> : button;
 }

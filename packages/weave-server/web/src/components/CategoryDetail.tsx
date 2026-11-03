@@ -17,6 +17,7 @@ import type { Harness } from '@weavecode/core/harness';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
 import {
   SkillGrid,
@@ -263,23 +264,26 @@ export function CategoryDetail({
       {showRuntimeTabs && (
         <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-edge/[0.06] p-0.5 w-fit">
           {RUNTIME_TABS.map((tab) => (
-            <button
+            <Tooltip
               key={tab}
-              onClick={() => setRuntimeTab(tab)}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150',
-                runtimeTab === tab
-                  ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
-                  : 'text-neutral-500 hover:text-neutral-300',
-              )}
-              title={
+              label={
                 tab === 'all'
                   ? t('category.tabAllTip')
                   : t('category.tabToolTip', { tool: harnessUiOf(tab).tooltip })
               }
             >
-              {tab === 'all' ? t('category.tabAll') : harnessUiOf(tab).label}
-            </button>
+              <button
+                onClick={() => setRuntimeTab(tab)}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150',
+                  runtimeTab === tab
+                    ? 'bg-neutral-800 text-neutral-100 shadow-mac-sm'
+                    : 'text-neutral-500 hover:text-neutral-300',
+                )}
+              >
+                {tab === 'all' ? t('category.tabAll') : harnessUiOf(tab).label}
+              </button>
+            </Tooltip>
           ))}
         </div>
       )}

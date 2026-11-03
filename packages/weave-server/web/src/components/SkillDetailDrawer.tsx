@@ -24,6 +24,7 @@ import {
   type GlobalSkillSource,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { splitFrontmatter } from '@/lib/markdown';
@@ -114,24 +115,25 @@ function FileTreeNode({
     const active = selectedRel === node.file.relPath;
     const isMd = node.file.relPath.endsWith('/SKILL.md');
     return (
-      <button
-        onClick={() => onSelect(node.file)}
-        style={{ paddingLeft: pad }}
-        className={cn(
-          'w-full flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-left text-xs font-mono truncate [&_svg]:pointer-events-none',
-          active
-            ? 'bg-neutral-800 text-neutral-100'
-            : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50',
-        )}
-        title={node.file.absPath}
-      >
+      <Tooltip label={node.file.absPath} className="w-full">
+        <button
+          onClick={() => onSelect(node.file)}
+          style={{ paddingLeft: pad }}
+          className={cn(
+            'w-full flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-left text-xs font-mono truncate [&_svg]:pointer-events-none',
+            active
+              ? 'bg-neutral-800 text-neutral-100'
+              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50',
+          )}
+        >
         {isMd ? (
           <FileText className="h-3 w-3 shrink-0 text-blue-400" />
         ) : (
           <FileCode className="h-3 w-3 shrink-0 text-neutral-500" />
         )}
         <span className="truncate">{lastSegment(node.file.relPath)}</span>
-      </button>
+        </button>
+      </Tooltip>
     );
   }
   const isCollapsed = collapsed.has(node.path);
@@ -327,12 +329,11 @@ export function SkillDetailDrawer({
         <span className="text-sm font-semibold truncate">{name}</span>
         {/* 注册键 name@marketplace——@后 = 所属市场 = 插件的 namespace */}
         {pluginKey && (
-          <span
-            className="shrink-0 font-mono text-10 text-neutral-500"
-            title={t('skillGrid.keyTip')}
-          >
-            {pluginKey}
-          </span>
+          <Tooltip label={t('skillGrid.keyTip')}>
+            <span className="shrink-0 font-mono text-10 text-neutral-500">
+              {pluginKey}
+            </span>
+          </Tooltip>
         )}
         {scope === 'project' ? (
           <Badge variant="default">project</Badge>
@@ -358,13 +359,14 @@ export function SkillDetailDrawer({
             /* 无按钮三态：App 侧 onUninstall 即关抽屉（组件随卸载卸载），且失败
                toast 已由 App 的 *Safely 包装兜底——此处再发成功 toast 会与真实
                结果脱节（fire-and-forget），成功由列表行消失呈现。 */
-            <button
-              onClick={onUninstall}
-              className="text-neutral-500 hover:text-red-400 [&_svg]:pointer-events-none"
-              title={t('skillDetail.uninstallTitle')}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            <Tooltip label={t('skillDetail.uninstallTitle')}>
+              <button
+                onClick={onUninstall}
+                className="text-neutral-500 hover:text-red-400 [&_svg]:pointer-events-none"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </Tooltip>
           )}
           <button onClick={onClose} className="text-neutral-500 hover:text-neutral-300">
             <X className="h-4 w-4" />
@@ -377,22 +379,25 @@ export function SkillDetailDrawer({
         <aside className="w-56 shrink-0 border-r border-edge/[0.06] overflow-y-auto p-2 space-y-0.5">
           {tree.length > 0 && (
             <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-edge/[0.06]">
-              <button
-                onClick={toggleAll}
-                className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
-                title={
+              <Tooltip
+                label={
                   anyCollapsed
                     ? t('skillDetail.expandAllDirs')
                     : t('skillDetail.collapseAllDirs')
                 }
               >
-                {anyCollapsed ? (
-                  <ChevronsUpDown className="h-2.5 w-2.5" />
-                ) : (
-                  <ChevronsDownUp className="h-2.5 w-2.5" />
-                )}
-                {anyCollapsed ? t('skillDetail.expandAll') : t('skillDetail.collapseAll')}
-              </button>
+                <button
+                  onClick={toggleAll}
+                  className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
+                >
+                  {anyCollapsed ? (
+                    <ChevronsUpDown className="h-2.5 w-2.5" />
+                  ) : (
+                    <ChevronsDownUp className="h-2.5 w-2.5" />
+                  )}
+                  {anyCollapsed ? t('skillDetail.expandAll') : t('skillDetail.collapseAll')}
+                </button>
+              </Tooltip>
             </div>
           )}
           {tree.length === 0 && (

@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { Combobox } from '@/components/ui/combobox';
+import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { sessionLabel } from '@/lib/hook-payload';
@@ -84,15 +85,16 @@ export function OrchestrationSessionPicker({
           <p className="min-w-0 truncate text-xs font-medium text-neutral-200">
             {t('orch.pickerTitle')}
           </p>
-          <button
-            type="button"
-            title={t('common.close')}
-            aria-label={t('common.close')}
-            onClick={onClose}
-            className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('common.close')}>
+            <button
+              type="button"
+              aria-label={t('common.close')}
+              onClick={onClose}
+              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 pb-2">
           <input
@@ -102,17 +104,18 @@ export function OrchestrationSessionPicker({
             autoFocus
             className="min-w-[8rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
-          <Combobox
-            value={String(projectId)}
-            onChange={(v) => setProjectId(v === 'all' ? 'all' : Number(v))}
-            title={t('orch.filterProject')}
-            placeholder={t('orch.pickerAllProjects')}
-            className="max-w-[10rem] shrink-0 rounded bg-neutral-900 px-1.5 py-1 text-xs"
-            options={[
-              { value: 'all', label: t('orch.pickerAllProjects') },
-              ...projectOptions.map((p) => ({ value: String(p.id), label: p.name })),
-            ]}
-          />
+          <Tooltip label={t('orch.filterProject')}>
+            <Combobox
+              value={String(projectId)}
+              onChange={(v) => setProjectId(v === 'all' ? 'all' : Number(v))}
+              placeholder={t('orch.pickerAllProjects')}
+              className="max-w-[10rem] shrink-0 rounded bg-neutral-900 px-1.5 py-1 text-xs"
+              options={[
+                { value: 'all', label: t('orch.pickerAllProjects') },
+                ...projectOptions.map((p) => ({ value: String(p.id), label: p.name })),
+              ]}
+            />
+          </Tooltip>
         </div>
         {rows.length === 0 ? (
           <p className="py-3 text-center text-xs text-neutral-600">{t('orch.pickerEmpty')}</p>

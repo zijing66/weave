@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { TriangleAlert, X } from 'lucide-react';
 import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -42,13 +43,14 @@ export function ConfirmDialog({
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <TriangleAlert className="h-4 w-4 text-amber-400" />
           <span className="text-sm font-semibold text-neutral-200">{title}</span>
-          <button
-            onClick={onClose}
-            className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-            title={t('common.close')}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <Tooltip label={t('common.close')} className="ml-auto">
+            <button
+              onClick={onClose}
+              className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </header>
         <div className="px-4 py-4">
           <p className="text-xs leading-relaxed text-neutral-400">{message}</p>

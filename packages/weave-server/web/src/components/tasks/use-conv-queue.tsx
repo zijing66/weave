@@ -4,6 +4,7 @@ import { api, type SessionMessageRow, type UploadFile } from '@/lib/api';
 import { discardUpload, uploadFileWithProgress } from '@/lib/upload';
 import { errorText, type ActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { Tooltip } from '@/components/ui/tooltip';
 import { ATTACH_ATTR, serializeDraft } from './draft-editor';
 import {
   ATTACH_MAX_COUNT,
@@ -234,9 +235,9 @@ const queueActions = (m: SessionMessageRow) => (
     {/* 已发出（层② 终端）却没回执 = 文本多半已贴进输入框、只欠那记被吞掉的回车：
         补一记 Enter（提交的是整个输入框，与重发的「只补回车」同一语义）。 */}
     {m.status === 'delivered' && m.acked !== true && m.via === 'terminal' && (
+      <Tooltip label={t('tasks.msgEnterHint')}>
       <button
         type="button"
-        title={t('tasks.msgEnterHint')}
         aria-label={t('tasks.msgEnter')}
         disabled={fb.stateOf(`enter:${m.id}`) === 'loading'}
         onClick={() =>
@@ -257,11 +258,12 @@ const queueActions = (m: SessionMessageRow) => (
           icon={<CornerDownLeft className="h-3 w-3" />}
         />
       </button>
+      </Tooltip>
     )}
     {(m.status === 'failed' || m.stalled === true) && (
+      <Tooltip label={t('tasks.msgResend')}>
       <button
         type="button"
-        title={t('tasks.msgResend')}
         aria-label={t('tasks.msgResend')}
         disabled={fb.stateOf(`resend:${m.id}`) === 'loading'}
         onClick={() =>
@@ -282,12 +284,13 @@ const queueActions = (m: SessionMessageRow) => (
           icon={<RotateCcw className="h-3 w-3" />}
         />
       </button>
+      </Tooltip>
     )}
     {/* 队尾那条（最新还没送出去的）取回输入框改完再发——已送出去的行没有「改」这回事 */}
     {m.id === newestQueuedId && (
+      <Tooltip label={t('tasks.outboxDequeueHint')}>
       <button
         type="button"
-        title={t('tasks.outboxDequeueHint')}
         aria-label={t('tasks.outboxDequeue')}
         disabled={fb.stateOf(`dequeue:${m.id}`) === 'loading'}
         onClick={() => dequeue(m)}
@@ -299,17 +302,20 @@ const queueActions = (m: SessionMessageRow) => (
           icon={<Pencil className="h-3 w-3" />}
         />
       </button>
+      </Tooltip>
     )}
     {removableOf(m) && (
-      <button
-        type="button"
-        title={t(
+      <Tooltip
+        label={t(
           m.status === 'pending'
             ? 'tasks.msgDismissQueuedHint'
             : m.status === 'delivering'
               ? 'tasks.msgDismissInflightHint'
               : 'tasks.msgDismissHint',
         )}
+      >
+      <button
+        type="button"
         aria-label={t('tasks.msgDismiss')}
         disabled={fb.stateOf(`dismiss:${m.id}`) === 'loading'}
         onClick={() =>
@@ -330,6 +336,7 @@ const queueActions = (m: SessionMessageRow) => (
           icon={<Trash2 className="h-3 w-3" />}
         />
       </button>
+      </Tooltip>
     )}
   </>
 );

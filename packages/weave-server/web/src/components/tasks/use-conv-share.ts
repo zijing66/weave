@@ -9,6 +9,7 @@ import { conversationHtml, htmlFileName } from '@/lib/conv-html';
 import { parseMarkdown } from '@/lib/conv-markdown';
 import { renderMermaidSvg } from '@/lib/mermaid';
 import { errorText, type ActionFeedback } from '@/lib/action-feedback';
+import { cssPx } from '@/lib/font-scale';
 import {
   exportConversationMarkdown,
   exportConversationText,
@@ -171,8 +172,11 @@ const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
   const up = roomBelow < MENU_H + 8;
   setMenu({
     kind: 'share',
-    right: Math.max(8, window.innerWidth - r.right),
-    ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+    // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+    right: cssPx(Math.max(8, window.innerWidth - r.right)),
+    ...(up
+      ? { bottom: cssPx(window.innerHeight - r.top + 4) }
+      : { top: cssPx(r.bottom + 4) }),
     up,
   });
 };

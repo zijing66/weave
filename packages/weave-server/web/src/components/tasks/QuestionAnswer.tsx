@@ -11,6 +11,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * 阻塞问答作答弹窗：会话被 AskUserQuestion / 计划确认 / 权限确认挂起时的远程
@@ -221,15 +222,16 @@ export function QuestionAnswer({
           <p className="min-w-0 truncate text-xs font-medium text-neutral-200">
             {t('tasks.answerPickerTitle')} · {label}
           </p>
-          <button
-            type="button"
-            title={t('tasks.messagesClose')}
-            aria-label={t('tasks.messagesClose')}
-            onClick={onClose}
-            className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('tasks.messagesClose')}>
+            <button
+              type="button"
+              aria-label={t('tasks.messagesClose')}
+              onClick={onClose}
+              className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
         <p className="pb-2 text-11 leading-relaxed text-neutral-500">
           {anyPreview ? t('tasks.answerPickerHintPreview') : t('tasks.answerPickerHint')}
@@ -545,19 +547,20 @@ export function QuestionAnswer({
         )}
         {/* 拖角调大小（桌面专属：触屏整屏，没有拖窗口这回事） */}
         {isDesktop && (
-          <div
-            role="separator"
-            title={t('app.resizeDialog')}
-            aria-label={t('app.resizeDialog')}
-            onPointerDown={onGripDown}
-            onPointerMove={onGripMove}
-            onPointerUp={onGripUp}
-            onPointerCancel={onGripUp}
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none"
-          >
-            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20" />
-          </div>
+          <Tooltip label={t('app.resizeDialog')} className="absolute bottom-0 right-0">
+            <div
+              role="separator"
+              aria-label={t('app.resizeDialog')}
+              onPointerDown={onGripDown}
+              onPointerMove={onGripMove}
+              onPointerUp={onGripUp}
+              onPointerCancel={onGripUp}
+              onClick={(e) => e.stopPropagation()}
+              className="h-4 w-4 cursor-nwse-resize touch-none"
+            >
+              <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20" />
+            </div>
+          </Tooltip>
         )}
       </div>
     </div>,

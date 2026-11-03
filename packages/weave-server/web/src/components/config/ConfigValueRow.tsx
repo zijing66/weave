@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { Combobox } from '@/components/ui/combobox';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
 
 /** 树里一层的缩进（px）；树节点行与叶子行共用同一个数。 */
@@ -176,14 +177,15 @@ export function ConfigValueRow({
       <div className="flex items-start gap-1.5 rounded-md px-1 py-1 hover:bg-neutral-800/30">
         <span className="flex w-4 shrink-0 justify-center">
           {container ? (
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              className="mt-1 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
-              title={t('cfg.shapedToggle')}
-            >
-              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            </button>
+            <Tooltip label={t('cfg.shapedToggle')}>
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="mt-1 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
+              >
+                {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+            </Tooltip>
           ) : null}
         </span>
         <span
@@ -210,43 +212,47 @@ export function ConfigValueRow({
         )}
         <div className="flex shrink-0 items-center gap-0.5 pt-1">
           {container && !managed && (
-            <button
-              type="button"
-              onClick={container.kind === 'object' ? addObjectKey : addArrayItem}
-              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
-              title={t('cfg.addEntry')}
-            >
-              <Plus className="h-3 w-3" />
-            </button>
+            <Tooltip label={t('cfg.addEntry')}>
+              <button
+                type="button"
+                onClick={container.kind === 'object' ? addObjectKey : addArrayItem}
+                className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </Tooltip>
           )}
           {spec.deprecated && (
             <span className="rounded bg-red-500/10 px-1 py-0.5 text-10 text-red-300">{t('cfg.deprecated')}</span>
           )}
-          <button
-            type="button"
-            onClick={() => setDescOpen((v) => !v)}
-            className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300"
-            title={t('cfg.description')}
-          >
-            <Info className="h-3 w-3" />
-          </button>
-          {set && !managed && defaultOfSpec(spec) !== undefined && (
+          <Tooltip label={t('cfg.description')}>
             <button
-              onClick={() => onChange({ value: defaultOfSpec(spec) })}
-              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
-              title={t('cfg.resetDefault')}
+              type="button"
+              onClick={() => setDescOpen((v) => !v)}
+              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300"
             >
-              <RotateCcw className="h-3 w-3" />
+              <Info className="h-3 w-3" />
             </button>
+          </Tooltip>
+          {set && !managed && defaultOfSpec(spec) !== undefined && (
+            <Tooltip label={t('cfg.resetDefault')}>
+              <button
+                onClick={() => onChange({ value: defaultOfSpec(spec) })}
+                className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+              >
+                <RotateCcw className="h-3 w-3" />
+              </button>
+            </Tooltip>
           )}
           {set && !managed && (
-            <button
-              onClick={() => onChange({ remove: true })}
-              className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
-              title={t('cfg.clear')}
-            >
-              <X className="h-3 w-3" />
-            </button>
+            <Tooltip label={t('cfg.clear')}>
+              <button
+                onClick={() => onChange({ remove: true })}
+                className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -445,14 +451,15 @@ function ValueNode({
       <div className="flex items-start gap-1.5 rounded px-1 py-1 hover:bg-neutral-800/30">
         <span className="flex w-4 shrink-0 justify-center">
           {container ? (
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              className="mt-1 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
-              title={t('cfg.shapedToggle')}
-            >
-              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            </button>
+            <Tooltip label={t('cfg.shapedToggle')}>
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="mt-1 rounded p-0.5 text-neutral-600 hover:text-neutral-300"
+              >
+                {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              </button>
+            </Tooltip>
           ) : null}
         </span>
         {nameEditable ? (
@@ -492,33 +499,36 @@ function ValueNode({
           ) : (
             <>
               {container && (
-                <button
-                  type="button"
-                  onClick={addChild}
-                  className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
-                  title={t('cfg.addEntry')}
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
+                <Tooltip label={t('cfg.addEntry')}>
+                  <button
+                    type="button"
+                    onClick={addChild}
+                    className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                </Tooltip>
               )}
               {container && (
+                <Tooltip label={t('cfg.resetRow')}>
+                  <button
+                    type="button"
+                    onClick={() => onChange(container.kind === 'array' ? [] : {})}
+                    className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip label={t('cfg.clear')}>
                 <button
                   type="button"
-                  onClick={() => onChange(container.kind === 'array' ? [] : {})}
-                  className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-neutral-200"
-                  title={t('cfg.resetRow')}
+                  onClick={onRemove}
+                  className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
                 >
-                  <RotateCcw className="h-3 w-3" />
+                  <X className="h-3 w-3" />
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={onRemove}
-                className="rounded p-0.5 text-neutral-600 hover:bg-neutral-800 hover:text-red-300"
-                title={t('cfg.clear')}
-              >
-                <X className="h-3 w-3" />
-              </button>
+              </Tooltip>
             </>
           )}
         </div>

@@ -30,6 +30,7 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { ConfigTree, type ConfigTreeHandlers } from './ConfigTree';
 import { Combobox } from '@/components/ui/combobox';
+import { Tooltip } from '@/components/ui/tooltip';
 import type { RowEdit } from './ConfigValueRow';
 import { ConfigVault } from './ConfigVault';
 import { ConfigModelCard } from './ConfigModelCard';
@@ -525,13 +526,14 @@ export function HarnessConfigPanel({
             <FeedbackIcon state={fb.stateOf('cfg-save')} className="h-3 w-3" />
             {t('cfg.save')}
           </button>
-          <button
-            onClick={() => void load()}
-            title={t('cfg.reload')}
-            className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('cfg.reload')} side="top">
+            <button
+              onClick={() => void load()}
+              className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -641,24 +643,25 @@ export function HarnessConfigPanel({
         >
           {t('cfg.collapseAll')}
         </button>
-        <button
-          onClick={() => {
-            if (rawMode) {
-              // 切回树：raw 编辑落进草稿（非法文本留在 raw 里不丢）
-              if (commitRawToDraft()) setRawMode(false);
-              return;
-            }
-            setRawText(textOf(values));
-            setRawMode(true);
-          }}
-          className={cn(
-            'ml-auto rounded-md px-2 py-1 text-11',
-            rawMode ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300',
-          )}
-          title={t('cfg.rawHint')}
-        >
-          {t('cfg.raw')}
-        </button>
+        <Tooltip label={t('cfg.rawHint')} className="ml-auto">
+          <button
+            onClick={() => {
+              if (rawMode) {
+                // 切回树：raw 编辑落进草稿（非法文本留在 raw 里不丢）
+                if (commitRawToDraft()) setRawMode(false);
+                return;
+              }
+              setRawText(textOf(values));
+              setRawMode(true);
+            }}
+            className={cn(
+              'rounded-md px-2 py-1 text-11',
+              rawMode ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300',
+            )}
+          >
+            {t('cfg.raw')}
+          </button>
+        </Tooltip>
       </div>
 
       {rawMode ? (

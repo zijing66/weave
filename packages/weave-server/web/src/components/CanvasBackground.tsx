@@ -4,6 +4,7 @@ import { Ban, Grid3x3, Grip, Palette, Plus, type LucideIcon } from 'lucide-react
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /**
  * 画布底纹（事件链 / 编排 / 钩子链路三处 ReactFlow 共用一份偏好）：
@@ -122,56 +123,57 @@ export function CanvasBackground() {
         onClick={(e) => e.stopPropagation()}
         className="nopan flex items-center gap-0.5 rounded-md border border-edge/[0.08] bg-neutral-900/85 p-0.5 opacity-70 shadow-mac-sm backdrop-blur-sm transition-opacity hover:opacity-100 max-lg:opacity-100"
       >
-        <button
-          type="button"
-          title={t('common.canvas.settings')}
-          aria-label={t('common.canvas.settings')}
-          aria-expanded={open}
-          onClick={() => setOpen((prev) => !prev)}
-          className={cn(
-            'flex h-5 w-5 items-center justify-center rounded',
-            open ? 'bg-edge/[0.14] text-neutral-100' : 'text-neutral-500 hover:text-neutral-200',
-          )}
-        >
-          <Palette size={12} />
-        </button>
+        <Tooltip label={t('common.canvas.settings')}>
+          <button
+            type="button"
+            aria-label={t('common.canvas.settings')}
+            aria-expanded={open}
+            onClick={() => setOpen((prev) => !prev)}
+            className={cn(
+              'flex h-5 w-5 items-center justify-center rounded',
+              open ? 'bg-edge/[0.14] text-neutral-100' : 'text-neutral-500 hover:text-neutral-200',
+            )}
+          >
+            <Palette size={12} />
+          </button>
+        </Tooltip>
         {open && (
           <>
             <span className="mx-0.5 h-3 w-px bg-edge/[0.12]" />
             {PATTERNS.map(({ id, icon: Icon, label }) => (
-              <button
-                key={id}
-                type="button"
-                title={t(label)}
-                aria-label={t(label)}
-                aria-pressed={pattern === id}
-                onClick={() => setCanvasPattern(id)}
-                className={cn(
-                  'flex h-5 w-5 items-center justify-center rounded',
-                  pattern === id
-                    ? 'bg-edge/[0.14] text-neutral-100'
-                    : 'text-neutral-500 hover:text-neutral-200',
-                )}
-              >
-                <Icon size={12} />
-              </button>
+              <Tooltip key={id} label={t(label)}>
+                <button
+                  type="button"
+                  aria-label={t(label)}
+                  aria-pressed={pattern === id}
+                  onClick={() => setCanvasPattern(id)}
+                  className={cn(
+                    'flex h-5 w-5 items-center justify-center rounded',
+                    pattern === id
+                      ? 'bg-edge/[0.14] text-neutral-100'
+                      : 'text-neutral-500 hover:text-neutral-200',
+                  )}
+                >
+                  <Icon size={12} />
+                </button>
+              </Tooltip>
             ))}
             <span className="mx-0.5 h-3 w-px bg-edge/[0.12]" />
             {TINTS.map(({ id, dot, label }) => (
-              <button
-                key={id}
-                type="button"
-                title={t(label)}
-                aria-label={t(label)}
-                aria-pressed={tint === id}
-                onClick={() => setCanvasTint(id)}
-                className={cn(
-                  'flex h-5 w-5 items-center justify-center rounded-full border',
-                  tint === id ? 'border-edge/50' : 'border-transparent hover:border-edge/25',
-                )}
-              >
-                <span className={cn('h-2.5 w-2.5 rounded-full', dot)} />
-              </button>
+              <Tooltip key={id} label={t(label)}>
+                <button
+                  type="button"
+                  aria-label={t(label)}
+                  aria-pressed={tint === id}
+                  onClick={() => setCanvasTint(id)}
+                  className={cn(
+                    'flex h-5 w-5 items-center justify-center rounded-full border',
+                    tint === id ? 'border-edge/50' : 'border-transparent hover:border-edge/25',
+                  )}
+                >
+                  <span className={cn('h-2.5 w-2.5 rounded-full', dot)} />
+                </button>
+              </Tooltip>
             ))}
           </>
         )}

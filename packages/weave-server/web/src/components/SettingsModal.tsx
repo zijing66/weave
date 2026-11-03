@@ -60,6 +60,7 @@ import { Switch } from '@/components/ui/switch';
 import { FieldHint } from '@/components/ui/field-hint';
 import { NumberStepper } from '@/components/ui/number-stepper';
 import { Combobox } from '@/components/ui/combobox';
+import { Tooltip } from '@/components/ui/tooltip';
 import { registerInvalidator } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -206,14 +207,15 @@ function SecretKeyInput(props: {
         )}
         placeholder={props.keySet ? labels.set : labels.unset}
       />
-      <button
-        type="button"
-        onClick={() => setShow((value) => !value)}
-        title={show ? labels.hide : labels.show}
-        className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-neutral-300 hover:bg-neutral-700"
-      >
-        {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-      </button>
+      <Tooltip label={show ? labels.hide : labels.show}>
+        <button
+          type="button"
+          onClick={() => setShow((value) => !value)}
+          className="shrink-0 rounded-lg bg-neutral-800 px-2 py-1.5 text-neutral-300 hover:bg-neutral-700"
+        >
+          {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -647,13 +649,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
           <Settings className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('settings.title')}</span>
-          <button
-            onClick={onClose}
-            className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-            title={t('common.close')}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <Tooltip label={t('common.close')} className="ml-auto" side="top">
+            <button
+              onClick={onClose}
+              className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </header>
 
         <div className="min-h-0 flex-1 flex overflow-hidden">
@@ -1001,14 +1004,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                               className="shrink-0 accent-blue-500"
                               aria-label={sessionTitles.get(u.sessionId) ?? u.sessionId.slice(0, 8)}
                             />
-                            <button
-                              type="button"
-                              onClick={() => toggleExpand(u.sessionId)}
-                              className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                              title={isOpen ? t('settings.cleanCollapse') : t('settings.cleanExpand')}
-                            >
-                              {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                            </button>
+                            <Tooltip label={isOpen ? t('settings.cleanCollapse') : t('settings.cleanExpand')}>
+                              <button
+                                type="button"
+                                onClick={() => toggleExpand(u.sessionId)}
+                                className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                              >
+                                {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                              </button>
+                            </Tooltip>
                             <span className="min-w-0 flex-1 truncate text-11 text-neutral-300">
                               {sessionTitles.get(u.sessionId) ?? u.sessionId.slice(0, 8)}
                             </span>
@@ -1018,14 +1022,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                             {cleaning ? (
                               <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-300" />
                             ) : (
-                              <button
-                                type="button"
-                                title={t('settings.cleanSessionDamage')}
-                                onClick={() => setConfirmClean(u.sessionId)}
-                                className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
+                              <Tooltip label={t('settings.cleanSessionDamage')}>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmClean(u.sessionId)}
+                                  className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </Tooltip>
                             )}
                           </div>
                           {isOpen && (
@@ -1194,27 +1199,28 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     <code className="min-w-0 flex-1 truncate rounded bg-neutral-950 border border-edge/[0.06] px-2 py-1 text-11 text-neutral-300">
                       {u.url}
                     </code>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void copyText(u.url).then((ok) => {
-                          if (!ok) {
-                            show('error', t('common.copyFailed'));
-                            return;
-                          }
-                          setCopiedUrl(u.url);
-                          window.setTimeout(() => setCopiedUrl(null), 1500);
-                        });
-                      }}
-                      title={t('common.copy')}
-                      className="shrink-0 rounded p-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-                    >
-                      {copiedUrl === u.url ? (
-                        <span className="text-10 text-emerald-400">✓</span>
-                      ) : (
-                        <Copy className="h-3 w-3" />
-                      )}
-                    </button>
+                    <Tooltip label={t('common.copy')}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void copyText(u.url).then((ok) => {
+                            if (!ok) {
+                              show('error', t('common.copyFailed'));
+                              return;
+                            }
+                            setCopiedUrl(u.url);
+                            window.setTimeout(() => setCopiedUrl(null), 1500);
+                          });
+                        }}
+                        className="shrink-0 rounded p-1 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+                      >
+                        {copiedUrl === u.url ? (
+                          <span className="text-10 text-emerald-400">✓</span>
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                      </button>
+                    </Tooltip>
                   </li>
                 ))}
               </ul>
@@ -1353,30 +1359,31 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     className="min-w-0 flex-1 rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    void fb.run(
-                      'ai-models',
-                      () =>
-                        loadModels({
-                          baseUrl: settings?.ai?.baseUrl ?? '',
-                          ...(apiKeyInput !== '' ? { apiKey: apiKeyInput } : {}),
-                        }),
-                      { fail: (error) => errorText(error) },
-                    )
-                  }
-                  disabled={fb.stateOf('ai-models') === 'loading'}
-                  title={t('settings.aiModelFetchTip')}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-neutral-800 px-2 py-1.5 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
-                >
-                  <FeedbackIcon
-                    state={fb.stateOf('ai-models')}
-                    className="h-3 w-3"
-                    icon={<RefreshCw className="h-3 w-3" />}
-                  />
-                  {t('settings.aiModelFetch')}
-                </button>
+                <Tooltip label={t('settings.aiModelFetchTip')}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void fb.run(
+                        'ai-models',
+                        () =>
+                          loadModels({
+                            baseUrl: settings?.ai?.baseUrl ?? '',
+                            ...(apiKeyInput !== '' ? { apiKey: apiKeyInput } : {}),
+                          }),
+                        { fail: (error) => errorText(error) },
+                      )
+                    }
+                    disabled={fb.stateOf('ai-models') === 'loading'}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-neutral-800 px-2 py-1.5 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-40"
+                  >
+                    <FeedbackIcon
+                      state={fb.stateOf('ai-models')}
+                      className="h-3 w-3"
+                      icon={<RefreshCw className="h-3 w-3" />}
+                    />
+                    {t('settings.aiModelFetch')}
+                  </button>
+                </Tooltip>
                 </div>
               </div>
             </div>
@@ -1487,14 +1494,15 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       />
                       {t('settings.htmlExportActive')}
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => removeProfile(profile.id)}
-                      title={t('settings.htmlExportDelete')}
-                      className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <Tooltip label={t('settings.htmlExportDelete')}>
+                      <button
+                        type="button"
+                        onClick={() => removeProfile(profile.id)}
+                        className="shrink-0 rounded p-1 text-neutral-500 hover:bg-edge/[0.08] hover:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
                   </div>
                   <textarea
                     value={profile.head}

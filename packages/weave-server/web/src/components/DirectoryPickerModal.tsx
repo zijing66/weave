@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
 import { SkeletonRows } from '@/components/ui/skeleton';
+import { Tooltip } from '@/components/ui/tooltip';
 import type { MessageKey } from '@/i18n/dict';
 import {
   Check,
@@ -172,17 +173,18 @@ export function DirectoryPickerModal({
           className="group flex items-center gap-1 pr-2 rounded hover:bg-edge/[0.04] touch-manipulation"
           style={{ paddingLeft: depth * 14 + 6 }}
         >
-          <button
-            onClick={() => toggleExpand(node.path)}
-            className="shrink-0 p-0.5 max-lg:p-2 text-neutral-500 hover:text-neutral-200"
-            title={isExpanded ? t('common.collapse') : t('common.expand')}
-          >
-            {isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
-            )}
-          </button>
+          <Tooltip label={isExpanded ? t('common.collapse') : t('common.expand')}>
+            <button
+              onClick={() => toggleExpand(node.path)}
+              className="shrink-0 p-0.5 max-lg:p-2 text-neutral-500 hover:text-neutral-200"
+            >
+              {isExpanded ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </Tooltip>
           <button
             onClick={() => toggleExpand(node.path)}
             className={cn(
@@ -205,17 +207,8 @@ export function DirectoryPickerModal({
               <span className="shrink-0 text-10 text-neutral-600">{t('picker.alreadyAdded')}</span>
             )}
           </button>
-          <button
-            onClick={() => toggleCheck(node.path)}
-            disabled={!selectable}
-            className={cn(
-              'shrink-0 w-4 h-4 max-lg:w-6 max-lg:h-6 rounded border flex items-center justify-center transition-colors',
-              isChecked
-                ? 'bg-blue-500 border-blue-500 text-white'
-                : 'border-neutral-600 text-transparent group-hover:border-neutral-400 max-lg:border-neutral-500',
-              !selectable && 'opacity-30 cursor-not-allowed',
-            )}
-            title={
+          <Tooltip
+            label={
               isAnchor
                 ? t('picker.anchorTip')
                 : isChecked
@@ -223,8 +216,20 @@ export function DirectoryPickerModal({
                   : t('picker.selectFolder')
             }
           >
-            <Check className="h-3 w-3 max-lg:h-4 max-lg:w-4" />
-          </button>
+            <button
+              onClick={() => toggleCheck(node.path)}
+              disabled={!selectable}
+              className={cn(
+                'shrink-0 w-4 h-4 max-lg:w-6 max-lg:h-6 rounded border flex items-center justify-center transition-colors',
+                isChecked
+                  ? 'bg-blue-500 border-blue-500 text-white'
+                  : 'border-neutral-600 text-transparent group-hover:border-neutral-400 max-lg:border-neutral-500',
+                !selectable && 'opacity-30 cursor-not-allowed',
+              )}
+            >
+              <Check className="h-3 w-3 max-lg:h-4 max-lg:w-4" />
+            </button>
+          </Tooltip>
         </div>,
       );
       if (isExpanded) {
@@ -282,13 +287,14 @@ export function DirectoryPickerModal({
           <Folder className="h-4 w-4 text-blue-400" />
           <span className="text-sm font-semibold text-neutral-200">{t('picker.title')}</span>
           <span className="text-11 text-neutral-500 max-lg:hidden">{t('picker.subtitle')}</span>
-          <button
-            onClick={onClose}
-            className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 max-lg:p-2"
-            title={t('common.close')}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <Tooltip label={t('common.close')} side="top" className="ml-auto">
+            <button
+              onClick={onClose}
+              className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 max-lg:p-2"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </header>
 
         {/* 完整绝对路径行：树里勾选后在这里显示（树内的名字会被截断），也可直接
@@ -305,14 +311,15 @@ export function DirectoryPickerModal({
             spellCheck={false}
             className="flex-1 min-w-0 bg-neutral-900 rounded px-2 py-1 text-xs font-mono text-neutral-200"
           />
-          <button
-            onClick={commitPath}
-            disabled={!pathInput.trim()}
-            title={t('picker.addPathTip')}
-            className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700 disabled:opacity-40 max-lg:px-3 max-lg:py-2"
-          >
-            {t('picker.add')}
-          </button>
+          <Tooltip label={t('picker.addPathTip')}>
+            <button
+              onClick={commitPath}
+              disabled={!pathInput.trim()}
+              className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700 disabled:opacity-40 max-lg:px-3 max-lg:py-2"
+            >
+              {t('picker.add')}
+            </button>
+          </Tooltip>
         </div>
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -321,19 +328,19 @@ export function DirectoryPickerModal({
             {roots.map((r) => {
               const meta = ROOT_LABELS[r.kind];
               return (
-                <button
-                  key={r.path}
-                  onClick={() => toggleExpand(r.path)}
-                  className="shrink-0 inline-flex items-center gap-1 rounded-full bg-edge/[0.06] px-2.5 py-1.5 text-11 text-neutral-300 touch-manipulation"
-                  title={r.path}
-                >
+                <Tooltip key={r.path} label={r.path} side="top">
+                  <button
+                    onClick={() => toggleExpand(r.path)}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-full bg-edge/[0.06] px-2.5 py-1.5 text-11 text-neutral-300 touch-manipulation"
+                  >
                   {r.kind === 'drive' || r.kind === 'root' ? (
                     <HardDrive className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                   ) : (
                     <meta.icon className="h-3.5 w-3.5 shrink-0 text-blue-400" />
                   )}
                   <span className="truncate">{t(meta.labelKey)}</span>
-                </button>
+                  </button>
+                </Tooltip>
               );
             })}
             {roots.length === 0 && <SkeletonRows rows={1} className="p-0" />}
@@ -347,24 +354,24 @@ export function DirectoryPickerModal({
               {roots.map((r) => {
                 const meta = ROOT_LABELS[r.kind];
                 return (
-                  <button
-                    key={r.path}
-                    onClick={() => toggleExpand(r.path)}
-                    className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-left hover:bg-edge/[0.06]"
-                    title={r.path}
-                  >
-                    {r.kind === 'drive' || r.kind === 'root' ? (
-                      <HardDrive className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-                    ) : (
-                      <meta.icon className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-                    )}
-                    <span className="text-xs text-neutral-300 truncate">
-                      {t(meta.labelKey)}
-                      {r.kind === 'home' || r.kind === 'drive' ? (
-                        <span className="ml-1 text-neutral-500">{r.path}</span>
-                      ) : null}
-                    </span>
-                  </button>
+                  <Tooltip key={r.path} label={r.path}>
+                    <button
+                      onClick={() => toggleExpand(r.path)}
+                      className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-left hover:bg-edge/[0.06]"
+                    >
+                      {r.kind === 'drive' || r.kind === 'root' ? (
+                        <HardDrive className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                      ) : (
+                        <meta.icon className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                      )}
+                      <span className="text-xs text-neutral-300 truncate">
+                        {t(meta.labelKey)}
+                        {r.kind === 'home' || r.kind === 'drive' ? (
+                          <span className="ml-1 text-neutral-500">{r.path}</span>
+                        ) : null}
+                      </span>
+                    </button>
+                  </Tooltip>
                 );
               })}
               {roots.length === 0 && (
@@ -391,16 +398,16 @@ export function DirectoryPickerModal({
               <span className="text-11 text-neutral-500">{t('picker.noneSelected')}</span>
             )}
             {selected.map((p) => (
-              <button
-                key={p}
-                onClick={() => toggleCheck(p)}
-                className="inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-200 pl-2 pr-1 py-0.5 text-11 hover:bg-blue-900/60 max-lg:py-1.5"
-                title={t('picker.clickRemove')}
-              >
-                <Folder className="h-3 w-3" />
-                <span className="max-w-[220px] truncate max-lg:max-w-[180px]">{p}</span>
-                <X className="h-3 w-3" />
-              </button>
+              <Tooltip key={p} label={t('picker.clickRemove')}>
+                <button
+                  onClick={() => toggleCheck(p)}
+                  className="inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-200 pl-2 pr-1 py-0.5 text-11 hover:bg-blue-900/60 max-lg:py-1.5"
+                >
+                  <Folder className="h-3 w-3" />
+                  <span className="max-w-[220px] truncate max-lg:max-w-[180px]">{p}</span>
+                  <X className="h-3 w-3" />
+                </button>
+              </Tooltip>
             ))}
           </div>
           {error && <span className="text-11 text-red-400 max-w-[200px] truncate">{error}</span>}

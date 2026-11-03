@@ -6,6 +6,7 @@ import { api, type SessionEditHunk, type SessionEdits } from '@/lib/api';
 import { collapseDiff, countChanges, diffLines } from '@/lib/text-diff';
 import { useT } from '@/i18n/I18nProvider';
 import { useBackPop } from '@/lib/back-pop';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 一处改动算出来的东西：逐行 diff（折叠未变区）+ 增删行数。 */
 interface EditBlock {
@@ -150,13 +151,17 @@ export function SessionEditsDialog({
               ))}
             </div>
           )}
-          <button
-            onClick={onClose}
-            className={hasTurn ? 'p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800' : 'ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800'}
-            title={t('common.close')}
+          <Tooltip
+            label={t('common.close')}
+            className={hasTurn ? undefined : 'ml-auto'}
           >
-            <X className="h-4 w-4" />
-          </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </header>
 
         <div className="flex-1 min-h-0 overflow-auto">

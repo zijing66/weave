@@ -7,6 +7,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { PowerlineRow } from '@/components/StatuslinePanel';
 import { PROJECTS_QUERY } from '@/hooks/use-projects';
 import { contextWindowOf } from './use-session-controls';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** Token 数 → 紧凑读数（与生成脚本 `humanize` 同形：M 留一位、k 去 `.0`）。 */
 function humanizeTokens(n: number): string {
@@ -107,8 +108,8 @@ export function StatuslineBar({
 
   return (
     // 贴边：面板本体是 p-3，这里把内边距吃回去，底条铺满一条
+    <Tooltip label={t('statusline.barTitle')} side="top" className="block">
     <div
-      title={t('statusline.barTitle')}
       className="-mx-3 -mb-3 mt-1.5 shrink-0 overflow-x-auto overflow-y-hidden border-t border-edge/[0.06] bg-neutral-950/50 px-3 py-1"
     >
       {/* 整条一起横滚（行不各滚各的）：块多/路径长时不折行——折了 powerline 的块
@@ -119,6 +120,7 @@ export function StatuslineBar({
         ))}
       </div>
     </div>
+    </Tooltip>
   );
 }
 

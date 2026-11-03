@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { useT } from '@/i18n/I18nProvider';
 import { useTheme } from '@/lib/theme';
+import { Tooltip } from '@/components/ui/tooltip';
 import {
   mermaidFileName,
   mermaidPngFile,
@@ -69,16 +70,16 @@ export function MermaidBlock({ code }: { code: string }) {
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {(['svg', 'png'] as const).map((ext) => (
-            <button
-              key={ext}
-              type="button"
-              title={ext === 'svg' ? t('common.mermaidDownloadSvg') : t('common.mermaidDownloadPng')}
-              disabled={!svg || saving}
-              onClick={() => download(ext)}
-              className="rounded border border-edge/[0.1] px-1.5 py-px text-10 uppercase text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
-            >
-              {ext}
-            </button>
+            <Tooltip key={ext} label={ext === 'svg' ? t('common.mermaidDownloadSvg') : t('common.mermaidDownloadPng')}>
+              <button
+                type="button"
+                disabled={!svg || saving}
+                onClick={() => download(ext)}
+                className="rounded border border-edge/[0.1] px-1.5 py-px text-10 uppercase text-neutral-400 hover:text-neutral-200 disabled:opacity-40"
+              >
+                {ext}
+              </button>
+            </Tooltip>
           ))}
           <button
             type="button"

@@ -6,6 +6,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { errorText } from '@/lib/action-feedback';
 import { DirectoryPickerModal, cleanPath } from '@/components/DirectoryPickerModal';
+import { Tooltip } from '@/components/ui/tooltip';
 import { Image, FolderCog, Loader2, X } from 'lucide-react';
 
 interface StorageSettingsModalProps {
@@ -84,13 +85,14 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
               <span className="text-sm font-semibold text-neutral-200">
                 {t('project.storageTitle', { name: project.name })}
               </span>
-              <button
-                onClick={onClose}
-                className="ml-auto p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 max-lg:p-2"
-                title={t('common.close')}
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <Tooltip label={t('common.close')} className="ml-auto">
+                <button
+                  onClick={onClose}
+                  className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 max-lg:p-2"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </Tooltip>
             </header>
 
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4 max-lg:p-3">

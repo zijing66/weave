@@ -1284,52 +1284,60 @@ export function TasksPanel({
         style={isDesktop ? { width: listW } : undefined}
         className="flex w-full max-lg:min-h-0 max-lg:flex-1 lg:shrink-0 flex-col gap-2 overflow-y-auto border-r-0 lg:border-r border-edge/[0.06] pr-0 lg:pr-3"
       >
-        <div className="flex min-w-0 items-center gap-2">
+        {/* 头行容器查询（.tasks-head 见 index.css）：侧栏可拖、容器窄 ≠ 视口窄。
+            恒单行不换行：退场次序（用户裁决）= 按钮文字先退（图标+tooltip 兜底）→
+            下拉收缩截断（文字不隐藏）→ 计数退场 → 刷新按钮恒居右不退场。 */}
+        <div className="tasks-head flex min-w-0 items-center gap-x-2">
           <h3 className="shrink-0 whitespace-nowrap text-sm font-semibold text-neutral-200">
             {t('tasks.listTitle')}
           </h3>
-          <span className="shrink-0 text-11 text-neutral-500">
+          <span className="new-session-count shrink-0 text-11 text-neutral-500">
             {sessions === null ? t('hooks.loading') : String(sessions.length)}
           </span>
           {/* 新建会话：不依赖已开终端——落点由终端后端自决（复用本项目的 pane
               分屏，没有就新开一个；连实例都没开时服务端报因，前端 toast 转达）。
               弹层恒列本项目选中的全部 harness（起不了的置灰并在行里说明原因），
               所以只有「一个 harness 都没接入」才置灰。 */}
-          <button
-            type="button"
-            disabled={!canNewSession || newSessionBusy}
-            title={
+          <Tooltip
+            label={
               newSessionBusy
                 ? t('tasks.newSessionStarting')
                 : harnesses.length === 0
                   ? t('tasks.newSessionNoHarness')
                   : t('tasks.newSessionTip')
             }
-            onClick={(e) => onNewSession(e.currentTarget)}
-            className={cn(
-              'inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 transition-colors',
-              !canNewSession
-                ? 'cursor-not-allowed text-neutral-600'
-                : 'text-neutral-200 hover:bg-neutral-800',
-              newSessionBusy && 'cursor-progress opacity-70 hover:bg-neutral-900/90',
-            )}
+            side="top"
           >
+            <button
+              type="button"
+              disabled={!canNewSession || newSessionBusy}
+              onClick={(e) => onNewSession(e.currentTarget)}
+              className={cn(
+                'inline-flex min-w-0 items-center gap-1 whitespace-nowrap rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 transition-colors',
+                !canNewSession
+                  ? 'cursor-not-allowed text-neutral-600'
+                  : 'text-neutral-200 hover:bg-neutral-800',
+                newSessionBusy && 'cursor-progress opacity-70 hover:bg-neutral-900/90',
+              )}
+            >
             <FeedbackIcon
               state={fb.stateOf(`newSession:${projectId}`)}
-              className="h-3 w-3"
+              className="h-3 w-3 shrink-0"
               icon={<Plus className="h-3 w-3" />}
             />
-            {/* 窄屏先退中文、只留图标：文字换行会把按钮挤成两行（tooltip 仍有全称） */}
-            <span className="max-lg:hidden">{t('tasks.newSession')}</span>
-          </button>
-          {/* harness 筛选：只过滤列表行与计数；选中态与右栏不受影响。 */}
+            {/* 容器 <180px 按钮文字退场（图标恒在，tooltip 有全称）；宽时恢复 */}
+              <span className="new-session-label min-w-0">{t('tasks.newSession')}</span>
+            </button>
+          </Tooltip>
+          {/* harness 筛选：只过滤列表行与计数；选中态与右栏不受影响。
+              窄时收缩截断（文字不隐藏，用户裁决）；trigger 内部已 truncate。 */}
           <Combobox
             value={harnessFilter}
             onChange={(v) => setHarnessFilter(v as Harness | '')}
             title={t('tasks.harnessFilterAll')}
             placeholder={t('tasks.harnessFilterAll')}
             clearLabel={t('tasks.harnessFilterAll')}
-            className="rounded bg-neutral-900 px-1 py-0.5 text-10"
+            className="min-w-0 max-w-36 shrink rounded bg-neutral-900 px-1 py-0.5 text-10"
             options={harnesses.map((h) => ({ value: h.id, label: harnessUiOf(h.id).label }))}
           />
           <RefreshIconButton

@@ -4,6 +4,7 @@ import type { ConfigTreeNode } from '@/lib/config-form';
 import { textOf } from '@/lib/config-form';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
+import { Tooltip } from '@/components/ui/tooltip';
 import { ConfigValueRow, TREE_INDENT, type RowEdit } from './ConfigValueRow';
 
 export interface ConfigTreeHandlers {
@@ -48,12 +49,12 @@ export function ConfigTree({
           const setCount = countSet(node, handlers.hasValue);
           return (
             <div key={node.path}>
-              <button
-                onClick={() => handlers.onToggle(node.path)}
-                style={{ paddingLeft: depth * TREE_INDENT }}
-                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-neutral-800/30"
-                title={node.path}
-              >
+              <Tooltip label={node.path} className="w-full">
+                <button
+                  onClick={() => handlers.onToggle(node.path)}
+                  style={{ paddingLeft: depth * TREE_INDENT }}
+                  className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-neutral-800/30"
+                >
                 <span className="flex w-4 shrink-0 justify-center">
                   {open ? (
                     <ChevronDown className="h-3 w-3 text-neutral-600" />
@@ -81,7 +82,8 @@ export function ConfigTree({
                     {t('cfg.managed')}
                   </span>
                 )}
-              </button>
+                </button>
+              </Tooltip>
               {open && <ConfigTree nodes={node.children} depth={depth + 1} handlers={handlers} footer={footer} />}
               {open && footer?.(node, depth + 1)}
             </div>

@@ -23,6 +23,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
+import { cssPx } from '@/lib/font-scale';
 import { PROJECTS_QUERY } from '@/hooks/use-projects';
 import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickTarget } from './FilePicker';
@@ -2084,8 +2085,9 @@ export function SessionMessages({
                       ...(menu.up ? { bottom: menu.bottom } : { top: menu.top }),
                     }
                   : {
-                      left: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
-                      top: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H)),
+                      // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+                      left: cssPx(Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8))),
+                      top: cssPx(Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H))),
                     }
               }
               onClick={(e) => e.stopPropagation()}

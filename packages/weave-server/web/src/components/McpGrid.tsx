@@ -8,6 +8,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Download, Power, Server, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
@@ -125,73 +126,76 @@ export function McpGrid({
                 )}
                 <div className="ml-auto flex items-center gap-1.5 shrink-0">
                   {toggleable && (
-                    <button
-                      type="button"
-                      disabled={enableState === 'loading'}
-                      onClick={() => cycleEnable(s)}
-                      title={t('mcp.enableTip', { state: t(STATE_LABEL[state]) })}
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
-                        state === 'on'
-                          ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
-                          : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
-                      )}
-                    >
-                      <FeedbackIcon
-                        state={enableState}
-                        className="h-3 w-3"
-                        icon={<Power className="h-3 w-3" />}
-                      />
-                      {t(STATE_LABEL[state])}
-                    </button>
+                    <Tooltip label={t('mcp.enableTip', { state: t(STATE_LABEL[state]) })}>
+                      <button
+                        type="button"
+                        disabled={enableState === 'loading'}
+                        onClick={() => cycleEnable(s)}
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                          state === 'on'
+                            ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
+                            : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
+                        )}
+                      >
+                        <FeedbackIcon
+                          state={enableState}
+                          className="h-3 w-3"
+                          icon={<Power className="h-3 w-3" />}
+                        />
+                        {t(STATE_LABEL[state])}
+                      </button>
+                    </Tooltip>
                   )}
                   {builtinAbsent ? (
-                    <button
-                      type="button"
-                      disabled={installState === 'loading'}
-                      onClick={() =>
-                        void fb.run(
-                          installKey,
-                          async () => {
-                            await onInstallBuiltinMcp(s.key, s.harness);
-                            show('success', t('mcp.installed', { name: s.key }));
-                          },
-                          { fail: (e) => t('errors.mcpInstallFailed', { error: errorText(e) }) },
-                        )
-                      }
-                      title={t('mcp.installTip', { name: s.key })}
-                      className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-1.5 py-0.5 text-10 text-neutral-300 hover:bg-neutral-700 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-                    >
-                      <FeedbackIcon
-                        state={installState}
-                        className="h-3 w-3"
-                        icon={<Download className="h-3 w-3" />}
-                      />
-                      {t('mcp.install')}
-                    </button>
+                    <Tooltip label={t('mcp.installTip', { name: s.key })}>
+                      <button
+                        type="button"
+                        disabled={installState === 'loading'}
+                        onClick={() =>
+                          void fb.run(
+                            installKey,
+                            async () => {
+                              await onInstallBuiltinMcp(s.key, s.harness);
+                              show('success', t('mcp.installed', { name: s.key }));
+                            },
+                            { fail: (e) => t('errors.mcpInstallFailed', { error: errorText(e) }) },
+                          )
+                        }
+                        className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-1.5 py-0.5 text-10 text-neutral-300 hover:bg-neutral-700 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                      >
+                        <FeedbackIcon
+                          state={installState}
+                          className="h-3 w-3"
+                          icon={<Download className="h-3 w-3" />}
+                        />
+                        {t('mcp.install')}
+                      </button>
+                    </Tooltip>
                   ) : (
-                  <button
-                    type="button"
-                    disabled={uninstallState === 'loading'}
-                    onClick={() =>
-                      void fb.run(
-                        uninstallKey,
-                        async () => {
-                          await onUninstallMcp(s.key, cardScope(s), s.harness);
-                          show('success', t('mcp.uninstalled', { name: s.key }));
-                        },
-                        { fail: (e) => t('errors.mcpUninstallFailed', { error: errorText(e) }) },
-                      )
-                    }
-                    className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-                    title={t('mcp.remove', { name: s.key })}
-                  >
-                    <FeedbackIcon
-                      state={uninstallState}
-                      className="h-3.5 w-3.5"
-                      icon={<Trash2 className="h-3.5 w-3.5" />}
-                    />
-                  </button>
+                    <Tooltip label={t('mcp.remove', { name: s.key })}>
+                      <button
+                        type="button"
+                        disabled={uninstallState === 'loading'}
+                        onClick={() =>
+                          void fb.run(
+                            uninstallKey,
+                            async () => {
+                              await onUninstallMcp(s.key, cardScope(s), s.harness);
+                              show('success', t('mcp.uninstalled', { name: s.key }));
+                            },
+                            { fail: (e) => t('errors.mcpUninstallFailed', { error: errorText(e) }) },
+                          )
+                        }
+                        className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                      >
+                        <FeedbackIcon
+                          state={uninstallState}
+                          className="h-3.5 w-3.5"
+                          icon={<Trash2 className="h-3.5 w-3.5" />}
+                        />
+                      </button>
+                    </Tooltip>
                   )}
                 </div>
               </CardHeader>
