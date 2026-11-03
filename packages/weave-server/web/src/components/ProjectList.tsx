@@ -29,6 +29,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Tooltip } from '@/components/ui/tooltip';
 import { StorageSettingsModal } from '@/components/StorageSettingsModal';
 import { useToast } from '@/components/Toast';
+import { CopyPathButton } from '@/components/ui/copy-button';
 import { errorText, type ActionState } from '@/lib/action-feedback';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
@@ -473,8 +474,11 @@ export function ProjectList({
                 </span>
                 {/* 路径与 harness 徽标各占整卡宽度：挤在文字列里会被右侧统计列
                     压窄——路径过度截断、两枚徽标还没满行就折行 */}
-                <span className="block w-full truncate text-11 text-neutral-500" title={p.path}>
-                  {p.path}
+                <span className="flex w-full min-w-0 items-center gap-0.5">
+                  <span className="min-w-0 truncate text-11 text-neutral-500" title={p.path}>
+                    {p.path}
+                  </span>
+                  <CopyPathButton path={p.path} />
                 </span>
                 {/* 已接入 harness（init 选择结果，服务端派生）：起会话的 harness
                     选项同一份事实。 */}

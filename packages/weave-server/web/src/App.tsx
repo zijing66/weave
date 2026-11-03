@@ -45,6 +45,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { ChevronDown, Github, Library, LogOut, Moon, PanelLeft, Search, Settings, Sun, SunMoon, X } from 'lucide-react';
 import type { MessageKey } from '@/i18n/dict';
 import { useToast } from '@/components/Toast';
+import { CopyPathButton } from '@/components/ui/copy-button';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { logout, refreshAuth, useAuthState } from '@/lib/auth';
@@ -917,8 +918,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       <h2 className="text-sm font-semibold truncate">
                         {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
                       </h2>
-                      <p className="text-11 text-neutral-500 truncate">
-                        {globalMode ? t('app.globalSubtitle') : (selected?.path ?? '')}
+                      <p className="flex min-w-0 items-center gap-0.5 text-11 text-neutral-500">
+                        <span className="min-w-0 truncate">
+                          {globalMode ? t('app.globalSubtitle') : (selected?.path ?? '')}
+                        </span>
+                        {!globalMode && selected && <CopyPathButton path={selected.path} />}
                       </p>
                     </div>
                     {!globalMode && updates && updates.available > 0 && (
