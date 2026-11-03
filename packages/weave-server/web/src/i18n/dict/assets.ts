@@ -69,10 +69,6 @@ export const assetsZh = {
   'assetView.packs': 'Plugins',
   'assetView.config': 'Config',
   'assetView.files': 'Files',
-  // —— 主视图里的「外部资源」折叠块（不属任何包的技能/MCP） ——
-  'category.externalAssets': '外部资源',
-  'category.externalAssetsNote': '不在任何插件包内',
-  'category.externalAssetsSummary': '技能 {skills} · MCP {mcp}',
 
   // —— McpGrid ——
   'mcp.headingGlobal': '全局 MCP Servers',
@@ -182,10 +178,6 @@ export const assetsEn: Record<keyof typeof assetsZh, string> = {
   'assetView.packs': 'Plugins',
   'assetView.config': 'Config',
   'assetView.files': 'Files',
-  // —— "External" collapsible block in the main view (skills/MCP outside any pack) ——
-  'category.externalAssets': 'External',
-  'category.externalAssetsNote': 'not part of any plugin pack',
-  'category.externalAssetsSummary': 'skills {skills} · MCP {mcp}',
 
   // —— McpGrid ——
   'mcp.headingGlobal': 'Global MCP Servers',

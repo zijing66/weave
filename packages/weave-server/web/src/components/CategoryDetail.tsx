@@ -1,6 +1,4 @@
 import { useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
-import { useDroppable } from '@dnd-kit/core';
 import {
   skillSourceRuntime,
   type AssetEntry,
@@ -18,7 +16,6 @@ import {
 import type { Harness } from '@weavecode/core/harness';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
-import { canInstall, type DragPayload } from '@/lib/install-capabilities';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import {
@@ -29,8 +26,6 @@ import {
   type OpenDetailFn,
 } from '@/components/SkillGrid';
 import { McpGrid } from '@/components/McpGrid';
-import { StatusPill, statusTone } from '@/components/ui/status-pill';
-import { countEffectiveSkills } from '@/lib/skill-stats';
 import { AgentBadge } from '@/components/AgentBadge';
 import { FileAssetTree } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
@@ -42,7 +37,7 @@ import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
 import { OrchestrationCanvas } from '@/components/tasks/OrchestrationCanvas';
 import { type MainCategory } from '@/components/CategoryBar';
 import type { MessageKey } from '@/i18n/dict';
-import { ChevronDown, ChevronRight, Code2, PackageX } from 'lucide-react';
+import { Code2, PackageX } from 'lucide-react';
 
 export type Mode = 'project' | 'global';
 
@@ -60,64 +55,10 @@ const VIEWS: { key: ResourceView; label: MessageKey }[] = [
   { key: 'files', label: 'assetView.files' },
 ];
 
-/** 外置 = 不属于任何包的技能分组（包内的随包启停，不进「外部资源」块）。 */
+/** 外置 = 不属于任何包的技能分组（包内的随包启停，由包行代表，不重复露面）。 */
 function externalGroups<T extends { pluginKey?: string }>(groups: readonly T[]): T[] {
   return groups.filter((group) => !group.pluginKey);
 }
-
-/**
- * 外部块的「已生效」计数：MCP 行读行上的 `effective`；技能按同一口径（只有显式禁用
- * 才算不生效；项目态技能行没有包级禁用概念 → 全算生效）。
- */
-function externalEffectiveCount(
-  skills: readonly unknown[],
-  mcp: readonly { effective?: boolean }[],
-  groups: readonly SkillGroup[] | undefined,
-): number {
-  const skillDone = groups ? countEffectiveSkills(externalGroups(groups)).effective : skills.length;
-  return skillDone + mcp.filter((row) => row.effective !== false).length;
-}
-
-/**
- * 主视图里的「外部资源」折叠块：装的是**不属于任何插件包**的技能与 MCP（包内的随包
- * 启停，不在这里露面）。默认展开——它是看到外置条目的唯一入口。
- */
-function ExternalAssetsSection({
-  title,
-  note,
-  tag,
-  children,
-}: {
-  title: string;
-  note: string;
-  tag?: ReactNode;
-  children: ReactNode;
-}) {
-  const t = useT();
-  // 默认折叠（与资源管理其余折叠条一致）
-  const [open, setOpen] = useState(false);
-  return (
-    <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        title={open ? t('common.collapse') : t('common.expand')}
-        className="flex w-full items-center gap-1.5 px-3 py-2 text-left [&_svg]:pointer-events-none max-lg:flex-wrap"
-      >
-        {open ? (
-          <ChevronDown className="h-3 w-3 text-neutral-500" />
-        ) : (
-          <ChevronRight className="h-3 w-3 text-neutral-500" />
-        )}
-        <span className="text-xs font-semibold text-neutral-300">{title}</span>
-        {tag}
-        <span className="text-11 text-neutral-500">{note}</span>
-      </button>
-      {open && <div className="space-y-2 px-3 pb-3">{children}</div>}
-    </section>
-  );
-}
-
 
 /** Harness-tool filter for the sections on the 资源管理 page. */
 export type RuntimeTab = Harness | 'all';
@@ -158,7 +99,6 @@ export function CategoryDetail({
   onOpenSession,
   onSelectSession,
   initialSessionId,
-  dragPayload,
 }: {
   /** Anchor project id (global mode reuses it to read machine-global data). */
   projectId: number;
@@ -201,10 +141,7 @@ export function CategoryDetail({
   onSelectSession: (sessionId: string | null) => void;
   /** 全局总览跳进项目任务视图时的初始选中会话。 */
   initialSessionId?: string;
-  /** 拖拽中的统一 payload（App onDragStart 提升）；null = 无拖拽。 */
-  dragPayload: DragPayload | null;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: 'project-assets' });
   const isGlobal = mode === 'global';
   const scope: AssetScope = isGlobal ? 'user' : 'project';
   const t = useT();
@@ -212,11 +149,6 @@ export function CategoryDetail({
   // 资产面板动作的按钮级反馈（FeedbackIcon 三态 + toast）已随按钮本体落位：
   // SkillGrid / McpGrid / FileAssetTree 各自 fb.run 自洽（App 的 handler 失败
   // 必抛，由各按钮的 fail 文案统一报错），这里只透传。
-  // 落点属性判定（与按钮 disabled 同谓词）：拖拽中且不合法 → 红圈 + not-allowed + 原因。
-  const dropVerdict = dragPayload
-    ? canInstall(dragPayload.attrs, { scope, agent: dragPayload.targetAgent })
-    : null;
-  const dropBlocked = dragPayload !== null && dropVerdict !== null && !dropVerdict.ok;
 
   // Harness-tool tab: globally effective skills differ per tool, so the asset
   // categories filter by runtime instead of mixing them.
@@ -324,15 +256,9 @@ export function CategoryDetail({
 
   return (
     <div
-      ref={setNodeRef}
-      className={cn(
-        // px-2/pt-2 对齐分类卡的 p-2（内容左缘/上缘与卡区同基准，任务两栏
-        // 不再贴主区边）；拖拽高亮用 -m-2 外扩，不改内容 padding。
-        'space-y-4 h-full px-2 pt-2',
-        dropBlocked
-          ? 'ring-1 ring-red-500/60 rounded-md -m-2 bg-red-950/20 cursor-not-allowed'
-          : (isOver && 'ring-1 ring-blue-500/60 rounded-md -m-2 bg-blue-950/20'),
-      )}
+      // px-2/pt-2 对齐分类卡的 p-2（内容左缘/上缘与卡区同基准，任务两栏
+      // 不再贴主区边）。
+      className="space-y-4 h-full px-2 pt-2"
     >
       {showRuntimeTabs && (
         <div className="flex items-center gap-1 rounded-lg bg-neutral-900/60 border border-edge/[0.06] p-0.5 w-fit">
@@ -443,62 +369,45 @@ export function CategoryDetail({
 
       {category === 'files' && resourceView === 'packs' && (
         <>
-          {/* 主区：插件包（包内技能/MCP 随包启停，不另行露面） */}
+          {/* 插件包（包内技能/MCP 随包启停，不另行露面） */}
           <PluginAssetsPanel projectId={projectId} mode={mode} runtimeTab={runtimeTab} />
 
-          {/* 外部资源：不属于任何包的 skills / MCP 自成一折叠块（用户定：外置单独一块） */}
-          <ExternalAssetsSection
-            title={t('category.externalAssets')}
-            note={t('category.externalAssetsNote')}
-            tag={
-              <StatusPill
-                tone={statusTone(
-                  externalEffectiveCount(skills, mcp, isGlobal ? groups : undefined),
-                  skills.length + mcp.length,
-                )}
-              >
-                {t('category.externalAssetsSummary', {
-                  skills: skills.length,
-                  mcp: mcp.length,
-                })}
-              </StatusPill>
+          {/* 外置 skills / MCP（不属于任何包；包内的随包启停、由上方包行代表）：
+              与包行同清单直铺，不再藏折叠块 */}
+          <SkillGrid
+            skills={skills}
+            groups={isGlobal ? externalGroups(groups) : undefined}
+            globalGroupsReadOnly={isGlobal ? undefined : externalGroups(groups)}
+            updates={skillUpdates}
+            empty={
+              runtimeTab === 'codex'
+                ? isGlobal
+                  ? t('category.emptySkillsGlobalCodex')
+                  : t('category.emptySkillsProjectCodex')
+                : isGlobal
+                  ? t('category.emptySkillsGlobal')
+                  : t('category.emptySkillsProject')
             }
-          >
-            <SkillGrid
-              skills={skills}
-              groups={isGlobal ? externalGroups(groups) : undefined}
-              globalGroupsReadOnly={isGlobal ? undefined : externalGroups(groups)}
-              updates={skillUpdates}
-              empty={
-                runtimeTab === 'codex'
-                  ? isGlobal
-                    ? t('category.emptySkillsGlobalCodex')
-                    : t('category.emptySkillsProjectCodex')
-                  : isGlobal
-                    ? t('category.emptySkillsGlobal')
-                    : t('category.emptySkillsProject')
-              }
-              onUninstallSkill={onUninstallSkill}
-              onOpenDetail={onOpenSkillDetail}
-              onCyclePluginState={onCyclePluginState}
-              onUninstallPlugin={onUninstallPlugin}
-            />
-            <McpGrid
-              rows={mcp}
-              scope={scope}
-              updates={mcpUpdates}
-              empty={
-                runtimeTab === 'codex'
-                  ? t('category.emptyMcpCodex')
-                  : isGlobal
-                    ? t('category.emptyMcpGlobal')
-                    : t('category.emptyMcpProject')
-              }
-              onUninstallMcp={onUninstallMcp}
-              onInstallBuiltinMcp={onInstallBuiltinMcp}
-              onCycleMcpEnable={onCycleMcpEnable}
-            />
-          </ExternalAssetsSection>
+            onUninstallSkill={onUninstallSkill}
+            onOpenDetail={onOpenSkillDetail}
+            onCyclePluginState={onCyclePluginState}
+            onUninstallPlugin={onUninstallPlugin}
+          />
+          <McpGrid
+            rows={mcp}
+            scope={scope}
+            updates={mcpUpdates}
+            empty={
+              runtimeTab === 'codex'
+                ? t('category.emptyMcpCodex')
+                : isGlobal
+                  ? t('category.emptyMcpGlobal')
+                  : t('category.emptyMcpProject')
+            }
+            onUninstallMcp={onUninstallMcp}
+            onInstallBuiltinMcp={onInstallBuiltinMcp}
+            onCycleMcpEnable={onCycleMcpEnable}
+          />
         </>
       )}
 
@@ -561,13 +470,6 @@ export function CategoryDetail({
                 })
           }
         />
-      )}
-
-      {dropBlocked && dropVerdict?.reasonKey && (
-        <p className="text-xs text-red-300">{t(dropVerdict.reasonKey)}</p>
-      )}
-      {!dropBlocked && isOver && (
-        <p className="text-xs text-blue-300">{t('category.dropToInstall')}</p>
       )}
     </div>
   );

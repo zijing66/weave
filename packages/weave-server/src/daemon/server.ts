@@ -50,6 +50,7 @@ import { handleToolkitRoutes } from './toolkit-routes.js';
 import { handleCaptureRoutes } from './capture-routes.js';
 import { handleConfigRoutes } from './config-routes.js';
 import { handleMarketRoutes } from './routes/market.js';
+import { handleInstallationRoutes } from './routes/installations.js';
 import { handleProjectRoutes } from './routes/projects.js';
 import { handleSettingsRoutes } from './routes/settings-statusline.js';
 import { handleSearchRoutes } from './routes/search.js';
@@ -346,6 +347,9 @@ async function handleRequest(
 
   // --- 资源/安装域 → routes/market.ts（libraries/市场/装卸/MCP/更新同步/文件读取）---
   if (await handleMarketRoutes(req, res, deps, pathname, url)) return;
+
+  // --- 安装位置聚合 → routes/installations.ts（跨项目「已装 N 处」快照，只读）---
+  if (await handleInstallationRoutes(req, res, deps, pathname)) return;
 
   // --- 设置/状态栏域 → routes/settings-statusline.ts（settings/目录浏览/config/statusline/assets）---
   if (await handleSettingsRoutes(req, res, deps, pathname, url)) return;

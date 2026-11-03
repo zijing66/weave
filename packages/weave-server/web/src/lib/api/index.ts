@@ -124,6 +124,8 @@ export type {
   McpServerConfig,
   McpRow,
   ProjectFile,
+  InstallationKind,
+  InstallationRow,
 } from './install';
 export { FILE_ASSET_CATEGORIES } from './install';
 export type {

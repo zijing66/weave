@@ -37,7 +37,9 @@ export function ConfigModelCard({
   onApply: (modelId: string) => void;
 }) {
   const t = useT();
-  const [baseUrl, setBaseUrl] = useState('');
+  // baseUrl 不是凭据（配置树里本就明文可见），实际值直接反显进框；
+  // key 才走掩码 + placeholder（明文不无谓展示）。
+  const [baseUrl, setBaseUrl] = useState(configuredBaseUrl);
   const [apiKey, setApiKey] = useState(configuredCredentialValue);
   // 未聚焦前 readOnly：密码管理器只在字段可写时自动填充，这是最硬的一道闸
   // （autoComplete/ignore 属性在部分浏览器会被忽略，readOnly 不会），否则浏览器存的
@@ -84,7 +86,7 @@ export function ConfigModelCard({
           <span className="text-11 text-neutral-500">{t('cfg.modelsBaseUrl')}</span>
           <input
             value={baseUrl}
-            placeholder={configuredBaseUrl || t('cfg.modelsBaseUrlPlaceholder')}
+            placeholder={t('cfg.modelsBaseUrlPlaceholder')}
             onChange={(e) => setBaseUrl(e.target.value)}
             className={INPUT_CLS}
           />

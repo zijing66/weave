@@ -1,7 +1,7 @@
 /**
  * 安装属性谓词单点（批 M5）：全 web 只有本模块读 capabilities 原始表。
  * 组件一律经 `capabilitiesOf()` 取 InstallAttrs（品牌位阻止字面构造），
- * 点击安装 disabled 与拖拽 canDrop 共用 `canInstall`——零第二份属性硬编码。
+ * 安装目标选择器的 disabled 判定共用 `canInstall`——零第二份属性硬编码。
  */
 import type { MessageKey } from '@/i18n/dict';
 import { HARNESS_ORDER } from './harness-meta';
@@ -12,7 +12,6 @@ import {
   type FileAssetCategory,
   type InstallCapabilities,
   type InstallCategory,
-  type McpServerConfig,
 } from './api';
 
 export type { InstallCategory };
@@ -92,26 +91,4 @@ export function canUninstall(
 ): boolean {
   if (!FILE_ASSET_CATEGORIES.includes(category as FileAssetCategory)) return false;
   return canInstall(capabilitiesOf(category as FileAssetCategory, table), { scope, agent }).ok;
-}
-
-/** 统一拖拽 payload：拖源封装、落点 canInstall 判定、onDragEnd 分派共用一形。 */
-export interface DragPayload {
-  installKind: 'skill' | 'mcp' | 'file';
-  category: InstallCategory;
-  name: string;
-  sourceDir?: string;
-  sourceFile?: string;
-  mcpConfig?: McpServerConfig;
-  /** 由 buildDragPayload 经 capabilitiesOf 取得（组件禁止字面构造）。 */
-  attrs: InstallAttrs;
-  /** 拖源区选定的安装目标 harness（skill/mcp = AgentToggle；file 恒 claude）。 */
-  targetAgent: AssetAgent;
-}
-
-/** 拖拽 payload 的唯一构造点：attrs 一律经 capabilitiesOf（组件不直接拼 payload）。 */
-export function buildDragPayload(
-  p: Omit<DragPayload, 'attrs'>,
-  table?: InstallCapabilities | null,
-): DragPayload {
-  return { ...p, attrs: capabilitiesOf(p.category, table) };
 }

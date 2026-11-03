@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DndContext,
-  PointerSensor,
-  TouchSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core';
-import {
   api,
   skillSourceRuntime,
   type AssetEntry,
@@ -24,7 +15,6 @@ import {
   type GlobalSkillSource,
   type InstallCapabilities,
 } from '@/lib/api';
-import type { DragPayload } from '@/lib/install-capabilities';
 import { registerInvalidator, subscribeFrame, subscribeHook } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { notifyBrowser } from '@/lib/browser-notify';
@@ -39,7 +29,7 @@ import { CategoryBar, type MainCategory, type CategoryBarData } from '@/componen
 import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
 import { DashboardOverview } from '@/components/DashboardOverview';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
-import { LibraryPanel } from '@/components/LibraryPanel';
+import { MarketModal } from '@/components/MarketModal';
 import { FileViewer } from '@/components/FileViewer';
 import { FileBrowserModal } from '@/components/FileBrowserModal';
 import { Resizer } from '@/components/Resizer';
@@ -66,8 +56,6 @@ import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
 
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
-const RIGHT_MIN = 260;
-const RIGHT_MAX = 440;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 /** 「n 个更新」展开面的一行。 */
@@ -166,13 +154,14 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 全局搜索弹层（Ctrl/Cmd+K；顶栏按钮是移动端入口）。 */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /** 资源市场弹层页（顶栏按钮唤起；开闭态不进 URL——先例裁决）。 */
+  const [marketOpen, setMarketOpen] = useState(false);
   /** 项目文件浏览器（只读 modal）：项目卡快捷按钮与全局搜索的文件结果共用。 */
   const [fileBrowser, setFileBrowser] = useState<{ projectId: number; path?: string } | null>(null);
   const themePref = useThemePreference();
-  // 移动端外壳（<1024px 单栏）：左右栏改滑出抽屉；拖拽 sensor 按指针类型分流。
+  // 移动端外壳（<1024px 单栏）：左栏改滑出抽屉。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
-  const finePointer = useMediaQuery('(pointer: fine)');
-  const [mobilePanel, setMobilePanel] = useState<'projects' | 'library' | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<'projects' | null>(null);
 
   // 全局 Ctrl/Cmd+K 开搜索：capture 阶段拦（输入框里的 Ctrl+K 也要归我们——
   // 浏览器默认没有占用它，preventDefault 只是防未来冲突）。
@@ -181,6 +170,18 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  // 全局 Ctrl/Cmd+P 开资源市场（浏览器默认打印在 dashboard 无意义，拦掉）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setMarketOpen((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -207,23 +208,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     const v = Number(localStorage.getItem('weave:col-left'));
     return Number.isFinite(v) && v > 0 ? clamp(v, LEFT_MIN, LEFT_MAX) : 224;
   });
-  const [rightW, setRightW] = useState<number>(() => {
-    const v = Number(localStorage.getItem('weave:col-right'));
-    return Number.isFinite(v) && v > 0 ? clamp(v, RIGHT_MIN, RIGHT_MAX) : 288;
-  });
   useEffect(() => localStorage.setItem('weave:col-left', String(leftW)), [leftW]);
-  useEffect(() => localStorage.setItem('weave:col-right', String(rightW)), [rightW]);
 
-  // 拖拽激活按指针分流：鼠标 = 5px 位移即拖（现状）；触屏 = 长按 200ms 才拖——
-  // PointerSensor 挂触摸会把列表滚动劫持成拖拽（dnd-kit 只在拖拽浮层设
-  // touch-action:none，改用 TouchSensor 后行本身的滚动不受影响）。
-  const mouseSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
-  const touchSensor = useSensor(TouchSensor, {
-    activationConstraint: { delay: 200, tolerance: 8 },
-  });
-  const sensors = useSensors(finePointer ? mouseSensor : touchSensor);
-
-  // 安装属性矩阵（静态）：启动拉一次，下发 LibraryPanel（M6 拖拽 canDrop 也用）。
+  // 安装属性矩阵（静态）：启动拉一次，下发市场弹层（目标选择器 canInstall 用）。
   const [installCaps, setInstallCaps] = useState<InstallCapabilities | null>(null);
   useEffect(() => {
     api.capabilities().then(setInstallCaps).catch(() => {});
@@ -373,21 +360,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     setMainCategory(route.category);
     setInitialSessionId(route.sessionId);
   }, [path, shellReady, projects, globalMode, selected, loadProject, selectGlobal]);
-
-  // Skill names already installed (project assets + machine-global set), for the
-  // ✓ mark in the library panel. In global mode the project list is empty, so
-  // the global set (all groups flattened) is what marks skills as installed.
-  const installedSkillNames = useMemo(() => {
-    const s = new Set<string>();
-    for (const g of globalSkillGroups) for (const k of g.skills) s.add(k.name);
-    for (const a of assets) {
-      if (a.category === 'skill') {
-        const n = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//)?.[1];
-        if (n) s.add(n);
-      }
-    }
-    return s;
-  }, [globalSkillGroups, assets]);
 
   const assetCounts = useMemo(() => {
     const skillNames = new Set<string>();
@@ -677,13 +649,12 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   );
   const restoreActionStateOf = useCallback((id: number) => fb.stateOf(`restore:${id}`), [fb]);
 
-  // 资产装卸 handler 域（安装/卸载/启停/同步/更新 + 拖拽分派），见 useAssetMutations。
+  // 资产装卸 handler 域（安装/卸载/启停/同步），见 useAssetMutations。
   const {
-    dragPayload, setDragPayload,
-    handleInstallSkillsBatch, handleUninstallSkill, handleUninstallMcp,
+    handleInstallSkill, handleInstallFileAsset, handleInstallMcp, handleInstallPlugin,
+    handleUninstallSkill, handleUninstallMcp,
     handleCycleMcpEnable, handleSyncAll, handleCyclePluginState, handleUninstallPlugin,
-    installSkillSafely, installFileAssetSafely, installMcpSafely, installBuiltinMcpSafely,
-    updateAssetSafely, uninstallSkillSafely, dispatchDrop,
+    installBuiltinMcpSafely, uninstallSkillSafely,
   } = useAssetMutations({
     t, show, selected, projects, globalMode, installCaps,
     refreshAssets, refreshMcp, refreshGlobalSkills, refreshPluginRows, refreshUpdates, ensureUpdates,
@@ -738,19 +709,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     },
     [selected, projects],
   );
-
-  function onDragStart(e: DragStartEvent) {
-    setDragPayload((e.active.data.current as DragPayload | undefined) ?? null);
-  }
-
-  function onDragEnd(e: DragEndEvent) {
-    const { active, over } = e;
-    const data = active.data.current as DragPayload | undefined;
-    setDragPayload(null);
-    if (!over || over.id !== 'project-assets' || !data) return;
-    const scope: AssetScope = globalMode ? 'user' : 'project';
-    dispatchDrop(data, scope, (reasonKey) => setError(t(reasonKey as Parameters<typeof t>[0])));
-  }
 
   // Drawer data for the open skill (project-scope files; global rows have none).
   // Files match by skill-dir name + the skill's server-set agent — no harness
@@ -818,38 +776,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   ) : (
     <SkeletonRows rows={7} />
   );
-  const libraryPanelEl = showMain ? (
-    <LibraryPanel
-      installedSkillNames={installedSkillNames}
-      onInstallSkill={installSkillSafely}
-      onInstallSkills={handleInstallSkillsBatch}
-      onInstallFileAsset={installFileAssetSafely}
-      onInstallMcp={installMcpSafely}
-      updates={updates}
-      onUpdateAsset={updateAssetSafely}
-      category={mainCategory}
-      scope={globalMode ? 'user' : 'project'}
-      capabilities={installCaps}
-      projectId={anchorId}
-      // 没有锚定项目就没什么可同步的（一键更新此时只是刷市场缓存，那步自己做完了）
-      onSyncAll={activeProject ? () => void syncNowWithFeedback(activeProject) : () => {}}
-    />
-  ) : !shellReady ? (
-    // 首拉未回：还没「选中」，此时给空态文案会闪一下「请选择一个项目」
-    <SkeletonRows rows={4} />
-  ) : (
-    <div className="p-3 text-xs text-neutral-500">
-      {t('app.selectProjectForAssets')}
-    </div>
-  );
 
   return (
-    <DndContext
-      sensors={sensors}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragCancel={() => setDragPayload(null)}
-    >
+    <>
       {/* h-full 不用 h-dvh：根 zoom 下视口单位被二次放大（125% 时整页溢出
           25%），html/body/#root 已钉 100%（index.css），百分比链不溢出。 */}
       <div className="h-full p-0 lg:p-4 bg-neutral-950">
@@ -873,13 +802,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             <span className={cn('text-xs text-neutral-500', !isDesktop && 'hidden')}>
               {t('app.projectCount', { n: projects.length })}
             </span>
+            {/* 资源市场（独立弹层页，Ctrl/Cmd+P）：安装落点在弹层内选定，不跟随锚定项目。 */}
             <button
-              onClick={() => setMobilePanel('library')}
-              className={cn(
-                'rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors',
-                (isDesktop || !showMain) && 'hidden',
-              )}
-              title={t('app.mobileLibrary')}
+              onClick={() => setMarketOpen(true)}
+              className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+              title={`${t('app.openMarket')} (Ctrl+P)`}
             >
               <Library className="h-4 w-4" />
             </button>
@@ -1131,7 +1058,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         onOpenSession={openSessionInProject}
                         onSelectSession={selectTaskSession}
                         initialSessionId={initialSessionId ?? undefined}
-                        dragPayload={dragPayload}
                       />
                       </>
                     )}
@@ -1180,27 +1106,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 />
               )}
             </main>
-
-            {/* Right — installable asset library, scope follows the active context。
-                <lg 同样收进滑出抽屉。 */}
-            {isDesktop && (
-              <>
-                {/* Sign matters: this handle sits to the LEFT of the panel, so
-                    dragging left (negative delta) has to make it wider. */}
-                <Resizer onResize={(d) => setRightW((w) => clamp(w - d, RIGHT_MIN, RIGHT_MAX))} title={t('app.resizeRight')} />
-                <aside
-                  style={{ width: rightW }}
-                  className="shrink-0 border-l border-edge/[0.06] frosted overflow-hidden"
-                >
-                  {libraryPanelEl}
-                </aside>
-              </>
-            )}
           </div>
         </div>
       </div>
 
-      {/* <lg：左右栏滑出抽屉——与桌面栏复用同一 JSX 常量（isDesktop 互斥，不双挂载） */}
+      {/* <lg：左栏滑出抽屉——与桌面栏复用同一 JSX 常量（isDesktop 互斥，不双挂载） */}
       {!isDesktop && mobilePanel !== null && (
         <div className="fixed inset-0 z-40">
           <button
@@ -1208,17 +1118,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             onClick={() => setMobilePanel(null)}
             className="absolute inset-0 bg-black/60 drawer-fade"
           />
-          <aside
-            className={cn(
-              'absolute top-0 bottom-0 w-[min(88vw,360px)] bg-neutral-900 border-edge/[0.08] shadow-mac flex flex-col',
-              mobilePanel === 'projects'
-                ? 'left-0 border-r drawer-left'
-                : 'right-0 border-l drawer-right',
-            )}
-          >
+          <aside className="absolute top-0 bottom-0 left-0 w-[min(88vw,360px)] bg-neutral-900 border-r border-edge/[0.08] shadow-mac flex flex-col drawer-left">
             <div className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
               <span className="text-sm font-semibold tracking-tight text-neutral-200">
-                {mobilePanel === 'projects' ? t('app.mobileProjects') : t('app.mobileLibrary')}
+                {t('app.mobileProjects')}
               </span>
               <button
                 onClick={() => setMobilePanel(null)}
@@ -1228,11 +1131,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            {mobilePanel === 'projects' ? (
-              <div className="flex-1 overflow-y-auto">{projectListEl}</div>
-            ) : (
-              <div className="flex-1 overflow-hidden">{libraryPanelEl}</div>
-            )}
+            <div className="flex-1 overflow-y-auto">{projectListEl}</div>
           </aside>
         </div>
       )}
@@ -1252,9 +1151,29 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           onClose={() => setFileBrowser(null)}
         />
       )}
+      {/* 资源市场弹层页：安装 handler 失败必抛（弹层 fb.run 统一报错），
+          装完弹层自己 refetch /installations 刷「已装 N 处」徽标。 */}
+      {marketOpen && (
+        <MarketModal
+          onClose={() => setMarketOpen(false)}
+          projects={projects}
+          defaultProjectId={selected?.id ?? null}
+          capabilities={installCaps}
+          onInstallSkill={(skill, scope, agent, target) => handleInstallSkill(skill, scope, agent, target)}
+          onInstallMcp={(name, config, scope, agent, target) => handleInstallMcp(name, config, scope, agent, target)}
+          onInstallFileAsset={(file, scope, target) => handleInstallFileAsset(file, scope, target)}
+          onInstallPlugin={(plugin, target) => handleInstallPlugin(plugin, target)}
+          onJumpToProject={(projectId) => {
+            setMarketOpen(false);
+            // null = 全局伪项目；行点击即跳对应项目的资源管理卡（'files' = 资源管理）
+            if (projectId === null) navigate({ kind: 'global', category: 'files' });
+            else navigate({ kind: 'project', projectId, category: 'files', sessionId: null });
+          }}
+        />
+      )}
       {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
       <AiAssistant />
-    </DndContext>
+    </>
   );
 }
 

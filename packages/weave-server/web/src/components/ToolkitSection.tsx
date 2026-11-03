@@ -27,7 +27,7 @@ import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { groupByRepo, toggleIn } from '@/lib/repo-groups';
 import { StatusPill, statusTone } from '@/components/ui/status-pill';
 
-/** 导出给 LibraryPanel 插件包区复用（同一 kind 徽标语言）。 */
+/** 导出给 MarketModal 插件行复用（同一 kind 徽标语言）。 */
 export const KIND_KEY: Record<ToolkitPack['kind'], MessageKey> = {
   skill: 'toolkit.kind.skill',
   hook: 'toolkit.kind.hook',
@@ -307,6 +307,11 @@ export function ToolkitSection({
           )}
         >
           {t(PROV_KEY[p.provenance])}
+        </Badge>
+        {/* 安装落点（与外置行同构的 scope 列）：CC 落地包 = user 档全局安装、
+            项目启用；表面/weave 包 = 本项目落盘。 */}
+        <Badge className="shrink-0 bg-neutral-800/60 text-neutral-400">
+          {t(p.key ? 'skillGrid.scopeUser' : 'skillGrid.scopeProject')}
         </Badge>
         <span className="shrink-0 text-10 text-neutral-600">v{p.version}</span>
         <span className="shrink-0 text-10 text-neutral-600">

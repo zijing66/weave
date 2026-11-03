@@ -82,6 +82,26 @@ export interface ProjectFile {
   size: number;
 }
 
+/** 市场可装的类别（与 InstallCategory 同族 + plugin 包）。 */
+export type InstallationKind =
+  | 'skill'
+  | 'mcp'
+  | 'plugin'
+  | FileAssetCategory;
+
+/** 跨项目安装位置行（GET /installations 快照；市场弹层「已装 N 处」的数据面）。 */
+export interface InstallationRow {
+  kind: InstallationKind;
+  name: string;
+  /** plugin 行的注册键 `name@market`（有则优先于 name 匹配）。 */
+  key?: string;
+  /** null = 全局（user 档，无项目可挂）。 */
+  projectId: number | null;
+  projectName: string | null;
+  scope: AssetScope;
+  harness: AssetAgent;
+}
+
 export const installApi = {
   /** 安装属性矩阵（服务端 install/capabilities.ts 派生；拖拽/点击禁用共用）。 */
   capabilities: (): Promise<InstallCapabilities> =>
@@ -128,4 +148,10 @@ export const installApi = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, state }),
     }),
+
+  /** 跨项目安装位置快照（按需实时聚合；前端建索引后零额外请求）。 */
+  listInstallations: (): Promise<InstallationRow[]> =>
+    apiFetch<{ installations: InstallationRow[] }>('/installations').then(
+      (r) => r.installations,
+    ),
 };
