@@ -50,10 +50,10 @@ describe('executeInit', () => {
     expect(result.created.directories).toContain(path.join(tmpDir, '.claude'));
   });
 
-  it('writes settings.json and CLAUDE.md', async () => {
+  it('writes settings.json and the local instruction file', async () => {
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     expect(result.created.files).toContain(path.join(tmpDir, '.claude', 'settings.json'));
-    expect(result.created.files).toContain(path.join(tmpDir, 'CLAUDE.md'));
+    expect(result.created.files).toContain(path.join(tmpDir, 'CLAUDE.local.md'));
   });
 
   // ---- P0-2: no overwrite without --force ----
@@ -150,13 +150,19 @@ describe('executeInit', () => {
     expect(result.created.files).not.toContain(rootGitignore);
   });
 
-  it('leaves .git/info/exclude alone', async () => {
+  it('appends the weave block to .git/info/exclude, preserving user content', async () => {
     await mkdir(path.join(tmpDir, '.git', 'info'), { recursive: true });
     const excludePath = path.join(tmpDir, '.git', 'info', 'exclude');
     await writeFile(excludePath, '# user content\n');
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(await readFile(excludePath, 'utf-8')).toBe('# user content\n');
+    const text = await readFile(excludePath, 'utf-8');
+    expect(text.startsWith('# user content\n')).toBe(true);
+    expect(text).toContain('# weave:start');
+    expect(text).toContain('CLAUDE.local.md');
+    // 幂等：再跑一次不重复追加
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(await readFile(excludePath, 'utf-8')).toBe(text);
   });
 
   it('is idempotent — re-init keeps the nested .gitignore byte-identical', async () => {
@@ -206,61 +212,56 @@ describe('executeInit', () => {
     expect(await readFile(path.join(tmpDir, '.claude', 'commands', 'my-cmd.md'), 'utf-8')).toContain('my-cmd');
   });
 
-  // ---- Step 8: CLAUDE.md and AGENTS.md resolve to one file ----
-  it('links AGENTS.md to CLAUDE.md on a fresh install', async () => {
-    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+  // ---- Step 8: local-first instruction files ----
+  it('writes local instruction files on a fresh install; shared files untouched', async () => {
+    const result = await executeInit({
+      ...BASE_OPTIONS,
+      targetDir: tmpDir,
+      harnesses: ['claude', 'codex'],
+    });
 
-    const link = await lstat(path.join(tmpDir, 'AGENTS.md'));
-    expect(link.isSymbolicLink()).toBe(true);
-    expect(await readlink(path.join(tmpDir, 'AGENTS.md'))).toBe('CLAUDE.md');
-    // the real file carries the content
-    const content = await readFile(path.join(tmpDir, 'CLAUDE.md'), 'utf-8');
-    expect(content).toContain('weave:start');
-    // 块内容按 locale 生成（默认 zh-CN），断言用 locale 无关的结束标记
-    expect(content).toContain('weave:end');
+    const claudeLocal = await readFile(path.join(tmpDir, 'CLAUDE.local.md'), 'utf-8');
+    expect(claudeLocal).toContain('weave:start');
+    expect(claudeLocal).toContain('weave:end');
+    expect(result.created.files).toContain(path.join(tmpDir, 'CLAUDE.local.md'));
+    const override = await readFile(path.join(tmpDir, 'AGENTS.override.md'), 'utf-8');
+    expect(override).toContain('weave:start');
+    expect(result.created.files).toContain(path.join(tmpDir, 'AGENTS.override.md'));
+    // 项目共享文件不再由 weave 生成
+    await expect(stat(path.join(tmpDir, 'CLAUDE.md'))).rejects.toThrow();
+    await expect(stat(path.join(tmpDir, 'AGENTS.md'))).rejects.toThrow();
   });
 
-  it('adopts an existing AGENTS.md instead of overwriting it', async () => {
+  it('merges the weave block into an existing AGENTS.md instead of writing the override', async () => {
     const agents = path.join(tmpDir, 'AGENTS.md');
     await writeFile(agents, '# Project\n\nHand-written notes.\n');
 
-    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const result = await executeInit({
+      ...BASE_OPTIONS,
+      targetDir: tmpDir,
+      harnesses: ['claude', 'codex'],
+    });
 
-    const link = await lstat(path.join(tmpDir, 'CLAUDE.md'));
-    expect(link.isSymbolicLink()).toBe(true);
-    expect(await readlink(path.join(tmpDir, 'CLAUDE.md'))).toBe('AGENTS.md');
-    // the user's prose survives, weave's block is appended to it
+    // 用户内容逐字节保留、块追加在尾部
     const content = await readFile(agents, 'utf-8');
-    expect(content).toContain('Hand-written notes.');
+    expect(content.startsWith('# Project\n\nHand-written notes.\n')).toBe(true);
     expect(content).toContain('weave:start');
+    expect(result.merged).toContain(agents);
+    // 同目录 override 会压掉 AGENTS.md → 有共享文件时不写
+    await expect(stat(path.join(tmpDir, 'AGENTS.override.md'))).rejects.toThrow();
+    // claude 恒走 local
+    expect(await readFile(path.join(tmpDir, 'CLAUDE.local.md'), 'utf-8')).toContain('weave:start');
   });
 
-  it('replaces an AGENTS.md that duplicates a CLAUDE.md, backing it up first', async () => {
-    await writeFile(path.join(tmpDir, 'CLAUDE.md'), '# Project\n\nClaude notes.\n');
-    await writeFile(path.join(tmpDir, 'AGENTS.md'), '# Project\n\nAgent notes.\n');
+  it('is idempotent — re-init replaces the block in place instead of duplicating it', async () => {
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    const localPath = path.join(tmpDir, 'CLAUDE.local.md');
+    const once = await readFile(localPath, 'utf-8');
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-
-    const link = await lstat(path.join(tmpDir, 'AGENTS.md'));
-    expect(link.isSymbolicLink()).toBe(true);
-    expect(await readlink(path.join(tmpDir, 'AGENTS.md'))).toBe('CLAUDE.md');
-
-    // the displaced content is preserved under the self-ignored .weave/ dir
-    const backups = await readdir(path.join(tmpDir, '.weave', 'backup'));
-    expect(backups).toHaveLength(1);
-    expect(await readFile(path.join(tmpDir, '.weave', 'backup', backups[0]), 'utf-8')).toContain(
-      'Agent notes.',
-    );
-  });
-
-  it('is idempotent — an already-correct link is left alone', async () => {
-    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    const before = await readlink(path.join(tmpDir, 'AGENTS.md'));
-
-    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(await readlink(path.join(tmpDir, 'AGENTS.md'))).toBe(before);
-    // no second backup was made
-    await expect(readdir(path.join(tmpDir, '.weave', 'backup'))).rejects.toThrow();
+    const twice = await readFile(localPath, 'utf-8');
+    expect(twice).toBe(once);
+    expect(twice.match(/weave:start/g)).toHaveLength(1);
   });
 
   // ---- settings.json merge (user file: append-only) ----
@@ -391,16 +392,19 @@ describe('executeInit', () => {
     expect(content).toContain(`initVersion: ${WEAVE_VERSION}`);
   });
 
-  // ---- CLAUDE.md: user file, append-only block ----
-  it('appends the weave block to an existing CLAUDE.md', async () => {
+  // ---- CLAUDE.local.md: user file, append-only block; existing CLAUDE.md untouched ----
+  it('writes the weave block to CLAUDE.local.md and leaves an existing CLAUDE.md alone', async () => {
     const claudeMdPath = path.join(tmpDir, 'CLAUDE.md');
     const user = '# My existing project instructions\n';
     await writeFile(claudeMdPath, user);
 
     const result = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(result.merged).toContain(claudeMdPath);
-    const content = await readFile(claudeMdPath, 'utf-8');
-    expect(content).toContain('My existing project instructions');
+    // 用户 CLAUDE.md 一字不动（追加语义下 local 文件已足够）
+    expect(await readFile(claudeMdPath, 'utf-8')).toBe(user);
+    expect(result.merged).not.toContain(claudeMdPath);
+    const localPath = path.join(tmpDir, 'CLAUDE.local.md');
+    expect(result.created.files).toContain(localPath);
+    const content = await readFile(localPath, 'utf-8');
     expect(content).toContain('<!-- weave:start -->');
     expect(content.match(/<!-- weave:start -->/g)?.length).toBe(1);
   });
@@ -498,14 +502,17 @@ describe('executeInit — 询问 commit（真实 git 集成）', () => {
 
       const files = git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean);
       expect(files).toEqual(
-        expect.arrayContaining(['CLAUDE.md', 'AGENTS.md', '.claude/.gitignore', '.weave/.gitignore']),
+        expect.arrayContaining(['.claude/.gitignore', '.weave/.gitignore']),
       );
+      // local-first：指令文件落本机文件（exclude 挡住），共享文件不再生成
+      expect(files).not.toContain('CLAUDE.md');
+      expect(files).not.toContain('AGENTS.md');
       // 嵌套 .gitignore 内容（* / !.gitignore）阻止其余产物入库
       expect(files).not.toContain('.claude/settings.json');
       expect(files).not.toContain('.weave/config.yaml');
       // 提交后候选路径工作区干净
       expect(
-        git(dir, 'status', '--porcelain', '--', 'CLAUDE.md', 'AGENTS.md', '.claude', '.weave').trim(),
+        git(dir, 'status', '--porcelain', '--', 'CLAUDE.local.md', 'AGENTS.override.md', '.claude', '.weave').trim(),
       ).toBe('');
     } finally {
       await rm(dir, { recursive: true, force: true });

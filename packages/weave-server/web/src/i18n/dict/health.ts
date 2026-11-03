@@ -8,6 +8,8 @@ export const healthZh = {
   'health.check.statuslinePathUnresolved': 'statusLine 命令无法解析出脚本路径：{command}',
   'health.check.statuslinePathForeign': 'statusLine 指向本项目之外（{path}）——它是为另一个检出生成的。',
   'health.check.statuslineScriptMissing': 'statusLine 脚本缺失：{path}',
+  'health.check.localInstructionAppend': '{file}：本机私有指令已生效（与项目指令叠加）。',
+  'health.check.localInstructionOverride': '{file}：本机覆盖指令生效中——宿主不再读取同目录 AGENTS.md，共享指令须一并写进来。',
 };
 
 export const healthEn: Record<keyof typeof healthZh, string> = {
@@ -23,4 +25,6 @@ export const healthEn: Record<keyof typeof healthZh, string> = {
   'health.check.statuslinePathForeign':
     'statusLine points outside this project ({path}) — it was generated for another checkout.',
   'health.check.statuslineScriptMissing': 'statusLine script is missing: {path}',
+  'health.check.localInstructionAppend': '{file}: local private instructions active (stacked with the project instructions).',
+  'health.check.localInstructionOverride': '{file}: local OVERRIDE instructions active — the host no longer reads AGENTS.md in this directory; include shared instructions here too.',
 };

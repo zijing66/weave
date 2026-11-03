@@ -159,6 +159,28 @@ export const HARNESS_INSTRUCTION_FILES = {
 /** 指令文件名（由注册表派生，不手写 union）。 */
 export type InstructionFile = (typeof HARNESS_INSTRUCTION_FILES)[Harness][number];
 
+/**
+ * 本机私有指令面注册表——各 harness 宿主原生加载的 local 指令文件（不进仓、
+ * `.git/info/exclude` 清单由此派生）。**两 harness 不同构**（2026-11-03 源码
+ * 实测定案）：claude 的 `CLAUDE.local.md` 是**追加**（与 CLAUDE.md 叠加生效）；
+ * codex 的 `AGENTS.override.md` 是**覆盖**（agents_md.rs 的 candidate_filenames
+ * 命中即返回——override 在则同目录 AGENTS.md 不被宿主读取）。semantics 字段
+ * 让提示文案如实分叉，不把 override 冒充补充。
+ *
+ * init 的写入策略（local-first，实现见 weave-cli init/instruction-files.ts）：
+ * claude 恒写本文件；codex 仅当根目录没有 AGENTS.md 时才写 override——已有
+ * 共享文件时块并入 AGENTS.md，避免 override 压掉用户自己的共享指令。
+ */
+export const HARNESS_LOCAL_INSTRUCTION_FILES = {
+  claude: { file: 'CLAUDE.local.md', semantics: 'append' },
+  codex: { file: 'AGENTS.override.md', semantics: 'override' },
+} as const satisfies Record<
+  Harness,
+  { file: string; semantics: 'append' | 'override' }
+>;
+
+export type LocalInstructionSemantics = (typeof HARNESS_LOCAL_INSTRUCTION_FILES)[Harness]['semantics'];
+
 /** 任务分组生命周期表的条目形状（D7）——分组差异是 harness 知识。 */
 export interface HarnessLifecycle {
   /** 开启一个 turn 组的事件（组头）。 */
@@ -365,3 +387,8 @@ export const HARNESS_KEYS: readonly Harness[] = HARNESS_NAMES;
 export const INSTRUCTION_FILES: readonly InstructionFile[] = [
   ...new Set(HARNESS_KEYS.flatMap((h) => [...HARNESS_INSTRUCTION_FILES[h]])),
 ];
+
+/** 全部 local 指令文件名（exclude 清单与检测共用，由 local 面注册表派生）。 */
+export const LOCAL_INSTRUCTION_FILES: readonly string[] = HARNESS_KEYS.map(
+  (h) => HARNESS_LOCAL_INSTRUCTION_FILES[h].file,
+);

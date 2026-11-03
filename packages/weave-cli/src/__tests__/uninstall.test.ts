@@ -72,9 +72,11 @@ function git(args: string[], cwd = tmpDir): ReturnType<typeof spawnSync> {
   return res;
 }
 
-/** 仿 init 收尾的提交面：固定候选路径逐路径 add（绝不 -A）+ 规定消息。 */
+/** 仿 init 收尾的提交面：候选路径逐路径 add（绝不 -A）+ 规定消息；缺位候选跳过。 */
 function commitInitOutputs(): void {
-  git(['add', '--', 'CLAUDE.md', 'AGENTS.md', '.claude', '.weave']);
+  for (const p of ['CLAUDE.local.md', 'AGENTS.override.md', '.claude', '.weave']) {
+    spawnSync('git', ['add', '--', p], { cwd: tmpDir });
+  }
   git(['commit', '-m', COMMIT_MESSAGE]);
 }
 
@@ -145,16 +147,16 @@ describe('executeUninstall', () => {
     expect(result.status).toBe('ok');
     expect(result.git).toBe('skipped-not-repo');
 
-    // weave 生成面全清：.weave 整目录、.claude 整目录、指令文件对
+    // weave 生成面全清：.weave 整目录、.claude 整目录、本机指令文件
     expect(await exists(path.join(tmpDir, '.weave'))).toBe(false);
     expect(await exists(path.join(tmpDir, '.claude'))).toBe(false);
-    expect(await exists(path.join(tmpDir, 'CLAUDE.md'))).toBe(false);
-    expect(await exists(path.join(tmpDir, 'AGENTS.md'))).toBe(false);
+    expect(await exists(path.join(tmpDir, 'CLAUDE.local.md'))).toBe(false);
+    expect(await exists(path.join(tmpDir, 'AGENTS.override.md'))).toBe(false);
     expect(result.keptUserFiles).toHaveLength(0);
   });
 
   it('preserves user-authored content while stripping weave bits', async () => {
-    // 用户先在：自己的 hook 组、statusLine、permission 与 CLAUDE.md 正文
+    // 用户先在：自己的 hook 组、statusLine、permission、CLAUDE.md 正文
     const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
     await mkdir(path.dirname(settingsPath), { recursive: true });
     const userSettings = {
@@ -172,7 +174,8 @@ describe('executeUninstall', () => {
       env: { USER_KEY: '1' },
     };
     await writeFile(settingsPath, JSON.stringify(userSettings, null, 2) + '\n');
-    await writeFile(path.join(tmpDir, 'CLAUDE.md'), '# Project\n\nUser notes.\n\n');
+    const userClaudeMd = '# Project\n\nUser notes.\n\n';
+    await writeFile(path.join(tmpDir, 'CLAUDE.md'), userClaudeMd);
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
 
@@ -183,13 +186,10 @@ describe('executeUninstall', () => {
     const after = JSON.parse(await readFile(settingsPath, 'utf-8')) as Record<string, unknown>;
     expect(after).toEqual(userSettings);
 
-    // CLAUDE.md 只剥 weave 段，正文保留
-    const md = await readFile(path.join(tmpDir, 'CLAUDE.md'), 'utf-8');
-    expect(md).toContain('User notes.');
-    expect(md).not.toContain('weave:start');
-    expect(md).not.toContain(WEAVE_HEADER_TEXT);
-    // AGENTS.md 链接摘掉
-    expect(await exists(path.join(tmpDir, 'AGENTS.md'))).toBe(false);
+    // 用户 CLAUDE.md 一字不动（local-first：weave 块从不进共享文件）
+    expect(await readFile(path.join(tmpDir, 'CLAUDE.md'), 'utf-8')).toBe(userClaudeMd);
+    // 本机指令文件整删（整文件是 weave 的）
+    expect(await exists(path.join(tmpDir, 'CLAUDE.local.md'))).toBe(false);
     // .claude 里只剩用户的东西（settings.json），空壳目录被回收
     expect((await readdir(path.join(tmpDir, '.claude'))).sort()).toEqual(['settings.json']);
     expect(result.keptUserFiles).toHaveLength(0);
@@ -281,22 +281,24 @@ describe('executeUninstall', () => {
     expect(git(['diff', '--cached', '--name-only']).stdout.trim()).toBe('staged.txt');
   });
 
-  it('restores the AGENTS.md displaced by init', async () => {
-    const original = '# Project\n\nPre-init AGENTS.md content.\n';
+  it('strips the weave block from a shared AGENTS.md and removes local instruction files', async () => {
+    const original = '# Project\n\nHand-written AGENTS.md content.\n';
     await writeFile(path.join(tmpDir, 'AGENTS.md'), original);
     await writeFile(path.join(tmpDir, 'CLAUDE.md'), '# Project\n\nPre-init CLAUDE.md.\n');
 
-    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    // init 把两个文件合一：AGENTS.md 被顶替并备份
-    const mdLink = await lstat(path.join(tmpDir, 'AGENTS.md'));
-    expect(mdLink.isSymbolicLink()).toBe(true);
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir, harnesses: ['claude', 'codex'] });
+    // local-first：块并入既有 AGENTS.md，本机文件各自生成
+    expect((await readFile(path.join(tmpDir, 'AGENTS.md'), 'utf-8'))).toContain('weave:start');
+    expect(await exists(path.join(tmpDir, 'CLAUDE.local.md'))).toBe(true);
+    expect(await exists(path.join(tmpDir, 'AGENTS.override.md'))).toBe(false);
 
     const result = await uninstall();
     expect(result.status).toBe('ok');
-    expect(result.restoredFromBackup).toBe(path.join(tmpDir, 'AGENTS.md'));
-    // 备份还原为真文件；CLAUDE.md 剥段后只剩用户正文
+    // 用户 AGENTS.md 剥段还原为原文；CLAUDE.md 一字不动；本机文件整删
     expect(await readFile(path.join(tmpDir, 'AGENTS.md'), 'utf-8')).toBe(original);
     expect(await readFile(path.join(tmpDir, 'CLAUDE.md'), 'utf-8')).toBe('# Project\n\nPre-init CLAUDE.md.\n');
+    expect(await exists(path.join(tmpDir, 'CLAUDE.local.md'))).toBe(false);
+    expect(result.keptUserFiles).toHaveLength(0);
   });
 });
 

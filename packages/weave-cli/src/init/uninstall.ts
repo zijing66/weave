@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { lstat, readdir, readFile, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
-import { HARNESS_DIRS, HARNESS_KEYS, INSTRUCTION_FILES, type Harness, logger } from '@weavecode/core';
+import { HARNESS_DIRS, HARNESS_KEYS, HARNESS_LOCAL_INSTRUCTION_FILES, INSTRUCTION_FILES, type Harness, logger } from '@weavecode/core';
 import { hashFile, projectPackFiles, unregisterProject } from '@weavecode/server';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
@@ -87,12 +87,16 @@ const UNINSTALL_COMMIT_MESSAGE = 'chore: weave uninstall 移除 init 生成物';
 /** 次名指令文件（合一时链到主名者）——init 顶替/备份的正是它。 */
 const INSTRUCTION_ALIAS = INSTRUCTION_FILES[1];
 
+/** 本机指令文件（CLAUDE.local.md / AGENTS.override.md）——init local-first 的落点。 */
+const LOCAL_INSTRUCTION_FILE_NAMES = Object.values(HARNESS_LOCAL_INSTRUCTION_FILES).map((e) => e.file);
+
 /**
  * init 提交允许包含的路径前缀——reset 门用。指令文件名与各 harness 项目目录
  * 皆表驱动（新增 harness 自动纳入），不写 harness 名或路径字面量。
  */
 const WEAVE_MANAGED_PATHS = [
   ...INSTRUCTION_FILES,
+  ...LOCAL_INSTRUCTION_FILE_NAMES,
   '.mcp.json',
   ...HARNESS_KEYS.map((h) => HARNESS_DIRS[h].projectDir),
   '.weave',
@@ -341,15 +345,16 @@ class Uninstaller {
   }
 
   /**
-   * 指令文件对（CLAUDE.md/AGENTS.md）：
+   * 指令文件对（CLAUDE.md/AGENTS.md）与本机指令文件（CLAUDE.local.md/
+   * AGENTS.override.md）：
    * - weave 建的链接 → 摘掉
    * - 真文件带 weave header → 整文件是 weave 的，删
    * - 真文件只有 weave:block → 剥段写回；两样都没有 → 用户的，不动
    * - init 顶替掉的 AGENTS.md 备份 → AGENTS.md 缺位时还原
    */
   private async sweepInstructionFiles(agentsBackup: string | null): Promise<void> {
-    // 次名在前（原文件的摘链接/删除顺序），主名在后。
-    for (const name of [...INSTRUCTION_FILES].reverse()) {
+    // 次名在前（原文件的摘链接/删除顺序），主名在后；本机文件随后同规则清扫。
+    for (const name of [...[...INSTRUCTION_FILES].reverse(), ...LOCAL_INSTRUCTION_FILE_NAMES]) {
       const p = path.join(this.targetDir, name);
       let st;
       try {

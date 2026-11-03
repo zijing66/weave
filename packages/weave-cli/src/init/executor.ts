@@ -20,17 +20,13 @@ import {
 import { templateRegistry } from '@weavecode/templates';
 import { WEAVE_VERSION } from '@weavecode/server';
 import type { InitContext } from '@weavecode/harness';
-import {
-  generateClaudeMd,
-  generateClaudeMdSection,
-  mergeClaudeMd,
-  type ClaudeMdTemplate,
-} from './claudemd-gen.js';
-import { ensureInstructionLink } from './instruction-link.js';
+import type { ClaudeMdTemplate } from './claudemd-gen.js';
+import { writeInstructionFiles } from './instruction-files.js';
 import { buildInitRegistry } from './wiring.js';
 import { type SurfacePipeline } from './types.js';
 import { createPromptPort, type PromptPort } from './prompt.js';
 import { commitInitOutputs, findGitRepoRoot } from './git-commit.js';
+import { ensureGitExcludes } from './git-exclude.js';
 import { ensureHarnessInstalled, prewriteTrust } from './provision.js';
 import { t } from '../i18n/index.js';
 
@@ -69,7 +65,7 @@ export async function executeInit(
   options: InitOptions,
   promptOverride?: PromptPort,
 ): Promise<InitResult> {
-  const { targetDir, force, interactive, preset } = options;
+  const { targetDir, interactive, preset } = options;
 
   // ---- Step 0: prepare（平台 / 组件 / PromptPort / 结果累加器）----
   const platform: PlatformInfo = detectPlatform();
@@ -119,44 +115,23 @@ export async function executeInit(
     removed.push(...rec.removed);
   }
 
-  // ---- Step 8: Instruction file (CLAUDE.md / AGENTS.md) ----
-  // The two names mean the same thing to different agents (Claude Code reads
-  // CLAUDE.md, Codex reads AGENTS.md), so weave keeps ONE file and links the
-  // other name to it rather than writing both and letting them drift.
-  //
-  // Policy for the real file (user file: append-only): a fresh one is generated
-  // whole; an existing one only ever receives weave's delimited block (appended,
-  // or replaced when already present). Content outside the markers is untouched.
+  // ---- Step 8: Instruction files (local-first) ----
+  // weave 的托管块尽量落「本机文件」（CLAUDE.local.md / AGENTS.override.md，
+  // 已登记 .git/info/exclude）：claude 追加语义恒走 local；codex 仅当根目录
+  // 没有自己的 AGENTS.md 时才写 override（同目录 override 会压掉 AGENTS.md，
+  // 见 HARNESS_LOCAL_INSTRUCTION_FILES 注释）。既有共享文件只收标记块，块外
+  // 内容不动。存量链接（AGENTS.md -> CLAUDE.md）穿透写入维持现状。
   if (components.claudeMd || components.agentsMd) {
-    const link = await ensureInstructionLink(targetDir, {
-      force,
-      interactive,
-      confirm: (question, detail) => prompt.confirm(question, detail),
-    });
-    if (link.backedUpTo) {
-      logger.dim(t('init.backedUp', { path: link.backedUpTo }));
-      created.files.push(link.backedUpTo);
-    }
-
     const template = PRESET_TEMPLATE[preset] ?? 'standard';
-    const projectName = path.basename(targetDir);
-    const instructionPath = path.join(targetDir, link.realFile);
-    const fresh = generateClaudeMd({ template, projectName });
-
-    if (force) {
-      await writeFile(instructionPath, fresh, 'utf-8');
-      created.files.push(instructionPath);
-    } else {
-      const existing = await readTextIfPresent(instructionPath);
-      if (existing === null) {
-        await writeFile(instructionPath, fresh, 'utf-8');
-        created.files.push(instructionPath);
-      } else {
-        const section = generateClaudeMdSection({ template, projectName });
-        await writeFile(instructionPath, mergeClaudeMd(existing, section), 'utf-8');
-        merged.push(instructionPath);
-      }
-    }
+    const instruction = await writeInstructionFiles(targetDir, {
+      claude: components.claudeMd && selected.includes('claude'),
+      codex: components.agentsMd && selected.includes('codex'),
+      template,
+      projectName: path.basename(targetDir),
+    });
+    created.files.push(...instruction.created);
+    merged.push(...instruction.merged);
+    for (const note of instruction.notes) logger.dim(note);
   }
 
   // ---- Step 9: Write runtime config ----
@@ -200,6 +175,11 @@ export async function executeInit(
     await ensureNestedGitignore(targetDir, path.join(targetDir, HARNESS_DIRS[h].projectDir), created);
   }
   await ensureNestedGitignore(targetDir, path.join(targetDir, '.weave'), created);
+
+  // ---- Step 10.5: 本机私有指令文件（CLAUDE.local.md / AGENTS.override.md）与
+  // .weave/token 登记 `.git/info/exclude`——先于提交询问，git status 才不把它们
+  // 列进待提交清单（细节见 git-exclude.ts）----
+  await ensureGitExcludes(targetDir);
 
   // ---- Step 11: 询问是否提交 init 生成物（嵌套 gitignore 已落盘，add 才能
   // 把 harness 目录裁剪到只剩 gitignore 文件本身）——细节与九闸见 git-commit.ts ----

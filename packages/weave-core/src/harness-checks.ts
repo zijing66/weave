@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { lstat, readFile, readlink, access } from 'node:fs/promises';
+import { HARNESS_KEYS, HARNESS_LOCAL_INSTRUCTION_FILES } from './harness.js';
 
 /**
  * Health checks over the state `weave init` produced, as structured results.
@@ -162,19 +163,41 @@ async function checkStatuslinePath(dir: string): Promise<HarnessCheck[]> {
 }
 
 /**
+ * Detect local instruction files, reporting each present one with its
+ * semantics. `AGENTS.override.md` suppresses same-directory `AGENTS.md` for
+ * the host (candidates hit-first return) — users who treat it as a supplement
+ * lose the shared instructions silently; the check surfaces that trap.
+ * id 按 semantics 分叉（渲染侧文案不插英文枚举）。
+ */
+async function checkLocalInstructions(dir: string): Promise<HarnessCheck[]> {
+  const out: HarnessCheck[] = [];
+  for (const h of HARNESS_KEYS) {
+    const { file, semantics } = HARNESS_LOCAL_INSTRUCTION_FILES[h];
+    if (!(await pathExists(path.join(dir, file)))) continue;
+    out.push({
+      id: semantics === 'override' ? 'local-instruction-override' : 'local-instruction-append',
+      params: { file },
+      ok: true,
+    });
+  }
+  return out;
+}
+
+/**
  * Run every harness check. Returns structured results in reporting order —
  * passing entries carry `ok: true`, checks whose preconditions do not hold are
  * omitted ("a check that cannot run is simply not reported").
  * Never throws.
  */
 export async function checkHarness(dir: string): Promise<HarnessCheck[]> {
-  const [linkCheckout, duplicate, dangling, statusline] = await Promise.all([
+  const [linkCheckout, duplicate, dangling, statusline, local] = await Promise.all([
     checkLinkCheckout(dir),
     checkDuplicateInstructions(dir),
     checkDanglingLinks(dir),
     checkStatuslinePath(dir),
+    checkLocalInstructions(dir),
   ]);
-  return [linkCheckout, duplicate, ...dangling, ...statusline].filter(
+  return [linkCheckout, duplicate, ...dangling, ...statusline, ...local].filter(
     (c): c is HarnessCheck => c !== null,
   );
 }

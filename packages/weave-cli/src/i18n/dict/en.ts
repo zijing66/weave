@@ -228,6 +228,9 @@ export const en: Record<keyof typeof zh, string> = {
   'init.commit.pathIgnored': 'Ignored by .gitignore, not added: {paths}',
   'init.commit.failed': 'Commit failed: {error}',
   'init.commit.done': 'Created commit {sha} ({count} files)',
+  'init.exclude.done': 'Local files registered in git exclude: {file}',
+  'init.instruction.localCreated': 'Wrote local instruction file {file} (not version-controlled)',
+  'init.instruction.agentsMerged': "Merged weave's block into {file} (codex reads shared instructions from it)",
   'init.hooksUnknownKeys': 'Ignored unknown hook event names: {keys}',
   'init.harnessUnknownKeys': 'Ignored unknown harness name(s): {keys}',
   'init.multiselect.title': 'Select harnesses to initialize (multiple allowed):',
@@ -270,6 +273,10 @@ export const en: Record<keyof typeof zh, string> = {
   'harness.instructionLinkDangling.message': '{name} is a symlink whose target does not exist.',
   'harness.instructionLinkDangling.fix':
     'Run `weave init` to rewrite the link and the instruction file.',
+  'harness.localInstructionAppend.message': '{file}: local private instructions active (stacked with the project instructions).',
+  'harness.localInstructionAppend.fix': 'This file is machine-local (not version-controlled) — instructions meant to be shared go in CLAUDE.md.',
+  'harness.localInstructionOverride.message': '{file}: local OVERRIDE instructions active — the host no longer reads AGENTS.md in this directory; include shared instructions here too.',
+  'harness.localInstructionOverride.fix': 'After editing AGENTS.md, copy the shared instructions here for them to take effect.',
   'harness.statuslinePathUnresolved.message':
     'statusLine command does not resolve to a script path: {command}',
   'harness.statuslinePathUnresolved.fix': `Run \`weave init\` to regenerate \`${HARNESS_DIRS[HARNESS_KEYS[0]].projectDir}/settings.json\`.`,
