@@ -41,6 +41,7 @@ import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
+import { Tooltip } from '@/components/ui/tooltip';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Resizer } from '@/components/Resizer';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
@@ -148,7 +149,9 @@ export function TasksPanel({
   const [chainDialog, setChainDialog] = useState(false);
   const [rules, setRules] = useState<HookRule[]>([]);
   const [events, setEvents] = useState<HookEventRow[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 深链/跳转带入的会话直接作为初始选中（路由即真源）；不带入才留给列表就绪后
+  // 的兜底去选最新。
+  const [selectedId, setSelectedId] = useState<string | null>(initialSessionId ?? null);
   /** 已落过的三级位置（项目 + 会话）：本面板自己点出来的选中会经 URL 回写成同值 prop，
    *  按这份账认回声，免得每次点会话都重设一遍并闪高亮。 */
   const appliedSel = useRef<{ project: number; sessionId: string | null }>({
@@ -1089,20 +1092,21 @@ export function TasksPanel({
                     {/* 最新组被挂起（AskUserQuestion/计划/权限确认）：组头亮待答
                         tag，点击即远程作答——与画布根节点 tag、会话行图标同开一弹窗。 */}
                     {isLatestGroup && questionOf(selectedId) && (
-                      <button
-                        type="button"
-                        title={t('tasks.answerActiveTooltip', {
-                          // 不含收尾屏：它不是宿主的问题 tab
-                          n: questionOf(selectedId)!.questions.filter((q) => !q.submit).length,
-                        })}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setAnswerFor(selectedId);
-                        }}
-                        className="shrink-0 rounded bg-amber-900/50 px-1 py-px text-10 font-medium leading-tight text-amber-300 transition-colors hover:bg-amber-900/70 hover:text-amber-200"
-                      >
-                        {t('tasks.answerPendingTag')}
-                      </button>
+                      <Tooltip label={t('tasks.answerActiveTooltip', {
+                        // 不含收尾屏：它不是宿主的问题 tab
+                        n: questionOf(selectedId)!.questions.filter((q) => !q.submit).length,
+                      })}>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAnswerFor(selectedId);
+                          }}
+                          className="shrink-0 rounded bg-amber-900/50 px-1 py-px text-10 font-medium leading-tight text-amber-300 transition-colors hover:bg-amber-900/70 hover:text-amber-200"
+                        >
+                          {t('tasks.answerPendingTag')}
+                        </button>
+                      </Tooltip>
                     )}
                     {g.questions > 0 && (
                       <Badge className="shrink-0 bg-teal-900/40 text-teal-300">
@@ -1131,21 +1135,22 @@ export function TasksPanel({
                       {t('tasks.groupDispatches', { n: g.dispatches.length })}
                     </span>
                     {g.prompt && (
-                      <button
-                        type="button"
-                        title={copiedGroupId === g.id ? t('tasks.copied') : t('tasks.copyPrompt')}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copyGroupPrompt(g);
-                        }}
-                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-200"
-                      >
-                        {copiedGroupId === g.id ? (
-                          <Check className="h-3 w-3 text-emerald-400" />
-                        ) : (
-                          <Copy className="h-3 w-3" />
-                        )}
-                      </button>
+                      <Tooltip label={copiedGroupId === g.id ? t('tasks.copied') : t('tasks.copyPrompt')}>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyGroupPrompt(g);
+                          }}
+                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-200"
+                        >
+                          {copiedGroupId === g.id ? (
+                            <Check className="h-3 w-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </button>
+                      </Tooltip>
                     )}
                     {(isLatestGroup && g.open && isSessionBusy(activeStatus)) && (
                       <span className="shrink-0">
@@ -1156,21 +1161,22 @@ export function TasksPanel({
                         （含卡在 API 报错重试时的长静默，那是 ESC 唯一有用的一记），
                         正常收尾后不残留。判据唯一实现 = canInterrupt。 */}
                     {isLatestGroup && stoppable && (
-                      <button
-                        type="button"
-                        title={t('tasks.stopTooltip')}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onInterrupt(selectedId);
-                        }}
-                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-red-300"
-                      >
-                        <FeedbackIcon
-                          state={fb.stateOf(`interrupt:${selectedId}`)}
-                          className="h-3 w-3"
-                          icon={<Square className="h-3 w-3" />}
-                        />
-                      </button>
+                      <Tooltip label={t('tasks.stopTooltip')}>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onInterrupt(selectedId);
+                          }}
+                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-red-300"
+                        >
+                          <FeedbackIcon
+                            state={fb.stateOf(`interrupt:${selectedId}`)}
+                            className="h-3 w-3"
+                            icon={<Square className="h-3 w-3" />}
+                          />
+                        </button>
+                      </Tooltip>
                     )}
                   </div>
                   {expanded && (
@@ -1400,13 +1406,14 @@ export function TasksPanel({
                   <SessionStatusIcon status={activeStatus} harness={selectedRow.harness} />
                 </span>
               )}
-              <button
-                onClick={() => setPaneOpen(false)}
-                className="ml-auto rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
-                title={t('app.mobileDrawerClose')}
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <Tooltip label={t('app.mobileDrawerClose')} className="ml-auto" side="top">
+                <button
+                  onClick={() => setPaneOpen(false)}
+                  className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </Tooltip>
             </div>
             <div className="flex min-h-0 flex-1 flex-col p-3">{paneEl}</div>
           </div>
@@ -1505,15 +1512,16 @@ export function TasksPanel({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 items-center justify-end">
-              <button
-                type="button"
-                title={t('app.mobileDrawerClose')}
-                aria-label={t('app.mobileDrawerClose')}
-                onClick={() => setChainDialog(false)}
-                className="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800/60 hover:text-neutral-200"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <Tooltip label={t('app.mobileDrawerClose')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('app.mobileDrawerClose')}
+                  onClick={() => setChainDialog(false)}
+                  className="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800/60 hover:text-neutral-200"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </Tooltip>
             </div>
             <div className="flex min-h-0 flex-1 flex-col">{chainEl}</div>
           </div>

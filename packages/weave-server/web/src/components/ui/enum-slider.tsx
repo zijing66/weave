@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useBackPop } from '@/lib/back-pop';
 import { commitOf, indexOf } from './enum-slider-core';
 
@@ -86,12 +87,12 @@ export function EnumSlider({
   const anchor = btnRef.current?.getBoundingClientRect();
   return (
     <span className="relative inline-flex min-w-0 items-center">
+      <Tooltip label={title}>
       <button
         ref={btnRef}
         type="button"
         data-effort-btn
         disabled={disabled}
-        title={title}
         aria-label={title}
         aria-expanded={open}
         onClick={() => (open ? close(true) : setOpen(true))}
@@ -105,6 +106,7 @@ export function EnumSlider({
         </span>
         <ChevronDown className={cn('h-3 w-3 shrink-0 text-neutral-500 transition-transform', open && 'rotate-180')} />
       </button>
+      </Tooltip>
       {open &&
         anchor &&
         createPortal(
@@ -112,8 +114,12 @@ export function EnumSlider({
             data-effort-pop
             className="fixed z-[60] w-56 rounded-lg border border-edge/[0.12] bg-neutral-900 p-3 shadow-mac"
             style={{
-              left: Math.max(8, Math.min(anchor.left, window.innerWidth - 232)),
-              top: Math.min(anchor.bottom + 6, window.innerHeight - 140),
+              // 右沿对齐按钮右沿（箭头在按钮右端，浮层跟着它走）、右贴视口时夹回 8px；
+              // 下方放得下就向下弹，贴底放不下再向上弹（bottom 钳回视口内）。
+              right: Math.max(8, window.innerWidth - anchor.right),
+              ...(anchor.bottom + 6 + 140 <= window.innerHeight
+                ? { top: anchor.bottom + 6 }
+                : { bottom: Math.max(8, window.innerHeight - anchor.top + 6) }),
             }}
             onClick={(e) => e.stopPropagation()}
           >

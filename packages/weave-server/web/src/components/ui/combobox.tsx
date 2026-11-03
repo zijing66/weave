@@ -63,7 +63,14 @@ export function Combobox({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [rect, setRect] = useState<{
+    left: number;
+    top?: number;
+    bottom?: number;
+    /** 本方向可用高度（弹层 max-h 钳到它，不溢出视口）。 */
+    maxH: number;
+    width: number;
+  } | null>(null);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -97,6 +104,9 @@ export function Combobox({
   });
 
   // 打开时定位弹层（锚点矩形 + 视口翻转），滚动/改窗即关——位置失真不如收起。
+  // 向上/向下都用「贴边 + 自然生长」：弹层 max-h 320 由 CSS 钳，这里只给一条贴
+  // 锚点的边（向下 = top 贴锚底、向上 = bottom 贴锚顶），不猜内容高度——猜了
+  // 就会在内容撑不满预算时留出一段空档，弹层看起来脱离按钮。
   useLayoutEffect(() => {
     if (!open) {
       setRect(null);
@@ -109,10 +119,13 @@ export function Combobox({
     const left = align === 'end' ? r.right - width : r.left;
     const below = window.innerHeight - r.bottom;
     const above = r.top;
-    const height = Math.min(320, Math.max(below, above) - 8);
+    // 向下弹至少要露出一段可用的列表（120px 首屏）；不够且上方更宽裕才向上弹。
+    const openUp = below < 120 && above > below;
     setRect({
       left: Math.max(8, Math.min(left, window.innerWidth - width - 8)),
-      top: below >= above || below > height ? r.bottom + 4 : Math.max(8, r.top - height - 4),
+      ...(openUp
+        ? { bottom: window.innerHeight - r.top + 4, maxH: Math.min(320, above - 8) }
+        : { top: r.bottom + 4, maxH: Math.min(320, below - 8) }),
       width,
     });
   }, [align, open]);
@@ -222,8 +235,13 @@ export function Combobox({
         createPortal(
           <div
             ref={popRef}
-            style={{ left: rect.left, top: rect.top, width: rect.width }}
-            className="fixed z-[60] flex max-h-[320px] flex-col rounded-lg border border-edge/[0.1] bg-neutral-900 shadow-mac"
+            style={{
+              left: rect.left,
+              width: rect.width,
+              maxHeight: rect.maxH,
+              ...(rect.top !== undefined ? { top: rect.top } : { bottom: rect.bottom }),
+            }}
+            className="fixed z-[60] flex flex-col rounded-lg border border-edge/[0.1] bg-neutral-900 shadow-mac"
           >
             <div className="flex shrink-0 items-center gap-1.5 border-b border-edge/[0.06] px-2 py-1.5">
               <Search className="h-3 w-3 shrink-0 text-neutral-500" />

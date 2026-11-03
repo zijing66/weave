@@ -20,6 +20,7 @@ import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { Tooltip } from '@/components/ui/tooltip';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
 import { PROJECTS_QUERY } from '@/hooks/use-projects';
@@ -651,35 +652,37 @@ export function SessionMessages({
               <>
                 {/* 旁路会话（claude 的 /btw）：能力面没有这种机制就不渲染 */}
                 {capability.sideQuestion && (
-                  <button
-                    type="button"
-                    title={t('tasks.sideTitle')}
-                    aria-label={t('tasks.sideTitle')}
+                  <Tooltip label={t('tasks.sideTitle')} side="top">
+                    <button
+                      type="button"
+                      aria-label={t('tasks.sideTitle')}
                     onClick={() => setSideOpen(true)}
                     className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                   >
                     <MessageCircleQuestion className="h-3 w-3 text-violet-400" />
                     <span className="max-lg:hidden">{t('tasks.sideTitle')}</span>
-                  </button>
+                    </button>
+                  </Tooltip>
                 )}
-                <button
-                  type="button"
-                  title={t('tasks.chainTitle')}
-                  aria-label={t('tasks.chainTitle')}
+                <Tooltip label={t('tasks.chainTitle')} side="top">
+                  <button
+                    type="button"
+                    aria-label={t('tasks.chainTitle')}
                   onClick={onOpenChain}
                   className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   <Activity className="h-3 w-3 text-rose-400" />
                   <span className="max-lg:hidden">{t('tasks.chainTitle')}</span>
                 </button>
+                </Tooltip>
               </>
             )}
             {/* 全屏：两种形态都能用（嵌入右栏被挤窄时尤其有用）；ESC 也能退。
                 样式与「事件链」同款按钮，图标用四角括线（放大 = 往外、缩小 = 往里）。 */}
-            <button
-              type="button"
-              title={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
-              aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+            <Tooltip label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')} side="top">
+              <button
+                type="button"
+                aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               onClick={toggleFullscreen}
               className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
             >
@@ -687,28 +690,31 @@ export function SessionMessages({
               <span className="max-lg:hidden">
                 {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               </span>
-            </button>
+              </button>
+            </Tooltip>
             {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
               <>
-                <button
-                  type="button"
-                  title={t('tasks.messagesMinimize')}
-                  aria-label={t('tasks.messagesMinimize')}
-                  onClick={onMinimize}
-                  className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  title={t('tasks.messagesClose')}
-                  aria-label={t('tasks.messagesClose')}
-                  onClick={requestClose}
-                  className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                <Tooltip label={t('tasks.messagesMinimize')} side="top">
+                  <button
+                    type="button"
+                    aria-label={t('tasks.messagesMinimize')}
+                    onClick={onMinimize}
+                    className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                  >
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
+                <Tooltip label={t('tasks.messagesClose')} side="top">
+                  <button
+                    type="button"
+                    aria-label={t('tasks.messagesClose')}
+                    onClick={requestClose}
+                    className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
               </>
             )}
           </div>
@@ -1012,11 +1018,10 @@ export function SessionMessages({
                         <div className="mb-1 flex flex-wrap items-start gap-1.5">
                           {previewAtts.map((a) =>
                             isImageUpload(a) ? (
-                              <button
-                                key={a.id}
-                                type="button"
-                                title={a.name}
-                                onClick={(e) => {
+                              <Tooltip key={a.id} label={a.name} side="top">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
                                   if (selecting) return;
                                   e.stopPropagation();
                                   setLightbox(a);
@@ -1030,25 +1035,26 @@ export function SessionMessages({
                                   className="h-full w-full object-cover"
                                   loading="lazy"
                                 />
-                              </button>
+                                </button>
+                              </Tooltip>
                             ) : (
-                              <a
-                                key={a.id}
-                                href={`${API_BASE}/images/${a.id}`}
-                                download={a.name}
-                                title={[a.name, sizeLabel(a.size ?? 0)].filter(Boolean).join(' · ')}
-                                onClick={(e) => {
-                                  if (selecting) {
-                                    e.preventDefault();
-                                    return;
-                                  }
-                                  e.stopPropagation();
-                                }}
-                                className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] bg-neutral-950 px-1.5 py-1 text-10 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300"
-                              >
-                                <FileCode className="h-3 w-3 shrink-0" />
-                                <span className="min-w-0 truncate">{a.name}</span>
-                              </a>
+                              <Tooltip key={a.id} label={[a.name, sizeLabel(a.size ?? 0)].filter(Boolean).join(' · ')} side="top" className="max-w-full">
+                                <a
+                                  href={`${API_BASE}/images/${a.id}`}
+                                  download={a.name}
+                                  onClick={(e) => {
+                                    if (selecting) {
+                                      e.preventDefault();
+                                      return;
+                                    }
+                                    e.stopPropagation();
+                                  }}
+                                  className="inline-flex max-w-full items-center gap-1 rounded border border-edge/[0.12] bg-neutral-950 px-1.5 py-1 text-10 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300"
+                                >
+                                  <FileCode className="h-3 w-3 shrink-0" />
+                                  <span className="min-w-0 truncate">{a.name}</span>
+                                </a>
+                              </Tooltip>
                             ),
                           )}
                         </div>
@@ -1063,24 +1069,24 @@ export function SessionMessages({
                         <div className="flex flex-col gap-1 [&_p]:whitespace-pre-wrap">
                           {inlineSegs.map((seg, i) =>
                             seg.kind === 'image' ? (
-                              <button
-                                key={i}
-                                type="button"
-                                title={seg.image.name}
-                                onClick={(e) => {
-                                  if (selecting) return;
-                                  e.stopPropagation();
-                                  setLightbox(seg.image);
-                                }}
-                                className="block h-20 w-20 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
-                              >
-                                <img
-                                  src={`${API_BASE}/images/${seg.image.id}`}
-                                  alt={seg.image.name}
-                                  className="h-full w-full object-cover"
-                                  loading="lazy"
-                                />
-                              </button>
+                              <Tooltip key={i} label={seg.image.name} side="top">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    if (selecting) return;
+                                    e.stopPropagation();
+                                    setLightbox(seg.image);
+                                  }}
+                                  className="block h-20 w-20 overflow-hidden rounded border border-edge/[0.12] bg-neutral-950"
+                                >
+                                  <img
+                                    src={`${API_BASE}/images/${seg.image.id}`}
+                                    alt={seg.image.name}
+                                    className="h-full w-full object-cover"
+                                    loading="lazy"
+                                  />
+                                </button>
+                              </Tooltip>
                             ) : seg.text.trim() ? (
                               <AssistantMarkdown key={i} text={seg.text} />
                             ) : null,
@@ -1165,13 +1171,13 @@ export function SessionMessages({
                           )}
                           {/* 删除：这条从对话里彻底消失（是暂停闸成因时一并解闸并续排空；
                               还在队列里的 pending 行则是取消发送） */}
-                          <button
-                            type="button"
-                            title={t(
+                          <Tooltip label={t(
                               pipe.status === 'pending'
                                 ? 'tasks.msgDismissQueuedHint'
                                 : 'tasks.msgDismissHint',
-                            )}
+                            )}>
+                            <button
+                            type="button"
                             disabled={fb.stateOf(`dismiss:${pipe.id}`) === 'loading'}
                             onClick={() =>
                               void fb.run(
@@ -1192,6 +1198,7 @@ export function SessionMessages({
                             />
                             {t('tasks.msgDismiss')}
                           </button>
+                          </Tooltip>
                         </div>
                       )}
                     </div>
@@ -1270,12 +1277,12 @@ export function SessionMessages({
                                 </span>
                               </div>
                             ) : (
-                              <button
-                                type="button"
-                                title={m.text}
-                                onClick={toggle}
-                                className="flex w-full min-w-0 items-center gap-1.5 text-left"
-                              >
+                              <Tooltip label={m.text}>
+                                <button
+                                  type="button"
+                                  onClick={toggle}
+                                  className="flex w-full min-w-0 items-center gap-1.5 text-left"
+                                >
                                 <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
                                   {t(queueStatusKey(m))}
                                 </Badge>
@@ -1291,7 +1298,8 @@ export function SessionMessages({
                                 <span className="shrink-0 text-10 text-neutral-600">
                                   {formatStamp(m.at)}
                                 </span>
-                              </button>
+                                </button>
+                              </Tooltip>
                             )}
                             {open && (
                               <>
@@ -1337,15 +1345,16 @@ export function SessionMessages({
               {(answerPending || generating || interrupted) && (
                 <div className="flex flex-wrap items-center justify-start gap-1.5">
                   {answerPending && (
-                    <button
-                      type="button"
-                      title={t('tasks.answerTooltip')}
-                      onClick={() => onOpenAnswer?.()}
-                      className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 transition-colors hover:border-amber-400/60 hover:text-amber-200"
-                    >
-                      <HelpCircle className="h-3 w-3" />
-                      {t('tasks.convAnswer')}
-                    </button>
+                    <Tooltip label={t('tasks.answerTooltip')}>
+                      <button
+                        type="button"
+                        onClick={() => onOpenAnswer?.()}
+                        className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 transition-colors hover:border-amber-400/60 hover:text-amber-200"
+                      >
+                        <HelpCircle className="h-3 w-3" />
+                        {t('tasks.convAnswer')}
+                      </button>
+                    </Tooltip>
                   )}
                   {(generating || interrupted || failed) && (
                     <div
@@ -1587,10 +1596,10 @@ export function SessionMessages({
               {(modeNames.length > 0 || modelNames.length > 0) && (
                 <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:contents">
                   {modeNames.length > 0 && (
-                    <button
-                      type="button"
-                      title={t('tasks.modeCycle')}
-                      aria-label={t('tasks.modeCycle')}
+                    <Tooltip label={t('tasks.modeCycle')}>
+                      <button
+                        type="button"
+                        aria-label={t('tasks.modeCycle')}
                       onClick={() => setConfirmMode(true)}
                       className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
                     >
@@ -1618,7 +1627,8 @@ export function SessionMessages({
                           ? t('tasks.modeSwitching')
                           : (currentMode ?? t('tasks.modeUnknown'))}
                       </span>
-                    </button>
+                      </button>
+                    </Tooltip>
                   )}
                   {modelNames.length > 0 && (
                     <div className="flex min-w-0 items-center gap-1">
@@ -1633,6 +1643,7 @@ export function SessionMessages({
                           }}
                           title={t('tasks.modelLastKnown')}
                           placeholder={t('tasks.modelUnknown')}
+                          align="end"
                           className="max-w-[12rem] rounded border border-edge/[0.1] bg-neutral-950 py-0.5 font-mono text-11 max-lg:max-w-[7rem]"
                           options={[
                             ...modelOptions,
@@ -1685,10 +1696,10 @@ export function SessionMessages({
             {/* 顶边拖拽手柄：贴在两行之间，负边距吃掉 gap，免得常显多出一条空隙。
                 触屏同样可用（pointer capture + touch-none；手柄自身不吃滚动，
                 旁边的对话区照常滚）。 */}
-            <div
-              role="separator"
-              title={t('tasks.msgResizeInput')}
-              aria-label={t('tasks.msgResizeInput')}
+            <Tooltip label={t('tasks.msgResizeInput')} className="flex-1">
+              <div
+                role="separator"
+                aria-label={t('tasks.msgResizeInput')}
               onPointerDown={onRowsDown}
               onPointerMove={onRowsMove}
               onPointerUp={onRowsUp}
@@ -1696,7 +1707,8 @@ export function SessionMessages({
               className="group -mb-1 flex h-2 cursor-ns-resize touch-none items-center justify-center max-lg:h-4"
             >
               <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
-            </div>
+              </div>
+            </Tooltip>
             <div className="flex flex-wrap items-end gap-1.5">
               {/* 输入框是 contenteditable 而非 textarea：内联引用胶囊必须是
                   `contenteditable=false` 的原子块（退格整枚删、光标进不去），
@@ -1851,16 +1863,17 @@ export function SessionMessages({
                   用文字不用图标——Enter 键帽已占了 CornerDownLeft，再摆一枚同形的
                   就是两个一样的箭头。`pointerdown` 压掉默认 = 不把焦点从输入框抢走
                   （抢了软键盘会收）。 */}
-              <button
-                type="button"
-                title={t('tasks.msgNewline')}
-                aria-label={t('tasks.msgNewline')}
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={insertNewline}
-                className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2 text-10 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-6"
-              >
-                {t('tasks.msgNewline')}
-              </button>
+              <Tooltip label={t('tasks.msgNewline')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.msgNewline')}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={insertNewline}
+                  className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2 text-10 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-6"
+                >
+                  {t('tasks.msgNewline')}
+                </button>
+              </Tooltip>
               {/* 停止 / 发送（+ 通道下拉）：靠右。窄屏输入框独占一行、这三枚钮折到
                   第二行靠右（`ml-auto`，与左边那枚换行分开拇指够得到的两头）；
                   桌面并排一行。停止与事件链组头同一判据与 fb 键。通道下拉贴着
@@ -1981,16 +1994,17 @@ export function SessionMessages({
                     /* flex：这层若是 block，inline-flex 按钮落在文本行盒里，descender
                        会把层撑高 1px——整组随之错位（主钮上浮、与键帽不齐）。 */
                     <div className="relative flex" ref={sendKeyMenuRef}>
-                      <button
-                        type="button"
-                        title={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
-                        aria-label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
+                      <Tooltip label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}>
+                        <button
+                          type="button"
+                          aria-label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
                         aria-expanded={sendKeyMenu}
                         onClick={() => setSendKeyMenu((v) => !v)}
                         className="inline-flex h-6 w-4 shrink-0 items-center justify-center rounded-r border-l border-blue-400/40 bg-blue-600/80 text-white transition-colors hover:bg-blue-500"
                       >
                         <ChevronDown className={cn('h-2.5 w-2.5', sendKeyMenu && 'rotate-180')} />
-                      </button>
+                        </button>
+                      </Tooltip>
                       {sendKeyMenu && (
                         <div
                           data-send-key-menu
@@ -2041,19 +2055,20 @@ export function SessionMessages({
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口。
             触屏同样可用——pointer capture + touch-none，grip 自身不吃滚动） */}
         {!embedded && !fullscreen && (
-          <div
-            role="separator"
-            title={t('app.resizeDialog')}
-            aria-label={t('app.resizeDialog')}
-            onPointerDown={onGripDown}
-            onPointerMove={onGripMove}
-            onPointerUp={onGripUp}
-            onPointerCancel={onGripUp}
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none max-lg:h-6 max-lg:w-6"
-          >
-            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20 max-lg:bottom-1.5 max-lg:right-1.5 max-lg:h-3 max-lg:w-3" />
-          </div>
+          <Tooltip label={t('app.resizeDialog')}>
+            <div
+              role="separator"
+              aria-label={t('app.resizeDialog')}
+              onPointerDown={onGripDown}
+              onPointerMove={onGripMove}
+              onPointerUp={onGripUp}
+              onPointerCancel={onGripUp}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none max-lg:h-6 max-lg:w-6"
+            >
+              <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20 max-lg:bottom-1.5 max-lg:right-1.5 max-lg:h-3 max-lg:w-3" />
+            </div>
+          </Tooltip>
         )}
 
         {/* 弹出菜单：气泡右键一项「多选」／分享图片两项（复制 / 下载）。 */}
@@ -2149,15 +2164,16 @@ export function SessionMessages({
               className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-6"
               onClick={() => setLightbox(null)}
             >
-              <button
-                type="button"
-                title={t('tasks.msgImagePreview')}
-                aria-label={t('tasks.msgImagePreview')}
-                onClick={() => setLightbox(null)}
-                className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-900 text-neutral-300 hover:text-neutral-100"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <Tooltip label={t('tasks.msgImagePreview')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('tasks.msgImagePreview')}
+                  onClick={() => setLightbox(null)}
+                  className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-900 text-neutral-300 hover:text-neutral-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </Tooltip>
               <img
                 src={`${API_BASE}/images/${lightbox.id}`}
                 alt={lightbox.name}

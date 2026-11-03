@@ -94,11 +94,13 @@ export function ConfigValueRow({
     }
     if (controlOf(spec.type, spec.options) === 'switch') {
       return (
-        <Switch
-          checked={boolOf(value)}
-          title={spec.key}
-          onChange={(next) => onChange(next ? { value: true } : { remove: true })}
-        />
+        <div className="pt-1">
+          <Switch
+            checked={boolOf(value)}
+            title={spec.key}
+            onChange={(next) => onChange({ value: next })}
+          />
+        </div>
       );
     }
     if (!set) {
@@ -113,6 +115,13 @@ export function ConfigValueRow({
       );
     }
     const control = controlOf(spec.type, spec.valueOptions ?? spec.options);
+    if (control === 'switch') {
+      return (
+        <div className="pt-1">
+          <Switch checked={boolOf(value)} title={spec.key} onChange={(next) => onChange({ value: next })} />
+        </div>
+      );
+    }
     if (control === 'select') {
       const options = [...(spec.valueOptions ?? spec.options ?? [])];
       const current = typeof value === 'string' ? value : textOf(value);
@@ -572,7 +581,13 @@ function PlainControl({
   onChange: (next: unknown) => void;
 }) {
   const control = controlOf(spec.type, spec.options);
-  if (control === 'switch') return <Switch checked={boolOf(value)} title={spec.key} onChange={onChange} />;
+  if (control === 'switch') {
+    return (
+      <div className="pt-1">
+        <Switch checked={boolOf(value)} title={spec.key} onChange={onChange} />
+      </div>
+    );
+  }
   if (control === 'select') {
     const options = [...(spec.options ?? [])];
     const current = typeof value === 'string' ? value : textOf(value);
