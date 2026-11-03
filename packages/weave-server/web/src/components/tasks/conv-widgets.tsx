@@ -20,9 +20,10 @@ export const TAP_SLOP = 8;
  *  body 上按视口坐标定位。 */
 export type ConvMenu =
   | { kind: 'bubble'; x: number; y: number; key: string }
-  /** 分享菜单往上弹：`bottom` 量到视口底边（贴着按钮顶）——不拿菜单高度去猜，
-   *  少一项多一项都不会错位。 */
-  | { kind: 'share'; left: number; bottom: number };
+  /** 分享菜单像 select 一样择向：下方放得下就向下弹（`top` 贴按钮底），否则向上弹
+   *  （`bottom` 贴按钮顶）；`right` 恒对齐按钮右沿——不拿菜单的宽高去猜，少一项
+   *  多一项都不会错位。箭头按 `up` 指向菜单。 */
+  | { kind: 'share'; right: number; top?: number; bottom?: number; up: boolean };
 
 export const MENU_W = 168;
 /** 菜单高度上限（气泡菜单至多三项）：只用于向上定位与下沿夹取，略大无害。 */

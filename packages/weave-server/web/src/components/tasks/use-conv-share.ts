@@ -19,7 +19,7 @@ import {
   toImageEntries,
 } from './conv-export';
 import { isImageUpload } from './attach';
-import { MENU_W, type ConvMenu } from './conv-widgets';
+import { MENU_H, type ConvMenu } from './conv-widgets';
 import type { ConvEntry } from './conv-model';
 import type { Theme } from '@/lib/theme';
 import type { TFunc } from '@/i18n/t';
@@ -161,14 +161,19 @@ const exportMarkdown = (entries: readonly ConvEntry[]): void => {
   downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), markdownFileName(label));
 };
 
-/** 分享菜单往上开：底栏在下沿，向下没有可用的地方。 */
+/** 分享菜单像 select 一样择向：下方放得下（视口底边距按钮底 ≥ 菜单上限）就向下弹，
+ *  否则向上弹。右沿对齐按钮右沿（箭头在按钮右端，菜单跟着它走）、留 4px 缝；
+ *  右边贴住视口时夹回 8px。按 right 定位与菜单实际宽度无关（菜单是内容自适应宽，
+ *  硬编码宽度夹逼会把菜单从按钮边上推开）。 */
 const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
   const r = e.currentTarget.getBoundingClientRect();
-  // 左沿对齐按钮左沿、右上角留 4px 缝；右边放不下就整体左移（夹进视口）
+  const roomBelow = window.innerHeight - r.bottom;
+  const up = roomBelow < MENU_H + 8;
   setMenu({
     kind: 'share',
-    left: Math.max(8, Math.min(r.left, window.innerWidth - MENU_W - 8)),
-    bottom: window.innerHeight - r.top + 4,
+    right: Math.max(8, window.innerWidth - r.right),
+    ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+    up,
   });
 };
 

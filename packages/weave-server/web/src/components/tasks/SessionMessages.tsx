@@ -1435,13 +1435,12 @@ export function SessionMessages({
                   icon={<ImageIcon className="h-3 w-3" />}
                 />
                 {t('tasks.convShare')}
-                {/* 下拉的箭头：菜单是往上弹的，箭头朝上；展开时翻过来 */}
-                <ChevronUp
-                  className={cn(
-                    'h-3 w-3 shrink-0 text-neutral-500 transition-transform',
-                    menu?.kind === 'share' && 'rotate-180',
-                  )}
-                />
+                {/* 箭头指向菜单实际弹出方向：向下弹（select 常态）朝下、向上弹朝上 */}
+                {menu?.kind === 'share' && menu.up ? (
+                  <ChevronUp className="h-3 w-3 shrink-0 text-neutral-500" />
+                ) : (
+                  <ChevronDown className="h-3 w-3 shrink-0 text-neutral-500" />
+                )}
               </button>
               <button
                 type="button"
@@ -2065,7 +2064,10 @@ export function SessionMessages({
               className="fixed z-[60] rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
               style={
                 menu.kind === 'share'
-                  ? { left: menu.left, bottom: menu.bottom }
+                  ? {
+                      right: menu.right,
+                      ...(menu.up ? { bottom: menu.bottom } : { top: menu.top }),
+                    }
                   : {
                       left: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
                       top: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H)),
