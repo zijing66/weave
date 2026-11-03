@@ -1253,23 +1253,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <FieldHint>{t('settings.petPickHint')}</FieldHint>
             </label>
             {pets.length > 0 ? (
-              <select
+              <Combobox
+                className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                 value={settings?.pet?.petId ?? 'weave-spider'}
-                onChange={(e) =>
+                options={pets.map((p) => ({ value: p.id, label: p.displayName }))}
+                onChange={(v) =>
                   setSettings((s) =>
                     s === null
                       ? s
-                      : { ...s, pet: { ...(s.pet ?? { enabled: false, notifications: true }), petId: e.target.value } },
+                      : { ...s, pet: { ...(s.pet ?? { enabled: false, notifications: true }), petId: v } },
                   )
                 }
-                className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                {pets.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.displayName}
-                  </option>
-                ))}
-              </select>
+              />
             ) : (
               <p className="text-11 text-neutral-500">{t('settings.petNone')}</p>
             )}

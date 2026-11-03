@@ -63,7 +63,8 @@ function labelOf(s: SessionRow | undefined, sessionId: string): string {
 }
 
 /**
- * 全局聚合：待答 > 失败 > 运行中 > 刚完成 > 空闲。
+ * 全局聚合：失败 > 运行中 > 刚完成 > 空闲（待答只进气泡，不抢动画——
+ * 提问时宠物该干嘛干嘛，问题挂起不等于活儿停了）。
  * 判据与 session-status.ts 同源（turnOpen/lastEventType/pidAlive/interruptedAt
  * + dispatch 状态），只是压成全局一态。
  */
@@ -86,20 +87,12 @@ function aggregate(
     }
   }
 
-  // 待答（最高优先）：每个待答会话各一条常驻气泡，答完才撤
-  if (questions.length > 0) {
-    const q = questions[0]!;
-    return {
-      anim: 'waiting',
-      bubble: `⏳ ${labelOf(byId.get(q.sessionId), q.sessionId)} 等你回答`,
-      focusSessionId: q.sessionId,
-      stateBubbles: questions.map((entry) => ({
-        key: `q:${entry.sessionId}`,
-        text: `⏳ ${labelOf(byId.get(entry.sessionId), entry.sessionId)} 等你回答`,
-        focusSessionId: entry.sessionId,
-      })),
-    };
-  }
+  // 待答：每个待答会话各一条常驻气泡，答完才撤；动画不因此切换
+  const stateBubbles: StateBubble[] = questions.map((entry) => ({
+    key: `q:${entry.sessionId}`,
+    text: `⏳ ${labelOf(byId.get(entry.sessionId), entry.sessionId)} 等你回答`,
+    focusSessionId: entry.sessionId,
+  }));
   // 失败（最新一次失败的派发，30 分钟内才算新闻）
   const failed = [...failedLatest.entries()]
     .filter(([, at]) => now - Date.parse(at) < 30 * 60_000)
@@ -109,7 +102,7 @@ function aggregate(
       anim: 'failed',
       bubble: `✗ ${labelOf(byId.get(failed[0]), failed[0])} 任务失败`,
       focusSessionId: failed[0],
-      stateBubbles: [],
+      stateBubbles,
     };
   }
   // 运行中：running dispatch / 回合开着且有近期活动 → 结网循环（织网=干活）。
@@ -123,14 +116,14 @@ function aggregate(
       runningDispatch.has(s.sessionId) ||
       (s.turnOpen === true ? quiet < STALE_TURN_MS : s.turnOpen !== false && quiet < ACTIVE_WINDOW_MS);
     if (busy) {
-      return { anim: 'review', bubble: null, focusSessionId: null, stateBubbles: [] };
+      return { anim: 'review', bubble: null, focusSessionId: null, stateBubbles };
     }
   }
   // 刚完成：3 分钟内有过运行、现在没了 → 挥腿庆祝一小段（review 已让给运行中的结网循环）
   if (wasRunningRecently(now)) {
-    return { anim: 'waving', bubble: '✓ 全部完成', focusSessionId: null, stateBubbles: [] };
+    return { anim: 'waving', bubble: '✓ 全部完成', focusSessionId: null, stateBubbles };
   }
-  return { anim: 'idle', bubble: null, focusSessionId: null, stateBubbles: [] };
+  return { anim: 'idle', bubble: null, focusSessionId: null, stateBubbles };
 }
 
 /** 「刚完成」判据的运行痕迹：上一拍聚合成运行中（结网循环）的时刻。 */
@@ -551,18 +544,21 @@ function syncRegion(): void {
   postToHost(`region:${rx},${ry},${rw},${rh}`);
 }
 
-/** 休息（idle）时头右上飘 zzz；位置跟着绘制区与视线微移走，停止时冻住。 */
+/** 休息（idle）时头右上飘 zzz；位置跟着绘制区与视线微移走，停止时冻住。
+ * 字号与浮距按宠物档等比缩放（small 为基准 1）。 */
 function syncZzz(): void {
   const resting = player.current() === 'idle';
   zzzEl.classList.toggle('show', resting);
   zzzEl.classList.toggle('frozen', paused);
   if (!resting) return;
+  const s = SIZE_PX[petSize].w / SIZE_PX.small.w;
+  zzzEl.style.setProperty('--zzz-scale', s.toFixed(2));
   const r = currentPetRect();
   const box = contentBoxOf('idle');
   const right = box ? r.x + ((box.x1 + 1) / SPRITE_GRID.cellWidth) * r.w : r.x + r.w;
   const top = box ? r.y + (box.y0 / SPRITE_GRID.cellHeight) * r.h : r.y;
-  zzzEl.style.left = `${Math.round(right + leanX - 12)}px`;
-  zzzEl.style.top = `${Math.round(top + leanY - 12)}px`;
+  zzzEl.style.left = `${Math.round(right + leanX - 12 * s)}px`;
+  zzzEl.style.top = `${Math.round(top + leanY - 12 * s)}px`;
 }
 
 function fitCanvas(): void {
@@ -684,7 +680,7 @@ function applyAggregated(next: Aggregated): void {
       upsertBubble('done', next.bubble, { ttlMs: DONE_TTL_MS });
     }
     if (next.focusSessionId && settingsNotifications) {
-      const title = next.anim === 'waiting' ? 'Weave 待答' : next.anim === 'failed' ? 'Weave 失败' : 'Weave';
+      const title = next.anim === 'failed' ? 'Weave 失败' : 'Weave';
       notifySystem(title, next.bubble.replace(/^[⏳✗]\s*/, ''), `weave-pet-${next.focusSessionId}`);
     }
   }
