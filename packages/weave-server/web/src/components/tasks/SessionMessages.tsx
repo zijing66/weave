@@ -1697,19 +1697,21 @@ export function SessionMessages({
             {/* 顶边拖拽手柄：贴在两行之间，负边距吃掉 gap，免得常显多出一条空隙。
                 触屏同样可用（pointer capture + touch-none；手柄自身不吃滚动，
                 旁边的对话区照常滚）。 */}
-            <Tooltip label={t('tasks.msgResizeInput')} className="flex-1">
-              <div
-                role="separator"
-                aria-label={t('tasks.msgResizeInput')}
+            <div
+              role="separator"
+              aria-label={t('tasks.msgResizeInput')}
               onPointerDown={onRowsDown}
               onPointerMove={onRowsMove}
               onPointerUp={onRowsUp}
               onPointerCancel={onRowsUp}
               className="group -mb-1 flex h-2 cursor-ns-resize touch-none items-center justify-center max-lg:h-4"
             >
-              <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
-              </div>
-            </Tooltip>
+              {/* Tooltip 只包住可见指示条：锚点跟随那根线（全宽手柄当锚点会让
+                  tooltip 飞到行中央/远端，与手柄位置脱钩）；side=top 不遮输入框 */}
+              <Tooltip label={t('tasks.msgResizeInput')} side="top">
+                <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
+              </Tooltip>
+            </div>
             <div className="flex flex-wrap items-end gap-1.5">
               {/* 输入框是 contenteditable 而非 textarea：内联引用胶囊必须是
                   `contenteditable=false` 的原子块（退格整枚删、光标进不去），
