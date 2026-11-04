@@ -193,8 +193,22 @@ const insertNodesUndoably = (el: HTMLDivElement, nodes: Node[], savedRange: Rang
   } catch {
     ok = false;
   }
-  if (!ok) insertNodes(nodes);
-  else setDraft(serializeDraft(el));
+  if (!ok) {
+    insertNodes(nodes);
+    return;
+  }
+  // insertHTML 插 contenteditable=false 元素后光标会被 Chromium 丢到胶囊**前面**：
+  // 显式移到末个插入节点之后，接着敲正文才连贯
+  const tail = el.contains(nodes[nodes.length - 1] ?? null) ? nodes[nodes.length - 1] : null;
+  if (tail) {
+    const after = document.createRange();
+    after.setStartAfter(tail);
+    after.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(after);
+  }
+  setDraft(serializeDraft(el));
 };
 
 /** 插一段**粘贴来的**文本：文本经 createTextNode 转义成 HTML，换行保持字面

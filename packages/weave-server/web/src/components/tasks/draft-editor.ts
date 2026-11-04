@@ -453,25 +453,25 @@ export function textBeforeCaret(root: Node, range: Range): string {
 }
 
 /** 胶囊的样式（动态建元素也想吃 Tailwind：类名写死在源码里才生成得出）。
- *  称呼与发送出去的表达式一致，不做好看的别名——用户看见的就是会发出去的。 */
-export const REF_CHIP_CLASS =
-  'mx-0.5 inline-block max-w-[16rem] truncate rounded-full border border-blue-500/40 bg-blue-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-blue-200';
+ *  称呼与发送出去的表达式一致，不做好看的别名——用户看见的就是会发出去的。
+ *  布局全部同构（2026-11-04：对齐/内边距/行高统一走 CHIP_BASE，颜色与截断
+ *  才是变体）——inline-flex + align-middle 与中文字基线对齐，错位消除。 */
+const CHIP_BASE =
+  'mx-0.5 inline-flex max-w-full items-center truncate rounded-full border px-1.5 align-middle font-mono text-11 leading-[1.5]';
+
+export const REF_CHIP_CLASS = `${CHIP_BASE} max-w-[16rem] border-blue-500/40 bg-blue-500/15 text-blue-200`;
 
 /** 附件占位胶囊：绿色系（与引用蓝、命令黄/红区分开），微缩略图 + 截短名。 */
-export const ATTACH_CHIP_CLASS =
-  'mx-0.5 inline-flex max-w-[12rem] items-center gap-1 truncate rounded-full border border-emerald-500/40 bg-emerald-500/15 px-1.5 align-middle font-mono text-11 leading-[1.5] text-emerald-200';
+export const ATTACH_CHIP_CLASS = `${CHIP_BASE} max-w-[12rem] gap-1 border-emerald-500/40 bg-emerald-500/15 text-emerald-200`;
 
 /** 命令胶囊：黄色系、**不截断**（命令名本来就短，截断只会藏掉分辨它们的最后几位）。 */
-const CMD_CHIP_CLASS =
-  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-amber-200';
+const CMD_CHIP_CLASS = `${CHIP_BASE} max-w-none whitespace-nowrap border-amber-500/40 bg-amber-500/15 text-amber-200`;
 
 /** skill / 插件命令：红色系——它们与官方命令不是一类东西（插在句子里也一样生效）。 */
-const SKILL_CHIP_CLASS =
-  'mx-0.5 inline-block whitespace-nowrap rounded-full border border-red-500/40 bg-red-500/15 px-1.5 align-baseline font-mono text-11 leading-[1.5] text-red-200';
+const SKILL_CHIP_CLASS = `${CHIP_BASE} max-w-none whitespace-nowrap border-red-500/40 bg-red-500/15 text-red-200`;
 
 /** 会话目标胶囊：紫色系（跨会话这个概念全站一色）。 */
-export const SESSION_CHIP_CLASS =
-  'mx-0.5 inline-block max-w-[14rem] truncate rounded-full border border-violet-500/40 bg-violet-500/15 px-1.5 align-baseline text-11 leading-[1.5] text-violet-200';
+export const SESSION_CHIP_CLASS = `${CHIP_BASE} max-w-[14rem] border-violet-500/40 bg-violet-500/15 text-violet-200`;
 
 export type CmdSource = HarnessCommandRow['source'];
 export type CmdSigil = '/' | '$';
