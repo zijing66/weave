@@ -32,8 +32,20 @@ const VERSION_FILES = ['package.json', ...ALL_PACKAGES.map((d) => `packages/${d}
 const [version, ...rest] = process.argv.slice(2);
 const dryRun = rest.includes('--dry-run');
 if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version ?? '')) {
-  console.error('usage: node scripts/release.mjs <x.y.z> [--dry-run]');
+  console.error('usage: node scripts/release.mjs <x.y.z> [--dry-run] [--proxy host:port]');
   process.exit(1);
+}
+
+// 发布出口代理（可选）：`--proxy host:port` 或 env HTTPS_PROXY。registry 直连
+// 不可达/被干扰的环境（国内网络常见）靠它出去；挂给 npm/pnpm 的是标准
+// https-proxy env，子进程全链生效，本脚本自身不发起网络请求。
+const proxyArgIdx = rest.indexOf('--proxy');
+const PROXY = proxyArgIdx !== -1 ? rest[proxyArgIdx + 1] : process.env.HTTPS_PROXY || process.env.https_proxy || '';
+if (PROXY) {
+  process.env.HTTPS_PROXY = PROXY;
+  process.env.HTTP_PROXY = PROXY;
+  process.env.NO_PROXY = 'localhost,127.0.0.1';
+  console.log(`proxy: ${PROXY}`);
 }
 
 function run(cmd) {
@@ -46,6 +58,7 @@ if (!dryRun) {
     console.log(`npm user: ${execSync(`npm whoami --registry=${REGISTRY}`, { encoding: 'utf8' }).trim()}`);
   } catch {
     console.error(`No valid token for ${REGISTRY} (missing or rejected). Run: npm login --registry=${REGISTRY}`);
+    console.error('Behind a proxy? Pass --proxy host:port (or set HTTPS_PROXY) and retry.');
     process.exit(1);
   }
 } else {
