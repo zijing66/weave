@@ -101,11 +101,19 @@ const insertNodes = (nodes: Node[]): void => {
   atRange.current = null;
   hashRange.current = null;
   // 等落定的这段时间里那截文字可能已经被删掉（粘贴要先问一趟服务端）：
-  // 挂一个游离节点的 Range 会抛，退回末尾追加
+  // 挂一个游离节点的 Range 会抛，退回末尾追加。saved 失效时**必须显式把光标
+  // 放到末尾**——focus 对空选区的默认落点是开头，任其自然会把胶囊插到开头。
   if (saved && el.contains(saved.startContainer)) {
     const sel = window.getSelection();
     sel?.removeAllRanges();
     sel?.addRange(saved);
+  } else {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
   }
   const range = caretInDraft(el);
   if (range) {
@@ -241,14 +249,17 @@ const buildSessionChip = (sessionId: string, name: string): HTMLElement => {
   return chip;
 };
 
-/** 落定引用目标：**单目标**——先摘掉既有目标胶囊再在 `#` 的位置插新的一枚。
- *  光标停在胶囊后面一格（正文接着敲就行）。 */
+/** 落定引用目标：**单目标**——先摘掉既有目标胶囊，再在触发 `#` 的位置插新的一枚
+ *  （与 `@` 引用胶囊同构：插入点跟随触发处，不落在开头/末尾）。
+ *  光标停在胶囊后面一格（正文接着敲就行）。走 `insertNodesUndoably` 与
+ *  `@` 回填同一条撤销语义（独立撤销步，不并进打字组）。 */
 const insertSessionTarget = (sessionId: string, name: string): void => {
   const el = draftRef.current;
   if (!el) return;
+  const saved = hashRange.current;
   hashRange.current = null;
   el.querySelector(`[${SESSION_ATTR}]`)?.remove();
-  insertNodes([buildSessionChip(sessionId, name), document.createTextNode(' ')]);
+  insertNodesUndoably(el, [buildSessionChip(sessionId, name), document.createTextNode(' ')], saved);
 };
 
 /** 附件占位胶囊：图 = 微缩略图 + 截短名，文件 = 图标 + 截短名。
