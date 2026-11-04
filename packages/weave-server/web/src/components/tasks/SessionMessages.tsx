@@ -862,7 +862,7 @@ export function SessionMessages({
                           'min-w-0 max-w-[92%] overflow-x-auto rounded-lg border px-2 py-1.5',
                           m.failed
                             ? 'border-red-500/30 bg-red-950/20'
-                            : 'border-edge/[0.08] bg-neutral-800/50',
+                            : 'border-edge/[0.16] bg-neutral-800/50',
                           // 被回退的段落：红虚线框 + 整体降不透明度（保留展示，一眼看出已退场）
                           m.rewound === true && 'border-dashed border-red-500/40 opacity-50',
                           m.narration === true && 'weave-card-in',
@@ -973,8 +973,8 @@ export function SessionMessages({
                         m.commandSigil === '!'
                           ? BASH_ECHO_CLASS.bubble
                           : pipe
-                            ? 'border-blue-500/30 bg-blue-500/[0.12]'
-                            : 'border-blue-500/15 bg-blue-500/[0.05]',
+                            ? 'border-blue-500/40 bg-blue-500/[0.12]'
+                            : 'border-blue-500/30 bg-blue-500/[0.05]',
                         // 被回退的段落：红虚线框 + 整体降不透明度（与回复气泡同口径）
                         m.rewound === true && 'border-dashed border-red-500/40 opacity-50',
                       )}
@@ -1363,7 +1363,7 @@ export function SessionMessages({
                         'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10',
                         failed
                           ? 'border-red-500/30 bg-red-950/30 text-red-300'
-                          : 'border-edge/[0.08] bg-neutral-800/50 text-neutral-500',
+                          : 'border-edge/[0.16] bg-neutral-800/50 text-neutral-500',
                       )}
                     >
                       {interrupted ? (

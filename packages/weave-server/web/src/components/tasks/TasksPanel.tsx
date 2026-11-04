@@ -158,7 +158,7 @@ export function TasksPanel({
     project: projectId,
     sessionId: initialSessionId ?? null,
   });
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
   const [pendingRun, setPendingRun] = useState<{
     dispatchId: number;
     sessionId: string;
@@ -1349,11 +1349,7 @@ export function TasksPanel({
             }}
           />
         </div>
-        {error && (
-          <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-11 text-red-300">
-            {error}
-          </p>
-        )}
+        {/* 拉取失败走全局 toast（store 层弹、自动消失），不再常驻红条 */}
         {sessions === null ? (
           // 首拉未回：会话行骨架（形状同真实行），比转圈更能顶住首屏
           <SkeletonRows rows={8} className="p-0" />

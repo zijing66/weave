@@ -67,7 +67,7 @@ export function GlobalTasksOverview({
 }) {
   const t = useT();
   const { show } = useToast();
-  const { sessions, statuses, error, refresh } = useSessionStatus();
+  const { sessions, statuses, refresh } = useSessionStatus();
   const [projectFilter, setProjectFilter] = useState<number | 'all'>('all');
   const [range, setRange] = useState<RangeKey>('all');
   const [fromDate, setFromDate] = useState('');
@@ -204,11 +204,7 @@ export function GlobalTasksOverview({
         )}
       </div>
 
-      {error && (
-        <p className="rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-11 text-red-300">
-          {error}
-        </p>
-      )}
+      {/* 拉取失败走全局 toast（store 层弹、自动消失），不再常驻红条 */}
       {sessions === null ? (
         <p className="flex items-center gap-1.5 text-xs text-neutral-600">
           <Loader2 className="h-3 w-3 animate-spin" />

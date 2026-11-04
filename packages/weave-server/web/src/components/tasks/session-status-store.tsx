@@ -17,6 +17,7 @@ import {
 } from '@/lib/api';
 import type { ModelAliasTarget } from '@weavecode/harness';
 import { useAuthState } from '@/lib/auth';
+import { useToast } from '@/components/Toast';
 import { subscribeHook, subscribePush, type HookFrame } from '@/lib/sse';
 import {
   countSessionsByHarness,
@@ -169,20 +170,35 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     if (s.status === 'fulfilled') {
       setSessions(() => applyRowPush(s.value.sessions, rowPush.current));
       setModelCatalog(s.value.modelCatalog ?? {});
-      setError(null);
       lastFullAt.current = Date.now();
       return null;
     }
     const message = s.reason instanceof Error ? s.reason.message : String(s.reason);
-    setError(message);
     return message;
   }, []);
+
+  /** 拉取失败 = 瞬时故障，走全局 toast（自动消失），不再常驻页面。
+   *  连续失败去重：同文案 10s 内只弹一次（SSE 帧驱动的重拉很密）。 */
+  const lastToastAt = useRef(0);
+  const lastToastMsg = useRef('');
+  const toast = useToast();
+  const refreshWithToast = useCallback(async (): Promise<string | null> => {
+    const message = await refresh();
+    if (message == null) return null;
+    const now = Date.now();
+    if (message !== lastToastMsg.current || now - lastToastAt.current > 10_000) {
+      lastToastAt.current = now;
+      lastToastMsg.current = message;
+      toast.show('error', message);
+    }
+    return message;
+  }, [refresh, toast]);
 
   // 认证前不拉：Provider 挂在认证门之上，登录页阶段发请求必 401，而错误会一直
   // 留到登录后（Provider 不重挂载）被全局总览渲染成红条。
   useEffect(() => {
-    if (auth === 'authenticated') void refresh();
-  }, [auth, refresh]);
+    if (auth === 'authenticated') void refreshWithToast();
+  }, [auth, refreshWithToast]);
 
   // 在途消息角标：后端按 message.* 事件重算并推绝对值快照（无轮询、无重拉）。
   useEffect(
@@ -212,7 +228,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
         land();
         // 已中断 = 用户在宿主里手动了结了那个对话框（ESC 多半连 Stop 都不发）——
         // 待答面由服务端在这一拍上判掉，本地不重拉就永远停在那条已经不存在的问题上。
-        void refresh();
+        void refreshWithToast();
       }),
       subscribePush<{ terminals?: Record<string, SessionTerminal | null> }>('terminalTopology', (p) => {
         if (p.terminals) rowPush.current.terminal = p.terminals;
@@ -222,7 +238,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     return () => {
       for (const off of offs) off();
     };
-  }, [refresh]);
+  }, [refreshWithToast]);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -249,7 +265,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
         ids.some((id) => !known.has(id)) ||
         Date.now() - lastFullAt.current >= FULL_REFRESH_MIN_MS;
       if (missed) {
-        void refresh().then(() => {
+        void refreshWithToast().then(() => {
           // API 数据已回，overlay 完成使命（started/finished 的行状态已落库）
           setOverlay(new Map());
         });
@@ -414,9 +430,9 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       inflight,
       questions,
       modelCatalog,
-      refresh,
+      refresh: refreshWithToast,
     }),
-    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, refresh],
+    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, refreshWithToast],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
