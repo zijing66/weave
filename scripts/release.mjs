@@ -59,7 +59,14 @@ function run(cmd) {
 
 if (!dryRun) {
   try {
-    console.log(`npm user: ${runWithProxy(`npm whoami --registry=${REGISTRY}`, { encoding: 'utf8' }).trim()}`);
+    // 输出要捕获（stdio 不能 inherit），proxy env 由 runWithProxy 注入
+    const who = execSync(`npm whoami --registry=${REGISTRY}`, {
+      encoding: 'utf8',
+      env: PROXY
+        ? { ...process.env, HTTPS_PROXY: PROXY, HTTP_PROXY: PROXY, NO_PROXY: 'localhost,127.0.0.1' }
+        : process.env,
+    }).trim();
+    console.log(`npm user: ${who}`);
   } catch {
     console.error(`No valid token for ${REGISTRY} (missing or rejected). Run: npm login --registry=${REGISTRY}`);
     console.error('Behind a proxy? Pass --proxy host:port (or set HTTPS_PROXY) and retry.');
