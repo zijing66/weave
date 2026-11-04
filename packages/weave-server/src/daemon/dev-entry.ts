@@ -28,6 +28,7 @@ import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { QuestionTracker } from '../hooks/question-tracker.js';
+import { ActivityTracker } from '../hooks/activity-tracker.js';
 import { SideQuestionRepository } from '../repositories/side-questions.js';
 import { claimSideAnswer, type SideQuestionDeps } from '../hooks/side-questions.js';
 import { DashboardRateCache } from '../hooks/dashboard-rate.js';
@@ -277,6 +278,9 @@ async function main(): Promise<void> {
     },
   });
   questionTracker.seedFromDb();
+  // 会话活动跟踪（子 agent/后台 shell/任务清单的事件账；文件面在 activity 槽）。
+  const activityTracker = new ActivityTracker({ sessions: hookSessions, hookEvents });
+  activityTracker.seedFromDb();
   // 旁路会话历史（claude = /btw）：与生产入口同一装配——见 start.ts 的说明。
   const sideQuestions = new SideQuestionRepository(db);
   // 仪表盘速率快照：ingest 时累加、读侧 O(点数)；daemon 重启后首次读回填一次库。
@@ -346,6 +350,24 @@ async function main(): Promise<void> {
     { key: 'sessionInterrupt', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
   );
   interruptRefresher.start();
+  // 会话活动（子 agent/shell/任务）：事件账已在 ingest 时就地更新，这里只兜「SubagentStop
+  // 没到但文件面变了」的尾巴——失效帧让前端重拉 /activity 合账，不带快照。
+  const activityRefresher = new SnapshotRefresher(
+    () => {
+      const out: Record<string, string> = {};
+      for (const s of hookSessions.listWithCounts()) {
+        if (s.turnOpen !== true) continue;
+        const agentIds = [...activityTracker.agentsOf(s.sessionId).keys()];
+        const taskIds = [...activityTracker.shellsOf(s.sessionId).keys()];
+        if (agentIds.length === 0 && taskIds.length === 0) continue;
+        out[s.sessionId] = `${agentIds.length}:${taskIds.length}`;
+      }
+      return out;
+    },
+    dataBus,
+    { key: 'sessionActivity', intervalMs: 15_000, shouldRun: () => dataBus.hasSubscribers(), invalidateOnly: true },
+  );
+  activityRefresher.start();
   // 对话页底条的 git 事实（分支 / 上游差异 / diff 行数）：由宿主的状态栏脚本算好
   // 落在缓存里，weave 自己不探 git。缓存每渲染一次就重写，但没人会通知 dashboard——
   // 底条只在挂载时读一次，两扇对话窗开窗时刻不同就停在不同的快照上（同一个仓库，
@@ -449,6 +471,7 @@ async function main(): Promise<void> {
     watchEngine,
     orchestrationEngine,
     questions: questionTracker,
+    activity: activityTracker,
     sideQuestions,
     probe: sessionProbe,
     uploads,
@@ -469,6 +492,7 @@ async function main(): Promise<void> {
     orchestrationEngine,
     messagePipe: messageDeliverer,
     questionTracker,
+    activityTracker,
     sideQuestions: {
       onEvent: (input) => {
         claimSideAnswer(sideQuestionDeps, input);
@@ -512,6 +536,7 @@ async function main(): Promise<void> {
     terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
     uploads,
     questionTracker,
+    activityTracker,
     sideQuestions: sideQuestionDeps,
     sessionWatches,
     watchEngine,

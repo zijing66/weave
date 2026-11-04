@@ -6,6 +6,7 @@ import type { SideQuestionRepository } from '../repositories/side-questions.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import type { QuestionTracker } from './question-tracker.js';
+import type { ActivityTracker } from './activity-tracker.js';
 
 export interface SessionPurgeDeps {
   sessions: SessionRepository;
@@ -19,6 +20,8 @@ export interface SessionPurgeDeps {
   orchestrations?: Pick<OrchestrationRepository, 'deleteMentioningSession'>;
   /** 阻塞问答：待答内存态一并清（不计数）。 */
   questions?: Pick<QuestionTracker, 'forgetSession'>;
+  /** 会话活动：子 agent/shell/任务事件账一并清（不计数）。 */
+  activity?: Pick<ActivityTracker, 'forgetSession'>;
   /** 转录探测：内存里的 transcriptPath 一并清（不计数）。 */
   probe?: { forget(sessionId: string): void };
   /** 旁路会话历史：该会话的侧问行一并清（不计数；这是会话的附属品）。 */
@@ -43,6 +46,7 @@ export function purgeSession(
   deps.watches?.deleteBySession(sessionId);
   deps.orchestrations?.deleteMentioningSession(sessionId);
   deps.questions?.forgetSession(sessionId);
+  deps.activity?.forgetSession(sessionId);
   deps.sideQuestions?.deleteBySession(sessionId);
   deps.probe?.forget(sessionId);
   deps.sessions.remove(sessionId);

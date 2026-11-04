@@ -10,6 +10,7 @@ import { promptboxPathOf } from '../hooks/promptbox.js';
 import type { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
+import type { ActivityTracker } from '../hooks/activity-tracker.js';
 import type { SideQuestionEvent } from '../hooks/side-questions.js';
 import {
   startInboxWorker,
@@ -37,6 +38,8 @@ export interface HookPipelineDeps {
   messagePipe?: Pick<MessageDeliverer, 'hasQueued' | 'flushSession'>;
   /** 阻塞式问答跟踪（AskUserQuestion/计划/权限确认）：ingest 事件派生待答面。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
+  /** 会话活动跟踪（子 agent/后台 shell/任务清单）：ingest 事件派生运行态账本。 */
+  activityTracker?: Pick<ActivityTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = /btw）：同透传（判据归 harness 能力面）。 */
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
   /** 仪表盘速率快照（ingest 路径累加；读侧见 /dashboard/stats）。 */
@@ -173,6 +176,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         orchestrationEngine: deps.orchestrationEngine,
         messagePipe: deps.messagePipe,
         questionTracker: deps.questionTracker,
+        activityTracker: deps.activityTracker,
         sideQuestions: deps.sideQuestions,
         dashboardRate: deps.dashboardRate,
         sessionProbe: deps.sessionProbe,

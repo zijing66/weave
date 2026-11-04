@@ -28,6 +28,7 @@ import type { WatchEngine } from './watch-engine.js';
 import type { OrchestrationEngine } from './orchestration-engine.js';
 import type { MessageDeliverer } from './message-deliverer.js';
 import type { QuestionTracker } from './question-tracker.js';
+import type { ActivityTracker } from './activity-tracker.js';
 import type { SideQuestionEvent } from './side-questions.js';
 import { isSyntheticSession, replaceSyntheticSessions } from './synthetic-sessions.js';
 
@@ -439,6 +440,8 @@ export interface IngestedHandlerDeps {
   paneEnvSource?: (harness: Harness) => PaneEnvSource;
   /** 阻塞式问答跟踪（toolName 不进帧域，挂点在此）；缺省不跟踪。 */
   questionTracker?: Pick<QuestionTracker, 'onEvent'>;
+  /** 会话活动跟踪（子 agent / 后台 shell / 任务清单的事件账）；缺省不跟踪。 */
+  activityTracker?: Pick<ActivityTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = `/btw`）：判据归 harness 能力面；缺省不认领。 */
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
   /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）+ 换模型落定 + 推理档位。 */
@@ -488,6 +491,16 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         source: record.input.source,
         payload,
       });
+      // 会话活动账：同挂点口径（解析后的 payload + frameFacts 已提的 agent/shell 事实）。
+      {
+        const facts = frameFacts(payload);
+        deps.activityTracker?.onEvent({
+          sessionId: record.input.sessionId,
+          payload,
+          ...(facts.backgroundTasks ? { backgroundTasks: facts.backgroundTasks } : {}),
+          ...(facts.bgShell ? { bgShell: facts.bgShell } : {}),
+        });
+      }
       // 旁路会话（/btw）：宿主不给这类 fork 留转录，判据归 harness 能力面；
       // 只有 weave 自己发过问、且还在窗口里时才认领（人工在宿主面板里发的侧问
       // 不该被挂到我们这条历史上）。

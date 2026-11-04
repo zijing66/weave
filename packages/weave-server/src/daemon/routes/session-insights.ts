@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import path, { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isHarness, type Harness } from '@weavecode/core';
 import type { FileEdit } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
-import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor, rewindSurfaceFor } from '../../surfaces.js';
+import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor, rewindSurfaceFor, activitySurfaceFor } from '../../surfaces.js';
 import type { HookEventRow } from '../../repositories/hook-events.js';
 import type { ProjectRow } from '../../repositories/projects.js';
 
@@ -334,6 +334,109 @@ export async function handleSessionInsightRoutes(
     }
     const executions = await surface.executions(deps.sessionProbe?.transcriptPathOf(sessionId) ?? null);
     sendJson(res, 200, { supported: executions !== null, executions });
+    return true;
+  }
+
+  // ---- 会话活动（第 21 能力槽 activity）：子 agent / 任务清单 / 后台 shell。
+  // 合账：meta 与路径归 surface 文件面，running/completed 状态归 server 事件账
+  // （ActivityTracker）；任务清单文件易失，读不到时用事件账重建并标 source。----
+  const activityMatch = pathname.match(/^\/sessions\/([^/]+)\/activity$/);
+  if (activityMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(activityMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? activitySurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 200, { supported: false, agents: null, tasks: null, shells: null });
+      return true;
+    }
+    const fileFace = await surface.sessionActivity({
+      sessionId,
+      transcriptPath: deps.sessionProbe?.transcriptPathOf(sessionId) ?? null,
+    });
+    const agents = deps.activityTracker?.agentsOf(sessionId);
+    const shells = deps.activityTracker?.shellsOf(sessionId);
+    const trackedTasks = deps.activityTracker?.tasksOf(sessionId) ?? [];
+    // agents：并集——surface 给 id/meta/路径，tracker 给状态（账上没有的保持 running，
+    // 那是文件在而 SubagentStop 还没到/没采到的形态）。
+    const mergedAgents = (fileFace?.agents ?? []).map((a) => {
+      const t = agents?.get(a.agentId);
+      return { ...a, ...(t ? { status: t.status } : {}) };
+    });
+    // 任务清单：文件为准（含 blocks/blockedBy）；文件缺 → 事件账重建（只有末态）。
+    const tasks =
+      fileFace?.tasks ?? (trackedTasks.length > 0
+        ? {
+            source: 'events' as const,
+            rows: trackedTasks.map((t) => ({
+              id: t.taskId,
+              subject: t.subject ?? `Task ${t.taskId}`,
+              ...(t.activeForm ? { activeForm: t.activeForm } : {}),
+              status: t.status,
+              blocks: [] as string[],
+              blockedBy: [] as string[],
+            })),
+          }
+        : null);
+    sendJson(res, 200, {
+      supported: true,
+      agents: mergedAgents,
+      tasks,
+      shells: [...(shells?.values() ?? [])].map((s) => ({
+        taskId: s.taskId,
+        ...(s.command ? { command: s.command } : {}),
+        ...(s.description ? { description: s.description } : {}),
+        status: s.status,
+        lastSeenAt: s.lastSeenAt,
+      })),
+    });
+    return true;
+  }
+
+  // ---- 子 agent 详情：读它自己的转录（增量 offset；白名单 = subagents 目录内）----
+  const agentTranscriptMatch = pathname.match(/^\/sessions\/([^/]+)\/agents\/([^/]+)\/transcript$/);
+  if (agentTranscriptMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(agentTranscriptMatch[1]!);
+    const agentId = agentTranscriptMatch[2]!.replace(/[^A-Za-z0-9-]/g, '');
+    if (!agentId || !projectOfSession(res, deps, sessionId)) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? activitySurfaceFor(src) : null;
+    const dir = surface?.subagentsDirOf(deps.sessionProbe?.transcriptPathOf(sessionId) ?? null);
+    if (!surface || !dir) {
+      sendJson(res, 404, { error: 'Agent transcript not found' });
+      return true;
+    }
+    const offsetRaw = url.searchParams.get('offset');
+    const offset = offsetRaw !== null && Number.isFinite(Number(offsetRaw)) ? Number(offsetRaw) : undefined;
+    const result = await surface.agentTranscript({ transcriptPath: join(dir, `agent-${agentId}.jsonl`), ...(offset !== undefined ? { offset } : {}) });
+    if (!result) {
+      sendJson(res, 404, { error: 'Agent transcript not found' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  // ---- 后台 shell 输出：tail 现读（路径由 surface 从盘上扫，绝不由会话 id 拼）----
+  const shellOutputMatch = pathname.match(/^\/sessions\/([^/]+)\/shells\/([^/]+)\/output$/);
+  if (shellOutputMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(shellOutputMatch[1]!);
+    const taskId = shellOutputMatch[2]!.replace(/[^A-Za-z0-9-]/g, '');
+    const project = projectOfSession(res, deps, sessionId);
+    if (!taskId || !project) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? activitySurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 404, { error: 'Shell output not found' });
+      return true;
+    }
+    // cwd = 项目路径（tmp 目录名的派生源；hook payload.raw.cwd 会漂，以项目为准）。
+    const result = await surface.shellOutput({ taskId, sessionId, cwd: project.path });
+    if (!result) {
+      sendJson(res, 404, { error: 'Shell output not found' });
+      return true;
+    }
+    sendJson(res, 200, result);
     return true;
   }
 

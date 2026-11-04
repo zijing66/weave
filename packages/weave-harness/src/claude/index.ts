@@ -16,9 +16,10 @@ import { CLAUDE_NARRATION } from './narration.js';
 import { CLAUDE_COMMANDS } from './commands.js';
 import { CLAUDE_LIVENESS } from './liveness.js';
 import { CLAUDE_REWIND } from './rewind.js';
+import { CLAUDE_ACTIVITY } from './activity.js';
 
 export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
-export type { ClaudeFrameFacts, FramePayloadLike } from './event-source.js';
+export type { ClaudeFrameFacts, FramePayloadLike, BackgroundTaskFact } from './event-source.js';
 export { CLAUDE_ASSETS, ClaudeJsonCorruptError, readClaudeJson } from './assets.js';
 export { CLAUDE_PLUGINS, createClaudePluginSurface, WEAVE_MARKETPLACE } from './plugins.js';
 export type { PluginExecutor, PluginExecResult } from './plugins.js';
@@ -112,6 +113,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'commands',
     'liveness',
     'rewind',
+    'activity',
   ],
   assets: CLAUDE_ASSETS,
   events: CLAUDE_EVENT_SOURCE,
@@ -130,4 +132,5 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   commands: CLAUDE_COMMANDS,
   liveness: CLAUDE_LIVENESS,
   rewind: CLAUDE_REWIND,
+  activity: CLAUDE_ACTIVITY,
 };

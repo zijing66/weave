@@ -29,7 +29,8 @@ export type HarnessCapability =
   | 'commands'
   | 'provision'
   | 'liveness'
-  | 'rewind';
+  | 'rewind'
+  | 'activity';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -1238,6 +1239,77 @@ export interface SessionTitleSurface {
   setSessionTitle(sessionId: string, name: string): Promise<void>;
 }
 
+/**
+ * 会话活动面：子 agent / 任务清单 / 后台 shell 三类运行态的快照与详情读法。
+ * 「运行态账本」的权威在 server 的 tracker（事件驱动），本面只答文件面事实
+ * （subagents 目录、tasks 目录、shell 输出文件）——两边在端点处合账。
+ */
+export interface ActivityAgentRow {
+  agentId: string;
+  agentType?: string;
+  description?: string;
+  status: 'running' | 'completed';
+  /** 子 agent 独立转录绝对路径（详情端点的白名单锚点）；null = 不知道在哪。 */
+  transcriptPath: string | null;
+  startedAt: string | null;
+}
+
+export interface ActivityTaskRow {
+  id: string;
+  subject: string;
+  activeForm?: string;
+  status: string;
+  blocks: string[];
+  blockedBy: string[];
+}
+
+export interface ActivityShellRow {
+  taskId: string;
+  command?: string;
+  description?: string;
+  status: string;
+  /** 输出文件绝对路径；null = 没找到（tmp 扫描与事件提取都落空）。 */
+  outputPath: string | null;
+}
+
+export interface ActivitySnapshot {
+  agents: ActivityAgentRow[];
+  /** null = 该会话没有任务清单痕迹（文件与事件账都没有）。 */
+  tasks: { rows: ActivityTaskRow[]; source: 'file' | 'events' } | null;
+  shells: ActivityShellRow[];
+}
+
+export interface ActivitySurface {
+  /** 文件面快照：subagents 目录 + tasks 目录（shell 归 server 账本合入）。 */
+  sessionActivity(req: {
+    sessionId: string;
+    /** 主转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
+    transcriptPath: string | null;
+  }): Promise<Pick<ActivitySnapshot, 'agents' | 'tasks'> | null>;
+  /**
+   * 子 agent 独立转录的 assistant 正文段（增量）：offset = 上次读到的字节位，
+   * 返回 nextOffset 供续读。transcriptPath 必须是 subagents/ 下的文件（调用方
+   * 先过 `subagentsDirOf` 白名单），null = 文件不在。
+   */
+  agentTranscript(req: {
+    transcriptPath: string;
+    offset?: number;
+  }): Promise<{ segs: NarrationText[]; nextOffset: number | null } | null>;
+  /**
+   * 后台 shell 输出尾部。路径**只从盘上找**（`<tmp>/claude/<cwdSlug>/<会话id>/tasks/<taskId>.output`
+   * 扫描；resume 换过会话 id 的目录段 ≠ 现会话 id，实测 84ac7ff3 vs 6e3e6094
+   * ——绝不由会话 id 拼路径），白名单 = 命中文件必须落在该扫描目录内。
+   */
+  shellOutput(req: {
+    taskId: string;
+    cwd: string | null;
+    sessionId: string;
+    bytes?: number;
+  }): Promise<{ text: string; truncated: boolean } | null>;
+  /** 子 agent 转录目录（详情端点白名单判据用）；null = 主转录路径未知。 */
+  subagentsDirOf(transcriptPath: string | null): string | null;
+}
+
 /** 单个 harness 的驱动：id/displayName 必填，能力槽按批次补齐。 */
 export interface HarnessDriver {
   id: Harness;
@@ -1263,6 +1335,7 @@ export interface HarnessDriver {
   provision?: ProvisionSurface;
   liveness?: LivenessSurface;
   rewind?: RewindSurface;
+  activity?: ActivitySurface;
   /** 不入 capabilities 清单——无 web 面，消费点仅 server 两处（dispatcher diff 采纳 / PATCH rename RPC）。 */
   titles?: SessionTitleSurface;
 }

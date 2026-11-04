@@ -21,6 +21,7 @@ export type DataKey =
   | 'terminalTopology'
   | 'sessionLiveness'
   | 'sessionInterrupt'
+  | 'sessionActivity'
   | 'inflightCounts'
   | 'assets'
   | 'toolkit'

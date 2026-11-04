@@ -52,17 +52,8 @@ export const CLAUDE_NARRATION: NarrationSurface = {
   lineParser: parseLine,
 };
 
-/** 一行转录 → 一段旁白（全量读与增量监视共用这份文法）。 */
-function parseLine(line: string): NarrationText | null {
-  // 预筛：assistant 条目行才值得 parse（转录动辄几十 MB）
-  if (!line.includes('"type":"assistant"')) return null;
-  let entry: Record<string, unknown>;
-  try {
-    entry = JSON.parse(line) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  if (entry.type !== 'assistant' || entry.isSidechain === true) return null;
+/** 一条 assistant 转录条目的 text 分区拼接（时刻随行）。null = 没有 text 分区。 */
+export function assistantTextOf(entry: Record<string, unknown>): NarrationText | null {
   const content = (entry.message as { content?: unknown } | undefined)?.content;
   if (!Array.isArray(content)) return null;
   const text = content
@@ -81,4 +72,18 @@ function parseLine(line: string): NarrationText | null {
     at: typeof entry.timestamp === 'string' ? entry.timestamp : null,
     text,
   };
+}
+
+/** 一行转录 → 一段旁白（全量读与增量监视共用这份文法）。 */
+function parseLine(line: string): NarrationText | null {
+  // 预筛：assistant 条目行才值得 parse（转录动辄几十 MB）
+  if (!line.includes('"type":"assistant"')) return null;
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (entry.type !== 'assistant' || entry.isSidechain === true) return null;
+  return assistantTextOf(entry);
 }

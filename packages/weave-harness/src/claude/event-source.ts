@@ -165,11 +165,23 @@ export class ClaudeEventSource implements EventSource {
 /** 事件接入实例（driver events 槽消费；normalize 无状态，单例安全）。 */
 export const CLAUDE_EVENT_SOURCE = new ClaudeEventSource();
 
+/** background_tasks 快照条目（活动面元数据版：id/status 之外有则带）。 */
+export interface BackgroundTaskFact {
+  id: string;
+  status: string;
+  type?: string;
+  description?: string;
+  agentType?: string;
+  command?: string;
+}
+
 /** SSE event.ingested 帧的 Claude 协议扩展字段（web 任务面板子 agent 对账消费）。 */
 export interface ClaudeFrameFacts {
   agentId?: string;
   spawnAgentId?: string;
-  backgroundTasks?: Array<{ id: string; status: string }>;
+  backgroundTasks?: BackgroundTaskFact[];
+  /** 后台 shell 出生信号：PostToolUse(Bash) 异步返回的 backgroundTaskId。 */
+  bgShell?: { taskId: string };
   /** raw.source（SessionStart 的 startup/resume/compact/clear——压缩收尾笔靠它认）。 */
   rawSource?: string;
 }
@@ -202,17 +214,37 @@ export function frameFacts(payload: FramePayloadLike | null): ClaudeFrameFacts {
     const resp = payload.toolResponse as { isAsync?: unknown; agentId?: unknown } | null;
     if (resp?.isAsync && typeof resp.agentId === 'string') spawnAgentId = resp.agentId;
   }
-  // Stop/SubagentStop 帧透出 background_tasks 快照（仅保留 id/status 字符串）。
-  let backgroundTasks: Array<{ id: string; status: string }> | undefined;
+  // Stop/SubagentStop 帧透出 background_tasks 快照（id/status 恒取，活动面
+  // 元数据 type/description/agent_type/command 有则带——shell 行与子 agent 行
+  // 的展示文案全靠它，别处没有）。
+  let backgroundTasks: BackgroundTaskFact[] | undefined;
   if (Array.isArray(raw && typeof raw === 'object' ? (raw as Record<string, unknown>).background_tasks : undefined)) {
     backgroundTasks = ((raw as Record<string, unknown>).background_tasks as Array<Record<string, unknown>>)
       .filter((x) => x && typeof x.id === 'string' && typeof x.status === 'string')
-      .map((x) => ({ id: x.id as string, status: x.status as string }));
+      .map((x) => {
+        const fact: BackgroundTaskFact = { id: x.id as string, status: x.status as string };
+        if (typeof x.type === 'string') fact.type = x.type;
+        if (typeof x.description === 'string' && x.description) fact.description = x.description;
+        if (typeof x.agent_type === 'string' && x.agent_type) fact.agentType = x.agent_type;
+        if (typeof x.command === 'string' && x.command) fact.command = x.command;
+        return fact;
+      });
+  }
+  // 后台 shell 出生信号：Bash 异步返回的 backgroundTaskId（command 就在本次
+  // toolInput 侧的 tool_response 同帧拿不到——tracker 从 PostToolUse 的
+  // toolInput.command 取，这里只报 id）。
+  let bgShell: ClaudeFrameFacts['bgShell'];
+  if (payload?.eventType === 'PostToolUse' && payload.toolName === 'Bash') {
+    const resp = payload.toolResponse as { backgroundTaskId?: unknown } | null;
+    if (resp && typeof resp.backgroundTaskId === 'string' && resp.backgroundTaskId) {
+      bgShell = { taskId: resp.backgroundTaskId };
+    }
   }
   const facts: ClaudeFrameFacts = {};
   if (agentId) facts.agentId = agentId;
   if (spawnAgentId) facts.spawnAgentId = spawnAgentId;
   if (backgroundTasks) facts.backgroundTasks = backgroundTasks;
+  if (bgShell) facts.bgShell = bgShell;
   const rawSource =
     raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).source === 'string'
       ? ((raw as Record<string, unknown>).source as string)
