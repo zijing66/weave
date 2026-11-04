@@ -195,7 +195,10 @@ export function conversationOf(
 
 /** 按轮取数的窗口（改动汇总的取数范围）：锚及其后第一条回复的 `at` 为上界、
  *  锚之前最近一条回复的 `at` 为下界——同一轮里的气泡算出同一个窗口。全程没有
- *  回复条目 → 双 null = 退化为「全部」。 */
+ *  回复条目 → 双 null = 退化为「全部」。轮界只认**带事件的**回复（Stop 收尾，
+ *  有 eventId）：旁白/计划/提问前说明这些转录补采的 assistant 气泡没有事件、
+ *  时刻插在轮次中间——把它们当轮界，本轮的 since 会被拉近到几秒前的旁白段上，
+ *  窗口整个错位（2026-11-04 实测）。 */
 export function editsWindowOf(
   entries: readonly ConvEntry[],
   key: string,
@@ -204,15 +207,17 @@ export function editsWindowOf(
   if (idx < 0) return { since: null, until: null };
   let until: string | null = null;
   for (let i = idx; i < entries.length; i++) {
-    if (entries[i]!.role === 'assistant') {
-      until = entries[i]!.at;
+    const e = entries[i]!;
+    if (e.role === 'assistant' && e.eventId !== undefined && !e.preQuestion && !e.plan) {
+      until = e.at;
       break;
     }
   }
   let since: string | null = null;
   for (let i = idx - 1; i >= 0; i--) {
-    if (entries[i]!.role === 'assistant') {
-      since = entries[i]!.at;
+    const e = entries[i]!;
+    if (e.role === 'assistant' && e.eventId !== undefined && !e.preQuestion && !e.plan) {
+      since = e.at;
       break;
     }
   }

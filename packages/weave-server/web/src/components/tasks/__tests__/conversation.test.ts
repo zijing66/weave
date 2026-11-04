@@ -1299,6 +1299,19 @@ describe('editsWindowOf（按轮取数的窗口）', () => {
     expect(editsWindowOf([conv(1), conv(2)], 'e1')).toEqual({ since: null, until: null });
     expect(editsWindowOf([conv(1)], 'e999')).toEqual({ since: null, until: null });
   });
+
+  it('旁白/计划/提问前说明（转录补采、无事件）不充当轮界——2026-11-04 实测：过程输出气泡插进轮次中间后，本轮 since 被拉近到旁白段，窗口错位', () => {
+    const entries = [
+      conv(1, { role: 'assistant' }), // 上一轮回复（真轮界）
+      conv(2), // 本轮 prompt
+      conv(3, { role: 'assistant', narration: true, eventId: undefined, at: at(2.5) }), // 本轮旁白
+      conv(4, { role: 'assistant' }), // 本轮回复
+    ];
+    // 锚 = 旁白本身（右键旁白气泡）：since 仍是上一轮回复 e1，不是它自己
+    expect(editsWindowOf(entries, 'e3')).toEqual({ since: at(1), until: at(4) });
+    // 锚 = 本轮 prompt：包夹窗口同样跨过旁白
+    expect(editsWindowOf(entries, 'e2')).toEqual({ since: at(1), until: at(4) });
+  });
 });
 
 describe('commandTokensOf（气泡里的命令 token 识别）', () => {
