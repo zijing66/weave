@@ -36,16 +36,20 @@ if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version ?? '')) {
   process.exit(1);
 }
 
-// 发布出口代理（可选）：`--proxy host:port` 或 env HTTPS_PROXY。registry 直连
-// 不可达/被干扰的环境（国内网络常见）靠它出去；挂给 npm/pnpm 的是标准
-// https-proxy env，子进程全链生效，本脚本自身不发起网络请求。
+// 发布出口代理（可选）：`--proxy host:port` 或 env HTTPS_PROXY。**只挂给
+// publish/whoami 这两步**（registry.npmjs.org 直连不可达/被干扰的环境靠它出去；
+// 2026-11-04 实测：install 也走代理反而卡死——依赖走本地 mirror 快路，只有
+// 发布出口需要代理）。本脚本自身不发起网络请求。
 const proxyArgIdx = rest.indexOf('--proxy');
 const PROXY = proxyArgIdx !== -1 ? rest[proxyArgIdx + 1] : process.env.HTTPS_PROXY || process.env.https_proxy || '';
-if (PROXY) {
-  process.env.HTTPS_PROXY = PROXY;
-  process.env.HTTP_PROXY = PROXY;
-  process.env.NO_PROXY = 'localhost,127.0.0.1';
-  console.log(`proxy: ${PROXY}`);
+
+/** 带/不带代理地跑一条命令：PROXY 未配置时与 run 等价。 */
+function runWithProxy(cmd, opts = {}) {
+  const env = PROXY
+    ? { ...process.env, HTTPS_PROXY: PROXY, HTTP_PROXY: PROXY, NO_PROXY: 'localhost,127.0.0.1' }
+    : { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '', https_proxy: '', http_proxy: '' };
+  console.log(`\n$ ${cmd}${PROXY ? '  (via proxy)' : ''}`);
+  execSync(cmd, { cwd: root, stdio: 'inherit', ...opts, env });
 }
 
 function run(cmd) {
@@ -55,7 +59,7 @@ function run(cmd) {
 
 if (!dryRun) {
   try {
-    console.log(`npm user: ${execSync(`npm whoami --registry=${REGISTRY}`, { encoding: 'utf8' }).trim()}`);
+    console.log(`npm user: ${runWithProxy(`npm whoami --registry=${REGISTRY}`, { encoding: 'utf8' }).trim()}`);
   } catch {
     console.error(`No valid token for ${REGISTRY} (missing or rejected). Run: npm login --registry=${REGISTRY}`);
     console.error('Behind a proxy? Pass --proxy host:port (or set HTTPS_PROXY) and retry.');
@@ -82,6 +86,6 @@ const publishFlags = `--access public --registry=${REGISTRY} --no-git-checks${dr
 // COMPONENTS is bumped above but never published on its own: it is bundled
 // inside the umbrella tarball below (see pack-weave.mjs).
 const tgz = await packWeaveTgz({ skipBuild: true });
-run(`pnpm publish ${path.relative(root, tgz)} ${publishFlags}`);
+runWithProxy(`pnpm publish ${path.relative(root, tgz)} ${publishFlags}`);
 
 console.log(dryRun ? '\nDry run complete — nothing published.' : `\nPublished ${version}. Tag with: git tag v${version}`);
