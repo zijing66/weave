@@ -263,17 +263,31 @@ const buildSessionChip = (sessionId: string, name: string): HTMLElement => {
   return chip;
 };
 
-/** 落定引用目标：**单目标**——先摘掉既有目标胶囊，再在触发 `#` 的位置插新的一枚
- *  （与 `@` 引用胶囊同构：插入点跟随触发处，不落在开头/末尾）。
- *  光标停在胶囊后面一格（正文接着敲就行）。走 `insertNodesUndoably` 与
- *  `@` 回填同一条撤销语义（独立撤销步，不并进打字组）。 */
+/** 落定引用目标：**多目标**——与 `@` 引用胶囊同构，在触发 `#` 的位置追加一枚，
+ *  已有的不摘（一处正文里可以标注多个收件人）。前邻居非空白时先补一个空格
+ *  （胶囊粘在字上序列化出 `字#…` 会把标注并进正文）；胶囊后恒补一个空格，
+ *  光标停其后（正文接着敲就行）。走 `insertNodesUndoably` 与 `@` 回填同一条
+ *  撤销语义（独立撤销步，不并进打字组）。 */
 const insertSessionTarget = (sessionId: string, name: string): void => {
   const el = draftRef.current;
   if (!el) return;
   const saved = hashRange.current;
   hashRange.current = null;
-  el.querySelector(`[${SESSION_ATTR}]`)?.remove();
-  insertNodesUndoably(el, [buildSessionChip(sessionId, name), document.createTextNode(' ')], saved);
+  const lead = (() => {
+    const anchor = saved && el.contains(saved.startContainer) ? saved.startContainer : null;
+    const node =
+      anchor?.nodeType === TEXT_NODE
+        ? (anchor.textContent ?? '').slice(0, saved!.startOffset)
+        : null;
+    return node && node !== '' && !/\s$/.test(node)
+      ? [document.createTextNode(' ')]
+      : [];
+  })();
+  insertNodesUndoably(
+    el,
+    [...lead, buildSessionChip(sessionId, name), document.createTextNode(' ')],
+    saved,
+  );
 };
 
 /** 附件占位胶囊：图 = 微缩略图 + 截短名，文件 = 图标 + 截短名。
