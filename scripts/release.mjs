@@ -14,7 +14,7 @@
  * pack-weave). --no-git-checks: the version bump is intentionally uncommitted
  * at publish time. Never publish with `npm publish`.
  */
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,7 @@ import { packWeaveTgz } from './pack-weave.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REGISTRY = 'https://registry.npmjs.org/';
+const REGISTRY_HOST = 'registry.npmjs.org';
 const COMPONENTS = ['weave-core', 'weave-harness', 'weave-templates', 'weave-server', 'weave-cli'];
 const UMBRELLA_DIR = 'weave';
 const ALL_PACKAGES = [...COMPONENTS, UMBRELLA_DIR];
@@ -37,35 +38,50 @@ if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version ?? '')) {
 }
 
 // 发布出口代理（可选）：`--proxy host:port` 或 env HTTPS_PROXY。**只挂给
-// publish/whoami 这两步**（registry.npmjs.org 直连不可达/被干扰的环境靠它出去；
-// 2026-11-04 实测：install 也走代理反而卡死——依赖走本地 mirror 快路，只有
-// 发布出口需要代理）。本脚本自身不发起网络请求。
+// publish/whoami 这两步**（install 走代理反而卡死——依赖走本地 mirror 快路）。
 const proxyArgIdx = rest.indexOf('--proxy');
 const PROXY = proxyArgIdx !== -1 ? rest[proxyArgIdx + 1] : process.env.HTTPS_PROXY || process.env.https_proxy || '';
-
-/** 带/不带代理地跑一条命令：PROXY 未配置时与 run 等价。 */
-function runWithProxy(cmd, opts = {}) {
-  const env = PROXY
-    ? { ...process.env, HTTPS_PROXY: PROXY, HTTP_PROXY: PROXY, NO_PROXY: 'localhost,127.0.0.1' }
-    : { ...process.env, HTTPS_PROXY: '', HTTP_PROXY: '', https_proxy: '', http_proxy: '' };
-  console.log(`\n$ ${cmd}${PROXY ? '  (via proxy)' : ''}`);
-  execSync(cmd, { cwd: root, stdio: 'inherit', ...opts, env });
-}
 
 function run(cmd) {
   console.log(`\n$ ${cmd}`);
   execSync(cmd, { cwd: root, stdio: 'inherit' });
 }
 
+/** 带/不带代理地跑：PROXY 未配置时与 run 等价（发布出口那两步用）。 */
+function runWithProxy(cmd, opts = {}) {
+  const env = PROXY
+    ? { ...process.env, HTTPS_PROXY: PROXY, HTTP_PROXY: PROXY, NO_PROXY: 'localhost,127.0.0.1' }
+    : process.env;
+  console.log(`\n$ ${cmd}${PROXY ? '  (via proxy)' : ''}`);
+  execSync(cmd, { cwd: root, stdio: 'inherit', ...opts, env });
+}
+
 if (!dryRun) {
+  // DNS 哨兵（2026-11-04 定案）：公司 DNS 曾把 registry 解到内网假源（10.x），
+  // 伪造 401 冤枉 token 一轮。系统解析全落内网段而 8.8.8.8 解到公网 → 提示修
+  // hosts（真 IP 由公共 DNS 现查现给，不写死）。只提示不拦截。
   try {
-    // 输出要捕获（stdio 不能 inherit），proxy env 由 runWithProxy 注入
-    const who = execSync(`npm whoami --registry=${REGISTRY}`, {
-      encoding: 'utf8',
-      env: PROXY
-        ? { ...process.env, HTTPS_PROXY: PROXY, HTTP_PROXY: PROXY, NO_PROXY: 'localhost,127.0.0.1' }
-        : process.env,
-    }).trim();
+    const lookup = (server) =>
+      execFileSync('nslookup', [REGISTRY_HOST, ...(server ? [server] : [])], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const ipsOf = (out) => [...out.matchAll(/((?:\d{1,3}\.){3}\d{1,3})/g)].map((m) => m[1]).filter((ip) => ip !== '8.8.8.8');
+    const isPrivate = (ip) => /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(ip);
+    const sysIps = ipsOf(lookup());
+    const pubIps = ipsOf(lookup('8.8.8.8'));
+    if (sysIps.length > 0 && sysIps.every(isPrivate) && pubIps.some((ip) => !isPrivate(ip))) {
+      const fix = pubIps.find((ip) => !isPrivate(ip));
+      console.error(`[release] DNS hijack suspected: ${REGISTRY_HOST} -> private ${sysIps.join(', ')} (public: ${pubIps.slice(0, 2).join(', ')})`);
+      console.error(`[release] Fix: add "${fix} ${REGISTRY_HOST}" to your hosts file, or pass --proxy.`);
+    }
+  } catch {
+    // 解析工具缺席/失败不挡发布
+  }
+
+  try {
+    // 输出要捕获（stdio 不能 inherit），proxy env 就地注入
+    const env = PROXY
+      ? { ...process.env, HTTPS_PROXY: PROXY, HTTP_PROXY: PROXY, NO_PROXY: 'localhost,127.0.0.1' }
+      : process.env;
+    const who = execSync(`npm whoami --registry=${REGISTRY}`, { encoding: 'utf8', env }).trim();
     console.log(`npm user: ${who}`);
   } catch {
     console.error(`No valid token for ${REGISTRY} (missing or rejected). Run: npm login --registry=${REGISTRY}`);
