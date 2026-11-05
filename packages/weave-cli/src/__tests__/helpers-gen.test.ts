@@ -260,6 +260,59 @@ describe('hook-handler.cjs 端到端（零 daemon）', () => {
     expect(existsSync(inboxPath())).toBe(true);
   });
 
+  it('渲染块引用行续投：fragment 还在 → 每轮 UserPromptSubmit 原样带上', async () => {
+    const fragment = path.join(root, 'panel.html');
+    writeFileSync(fragment, '<html>ok</html>');
+    const line = `\u{e200}visualize\u{e202}${JSON.stringify({ path: fragment })}\u{e201}`;
+    writeMirror({
+      version: 1,
+      project: 'proj',
+      pendingTitles: {},
+      rules: [],
+      visualizations: { s1: { line, path: fragment, at: new Date().toISOString() } },
+    });
+    const { stdout } = await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's1',
+      cwd: projectDir,
+    });
+    const payload = JSON.parse(stdout) as { hookSpecificOutput: { additionalContext: string } };
+    // 原文逐字节（PUA 首字符差一个区就退化成普通文本）
+    expect(payload.hookSpecificOutput.additionalContext).toBe(line);
+
+    // 别的会话没有这条记忆；非注入事件不续投
+    const other = await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's2',
+      cwd: projectDir,
+    });
+    expect(other.stdout).toBe('');
+    const tool = await runHook({
+      hook_event_name: 'PostToolUse',
+      session_id: 's1',
+      cwd: projectDir,
+    });
+    expect(tool.stdout).toBe('');
+  });
+
+  it('渲染块续投：fragment 已被删 → 不再注入（面板没了就别再提醒）', async () => {
+    const fragment = path.join(root, 'gone.html');
+    const line = `\u{e200}visualize\u{e202}${JSON.stringify({ path: fragment })}\u{e201}`;
+    writeMirror({
+      version: 1,
+      project: 'proj',
+      pendingTitles: {},
+      rules: [],
+      visualizations: { s1: { line, path: fragment, at: new Date().toISOString() } },
+    });
+    const { stdout } = await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 's1',
+      cwd: projectDir,
+    });
+    expect(stdout).toBe('');
+  });
+
   it('pendingTitle 只在标题生效事件下发：工具事件下发即弃（Claude 2.1.296 实测）', async () => {
     // Claude Code 只在 SessionStart/UserPromptSubmit 应用 hookSpecificOutput.
     // sessionTitle——工具事件 hook_success 落档但 custom-title 不变。工具事件若

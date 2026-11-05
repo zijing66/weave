@@ -6,5 +6,6 @@ export * from './install.js';
 export * from './shared/file-specs.js';
 export * from './shared/install-link.js';
 export * from './shared/turn-output.js';
+export * from './shell.js';
 export * from './claude/index.js';
 export * from './codex/index.js';

@@ -62,7 +62,6 @@ export {
   parseClaudeSessionReg,
   pidAlive,
   pidAliveOf,
-  shellDiscardedByClaude,
   CLAUDE_REG_GRACE_MS,
   type ClaudeSessionReg,
 } from './liveness.js';

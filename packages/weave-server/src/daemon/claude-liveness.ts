@@ -9,6 +9,6 @@ export {
   pidAlive,
   CLAUDE_REG_GRACE_MS,
   pidAliveOf,
-  shellDiscardedByClaude,
+  shellDiscardedByHost,
   claudeLivenessById,
 } from '@weavecode/harness';

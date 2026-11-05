@@ -67,17 +67,36 @@ describe('visualizeSegments', () => {
     ]);
   });
 
-  it('JSON 坏行回落普通文本', () => {
+  it('带协议标记的坏行渲染成不可用占位（区分「没认出」与「认出了但用不了」）', () => {
     const bad = '\u{e200}visualize\u{e202}{broken';
     const segs = visualizeSegments(`a\n${bad}\nb`);
-    expect(segs).toEqual([{ kind: 'text', text: 'a\n\u{e200}visualize\u{e202}{broken\nb' }]);
+    expect(segs).toEqual([
+      { kind: 'text', text: 'a' },
+      { kind: 'vizUnavailable' },
+      { kind: 'text', text: 'b' },
+    ]);
+    expect(visualizeSegments('\u{e200}visualize\u{e202}{}')).toEqual([{ kind: 'vizUnavailable' }]);
+    expect(visualizeSegments('\u{e200}visualize\u{e202}{"path":123}')).toEqual([
+      { kind: 'vizUnavailable' },
+    ]);
+    // LANGUAGE TAG 区同义前缀同样算「带标记」
+    expect(visualizeSegments('\u{e0000}visualize\u{e0001}{oops}')).toEqual([
+      { kind: 'vizUnavailable' },
+    ]);
   });
 
-  it('缺 path / path 非字符串回落普通文本', () => {
-    const segs = visualizeSegments('\u{e200}visualize\u{e202}{}');
-    expect(segs[0]!.kind).toBe('text');
-    const segs2 = visualizeSegments('\u{e200}visualize\u{e202}{"path":123}');
-    expect(segs2[0]!.kind).toBe('text');
+  it('代码围栏内的引用行按字面保留（示例/文档不该被当成渲染块）', () => {
+    const inFence = `示例：\n\`\`\`md\n${ref('D:/x/a.html')}\nvisualize{"path":"D:/x/b.html"}\n\`\`\`\n完`;
+    expect(visualizeSegments(inFence)).toEqual([{ kind: 'text', text: inFence }]);
+    // 围栏闭合之后照常认
+    const after = `${inFence}\n${ref('D:/x/c.html')}`;
+    expect(visualizeSegments(after)).toEqual([
+      { kind: 'text', text: inFence },
+      { kind: 'viz', ref: { path: 'D:/x/c.html' } },
+    ]);
+    // ~~~ 围栏同理；hasVisualizeRef 也不该被围栏内的行点亮
+    expect(hasVisualizeRef(`~~~\n${ref('D:/x/a.html')}\n~~~`)).toBe(false);
+    expect(hasVisualizeRef(`~~~\n${ref('D:/x/a.html')}\n~~~\n${ref('D:/x/b.html')}`)).toBe(true);
   });
 
   it('多个引用行各自成段', () => {
@@ -103,5 +122,12 @@ describe('hasVisualizeRef / stripVisualizeRefs', () => {
 
   it('strip 无引用行时原样（trim 后）', () => {
     expect(stripVisualizeRefs('  hello  ')).toBe('hello');
+  });
+
+  it('strip 剥带标记的坏行（乱码），围栏内的原样保留', () => {
+    const bad = '\u{e200}visualize\u{e202}{broken';
+    expect(stripVisualizeRefs(`a\n${bad}\nb`)).toBe('a\nb');
+    const fenced = `\`\`\`\n${bad}\n\`\`\``;
+    expect(stripVisualizeRefs(fenced)).toBe(fenced);
   });
 });

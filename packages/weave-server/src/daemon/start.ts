@@ -528,6 +528,7 @@ export function startDaemon(): void {
     projects,
     rules: hookRegistry,
     sessions: hookSessions,
+    hookEvents,
     bus: hookBus,
     dispatcher: hookDispatcher,
     watchEngine,

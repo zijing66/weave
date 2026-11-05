@@ -309,6 +309,12 @@ const VIZ_REF_SUFFIX = '\u{e201}';
  * 静默退化成普通文本（2026-10-30 转录实测，9/9 行如此）。
  */
 const VIZ_REF_PREFIXES = [VIZ_REF_PREFIX, '\u{e0000}visualize\u{e0001}', 'visualize'] as const;
+/**
+ * 带协议标记（PUA / LANGUAGE TAG）的那两种前缀：出现即「这是一条引用行」，
+ * 坏行也照此认出（渲染成不可用占位，别让用户只看到一串乱码）。
+ * 裸 `visualize` 不算标记——正文里提到语法的情形太多，须 JSON 合法才成立。
+ */
+const VIZ_MARKED_PREFIXES = [VIZ_REF_PREFIX, '\u{e0000}visualize\u{e0001}'] as const;
 const VIZ_REF_SUFFIXES = [VIZ_REF_SUFFIX, '\u{e0002}'] as const;
 
 /** 渲染块引用（引用行解析产物）：fragment 文件绝对路径 + 可选标题/宽幅。 */
@@ -318,8 +324,11 @@ export interface VisualizeRef {
   mode?: 'wide';
 }
 
-/** 对话正文切段的一节：文本段或渲染块。 */
-export type VizSeg = { kind: 'text'; text: string } | { kind: 'viz'; ref: VisualizeRef };
+/** 对话正文切段的一节：文本段、渲染块，或「认出了引用行但用不了」（坏 JSON / 缺 path）。 */
+export type VizSeg =
+  | { kind: 'text'; text: string }
+  | { kind: 'viz'; ref: VisualizeRef }
+  | { kind: 'vizUnavailable' };
 
 /** 引用行 → ref；认不出（JSON 坏 / 缺 path / path 非字符串）返回 null，调用方当普通文本。 */
 function visualizeRefOf(line: string): VisualizeRef | null {
@@ -342,42 +351,96 @@ function visualizeRefOf(line: string): VisualizeRef | null {
 }
 
 /**
+ * markdown 代码围栏内的行（含围栏行本身）：那里的引用行是**字面示例**（文档、
+ * 教学、贴代码），不触发渲染。开围栏认 ``` / ~~~（可带语言标识），闭合须同字符
+ * 且长度不短于开围栏、且整行只有围栏字符——与 CommonMark 同口径的近似。
+ */
+function codeFenceMask(lines: readonly string[]): boolean[] {
+  const mask: boolean[] = [];
+  let open: { ch: string; len: number } | null = null;
+  for (const line of lines) {
+    const t = line.trim();
+    const m = /^(`{3,}|~{3,})/.exec(t);
+    if (!open && m) {
+      open = { ch: m[1]![0]!, len: m[1]!.length };
+      mask.push(true);
+      continue;
+    }
+    if (open && m && m[1]![0] === open.ch && m[1]!.length >= open.len && t === m[1]) {
+      open = null;
+      mask.push(true);
+      continue;
+    }
+    mask.push(open != null);
+  }
+  return mask;
+}
+
+/**
  * assistant 正文按渲染块引用行切段：引用行整行替换成 viz 段（气泡里渲染成
- * sandbox iframe），其余是文本段。坏行（前缀对但 JSON 认不出）当普通文本——
- * 最宽容，不摆错误壳。**只对 assistant 条目用**（引用行只出现在最终回复）。
+ * sandbox iframe），其余是文本段。**带协议标记（PUA / LANGUAGE TAG）的坏行**
+ * （JSON 认不出 / 缺 path）渲染成不可用占位——用户能区分「协议行没被识别」与
+ * 「识别了但用不了」；裸 `visualize` 形识别不到就还是普通文本（正文里提到语法
+ * 太常见）。代码围栏内一律不认。**只对 assistant 条目用**（引用行只出现在最终回复）。
  */
 export function visualizeSegments(text: string): VizSeg[] {
+  const lines = text.split('\n');
+  const inFence = codeFenceMask(lines);
   const out: VizSeg[] = [];
   let buf: string[] = [];
-  for (const line of text.split('\n')) {
-    const ref = visualizeRefOf(line.trim());
-    if (ref) {
-      if (buf.length) {
-        out.push({ kind: 'text', text: buf.join('\n') });
-        buf = [];
-      }
-      out.push({ kind: 'viz', ref });
-    } else {
-      buf.push(line);
+  const flush = (): void => {
+    if (buf.length) {
+      out.push({ kind: 'text', text: buf.join('\n') });
+      buf = [];
     }
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i]!.trim();
+    if (!inFence[i]) {
+      const ref = visualizeRefOf(t);
+      if (ref) {
+        flush();
+        out.push({ kind: 'viz', ref });
+        continue;
+      }
+      if (VIZ_MARKED_PREFIXES.some((p) => t.startsWith(p))) {
+        flush();
+        out.push({ kind: 'vizUnavailable' });
+        continue;
+      }
+    }
+    buf.push(lines[i]!);
   }
-  if (buf.length) out.push({ kind: 'text', text: buf.join('\n') });
+  flush();
   return out;
 }
 
 /** 正文里有没有渲染块引用行（渲染层零开销短路用）。 */
 export function hasVisualizeRef(text: string): boolean {
-  return VIZ_REF_PREFIXES.some((p) =>
-    // 裸 `visualize` 太常见，只认「单独一行且紧跟 `{`」——真正的成立与否在分段的 JSON 校验里
-    p === 'visualize' ? /(^|\n)[ \t]*visualize\{/.test(text) : text.includes(p),
-  );
+  const lines = text.split('\n');
+  const inFence = codeFenceMask(lines);
+  return lines.some((line, i) => {
+    if (inFence[i]) return false;
+    const t = line.trim();
+    return (
+      VIZ_MARKED_PREFIXES.some((p) => t.startsWith(p)) ||
+      // 裸 `visualize` 太常见，只认「单独一行且紧跟 `{`」——成立与否在分段的 JSON 校验里
+      /^visualize\{/.test(t)
+    );
+  });
 }
 
-/** 剥掉全部渲染块引用行（HTML 导出与分享图片用——私有区字符在那两种载体里是乱码）。 */
+/** 剥掉全部渲染块引用行（HTML 导出与分享图片用——私有区字符在那两种载体里是乱码）。
+ *  带标记的坏行也剥（同样有乱码），代码围栏内的原样保留。 */
 export function stripVisualizeRefs(text: string): string {
-  return text
-    .split('\n')
-    .filter((line) => !visualizeRefOf(line.trim()))
+  const lines = text.split('\n');
+  const inFence = codeFenceMask(lines);
+  return lines
+    .filter((line, i) => {
+      if (inFence[i]) return true;
+      const t = line.trim();
+      return !(visualizeRefOf(t) || VIZ_MARKED_PREFIXES.some((p) => t.startsWith(p)));
+    })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -478,6 +541,41 @@ function supersededCommand(
   return entries.some((e) => e.role === 'user' && Date.parse(e.at) > at);
 }
 
+/** 还没落定的本地乐观行（发送那一拍插的；服务端可见列表里可能还没有它）。 */
+function isLocalOptimistic(m: SessionMessageRow, sessionId: string): boolean {
+  return (
+    m.sessionId === sessionId &&
+    m.id.startsWith('local:') &&
+    (m.status === 'pending' || m.status === 'opening')
+  );
+}
+
+/**
+ * 全量刷新时保住还没落定的乐观行：拉起会话最长 15s 才真正投递，这期间服务端
+ * 的可见列表里根本没有这条消息——整包替换会把刚发出去的气泡吞掉，等真正入队
+ * 才又冒出来。服务端出现同文案、时刻不早于它的行即让位（此后照常由
+ * ackedEventId/同文案认领接上气泡）；同文案连发按「一条服务端行只接一条乐观行」
+ * 配对，不会把后一条提前顶掉。
+ */
+export function withLocalOptimistic(
+  prev: readonly SessionMessageRow[] | null,
+  rows: readonly SessionMessageRow[],
+  sessionId: string,
+): SessionMessageRow[] {
+  const local = (prev ?? []).filter((m) => isLocalOptimistic(m, sessionId));
+  if (local.length === 0) return [...rows];
+  const claimed = new Set<string>();
+  const kept = local.filter((m) => {
+    const hit = rows.find((r) => !claimed.has(r.id) && r.text === m.text && r.at >= m.at);
+    if (hit) {
+      claimed.add(hit.id);
+      return false;
+    }
+    return true;
+  });
+  return kept.length > 0 ? [...rows, ...kept] : [...rows];
+}
+
 /** 能不能从队列里移除。**在飞的 delivering 也能删**——投递卡住时它就是队头，压着
  *  后面每一条都发不出去，不给动手就永远解不开（删除会连泵闸一起解除，服务端那条
  *  落定回调发现行没了即收手）。running 删不掉：编排域的一条真实子进程，删行只是把
@@ -487,8 +585,9 @@ function supersededCommand(
  *  条多半压根没进去，留着只是化石。 */
 export function removableOf(m: SessionMessageRow): boolean {
   if (m.status === 'running') return false;
-  // 正在拉起被引用的会话：还没进服务端队列（本地乐观行），删除会打到不存在的 id
-  if (m.status === 'opening') return false;
+  // 本地乐观行（含正在拉起被引用的会话的 opening）：还没进服务端队列，
+  // 删除会打到不存在的 id
+  if (m.status === 'opening' || m.id.startsWith('local:')) return false;
   if (m.status === 'delivered') {
     // 已回执但没有认领事件 = 宿主自己执行的内建命令（/rewind 之类），永远不会有
     // 气泡来接它；留着只会占在对话尾巴上，给手动移除。

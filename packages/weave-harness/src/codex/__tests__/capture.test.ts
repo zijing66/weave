@@ -71,10 +71,12 @@ describe('installUserCapture', () => {
     }
   });
 
-  it('编码为 codex：可注入事件表为空（脚本永不往 codex 回注上下文）', async () => {
+  it('编码为 codex：可注入事件 = 0.164 output schema 实证的那三个；标题通道仍为空', async () => {
     await installUserCapture({ home, version: '1.2.3' });
     const script = await readFile(scriptFile(), 'utf-8');
-    expect(script).toContain('const INJECTABLE_EVENTS = [];');
+    expect(script).toContain(
+      'const INJECTABLE_EVENTS = ["UserPromptSubmit","SessionStart","PostToolUse"];',
+    );
     expect(script).toContain('const TITLE_EVENTS = [];');
   });
 

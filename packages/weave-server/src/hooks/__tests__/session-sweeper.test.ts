@@ -13,6 +13,7 @@ import { HookDispatchRepository } from '../../repositories/hook-dispatches.js';
 import { SessionSweeper } from '../session-sweeper.js';
 import { PROMPTLESS_GRACE_MS } from '../../repositories/sessions.js';
 import { CLAUDE_REG_GRACE_MS } from '../../daemon/claude-liveness.js';
+import { HARNESS_SHELL_DISCARD_GRACE_MS } from '@weavecode/core';
 
 /**
  * 会话自动移除回归：期限两档——没等到用户 prompt 的新会话 1 小时快过期（PROMPTLESS_GRACE_MS），
@@ -172,20 +173,35 @@ describe('宿主丢弃的空壳会话不等 1 小时保活期', () => {
     expect(sessions.getBySessionId('x-exited')).toBeUndefined();
   });
 
-  it('登记在册 / 豁免窗内 / 说过话 / 非 claude → 都留着', () => {
+  it('登记在册 / 豁免窗内 / 说过话 → 都留着', () => {
     seed('x-idle', ['SessionStart']);
     age('x-idle', CLAUDE_REG_GRACE_MS + 60_000);
     seed('x-fresh', ['SessionStart']);
     age('x-fresh', 30_000);
     seed('x-talked', ['SessionStart', 'UserPromptSubmit']);
     age('x-talked', CLAUDE_REG_GRACE_MS + 60_000);
-    sessions.touch('x-codex', projectId);
-    events.insert({ projectId, source: 'codex', eventType: 'SessionStart', sessionId: 'x-codex', payload: '{}' });
-    age('x-codex', CLAUDE_REG_GRACE_MS + 60_000);
 
     expect(sweepWith([['x-idle', true]])).toBe(0);
-    for (const id of ['x-idle', 'x-fresh', 'x-talked', 'x-codex']) {
+    for (const id of ['x-idle', 'x-fresh', 'x-talked']) {
       expect(sessions.getBySessionId(id)).toBeDefined();
     }
+  });
+
+  it('codex 同判据、窗更长：过窗且锁不在 → 清；锁 HELD / 仍在窗内 → 留着', () => {
+    const seedCodex = (id: string, msAgo: number) => {
+      sessions.touch(id, projectId);
+      events.insert({ projectId, source: 'codex', eventType: 'SessionStart', sessionId: id, payload: '{}' });
+      age(id, msAgo);
+    };
+    const codexGrace = HARNESS_SHELL_DISCARD_GRACE_MS.codex!;
+    seedCodex('cx-gone', codexGrace + 60_000);
+    seedCodex('cx-live', codexGrace + 60_000);
+    seedCodex('cx-fresh', codexGrace - 60_000);
+
+    // 存活图里 cx-live = true（thread 锁 HELD），cx-gone 查无此 id（锁已随会话消失）
+    expect(sweepWith([['cx-live', true]])).toBe(1);
+    expect(sessions.getBySessionId('cx-gone')).toBeUndefined();
+    expect(sessions.getBySessionId('cx-live')).toBeDefined();
+    expect(sessions.getBySessionId('cx-fresh')).toBeDefined();
   });
 });

@@ -31,6 +31,7 @@ import type { QuestionTracker } from './question-tracker.js';
 import type { ActivityTracker } from './activity-tracker.js';
 import type { SideQuestionEvent } from './side-questions.js';
 import { isSyntheticSession, replaceSyntheticSessions } from './synthetic-sessions.js';
+import { visualizeRefsIn } from './visualizations.js';
 
 /**
  * inbox 消费线程（hook 文件化管道的 daemon 侧）：hook-handler.cjs 把事件追加到
@@ -432,6 +433,8 @@ export interface IngestedHandlerDeps {
   };
   /** 终端拓扑即时对账（会话退出后立刻摘出终端分组，不等 30s 周期）；缺省跳过。 */
   terminalTopologyKick?: () => void;
+  /** 渲染块续投：本轮最终回复带引用行 → 重写该项目镜像（会话 → 活跃引用）。 */
+  onVisualization?: (projectId: number) => void;
   /**
    * pane 定位 env 的信源（能力面声明）：'hook' 采旁路上报（缺省 = 现行为）；
    * 'launch' 忽略上报（hook 由宿主共享 daemon 代跑、env 冻结失真），改认领
@@ -581,6 +584,13 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       if (deps.messagePipe?.hasQueued(record.input.sessionId)) {
         void deps.messagePipe.flushSession(record.input.sessionId);
       }
+    }
+    // 渲染块续投：本轮最终回复带了引用行 → 重写该项目镜像。没有引用行的轮次
+    // 不写（上一次学到的保留，粘性由 handler 每轮续投维持）。
+    if (record.input.eventType === 'Stop' && record.input.sessionId) {
+      const raw = (payload as { raw?: Record<string, unknown> } | null)?.raw;
+      const text = typeof raw?.last_assistant_message === 'string' ? raw.last_assistant_message : '';
+      if (text && visualizeRefsIn(text).length > 0) deps.onVisualization?.(project.id);
     }
     if (!deps.dispatcher) continue;
     void deps.dispatcher

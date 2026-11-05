@@ -498,6 +498,7 @@ async function main(): Promise<void> {
     projects,
     rules: hookRegistry,
     sessions: hookSessions,
+    hookEvents,
     bus: hookBus,
     dispatcher: hookDispatcher,
     watchEngine,

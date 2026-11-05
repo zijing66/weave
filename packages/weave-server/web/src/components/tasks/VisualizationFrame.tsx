@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Maximize2, RefreshCw, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import {
   materialize,
@@ -33,6 +34,8 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
   const [height, setHeight] = useState<number | null>(null);
   const [cap, setCap] = useState(VIZ_MAX_HEIGHT);
   const [nonce, setNonce] = useState(0);
+  /** wide 块的全屏面板（codex 的 wide 语义：气泡内照常，点开铺到 1024px 上限）。 */
+  const [expanded, setExpanded] = useState(false);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -102,6 +105,15 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setExpanded(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
+
   const doc = html ? materialize(html, { theme, vars: themeVarsOf() }) : null;
 
   return (
@@ -139,17 +151,63 @@ export function VisualizationFrame({ ref: viz }: { ref: VisualizeRef }) {
             className="block w-full border-0"
             style={{ height: Math.min(Math.max(height ?? 160, VIZ_MIN_HEIGHT), cap) }}
           />
-          <Tooltip label={t('tasks.vizRefresh')}>
-            <button
-              type="button"
-              onClick={refresh}
-              className="absolute right-1.5 top-1.5 rounded border border-edge/[0.12] bg-neutral-950/80 p-1 text-neutral-500 hover:text-neutral-200"
-            >
-              <RefreshCw className="h-3 w-3" />
-            </button>
-          </Tooltip>
+          <div className="absolute right-1.5 top-1.5 flex gap-1">
+            {viz.mode === 'wide' && (
+              <Tooltip label={t('tasks.vizExpand')}>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(true)}
+                  className="rounded border border-edge/[0.12] bg-neutral-950/80 p-1 text-neutral-500 hover:text-neutral-200"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                </button>
+              </Tooltip>
+            )}
+            <Tooltip label={t('tasks.vizRefresh')}>
+              <button
+                type="button"
+                onClick={refresh}
+                className="rounded border border-edge/[0.12] bg-neutral-950/80 p-1 text-neutral-500 hover:text-neutral-200"
+              >
+                <RefreshCw className="h-3 w-3" />
+              </button>
+            </Tooltip>
+          </div>
         </div>
       )}
+      {expanded && doc
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[65] flex items-center justify-center bg-black/60 p-3"
+              onClick={() => setExpanded(false)}
+            >
+              <div
+                className="relative flex h-[88vh] w-[min(1024px,92vw)] flex-col overflow-hidden rounded-xl border border-edge/[0.12] bg-neutral-900 shadow-mac"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge/[0.06] px-3">
+                  <span className="truncate text-11 text-neutral-400">{viz.title ?? viz.path}</span>
+                  <Tooltip label={t('tasks.vizClose')}>
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(false)}
+                      className="shrink-0 rounded p-1 text-neutral-500 hover:text-neutral-200"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                </div>
+                <iframe
+                  title={viz.title ?? viz.path}
+                  sandbox="allow-scripts"
+                  srcDoc={doc}
+                  className="min-h-0 w-full flex-1 border-0"
+                />
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -159,11 +217,16 @@ export function VizSegments({ segments, markdown }: {
   segments: readonly VizSeg[];
   markdown: (text: string) => React.ReactNode;
 }) {
+  const t = useT();
   return (
     <div className="flex flex-col gap-1.5 [&_p]:whitespace-pre-wrap">
       {segments.map((seg, i) =>
         seg.kind === 'viz' ? (
           <VisualizationFrame key={i} ref={seg.ref} />
+        ) : seg.kind === 'vizUnavailable' ? (
+          <div key={i} className="rounded-md border border-edge/[0.12] bg-neutral-950/40 px-3 py-2 text-11 text-neutral-500">
+            {t('tasks.vizUnavailable')}
+          </div>
         ) : seg.text.trim() ? (
           markdown(seg.text)
         ) : null,

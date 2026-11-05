@@ -15,7 +15,7 @@ import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import {
   api,
   CLAUDE_HOOK_EVENTS,
-  INJECTABLE_HOOK_EVENTS,
+  injectableEventsOf,
   hookSourceHarness,
   normalizeHookRuleSource,
   type CaptureRow,
@@ -571,9 +571,10 @@ export function HooksPanel({
     setForm((f) => {
       if (!f) return f;
       let event = f.state.event;
-      // inject 只允许白名单事件 — 切过去时把越界事件拉回第一个可注入项。
-      if (type === 'inject' && !(INJECTABLE_HOOK_EVENTS as readonly string[]).includes(event)) {
-        event = 'PostToolUse';
+      // inject 只允许白名单事件（按 harness 分表）— 切过去时把越界事件拉回第一个可注入项。
+      const injectable = injectableEventsOf(f.state.harness);
+      if (type === 'inject' && !injectable.includes(event)) {
+        event = injectable[0] ?? event;
       }
       return {
         ...f,
@@ -1003,7 +1004,18 @@ export function HooksPanel({
                           // harness 名走 meta 单点表（加 harness 自动跟随）；只有 any 是词条。
                           label: h === 'any' ? t('hooks.harness.any') : harnessUiOf(h).label,
                         }))}
-                        onChange={(v) => patchForm({ harness: v as Harness | 'any' })}
+                        onChange={(v) => {
+                          const harness = v as Harness | 'any';
+                          const injectable = injectableEventsOf(harness);
+                          patchForm({
+                            harness,
+                            // 换 harness 后原事件可能不在新白名单里（inject 会 400）
+                            ...(form.state.handlerType === 'inject' &&
+                            !injectable.includes(form.state.event)
+                              ? { event: injectable[0] ?? form.state.event }
+                              : {}),
+                          });
+                        }}
                       />
                     </label>
                   )}
@@ -1014,14 +1026,16 @@ export function HooksPanel({
                       className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.event}
                       options={(form.state.handlerType === 'inject'
-                        ? INJECTABLE_HOOK_EVENTS
+                        ? injectableEventsOf(form.state.harness)
                         : CLAUDE_HOOK_EVENTS
                       ).map((ev) => ({ value: ev }))}
                       onChange={(v) => patchForm({ event: v })}
                     />
                     {form.state.handlerType === 'inject' && (
                       <span className="block text-10 text-amber-400/80">
-                        {t('hooks.eventInjectHint', { events: INJECTABLE_HOOK_EVENTS.join(', ') })}
+                        {t('hooks.eventInjectHint', {
+                          events: injectableEventsOf(form.state.harness).join(', '),
+                        })}
                       </span>
                     )}
                   </label>

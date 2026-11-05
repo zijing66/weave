@@ -475,8 +475,8 @@ function layoutBlocks(
   // 渲染块引用行把正文切成段：文本段照常排版，viz 段有位图画位图、无位画占位行
   const segs = frags ? visualizeSegments(text) : [{ kind: 'text', text } as VizSeg];
   for (const seg of segs) {
-    if (seg.kind === 'viz') {
-      const frag = frags![fragsConsumed] ?? null;
+    if (seg.kind === 'viz' || seg.kind === 'vizUnavailable') {
+      const frag = seg.kind === 'viz' ? (frags![fragsConsumed] ?? null) : null;
       if (frag) {
         fragsConsumed += 1;
         add({
@@ -490,9 +490,11 @@ function layoutBlocks(
           image: frag,
         });
       } else {
+        const label =
+          seg.kind === 'vizUnavailable' ? '[visualization unavailable]' : `[visualization] ${seg.ref.path}`;
         const lines = wrapSpans(
           measure,
-          [{ text: `[visualization] ${seg.ref.path}`, style: 'plain' }],
+          [{ text: label, style: 'plain' }],
           { ...pal, fg: pal.quote },
           TEXT_MAX,
           SMALL_LH,

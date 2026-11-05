@@ -63,7 +63,14 @@ export type {
   HookDispatchMode,
   HookDispatch,
 } from './hooks';
-export { normalizeHookRuleSource, hookSourceHarness, CLAUDE_HOOK_EVENTS, INJECTABLE_HOOK_EVENTS } from './hooks';
+export {
+  normalizeHookRuleSource,
+  hookSourceHarness,
+  CLAUDE_HOOK_EVENTS,
+  INJECTABLE_HOOK_EVENTS,
+  CODEX_INJECTABLE_HOOK_EVENTS,
+  injectableEventsOf,
+} from './hooks';
 export type {
   SessionRow,
   SessionListResult,

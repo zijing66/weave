@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDatabase } from '../../db/db.js';
@@ -140,6 +140,52 @@ describe('buildMirrorDoc：只投影 hook 本地可裁决的 inject 规则', () 
       writer.syncProject(projectId);
       const doc = await read(dataDir, 'tok-m');
       expect(doc.pendingTitles).toEqual({ s1: '新名' });
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('visualizations：会话最近 Stop 的引用行（fragment 还在）随镜像下发', async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'weave-mirror-'));
+    const fragment = path.join(dataDir, 'panel.html');
+    await writeFile(fragment, '<html>ok</html>');
+    try {
+      const sessions = new SessionRepository(db);
+      sessions.touch('s1', projectId);
+      const line = `\u{e200}visualize\u{e202}${JSON.stringify({ path: fragment })}\u{e201}`;
+      const writer = new MirrorWriter({
+        dataDir,
+        projects,
+        rules: registry,
+        sessions,
+        lastStopTextOf: (sid) => (sid === 's1' ? `干完了\n${line}` : null),
+      });
+      writer.syncProject(projectId);
+      const doc = await read(dataDir, 'tok-m');
+      expect(doc.visualizations).toEqual({
+        s1: { line, path: fragment, at: expect.any(String) },
+      });
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('visualizations：fragment 已被删 → 不投影（不再续投）', async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'weave-mirror-'));
+    try {
+      const sessions = new SessionRepository(db);
+      sessions.touch('s1', projectId);
+      const gone = path.join(dataDir, 'gone.html');
+      const line = `\u{e200}visualize\u{e202}${JSON.stringify({ path: gone })}\u{e201}`;
+      const writer = new MirrorWriter({
+        dataDir,
+        projects,
+        rules: registry,
+        sessions,
+        lastStopTextOf: () => line,
+      });
+      writer.syncProject(projectId);
+      expect((await read(dataDir, 'tok-m')).visualizations).toEqual({});
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }

@@ -1,7 +1,7 @@
 import { purgeSession, type SessionPurgeDeps } from './session-purge.js';
 import type { WatchEngine } from './watch-engine.js';
 import type { OrchestrationEngine } from './orchestration-engine.js';
-import { shellDiscardedByClaude } from '../daemon/claude-liveness.js';
+import { shellDiscardedByHost } from '../daemon/claude-liveness.js';
 import { combinedLivenessOf } from '../daemon/liveness.js';
 
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -10,8 +10,8 @@ export const SWEEP_INTERVAL_MS = 5 * 60_000;
  * 定时清过期会话，两条判据：
  * 1. `autoDeleteAt`（期限与档位唯一事实源 = sessions 仓储的 `listWithCounts`：没等到
  *    用户 prompt 的新会话 1 小时快过期、收到过 prompt 的走 settings `sessions.idleDays`）；
- * 2. 宿主已丢弃的空壳会话（`shellDiscardedByClaude`）——claude 一句没说就退出会连 id 带
- *    转录一起删，等满保活期只是让列表多摆一条幽灵。
+ * 2. 宿主已丢弃的空壳会话（`shellDiscardedByHost`）——一句没说就退出会连 id 带转录一起
+ *    丢（claude 删注册表、codex 连 thread 锁一起没），等满保活期只是让列表多摆一条幽灵。
  *
  * 注：入库路径对**每个**首现 sessionId 都建档（含仅一条 SessionStart 的新会话
  * ——新建会话要马上出现在列表），期限倒计时随行展示，看得见它还剩多久。
@@ -37,7 +37,7 @@ export class SessionSweeper {
     const liveness = this.deps.livenessOf?.();
     let purged = 0;
     for (const row of this.deps.sessions.listWithCounts()) {
-      if (liveness && shellDiscardedByClaude(row, liveness, now)) {
+      if (liveness && shellDiscardedByHost(row, liveness, now)) {
         purgeSession(this.deps, row.sessionId);
         purged++;
         continue;

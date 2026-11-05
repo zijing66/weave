@@ -23,11 +23,15 @@ import {
 import type { HookRuleRegistry } from '../hooks/registry.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
+import type { HookEventRepository } from '../repositories/hook-events.js';
+import { lastStopTextOf } from '../hooks/visualizations.js';
 
 export interface HookPipelineDeps {
   projects: ProjectRepository;
   rules: HookRuleRegistry;
   sessions: SessionRepository;
+  /** 渲染块续投的源（会话最近一条 Stop 的最终回复）；缺省 = 不投影。 */
+  hookEvents?: Pick<HookEventRepository, 'listBySession'>;
   bus: HookEventBus;
   dispatcher: HookDispatcher;
   /** 空闲订阅引擎（批 2）：透传给 handleIngestedRecords（与 dispatcher 平行触发）。 */
@@ -159,6 +163,9 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
     projects: deps.projects,
     rules: deps.rules,
     sessions: deps.sessions,
+    ...(deps.hookEvents
+      ? { lastStopTextOf: (sessionId: string) => lastStopTextOf(deps.hookEvents!, sessionId) }
+      : {}),
   });
   deps.rules.onChange = () => mirror.syncAll();
   mirror.attachToBus(deps.bus);
@@ -182,6 +189,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         sessionProbe: deps.sessionProbe,
         uploads: deps.uploads,
         terminalTopologyKick: deps.terminalTopologyKick,
+        onVisualization: (projectId) => mirror.syncProject(projectId),
         paneEnvSource: (h) => messagingSurfaceFor(h).paneEnvSource,
       },
       records,

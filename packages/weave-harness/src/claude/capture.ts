@@ -7,6 +7,7 @@ import {
   INJECTABLE_EVENTS,
   TERMINAL_LOCATOR_ENV_KEYS,
   TITLE_EFFECTIVE_EVENTS,
+  VISUALIZATION_PROTOCOL,
   type Harness,
 } from '@weavecode/core';
 import type { CaptureDeps, CaptureScriptHealth, CaptureState, CaptureSurface } from '../driver.js';
@@ -67,6 +68,8 @@ const TITLE_EVENTS = ${JSON.stringify(TITLE_EFFECTIVE_EVENTS[harness])};
 const TERMINAL_ENV_KEYS = ${JSON.stringify(TERMINAL_LOCATOR_ENV_KEYS)};
 const INBOX_MAX_BYTES = 4 * 1024 * 1024;
 const INBOX_MAX_LINES = 1000;
+// Rendered-block fodder cap: the same limit the fragment endpoint enforces.
+const VIZ_MAX_BYTES = ${VISUALIZATION_PROTOCOL.maxFragmentBytes};
 const OUTBOX_MAX_LINES = 200;
 const DEDUPE_WINDOW_MS = 60000;
 const DISPATCH_MARKER = '<!--weave-dispatch-->';
@@ -390,6 +393,19 @@ async function main() {
       );
     }
     if (dirty) saveDedupe(projectDir, dedupe);
+  }
+
+  // 2b. Rendered-block references: a block this session already displayed, whose
+  // fragment still exists, gets its reference line re-injected on every turn --
+  // the model forgetting the line must not make the panel vanish. Copied verbatim
+  // (private-use characters included; never normalise or strip it).
+  if (eventType === 'UserPromptSubmit' && sessionId && mirror && mirror.visualizations) {
+    var viz = mirror.visualizations[sessionId];
+    if (viz && typeof viz.line === 'string' && viz.line) {
+      try {
+        if (fs.statSync(viz.path).size <= VIZ_MAX_BYTES) parts.push(viz.line);
+      } catch {}
+    }
   }
 
   // 3. Deferred injections produced after this session's previous event.

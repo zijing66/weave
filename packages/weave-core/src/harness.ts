@@ -113,8 +113,13 @@ export const HARNESS_TOOL_EVENTS = {
  */
 export const INJECTABLE_EVENTS = {
   claude: ['PostToolUse', 'UserPromptSubmit', 'SessionStart', 'Stop', 'SubagentStop'] as const,
-  /** 待调研 Codex 同步注入通道；无则永久为空。 */
-  codex: [] as const,
+  /**
+   * codex 0.163+ 的 hooks 引擎输出与 claude 同形（0.164 二进制内嵌的
+   * `*.command.output` schema 实证）：UserPromptSubmit / SessionStart /
+   * PostToolUse 都带 `hookSpecificOutput.additionalContext`；Stop 与
+   * SubagentStop 的 schema 没有该字段，故不登记。
+   */
+  codex: ['UserPromptSubmit', 'SessionStart', 'PostToolUse'] as const,
 } satisfies Record<Harness, readonly string[]>;
 
 /**
@@ -237,6 +242,19 @@ export const HARNESS_LIFECYCLE = {
   },
 } satisfies Record<Harness, HarnessLifecycle>;
 
+/**
+ * 空壳会话（仅一条 SessionStart）的「宿主已丢弃」豁免窗：存活登记面查不到 +
+ * 已过此窗 ⇒ 再没有进程会以这个 id 发事件，可提前清扫，不必等满 1 小时无 prompt
+ * 保活期。null = 该 harness 没有可信的存活登记面，不提前清（走保活期）。
+ * 窗长取各自存活判据的竞态窗（claude 注册表落盘 / codex thread 锁建立都可能晚于
+ * 事件），只防「刚起就被清」这一种误判。codex 给得更宽：它的存活面是 15s 一拍的
+ * 异步探针缓存、探针失败回空图，窗太短会把「这拍没探到」读成「宿主已丢弃」。
+ */
+export const HARNESS_SHELL_DISCARD_GRACE_MS: Record<Harness, number | null> = {
+  claude: 90_000,
+  codex: 5 * 60_000,
+};
+
 /** 压缩信号表的条目形状（谁在压缩、哪些事件是压缩）——压缩差异是 harness 知识。 */
 export interface HarnessCompaction {
   /** 压缩开始事件：置实时「压缩中」态的唯一信号（最新事件是它即压缩中）。 */
@@ -327,8 +345,8 @@ export const VISUALIZATION_PROTOCOL = {
    */
   referencePrefixAliases: ['\u{e0000}visualize\u{e0001}', 'visualize'],
   referenceSuffixAliases: ['\u{e0002}'],
-  /** fragment 文件大小上限（字节）。 */
-  maxFragmentBytes: 1024 * 1024,
+  /** fragment 文件大小上限（字节）——对齐 codex 的 2MB 口径。 */
+  maxFragmentBytes: 2 * 1024 * 1024,
 } as const;
 
 /**

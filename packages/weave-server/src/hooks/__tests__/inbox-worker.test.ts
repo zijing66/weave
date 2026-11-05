@@ -354,6 +354,39 @@ describe('handleIngestedRecords：SSE + 规则分发 + outbox 顺延', () => {
     expect(frames[0]).toMatchObject({ eventId: id, projectId: project.id, eventType: 'Stop' });
   });
 
+  it('Stop 最终回复带渲染块引用行 → 通知镜像重投影（别的事件/无引用行不通知）', () => {
+    const projects = new ProjectRepository(db);
+    const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });
+    const hookEvents = new HookEventRepository(db);
+    const synced: number[] = [];
+
+    const record = (eventType: string, raw: Record<string, unknown>) => {
+      const payload = JSON.stringify({ eventType, raw });
+      return {
+        eventId: hookEvents.insert({
+          projectId: project.id,
+          source: 'claude',
+          eventType,
+          sessionId: 's-viz',
+          payload,
+        }),
+        projectId: project.id,
+        input: { projectId: project.id, source: 'claude' as const, eventType, sessionId: 's-viz', payload },
+      };
+    };
+
+    const deps = { projects, hooksDir, bus, onVisualization: (id: number) => synced.push(id) };
+    const line = `\u{e200}visualize\u{e202}${JSON.stringify({ path: 'C:/tmp/panel.html' })}\u{e201}`;
+
+    handleIngestedRecords(deps, [record('Stop', { last_assistant_message: `干完了\n${line}` })]);
+    expect(synced).toEqual([project.id]);
+
+    // 没有引用行的 Stop、以及 PostToolUse 带引用行，都不触发
+    handleIngestedRecords(deps, [record('Stop', { last_assistant_message: '普通回复' })]);
+    handleIngestedRecords(deps, [record('PostToolUse', { last_assistant_message: line })]);
+    expect(synced).toEqual([project.id]);
+  });
+
   it('SessionEnd 到达即会话退出（谁是退出事件查生命周期表）；其他事件不动', () => {
     const projects = new ProjectRepository(db);
     const project = projects.register({ path: '/proj', name: 'p', token: TOKEN, source: 'init' });

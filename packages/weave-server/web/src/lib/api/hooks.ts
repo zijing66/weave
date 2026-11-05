@@ -197,7 +197,7 @@ export const CLAUDE_HOOK_EVENTS = [
   'PostModelSwitch',
 ] as const;
 
-/** mirror of `INJECTABLE_HOOK_EVENTS` — inject 处理器只允许这些事件（服务端 400）。 */
+/** mirror of `INJECTABLE_EVENTS.claude` — inject 处理器只允许这些事件（服务端 400）。 */
 export const INJECTABLE_HOOK_EVENTS = [
   'PostToolUse',
   'UserPromptSubmit',
@@ -205,6 +205,18 @@ export const INJECTABLE_HOOK_EVENTS = [
   'Stop',
   'SubagentStop',
 ] as const;
+
+/** mirror of `INJECTABLE_EVENTS.codex`（0.164 的 output schema 实证：Stop 无该字段）。 */
+export const CODEX_INJECTABLE_HOOK_EVENTS = [
+  'UserPromptSubmit',
+  'SessionStart',
+  'PostToolUse',
+] as const;
+
+/** 面板按 harness 给 inject 事件的候选（'any' 的 inject 服务端会拒，按 claude 列）。 */
+export function injectableEventsOf(harness: string): readonly string[] {
+  return harness === 'codex' ? CODEX_INJECTABLE_HOOK_EVENTS : INJECTABLE_HOOK_EVENTS;
+}
 
 export const hooksApi = {
   /** 按会话查事件（时间升序，任务视图事件链用）。projectId 仅作鉴权锚点。

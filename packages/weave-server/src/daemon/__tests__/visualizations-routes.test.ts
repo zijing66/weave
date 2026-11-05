@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { VISUALIZATION_PROTOCOL } from '@weavecode/core';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
 import { handleVisualizationRoutes } from '../routes/visualizations.js';
@@ -166,7 +167,7 @@ describe('渲染块 fragment 端点', () => {
 
   it('超限 413', async () => {
     const file = join(projectPath, 'big.html');
-    writeFileSync(file, 'x'.repeat(1024 * 1024 + 1));
+    writeFileSync(file, 'x'.repeat(VISUALIZATION_PROTOCOL.maxFragmentBytes + 1));
     const res = await call(`path=${encodeURIComponent(file)}`);
     expect(res.status).toBe(413);
   });

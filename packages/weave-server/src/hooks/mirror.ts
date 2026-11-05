@@ -5,6 +5,7 @@ import type { Harness, HookRule } from '@weavecode/core';
 import { hookSourceHarness } from '@weavecode/core';
 import { getDataDir, getHooksDir } from '../db/paths.js';
 import type { ProjectRow, ProjectRepository } from '../repositories/projects.js';
+import { activeVisualRefOf, type VisualRef } from './visualizations.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import type { HookRuleRegistry } from './registry.js';
 import type { HookEventBus } from './bus.js';
@@ -62,6 +63,12 @@ export interface HookMirrorDoc {
   project: string;
   pendingTitles: Record<string, string>;
   rules: MirrorRule[];
+  /**
+   * 会话 → 活跃渲染块引用（weave 内建续投）：hook-handler 在 UserPromptSubmit
+   * 把这行原样追加进 additionalContext，模型忘写时面板不会消失。字段可缺席
+   * （老 mirror），缺席 = 不续投。
+   */
+  visualizations?: Record<string, VisualRef>;
 }
 
 /**
@@ -73,6 +80,7 @@ export function buildMirrorDoc(
   project: ProjectRow,
   rules: HookRule[],
   pendingTitles: Record<string, string>,
+  visualizations: Record<string, VisualRef> = {},
 ): HookMirrorDoc {
   const mirrored = rules
     .filter((rule) => {
@@ -93,7 +101,13 @@ export function buildMirrorDoc(
       globs: rule.filter.pathGlobs?.length ? [...rule.filter.pathGlobs] : null,
       template: rule.handler.type === 'inject' ? rule.handler.template : '',
     }));
-  return { version: MIRROR_VERSION, project: projectLabel(project.path), pendingTitles, rules: mirrored };
+  return {
+    version: MIRROR_VERSION,
+    project: projectLabel(project.path),
+    pendingTitles,
+    rules: mirrored,
+    visualizations,
+  };
 }
 
 export interface MirrorWriterDeps {
@@ -102,6 +116,8 @@ export interface MirrorWriterDeps {
   projects: Pick<ProjectRepository, 'list' | 'getById'>;
   rules: Pick<HookRuleRegistry, 'list'>;
   sessions: Pick<SessionRepository, 'list' | 'getBySessionId'>;
+  /** 会话最近一条 Stop 的最终回复（渲染块续投的源；缺省 = 不投影 visualizations）。 */
+  lastStopTextOf?: (sessionId: string) => string | null;
 }
 
 /**
@@ -128,10 +144,19 @@ export class MirrorWriter {
     const project = this.deps.projects.getById(projectId);
     if (!project || project.archivedAt) return; // 归档项目不喂镜像（文件已随归档焚毁）
     const pendingTitles: Record<string, string> = {};
+    const visualizations: Record<string, VisualRef> = {};
     for (const session of this.deps.sessions.list(projectId)) {
       if (session.pendingTitle) pendingTitles[session.sessionId] = session.pendingTitle;
+      // 我只回填「最近一轮真的展示过、文件还在」的块；粘性由 handler 侧维持，
+      // 会话没有新引用行时这里仍是上一次学到的那个（不因本轮没写而丢）。
+      const text = this.deps.lastStopTextOf?.(session.sessionId);
+      const ref = text ? activeVisualRefOf(text) : null;
+      if (ref) visualizations[session.sessionId] = ref;
     }
-    this.write(project.token, buildMirrorDoc(project, this.deps.rules.list(), pendingTitles));
+    this.write(
+      project.token,
+      buildMirrorDoc(project, this.deps.rules.list(), pendingTitles, visualizations),
+    );
   }
 
   write(token: string, doc: HookMirrorDoc): void {

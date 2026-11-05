@@ -7,6 +7,7 @@ import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
 import { isInsideDir } from '../../market/resolve.js';
 import { getVisualizationsDir } from '../../db/paths.js';
+import { visualizePathsIn } from '../../hooks/visualizations.js';
 
 /**
  * 渲染块只读端点：按绝对路径回读 HTML fragment（JSON 包裹）。路径必须落在
@@ -38,35 +39,6 @@ function whitelistRoots(deps: WeaveServerDeps): string[] {
 
 /** 清理宽限：刚写出来的 fragment 可能还没落进对话事件，不把它算作无引用。 */
 const VISUALIZATION_GRACE_MS = 24 * 60 * 60 * 1000;
-
-const REF_PREFIXES = [
-  VISUALIZATION_PROTOCOL.referencePrefix,
-  ...VISUALIZATION_PROTOCOL.referencePrefixAliases,
-];
-const REF_SUFFIXES = [
-  VISUALIZATION_PROTOCOL.referenceSuffix,
-  ...VISUALIZATION_PROTOCOL.referenceSuffixAliases,
-];
-
-/** 引用行 → fragment 绝对路径。web `visualizeRefOf` 同判据（它只 import type、常量镜像）。 */
-function visualizePathsIn(text: string): string[] {
-  const out: string[] = [];
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    const prefix = REF_PREFIXES.find((p) => trimmed.startsWith(p));
-    if (!prefix) continue;
-    let body = trimmed.slice(prefix.length);
-    const suffix = REF_SUFFIXES.find((s) => body.endsWith(s));
-    if (suffix) body = body.slice(0, -suffix.length);
-    try {
-      const parsed = JSON.parse(body) as { path?: unknown };
-      if (typeof parsed.path === 'string' && parsed.path) out.push(path.resolve(parsed.path));
-    } catch {
-      /* 坏行当普通文本（与 web 同口径） */
-    }
-  }
-  return out;
-}
 
 /** 历史上被对话引用过的 fragment 路径（小写归一，Windows 路径大小写不定）。 */
 function referencedPathsOf(deps: WeaveServerDeps): Set<string> {
@@ -203,7 +175,7 @@ export async function handleVisualizationRoutes(
   // fragment 是活文件（模型随时重写）：不缓存，跨机访问才拿得到当下快照
   res.setHeader('cache-control', 'no-store');
   // 轮询的条件形：带上客户端手上那份的 mtime，没变就只回一个空壳——热更新
-  // 每几秒一拍，没必要把整份正文（≤1MB）反复搬一遍
+  // 每几秒一拍，没必要把整份正文（≤上限）反复搬一遍
   const mtimeMs = Math.floor(stat.mtimeMs);
   const sinceRaw = url.searchParams.get('mtime');
   const since = sinceRaw == null ? NaN : Number(sinceRaw);
@@ -212,7 +184,9 @@ export async function handleVisualizationRoutes(
     return true;
   }
   if (stat.size > VISUALIZATION_PROTOCOL.maxFragmentBytes) {
-    sendJson(res, 413, { error: 'Fragment exceeds the 1 MB size limit' });
+    sendJson(res, 413, {
+      error: `Fragment exceeds the ${VISUALIZATION_PROTOCOL.maxFragmentBytes / (1024 * 1024)} MB size limit`,
+    });
     return true;
   }
 
