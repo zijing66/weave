@@ -1,24 +1,10 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { readBody, sendJson } from './http.js';
+import type { McpHttpContext, McpToolDef, McpToolRequest } from './registry.js';
 
 /**
- * 编排内置 MCP（Streamable HTTP，daemon 托管）：工具面只转发 daemon 自己的 HTTP
+ * 编排内置 MCP 服务 `weave-orchestration`：工具面只转发 daemon 自己的 HTTP
  * API，**不缓存任何编排状态**——编排的唯一事实源仍是 daemon 的仓储，web 画布、
  * CLI、MCP 三处修改互相立刻可见。
- *
- * 生命周期 = daemon 的启停（无子进程、无 CLI 命令）；端点固定 `/mcp`，无状态模式，
- * 认证沿用本机令牌（MCP 客户端配置里带 `x-weave-local` 头）。诊断走 stderr。
  */
-
-export interface McpHttpContext {
-  /** daemon 自己的监听端口（工具调用转回自己的 API）。 */
-  port: number;
-  /** 本机令牌；null = 未装认证（测试/开放口），调用不带令牌。 */
-  token: string | null;
-}
 
 async function api<T>(
   ctx: McpHttpContext,
@@ -29,6 +15,8 @@ async function api<T>(
   const res = await fetch(`http://127.0.0.1:${ctx.port}/api${path}`, {
     method,
     headers: {
+      // 自报来源：api-log 的 origin 列据此区分 MCP 调用与用户操作（RPG 稿§七）。
+      'x-weave-origin': 'mcp',
       ...(ctx.token ? { 'x-weave-local': ctx.token } : {}),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
@@ -89,7 +77,7 @@ const edgeSchema = {
 const ORCH_REF = { type: 'object', additionalProperties: true } as const;
 const RUN_REF = { type: 'object', additionalProperties: true } as const;
 
-const TOOLS = [
+export const TOOLS = [
   {
     name: 'list_orchestrations',
     description:
@@ -235,81 +223,100 @@ const TOOLS = [
       required: ['sessions'],
     },
   },
-] as const;
+] as const satisfies readonly McpToolDef[];
 
 type Args = Record<string, unknown>;
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
-async function callTool(ctx: McpHttpContext, name: string, args: Args): Promise<unknown> {
+/**
+ * 工具 → 它转发的 daemon 请求（对账测试遍历这张映射，逐条比对 daemon 路由表——
+ * 路由改名后 MCP 静默 404 的漂移拦在提交前）。
+ */
+export function toolRequest(name: string, args: Args): McpToolRequest {
   switch (name) {
     case 'list_orchestrations':
-      return api(ctx, 'GET', `/messaging/orchestrations${qs({ projectId: num(args.projectId) })}`);
-    case 'get_orchestration': {
+      return { method: 'GET', path: `/messaging/orchestrations${qs({ projectId: num(args.projectId) })}` };
+    case 'get_orchestration':
       // 服务端没有单条 GET（只有列表）：按 id 过滤，找不到明确报错，
       // 绝不让 SPA 的 HTML 兜底页冒充编排定义。
-      const all = await api<{ orchestrations: Array<{ id: number }> }>(
-        ctx,
-        'GET',
-        '/messaging/orchestrations',
-      );
-      const found = all.orchestrations.find((o) => o.id === num(args.id));
-      if (!found) throw new Error(`Orchestration not found: ${String(args.id)}`);
-      return { orchestration: found };
-    }
+      return { method: 'GET', path: '/messaging/orchestrations' };
     case 'create_orchestration':
-      return api(ctx, 'POST', '/messaging/orchestrations', {
-        name: args.name,
-        startText: args.startText,
-        projectId: num(args.projectId),
-        nodes: args.nodes,
-        edges: args.edges,
-        cron: args.cron ?? null,
-        enabled: args.enabled,
-      });
+      return {
+        method: 'POST',
+        path: '/messaging/orchestrations',
+        body: {
+          name: args.name,
+          startText: args.startText,
+          projectId: num(args.projectId),
+          nodes: args.nodes,
+          edges: args.edges,
+          cron: args.cron ?? null,
+          enabled: args.enabled,
+        },
+      };
     case 'update_orchestration': {
       const id = num(args.id);
-      return api(ctx, 'PUT', `/messaging/orchestrations/${id}`, {
-        ...(args.name === undefined ? {} : { name: args.name }),
-        ...(args.startText === undefined ? {} : { startText: args.startText }),
-        ...(args.nodes === undefined ? {} : { nodes: args.nodes }),
-        ...(args.edges === undefined ? {} : { edges: args.edges }),
-        ...(args.cron === undefined ? {} : { cron: args.cron }),
-        ...(args.enabled === undefined ? {} : { enabled: args.enabled }),
-      });
+      return {
+        method: 'PUT',
+        path: `/messaging/orchestrations/${id}`,
+        body: {
+          ...(args.name === undefined ? {} : { name: args.name }),
+          ...(args.startText === undefined ? {} : { startText: args.startText }),
+          ...(args.nodes === undefined ? {} : { nodes: args.nodes }),
+          ...(args.edges === undefined ? {} : { edges: args.edges }),
+          ...(args.cron === undefined ? {} : { cron: args.cron }),
+          ...(args.enabled === undefined ? {} : { enabled: args.enabled }),
+        },
+      };
     }
     case 'delete_orchestration':
-      return api(ctx, 'DELETE', `/messaging/orchestrations/${num(args.id)}`);
+      return { method: 'DELETE', path: `/messaging/orchestrations/${num(args.id)}` };
     case 'trigger_orchestration':
-      return api(ctx, 'POST', `/messaging/orchestrations/${num(args.id)}/trigger`, {
-        ...(str(args.text) ? { text: args.text } : {}),
-        ...(Array.isArray(args.entries) ? { entries: args.entries } : {}),
-      });
+      return {
+        method: 'POST',
+        path: `/messaging/orchestrations/${num(args.id)}/trigger`,
+        body: {
+          ...(str(args.text) ? { text: args.text } : {}),
+          ...(Array.isArray(args.entries) ? { entries: args.entries } : {}),
+        },
+      };
     case 'list_runs':
-      return api(
-        ctx,
-        'GET',
-        `/messaging/orchestration-runs${qs({
+      return {
+        method: 'GET',
+        path: `/messaging/orchestration-runs${qs({
           orchestrationId: num(args.orchestrationId),
           projectId: num(args.projectId),
           status: str(args.status),
           limit: num(args.limit),
           before: num(args.before),
         })}`,
-      );
+      };
     case 'get_run':
-      return api(ctx, 'GET', `/messaging/orchestration-runs/${num(args.id)}`);
+      return { method: 'GET', path: `/messaging/orchestration-runs/${num(args.id)}` };
     case 'cancel_run':
-      return api(ctx, 'POST', `/messaging/orchestration-runs/${num(args.id)}/cancel`);
+      return { method: 'POST', path: `/messaging/orchestration-runs/${num(args.id)}/cancel` };
+    case 'list_sessions':
+      return { method: 'GET', path: `/sessions${qs({ projectId: num(args.projectId) })}` };
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+/** 转发回包的策展整形（get_orchestration 按 id 过滤、list_sessions 裁最小字段）。 */
+function postProcess(name: string, data: unknown, args: Args): unknown {
+  switch (name) {
+    case 'get_orchestration': {
+      const all = data as { orchestrations: Array<{ id: number }> };
+      const found = all.orchestrations.find((o) => o.id === num(args.id));
+      if (!found) throw new Error(`Orchestration not found: ${String(args.id)}`);
+      return { orchestration: found };
+    }
     case 'list_sessions': {
-      const data = await api<{ sessions: Array<Record<string, unknown>> }>(
-        ctx,
-        'GET',
-        `/sessions${qs({ projectId: num(args.projectId) })}`,
-      );
+      const rows = (data as { sessions: Array<Record<string, unknown>> }).sessions;
       // 只回选节点要用的最小字段：完整行带着大量 UI 专用状态
       return {
-        sessions: data.sessions.map((s) => ({
+        sessions: rows.map((s) => ({
           sessionId: s.sessionId,
           projectId: s.projectId,
           title: s.title,
@@ -321,63 +328,12 @@ async function callTool(ctx: McpHttpContext, name: string, args: Args): Promise<
       };
     }
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      return data;
   }
 }
 
-function buildServer(ctx: McpHttpContext): Server {
-  const server = new Server(
-    { name: 'weave-orchestration', version: '0.1.0' },
-    { capabilities: { tools: {} } },
-  );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    try {
-      const result = await callTool(ctx, name, (args ?? {}) as Args);
-      // text 留给老客户端；structuredContent 给声明了 outputSchema 的宿主
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-        structuredContent: result as Record<string, unknown>,
-      };
-    } catch (error) {
-      return {
-        isError: true,
-        content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-      };
-    }
-  });
-  return server;
-}
-
-/**
- * `/mcp` 的 HTTP 入口（无状态）：每个请求建一套 server+transport，响应完即回收。
- * 无状态模式不带会话 id、不做会话校验——工具都是「一问一答」，不需要长连接状态。
- */
-export async function handleMcpRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  ctx: McpHttpContext,
-): Promise<void> {
-  const server = buildServer(ctx);
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true,
-  });
-  res.on('close', () => {
-    void transport.close();
-    void server.close();
-  });
-  await server.connect(transport);
-  let parsed: unknown;
-  if (req.method === 'POST') {
-    const raw = await readBody(req);
-    try {
-      parsed = raw.trim() ? JSON.parse(raw) : undefined;
-    } catch {
-      sendJson(res, 400, { error: 'Invalid JSON body' });
-      return;
-    }
-  }
-  await transport.handleRequest(req, res, parsed);
+export async function callTool(ctx: McpHttpContext, name: string, args: Args): Promise<unknown> {
+  const req = toolRequest(name, args);
+  const data = await api(ctx, req.method, req.path, req.body);
+  return postProcess(name, data, args);
 }

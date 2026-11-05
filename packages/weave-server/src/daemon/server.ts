@@ -47,9 +47,9 @@ import type { UploadSessions } from './upload-sessions.js';
 import type { WatchService } from '../watch/watch-service.js';
 import { sendJson } from './http.js';
 import { FingerprintCache } from '../install/fingerprint.js';
-import { ApiLogger } from './api-log.js';
+import { ApiLogger, type ApiLogOrigin } from './api-log.js';
 import { handleHooksRoutes } from './hooks-routes.js';
-import { handleMcpRequest } from './mcp-orchestration.js';
+import { handleMcpServerRequest, mcpServerForPath } from './mcp/index.js';
 import { handleToolkitRoutes } from './toolkit-routes.js';
 import { handleCaptureRoutes } from './capture-routes.js';
 import { handleConfigRoutes } from './config-routes.js';
@@ -261,10 +261,15 @@ async function handleRequest(
     }
   }
 
-  // POST/GET /mcp —— 内置 MCP（Streamable HTTP，无状态）：工具面 = 编排。
+  // POST/GET /mcp[/<server>] —— 内置 MCP（Streamable HTTP，无状态）：注册表分发。
   // 生命周期即 daemon 生命周期；认证沿用上面的门（MCP 客户端配置带本机令牌头）。
-  if (pathname === '/mcp') {
-    await handleMcpRequest(req, res, {
+  if (pathname === '/mcp' || pathname.startsWith('/mcp/')) {
+    const def = mcpServerForPath(pathname);
+    if (!def) {
+      sendJson(res, 404, { error: `Unknown MCP server: ${pathname}` });
+      return;
+    }
+    await handleMcpServerRequest(def, req, res, {
       port: deps.port,
       token: deps.auth?.getLocalToken() ?? null,
     });
@@ -285,6 +290,7 @@ async function handleRequest(
       path: url.searchParams.get('path') ?? undefined,
       method: url.searchParams.get('method') ?? undefined,
       status: statusRaw == null ? undefined : Number(statusRaw),
+      origin: (url.searchParams.get('origin') ?? undefined) as ApiLogOrigin | undefined,
       limit: limitRaw == null ? undefined : Number(limitRaw),
     });
     sendJson(res, 200, result);
