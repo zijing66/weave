@@ -2,8 +2,9 @@
  * weave 自带、**由 daemon 托管**的 MCP 服务目录（Streamable HTTP）。
  *
  * 它们不会自动写进用户配置，只在 MCP 页以「内置」行出现；安装**只允许 user 档**
- * （令牌会写进配置，项目档配置会跟着仓库走）。端点固定是 daemon 的 `/mcp`，
- * 安装时由服务端填入实际端口与本机令牌，前端永远看不到令牌。
+ * （令牌会写进配置，项目档配置会跟着仓库走）。端点 = daemon 的 `/mcp[/<server>]`
+ * （`/mcp` 裸路径保留给编排，存量已装配置不断），安装时由服务端填入实际端口与
+ * 本机令牌，前端永远看不到令牌。加一行前先在 `daemon/mcp/registry.ts` 注册实现。
  */
 export interface BuiltinMcpServer {
   /** MCP 服务器名（写进配置的键）。 */
