@@ -56,6 +56,9 @@ export type HookBusMessage =
   | { kind: 'session.renamed'; sessionId: string; title: string; at: string }
   // ---- 消息域（消息域重塑：纯管道）：与 dispatch.* 分域，幂等键 = messageId（管道发号）----
   | { kind: 'message.created'; messageId: string; sessionId: string; mode: string; at: string }
+  /** 投递前置：正文 `#` 标注的目标会话判死，正在拉起（`ensureOpen`，最长 15s）。
+   *  发送方的乐观行据此显示「拉起会话中」，不必干等 POST 返回。 */
+  | { kind: 'message.opening'; sessionId: string; targets: string[]; at: string }
   | { kind: 'message.delivered'; messageId: string; sessionId: string; at: string }
   /** 投递回执：目标会话自己的 UserPromptSubmit 与在途条目匹配上了（真到达）。
    *  eventId = 命中的那条开轮事件（精确配对键；内建命令没有这一轮，不带）。 */

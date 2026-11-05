@@ -240,6 +240,7 @@ export const zh = {
   'claudemd.files': '## 文件组织\n\n- 源码：`src/`\n- 测试：与源文件同目录的 `*.test.ts` 或 `__tests__/` 目录\n- 配置文件放项目根目录\n- 沿用既有目录结构——不要新造顶层目录\n\n',
   'claudemd.security': '## 安全\n\n- 绝不提交密钥、凭据或 API key\n- 在系统边界校验所有用户输入\n- 不引入 XSS、SQL 注入、命令注入面\n- 优先参数化查询与安全 API，而不是字符串拼接\n\n',
   'claudemd.skills': '## 技能\n\n可复用技能放 harness 自己的技能目录（Claude Code 为 `.claude/skills/`）：一个技能一个目录、内含 `SKILL.md`；任务命中某个技能时按名调用。\n\n',
+  'claudemd.sessionRef': '## 会话引用\n\n消息正文里的 `#<会话 id>「<会话名>」` 是**发给另一个会话的标注**，不是给你的任务：用宿主原生的会话消息工具（Claude Code 为 `SendMessage`）把标注后的内容转达给目标会话。地址只认会话**名字**（`名字`，重名时 `名字 [ref]`），id 只是标识、不是地址；名字对不上先用 `ListAgents` 核对。宿主没有这类工具时忽略标注、按普通消息处理。\n\n',
   'claudemd.visualize': '## 渲染块\n\n要让 weave 对话里内嵌 HTML 快照：fragment 写进项目内（如 `.weave/previews/<name>.html`）或写到 `{dir}`，其它位置服务端会拒；回复里**单独一行**写引用行：U+E200 + `visualize` + U+E202 + `{"path":"<绝对路径>"}` + U+E201。\n\n',
   // --- harness 健康检查 message / fix ---
   'harness.instructionLinkNotMaterialised.message': '{agents} 是内容为 "{claude}" 的普通文件——git 把软链接检出成了文本。',

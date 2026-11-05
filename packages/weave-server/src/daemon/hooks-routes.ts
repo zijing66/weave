@@ -17,6 +17,7 @@ import type { WeaveServerDeps } from './server.js';
 import type { MessageAttachment, SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
 import { readJson, sendJson } from './http.js';
 import { purgeSession } from '../hooks/session-purge.js';
+import { referencedSessionIds } from '../hooks/session-refs.js';
 import { readDaemonSettingsSync, readHooksEnabled } from './settings.js';
 import { handleOrchestrationRoutes } from './routes/orchestration.js';
 import { handleHookAdminRoutes } from './routes/hooks-admin.js';
@@ -240,12 +241,13 @@ export async function handleHooksRoutes(
     }
     try {
       const body = RenameSessionBody.parse(await readJson(req));
-      // 宿主侧名字通道（titles 面，codex = thread/name/set）：写宿主成功才落库，
-      // 不挂 pending——该通道无 hook 回执，挂了永不 confirm、徽标常驻。失败如实报错。
+      // 宿主侧名字写通道（titles 面的 setSessionTitle，codex = thread/name/set）：
+      // 写宿主成功才落库，不挂 pending——该通道无 hook 回执，挂了永不 confirm、
+      // 徽标常驻。失败如实报错。claude 的面只有读半边，仍旧走下面的 pending 管线。
       const latest = deps.hookEvents?.listBySession(sessionId, 1);
       const src = latest?.[latest.length - 1]?.source;
       const titleSurface = isHarness(src) ? sessionTitleSurfaceFor(src) : null;
-      if (titleSurface) {
+      if (titleSurface?.setSessionTitle) {
         try {
           await titleSurface.setSessionTitle(sessionId, body.title);
         } catch (err) {
@@ -351,6 +353,7 @@ export async function handleHooksRoutes(
         sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
         return true;
       }
+      const hookSessions = deps.hookSessions;
       let body: z.infer<typeof SendMessageBody>;
       try {
         body = SendMessageBody.parse(await readJson(req));
@@ -372,6 +375,44 @@ export async function handleHooksRoutes(
           return true;
         }
         attachments = refs;
+      }
+      // 引用标注的目标会话判死就先拉起（复用编排的 ensureOpen）：`#` 只是收件人
+      // 标注、代投归宿主模型，但目标没开时宿主 SendMessage 必 unreachable——
+      // 用户要的是「到 TUI 前先把它拉起来」。拉起失败即拒发（不当没看见）。
+      const refs = referencedSessionIds(body.text).filter((id) => id !== sessionId);
+      if (refs.length > 0) {
+        if (!deps.ensureOpen) {
+          sendJson(res, 503, { error: 'Terminal auto-open unavailable' });
+          return true;
+        }
+        const liveness = combinedLivenessOf();
+        // 判活要用带派生的行（harness / lastEventType / eventCount），单条查询没有
+        const rows = hookSessions.listWithCounts();
+        const dead: string[] = [];
+        for (const id of refs) {
+          const row = rows.find((r) => r.sessionId === id);
+          if (!row) {
+            sendJson(res, 404, { error: `Referenced session not found: ${id}` });
+            return true;
+          }
+          if (pidAliveOf(row, liveness) === false) dead.push(id);
+        }
+        if (dead.length > 0) {
+          // 拉起最长 15s：先广播一帧，发送方的乐观行改显「拉起会话中」再等
+          deps.hookBus?.emit({
+            kind: 'message.opening',
+            sessionId,
+            targets: dead,
+            at: new Date().toISOString(),
+          });
+          for (const id of dead) {
+            const opened = await deps.ensureOpen(id);
+            if (!opened.ok) {
+              sendJson(res, 502, { error: `Failed to open referenced session ${id}: ${opened.error}` });
+              return true;
+            }
+          }
+        }
       }
       const result = await deps.messageDeliverer.send({
         toSessionId: sessionId,

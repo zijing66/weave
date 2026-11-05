@@ -1,6 +1,7 @@
-import { useRef, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react';
 import { CornerDownLeft, Pencil, RotateCcw, Trash2 } from 'lucide-react';
 import { api, type SessionMessageRow, type UploadFile } from '@/lib/api';
+import { subscribeHook } from '@/lib/sse';
 import { discardUpload, uploadFileWithProgress } from '@/lib/upload';
 import { errorText, type ActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -47,6 +48,34 @@ export function useConvQueue(deps: {
   newestQueuedId: string | undefined;
 }) {
   const { sessionId, attachKinds, staged, setStaged, draftRef, setDraft, setDraftText, insertAttach, stick, fb, t, show, refreshMessages, setMessages, newestQueuedId } = deps;
+
+  // 引用拉起：服务端真判死才发这一帧（拉最长 15s），把本会话最后一条本地乐观行
+  // 改显「拉起会话中」——不必干等 POST 返回，也不会在目标活着时误报。
+  useEffect(
+    () =>
+      subscribeHook(
+        (f) => {
+          if (f.kind !== 'message.opening' || f.sessionId !== sessionId) return;
+          setMessages((prev) => {
+            if (!prev?.length) return prev;
+            let idx = -1;
+            for (let i = prev.length - 1; i >= 0; i -= 1) {
+              const m = prev[i]!;
+              if (m.id.startsWith('local:') && m.status === 'pending') {
+                idx = i;
+                break;
+              }
+            }
+            if (idx < 0) return prev;
+            const next = prev.slice();
+            next[idx] = { ...next[idx]!, status: 'opening' };
+            return next;
+          });
+        },
+        ['message.opening'],
+      ),
+    [sessionId, setMessages],
+  );
   /** 在飞上传的取消把手（按 staged 本地键索引）。 */
   const uploadAborters = useRef(new Map<string, AbortController>());
   /** staged 本地键的自增尾号（同名同大小的两个文件各占一格）。 */

@@ -60,6 +60,7 @@ export function generateClaudeMdSection(input: ClaudeMdGeneratorInput): string {
   }
 
   content += t('claudemd.skills');
+  content += t('claudemd.sessionRef');
   content += t('claudemd.visualize', { dir: getVisualizationsDir() });
   content += `${WEAVE_BLOCK_END}\n`;
   return content;

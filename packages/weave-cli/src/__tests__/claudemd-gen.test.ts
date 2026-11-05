@@ -85,6 +85,18 @@ describe('generateClaudeMdSection', () => {
     expect(section).not.toContain('# p\n');
   });
 
+  it('每个模板都带会话引用写法（#<id>「<名>」 + 名字才是地址）', () => {
+    setLocale('zh-CN');
+    for (const template of ['minimal', 'standard', 'full'] as const) {
+      const section = generateClaudeMdSection({ template, projectName: 'p' });
+      expect(section).toContain('## 会话引用');
+      expect(section).toContain('#<会话 id>「<会话名>」');
+      expect(section).toContain('SendMessage');
+      expect(section).toContain('ListAgents');
+    }
+    setLocale('en');
+  });
+
   it('按 locale 生成：zh-CN 出中文块，英文键不泄漏', () => {
     setLocale('zh-CN');
     const section = generateClaudeMdSection({ template: 'full', projectName: 'p' });

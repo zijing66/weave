@@ -26,6 +26,9 @@ export interface SessionMessageRow {
   forceTerminal?: boolean | null;
   status:
     | 'pending'
+    /** 投递前置：正文 `#` 标注的目标会话判死，正在拉起（服务端 `message.opening`
+     *  帧推到本地乐观行；POST 返回后由真实行覆盖）。 */
+    | 'opening'
     | 'delivering'
     | 'running'
     | 'injected'
