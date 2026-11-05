@@ -102,15 +102,19 @@ export function AiAssistant() {
 
   return (
     <>
-      <Tooltip label={open ? t('ai.close') : t('ai.open')} side="top">
-        <button
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          className="fixed bottom-4 right-4 z-50 grid h-11 w-11 place-items-center rounded-full border border-edge/[0.08] bg-neutral-900/90 text-neutral-300 shadow-mac backdrop-blur transition-colors hover:bg-neutral-800 hover:text-neutral-100"
-        >
-          <Bot className="h-5 w-5" />
-        </button>
-      </Tooltip>
+      {/* 定位挂在外层：Tooltip 的 wrapper 是参与文档流的 inline-flex，
+          直接包 fixed 按钮会在 #root 尾部多出一个空行 box（页面多一条滚动条） */}
+      <span className="fixed bottom-4 right-4 z-50">
+        <Tooltip label={open ? t('ai.close') : t('ai.open')} side="top">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            className="grid h-11 w-11 place-items-center rounded-full border border-edge/[0.08] bg-neutral-900/90 text-neutral-300 shadow-mac backdrop-blur transition-colors hover:bg-neutral-800 hover:text-neutral-100"
+          >
+            <Bot className="h-5 w-5" />
+          </button>
+        </Tooltip>
+      </span>
       {open &&
         createPortal(
           // 双锚（left/right）：zoom 下单锚定宽会左溢，双锚宽度自动求解永不出屏
