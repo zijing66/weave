@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type BrowseChild, type BrowseRoot } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -101,38 +101,37 @@ function loadQuickAccess(): string[] {
 }
 
 /** 长按 = 移动端右键等价手势（§11 触屏右键等价手势）：按住 500ms 触发一次，
- *  触发后轻微震动反馈；移动超过阈值算滚动、取消。纯工厂（非 hook），行内即用。 */
+ *  触发后轻微震动反馈；移动超过阈值算滚动、取消。纯闭包工厂（绝不用 hook——
+ *  行循环里每行一份，hook 数会随行数漂移，React #310 白屏就是这么来的）。 */
 function makeLongPress(onLongPress: (x: number, y: number) => void, enabled: boolean) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const start = useRef<{ x: number; y: number } | null>(null);
-
-  const clear = useCallback((): void => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      timer.current = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let startPos: { x: number; y: number } | null = null;
+  const clear = (): void => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
     }
-    start.current = null;
-  }, []);
-
+    startPos = null;
+  };
   return {
     onTouchStart: (e: React.TouchEvent): void => {
       if (!enabled) return;
       const t0 = e.touches[0];
       if (!t0) return;
-      start.current = { x: t0.clientX, y: t0.clientY };
-      timer.current = setTimeout(() => {
-        timer.current = null;
-        if (start.current) {
-          onLongPress(start.current.x, start.current.y);
-          start.current = null;
+      startPos = { x: t0.clientX, y: t0.clientY };
+      timer = setTimeout(() => {
+        timer = null;
+        if (startPos) {
+          onLongPress(startPos.x, startPos.y);
+          startPos = null;
           navigator.vibrate?.(10);
         }
       }, 500);
     },
     onTouchMove: (e: React.TouchEvent): void => {
       const t0 = e.touches[0];
-      if (!start.current || !t0) return;
-      if (Math.abs(t0.clientX - start.current.x) + Math.abs(t0.clientY - start.current.y) > 12) clear();
+      if (!startPos || !t0) return;
+      if (Math.abs(t0.clientX - startPos.x) + Math.abs(t0.clientY - startPos.y) > 12) clear();
     },
     onTouchEnd: clear,
     onTouchCancel: clear,
