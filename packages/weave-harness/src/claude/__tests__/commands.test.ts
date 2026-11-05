@@ -128,6 +128,9 @@ describe('claude 命令执行返显', () => {
     });
   const out = (text: string, at = '2026-10-23T01:39:11.500Z'): string =>
     line({ type: 'user', timestamp: at, message: { role: 'user', content: `<local-command-stdout>${text}</local-command-stdout>` } });
+  /** stdout 的另一种落点：`system/local_command` 行的顶层 content（/clear、/list-agents 走这条）。 */
+  const sysOut = (text: string, at = '2026-10-23T01:39:11.500Z'): string =>
+    line({ type: 'system', subtype: 'local_command', timestamp: at, content: `<local-command-stdout>${text}</local-command-stdout>` });
   const skill = (at = '2026-10-23T01:39:12.000Z'): string =>
     line({ type: 'user', isMeta: true, timestamp: at, message: { role: 'user', content: 'Base directory for this skill: …' } });
   const bashIn = (text: string, at = '2026-10-23T01:40:00.000Z'): string =>
@@ -165,6 +168,38 @@ describe('claude 命令执行返显', () => {
     expect(await commandExecutions(file)).toEqual([
       { name: 'mkdir x', args: '', at: '2026-10-23T01:40:00.000Z', output: '[stderr] mkdir: cannot create', sigil: '!' },
     ]);
+  });
+
+  it('本地型内建命令没有 stdout（如 /list-agents）→ 命令行照样落账', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [cmd('list-agents'), skill()].join('\n'));
+    expect(await commandExecutions(file)).toEqual([
+      { name: 'list-agents', args: '', at: '2026-10-23T01:39:11.452Z' },
+    ]);
+  });
+
+  it('stdout 落在 system/local_command 行（/clear、/list-agents）→ 输出补进那一条', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [cmd('clear'), sysOut('Cleared conversation')].join('\n'));
+    expect(await commandExecutions(file)).toEqual([
+      { name: 'clear', args: '', at: '2026-10-23T01:39:11.452Z', output: 'Cleared conversation' },
+    ]);
+  });
+
+  it('本地型内建的 stdout 分在两次读里到达 → 补进同一条，不另起', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, cmd('model'));
+    expect(await commandExecutions(file)).toEqual([{ name: 'model', args: '', at: '2026-10-23T01:39:11.452Z' }]);
+    writeFileSync(file, [cmd('model'), out('Set model to opus')].join('\n'));
+    expect(await commandExecutions(file)).toEqual([
+      { name: 'model', args: '', at: '2026-10-23T01:39:11.452Z', output: 'Set model to opus' },
+    ]);
+  });
+
+  it('prompt 型内建（init）展开成 prompt 走 UPS → 仍不算执行', async () => {
+    const file = path.join(root, 't.jsonl');
+    writeFileSync(file, [cmd('init'), skill()].join('\n'));
+    expect(await commandExecutions(file)).toEqual([]);
   });
 
   it('skill 命令没有 stdout（展开成 prompt，已有 UPS 气泡）→ 不算执行', async () => {

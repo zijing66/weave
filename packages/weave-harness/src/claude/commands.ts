@@ -285,13 +285,27 @@ const execCursors = new Map<
     cur: LineCursor;
     out: CommandExecution[];
     pending: { name: string; args: string; at: string; sigil?: '/' | '!' } | null;
+    /** pending 那条已经先落账了（本地型内建命令不等 stdout），stdout 到了只补输出。 */
+    emitted: boolean;
   }
 >();
 const EXEC_CURSOR_MAX = 64;
 
+/** 本地型内建命令（注册表里非 `type:"prompt"` 的那些）：输出只在 TUI 里渲染，
+ *  转录只有命令行 ⇒ 不等 stdout 也要落账。prompt 型（`inline`）会展开成 prompt 走 UPS。 */
+const LOCAL_BUILTINS = new Set(BUILTINS.filter((c) => c.inline !== true).map((c) => c.name));
+
 /**
- * 转录里的命令执行：`<command-name>` 那一条之后若紧跟 `<local-command-stdout>`，
- * 就是一次内建命令（skill 命令后面跟的是 isMeta 展开正文，不算——它已经有 UPS 气泡）。
+ * 转录里的命令执行。三族证据：
+ * - 内建**本地型**命令（local/local-jsx，如 `/list-agents`）：宿主只写 `<command-name>`，
+ *   输出只在 TUI 里渲染 ⇒ **不等 stdout，命令行直接落账**（否则这类交互式命令在对话里
+ *   永远不出现）。
+ * - 内建**输出型**命令（`/model`、`/compact`…）：`<command-name>` 之后紧跟
+ *   `<local-command-stdout>`，输出补进同一条。这行 stdout 有**两种落点**（实测
+ *   2.1.215–2.1.296 都在用）：普通 user 行的 `message.content`，或
+ *   `type:'system', subtype:'local_command'` 行的顶层 `content`——`/clear`、
+ *   `/reload-plugins`、`/reload-skills`、`/list-agents` 只在后者（不认就丢输出）。
+ * - skill/插件命令：展开成 prompt（走 UPS，对话里已有气泡）⇒ 不认，否则重复。
  * bash 模式同构：`<bash-input>` 之后紧跟 `<bash-stdout>`（+`<bash-stderr>`）——
  * bash 不发 UPS、hook 域零事件，转录这两行是它执行过的唯一证据。
  *
@@ -306,16 +320,18 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
   }
   const hit = execCursors.get(transcriptPath);
   execCursors.delete(transcriptPath);
-  const entry = hit ?? { cur: { offset: 0 }, out: [], pending: null };
+  const entry = hit ?? { cur: { offset: 0 }, out: [], pending: null, emitted: false };
   if (size < entry.cur.offset) {
     entry.cur.offset = 0;
     entry.out = [];
     entry.pending = null;
+    entry.emitted = false;
   }
   const lines = readNewLines(transcriptPath, entry.cur, size);
   if (lines === null) return null;
   const out = entry.out;
   let pending = entry.pending;
+  let emitted = entry.emitted;
   for (const line of lines) {
     // 四类标记都以 `<` 开头的前缀分三族：先过哨兵再细分，绝大多数行在这里就丢掉
     if (
@@ -332,18 +348,38 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
       continue;
     }
     if (row === null || typeof row !== 'object') continue;
-    const rec = row as { type?: unknown; timestamp?: unknown; message?: { content?: unknown } };
-    const content = rec.message?.content;
-    if (typeof content !== 'string') continue;
+    const rec = row as {
+      type?: unknown;
+      subtype?: unknown;
+      timestamp?: unknown;
+      content?: unknown;
+      message?: { content?: unknown };
+    };
+    // stdout 的两种落点：user 行的 message.content，或 system/local_command 行的顶层 content
+    const content =
+      typeof rec.message?.content === 'string'
+        ? rec.message.content
+        : rec.type === 'system' && rec.subtype === 'local_command' && typeof rec.content === 'string'
+          ? rec.content
+          : null;
+    if (content === null) continue;
     const at = str(rec.timestamp);
     const name = /<command-name>([^<]*)<\/command-name>/.exec(content)?.[1]?.trim();
     if (name?.startsWith('/')) {
-      pending = { name: name.slice(1), args: argsOf(content), at };
+      const bare = name.slice(1);
+      pending = { name: bare, args: argsOf(content), at };
+      emitted = false;
+      // 本地型内建命令没有 stdout 可等：命令行一到就落账（交互式命令不留输出）。
+      if (LOCAL_BUILTINS.has(bare)) {
+        out.push({ ...pending });
+        emitted = true;
+      }
       continue;
     }
     const bashInput = /<bash-input>([\s\S]*?)<\/bash-input>/.exec(content)?.[1];
     if (bashInput !== undefined) {
       pending = { name: bashInput.trim(), args: '', at, sigil: '!' };
+      emitted = false;
       continue;
     }
     const localOut = /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(content)?.[1];
@@ -354,10 +390,18 @@ export async function commandExecutions(transcriptPath: string): Promise<Command
     // ANSI 转义（宿主的着色）进不了对话正文
     const clean = bashOut.replace(/\u001b\[[0-9;]*m/g, '').trim();
     const merged = [clean, stderr ? `[stderr] ${stderr}` : ''].filter(Boolean).join('\n');
-    out.push({ ...pending, ...(merged !== '' ? { output: merged } : {}) });
+    if (emitted) {
+      // 已先落账的那条（out 末条）：输出补给它，不另起一条。
+      const last = out[out.length - 1];
+      if (last && merged !== '') last.output = merged;
+    } else {
+      out.push({ ...pending, ...(merged !== '' ? { output: merged } : {}) });
+    }
     pending = null;
+    emitted = false;
   }
   entry.pending = pending;
+  entry.emitted = emitted;
   if (execCursors.size >= EXEC_CURSOR_MAX) {
     const oldest = execCursors.keys().next().value;
     if (oldest !== undefined) execCursors.delete(oldest);
