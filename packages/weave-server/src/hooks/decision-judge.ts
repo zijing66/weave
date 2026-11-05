@@ -1,4 +1,4 @@
-import type { ConditionDecision, ConditionJudge } from './orchestration-engine.js';
+import type { ConditionDecision, ConditionJudge } from './decision-kernel.js';
 
 /**
  * 编排条件边的决策模型判断（Jev 兼容 / System One 接口）：`POST {baseUrl}/v1/systemone`
