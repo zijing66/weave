@@ -209,6 +209,8 @@ export const zh = {
   'init.commit.failed': '创建 commit 失败：{error}',
   'init.commit.done': '已创建提交 {sha}（{count} 个文件）',
   'init.exclude.done': '已登记本机文件免提交：{file}',
+  'init.rerere.enabled': '已开启 git rerere（自动重放已解决的冲突）',
+  'init.rerere.failed': '开启 git rerere 失败：{error}',
   'init.instruction.localCreated': '已写入本机指令文件 {file}（不入版本库）',
   'init.instruction.agentsMerged': '已把 weave 块并入 {file}（codex 从它读取共享指令）',
   'init.hooksUnknownKeys': '已忽略未知的 hooks 事件名：{keys}',

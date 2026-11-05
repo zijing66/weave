@@ -25,7 +25,7 @@ import { writeInstructionFiles } from './instruction-files.js';
 import { buildInitRegistry } from './wiring.js';
 import { type SurfacePipeline } from './types.js';
 import { createPromptPort, type PromptPort } from './prompt.js';
-import { commitInitOutputs, findGitRepoRoot } from './git-commit.js';
+import { commitInitOutputs, defaultGitExec, findGitRepoRoot } from './git-commit.js';
 import { ensureGitExcludes } from './git-exclude.js';
 import { ensureHarnessInstalled, prewriteTrust } from './provision.js';
 import { t } from '../i18n/index.js';
@@ -181,6 +181,9 @@ export async function executeInit(
   // 列进待提交清单（细节见 git-exclude.ts）----
   await ensureGitExcludes(targetDir);
 
+  // ---- Step 10.6: git rerere 默认开（项目级配置、双 harness 共享）----
+  await ensureRerereEnabled(targetDir);
+
   // ---- Step 11: 询问是否提交 init 生成物（嵌套 gitignore 已落盘，add 才能
   // 把 harness 目录裁剪到只剩 gitignore 文件本身）——细节与九闸见 git-commit.ts ----
   await commitInitOutputs({ targetDir, interactive, selected, prompt });
@@ -258,6 +261,32 @@ async function ensureNestedGitignore(
   await ensureDir(dir);
   await writeFile(file, NESTED_GITIGNORE, 'utf-8');
   created.files.push(file);
+}
+
+/**
+ * Enable `git rerere` in the project's repo config (design 6.5-1: rerere
+ * remembers resolved conflict hunks and replays them — L1 mechanical layer).
+ * Only for git repos (the temp .git check is conservative: a `.git` file as in
+ * worktrees also counts since `git config` resolves it); idempotent — already
+ * enabled means a no-op. Failures degrade to a dim note and never break init.
+ */
+export async function ensureRerereEnabled(targetDir: string): Promise<void> {
+  const repoRoot = await findGitRepoRoot(targetDir);
+  if (!repoRoot) return;
+
+  try {
+    const check = await defaultGitExec('git', ['config', '--local', 'rerere.enabled'], {
+      cwd: repoRoot,
+    });
+    if (check.code === 0 && check.stdout.trim() === 'true') return;
+    const res = await defaultGitExec('git', ['config', '--local', 'rerere.enabled', 'true'], {
+      cwd: repoRoot,
+    });
+    if (res.code !== 0) throw new Error(res.stderr.trim() || 'git config failed');
+    if (check.code !== 0) logger.dim(t('init.rerere.enabled'));
+  } catch (err) {
+    logger.warn(t('init.rerere.failed', { error: (err as Error).message }));
+  }
 }
 
 /** Read a file's text, or null when absent. Any other error propagates. */
