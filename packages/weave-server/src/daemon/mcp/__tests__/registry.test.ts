@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MCP_SERVERS, mcpServerForPath } from '../registry.js';
-import { orchestrationToolRequest } from '../orchestration.js';
+import { toolRequest as orchestrationToolRequest } from '../orchestration.js';
 
 /**
  * MCP-1 对账测试（「及时更新」的机器侧底线）：每个工具转发的 path 必须命中
@@ -39,7 +39,80 @@ describe('MCP 注册表', () => {
     expect(mcpServerForPath('/mcp/sessions')).toBeNull();
   });
 
-  it('对账：每个工具转发的请求都命中 daemon 路由（非 404）', async () => {
+  it('既有 /mcp 调用回归：tools/list 出 10 工具、tools/call 走通编排转发', { timeout: 30_000 }, async () => {
+    const { openDatabase } = await import('../../../db/db.js');
+    const { ProjectRepository } = await import('../../../repositories/projects.js');
+    const { createWeaveServer } = await import('../../../daemon/server.js');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const projectDir = mkdtempSync(join(tmpdir(), 'weave-mcp-e2e-'));
+    const db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    const projectId = projects.register({ path: projectDir, name: 'e2e', token: 't', source: 'init' }).id;
+    const { OrchestrationRepository, OrchestrationRunRepository } = await import(
+      '../../../repositories/orchestrations.js'
+    );
+    const { SessionRepository } = await import('../../../repositories/sessions.js');
+    const sessions = new SessionRepository(db);
+    for (const id of ['s1', 's2']) sessions.touch(id, projectId);
+    // MCP 工具的转发目标 = deps.port（ctx.port）——先探一个空端口再起 server，
+    // 让 deps.port 与实际监听一致（port:0 的随机分配拿不到 deps 里的回填）。
+    const { createServer: netCreate } = await import('node:net');
+    const probe = netCreate();
+    const port = await new Promise<number>((resolve) => {
+      probe.listen(0, '127.0.0.1', () => resolve((probe.address() as { port: number }).port));
+    }).finally(() => new Promise<void>((resolve) => probe.close(() => resolve())));
+    const httpServer = createWeaveServer({
+      projects,
+      port,
+      orchestrations: new OrchestrationRepository(db),
+      orchestrationRuns: new OrchestrationRunRepository(db),
+      hookSessions: sessions,
+    });
+    await new Promise<void>((resolve) => httpServer.listen(port, '127.0.0.1', resolve));
+    const call = async (method: string, params?: unknown): Promise<{ status: number; body: any }> => {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      const listed = await call('tools/list');
+      expect(listed.status).toBe(200);
+      const names = (listed.body.result.tools as Array<{ name: string }>).map((t) => t.name);
+      expect(names).toContain('list_orchestrations');
+      expect(names).toHaveLength(10);
+
+      const created = await call('tools/call', {
+        name: 'create_orchestration',
+        arguments: {
+          name: 'recon',
+          nodes: [{ id: 's1', kind: 'session' }, { id: 's2', kind: 'session' }],
+          edges: [{ id: 'e1', from: 's1', to: 's2', text: 'x' }],
+        },
+      });
+      expect(created.status).toBe(200);
+      // 工具转发失败会在 isError 里（不是 structuredContent）——失败即断言失败并带出文本
+      expect(
+        created.body.result.structuredContent ??
+          `isError: ${(created.body.result.content as Array<{ text: string }>)[0]?.text}`,
+      ).toMatchObject({ ok: true });
+      expect(created.body.result.structuredContent.orchestration.name).toBe('recon');
+
+      const runs = await call('tools/call', { name: 'list_runs', arguments: {} });
+      expect(runs.body.result.structuredContent).toMatchObject({ runs: [] });
+    } finally {
+      httpServer.close();
+      db.close();
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('对账：每个工具转发的请求都命中 daemon 路由（非 404）', { timeout: 30_000 }, async () => {
     const { openDatabase } = await import('../../../db/db.js');
     const { ProjectRepository } = await import('../../../repositories/projects.js');
     const { mkdtempSync, rmSync } = await import('node:fs');
