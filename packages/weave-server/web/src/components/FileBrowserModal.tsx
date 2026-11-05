@@ -10,6 +10,8 @@ import {
   ChevronLeft,
   ChevronUp,
   Download,
+  Eye,
+  FileCode,
   Folder,
   Hash,
   Loader2,
@@ -223,6 +225,9 @@ export function FileBrowserModal({
   const [rowMenu, setRowMenu] = useState<{ x: number; y: number; entry: ProjectFileEntry } | null>(null);
   /** 全项目第一屏的选中项目（↑↓/Enter 与 hover 共用；进入文件树后闲置）。 */
   const [projSelected, setProjSelected] = useState(0);
+  /** markdown 原始视图开关（默认渲染视图）：查找/跳行只认原始视图——渲染成
+   *  prose 之后 CodeMirror 不在了，高亮与跳转没有落点。换文件重置回预览。 */
+  const [rawView, setRawView] = useState(false);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
   /** 全项目模式：null = 还没进任何项目（中栏第一屏列项目）；非 null = 已进入。
    *  面包屑退回根（goTo('')）时回到项目列表。 */
@@ -400,12 +405,13 @@ export function FileBrowserModal({
   /** 行号选区已退役（用户裁决：那是引用选择器的行为，浏览器不需要）——
    *  CodePreview 的 `lines`/`onGutterClick` 传空壳，行号纯展示。 */
 
-  // 换一条选中：查找条重来
+  // 换一条选中：查找条重来；markdown 回到渲染视图
   useEffect(() => {
     setBar(null);
     setFind('');
     setJump('');
     setHits(null);
+    setRawView(false);
   }, [current?.path]);
 
   /** ESC 逐层退：查找条 → 全屏 → 关 modal（焦点可能在预览里，挂 document 捕获阶段）。 */
@@ -1037,32 +1043,56 @@ export function FileBrowserModal({
         </span>
         {current?.kind === 'file' && previewKindOf(current.name) === 'text' && preview?.text != null && (
           <>
-            <Tooltip label={t('tasks.fileFind')}>
-              <button
-                type="button"
-                aria-label={t('tasks.fileFind')}
-                onClick={() => setBar(bar === 'find' ? null : 'find')}
-                className={cn(
-                  'rounded p-0.5 hover:text-neutral-100',
-                  bar === 'find' ? 'text-blue-300' : 'text-neutral-400',
-                )}
-              >
-                <TextSearch className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
-            <Tooltip label={t('tasks.fileGoToLine')}>
-              <button
-                type="button"
-                aria-label={t('tasks.fileGoToLine')}
-                onClick={() => setBar(bar === 'line' ? null : 'line')}
-                className={cn(
-                  'rounded p-0.5 hover:text-neutral-100',
-                  bar === 'line' ? 'text-blue-300' : 'text-neutral-400',
-                )}
-              >
-                <Hash className="h-3.5 w-3.5" />
-              </button>
-            </Tooltip>
+            {/* markdown 专有：渲染 ⇄ 原始切换（渲染态 CodeMirror 不在，查找无落点） */}
+            {MARKDOWN_EXT.test(current.name) && (
+              <Tooltip label={rawView ? t('tasks.fileRenderedView') : t('tasks.fileRawView')}>
+                <button
+                  type="button"
+                  aria-label={rawView ? t('tasks.fileRenderedView') : t('tasks.fileRawView')}
+                  onClick={() => {
+                    setRawView((v) => !v);
+                    setBar(null);
+                  }}
+                  className={cn(
+                    'rounded p-0.5 hover:text-neutral-100',
+                    rawView ? 'text-blue-300' : 'text-neutral-400',
+                  )}
+                >
+                  {rawView ? <Eye className="h-3.5 w-3.5" /> : <FileCode className="h-3.5 w-3.5" />}
+                </button>
+              </Tooltip>
+            )}
+            {/* 查找/跳行只在原始视图可用：渲染态点了等于无处高亮，不如不摆 */}
+            {(!MARKDOWN_EXT.test(current.name) || rawView) && (
+              <>
+                <Tooltip label={t('tasks.fileFind')}>
+                  <button
+                    type="button"
+                    aria-label={t('tasks.fileFind')}
+                    onClick={() => setBar(bar === 'find' ? null : 'find')}
+                    className={cn(
+                      'rounded p-0.5 hover:text-neutral-100',
+                      bar === 'find' ? 'text-blue-300' : 'text-neutral-400',
+                    )}
+                  >
+                    <TextSearch className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
+                <Tooltip label={t('tasks.fileGoToLine')}>
+                  <button
+                    type="button"
+                    aria-label={t('tasks.fileGoToLine')}
+                    onClick={() => setBar(bar === 'line' ? null : 'line')}
+                    className={cn(
+                      'rounded p-0.5 hover:text-neutral-100',
+                      bar === 'line' ? 'text-blue-300' : 'text-neutral-400',
+                    )}
+                  >
+                    <Hash className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
+              </>
+            )}
           </>
         )}
       </div>
@@ -1205,8 +1235,9 @@ export function FileBrowserModal({
           </a>
         </div>
       ) : current?.kind === 'file' ? (
-        current && MARKDOWN_EXT.test(current.name) && preview?.path === current.path && preview.text != null ? (
+        current && MARKDOWN_EXT.test(current.name) && !rawView && preview?.path === current.path && preview.text != null ? (
           // markdown 复用全局渲染管线（FileViewer 同款：frontmatter 卡 + prose）。
+          // 原始视图（rawView）才走 CodeMirror——查找/跳行只在那里有落点。
           <MarkdownPreview text={preview.text} />
         ) : preview?.path === current.path && preview.text != null ? (
           <CodePreview text={preview.text} lines={null} viewRef={viewRef} onGutterClick={() => {}} />
@@ -1469,14 +1500,16 @@ export function FileBrowserModal({
           </div>
         </div>
         {/* 行右键菜单 — portal 到 body：弹窗容器的 overflow 会裁剪 fixed 后代。
-            只有一项：复制绝对路径（项目根 + 条目相对路径）。 */}
-        {rowMenu &&
+            两项：复制绝对路径（文件/目录）+ 下载（仅文件）。 */}
+        {rowMenu && (
+          // 菜单里放 <a download>：click 时浏览器原生转交下载管理器/本地应用，
+          // 不用 fetch 拼字节（认证 cookie 同域自动带上）。
           createPortal(
             <div
               ref={rowMenuRef}
               style={{
                 left: Math.min(rowMenu.x, window.innerWidth - 220),
-                top: Math.min(rowMenu.y, window.innerHeight - 64),
+                top: Math.min(rowMenu.y, window.innerHeight - 96),
               }}
               className="fixed z-[65] w-52 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
               onContextMenu={(e) => e.preventDefault()}
@@ -1496,9 +1529,20 @@ export function FileBrowserModal({
               >
                 {t('tasks.fileCopyAbsPath')}
               </button>
+              {rowMenu.entry.kind === 'file' && (
+                <a
+                  href={api.projectFileUrl(activeProjectId, rowMenu.entry.path)}
+                  download={rowMenu.entry.name}
+                  onClick={() => setRowMenu(null)}
+                  className="flex w-full items-center px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-edge/[0.06] hover:text-neutral-100"
+                >
+                  {t('tasks.fileDownload')}
+                </a>
+              )}
             </div>,
             document.body,
-          )}
+          )
+        )}
       </div>
     </div>,
     document.body,
