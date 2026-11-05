@@ -1,5 +1,6 @@
 /**
- * .mcp.json 生成器已迁 `@weavecode/harness`（claude 专属表示法，daemon 的 init
- * 文件漂移检测也要用同一份）；此处 re-export 保持存量 import 与测试零改动。
+ * .mcp.json 合并/剥除已迁 `@weavecode/harness`（claude 专属表示法）；此处
+ * re-export 保持存量 import 与测试零改动。生成器 generateMcpJson 已随
+ * daemon 托管 MCP 退役。
  */
-export { generateMcpJson, mergeMcpJson, stripWeaveMcp, type McpGeneratorInput } from '@weavecode/harness';
+export { mergeMcpJson, stripWeaveMcp } from '@weavecode/harness';

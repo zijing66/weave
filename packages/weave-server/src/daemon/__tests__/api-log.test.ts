@@ -89,6 +89,28 @@ describe('ApiLogger 落盘', () => {
     expect(entry!.aborted).toBeUndefined();
   });
 
+  it('origin 列：x-weave-origin 头优先、webhook 路径派生、缺省 user', async () => {
+    const dir = tmpDir();
+    const logger = new ApiLogger({ dir });
+    const server = await withServer(logger, (_req, res) => sendJson(res, 200, { ok: true }));
+    try {
+      await fetch(`${server.url}/projects`);
+      await fetch(`${server.url}/mcp`, { headers: { 'x-weave-origin': 'mcp' } });
+      await fetch(`${server.url}/webhooks/orchestrate/tok123`, { method: 'POST', body: '{}' });
+      await fetch(`${server.url}/health`, { headers: { 'x-weave-origin': 'bogus' } });
+      await logger.onIdle();
+    } finally {
+      await server.close();
+    }
+    const entries = entriesOf(dir);
+    expect(entries.find((e) => e.path.startsWith('/projects'))!.origin).toBe('user');
+    expect(entries.find((e) => e.path.startsWith('/mcp'))!.origin).toBe('mcp');
+    expect(entries.find((e) => e.path.startsWith('/webhooks/orchestrate/'))!.origin).toBe('webhook');
+    // 词表外的头不当来源（不信任任意值），回落 user
+    expect(entries.find((e) => e.path.startsWith('/health'))!.origin).toBe('user');
+    expect(entries.find((e) => e.path.startsWith('/health'))!.path).toBe('/health');
+  });
+
   it('请求头不落盘（cookie/authorization/x-weave-local 的值绝不出现在行里）', async () => {
     const dir = tmpDir();
     const logger = new ApiLogger({ dir });

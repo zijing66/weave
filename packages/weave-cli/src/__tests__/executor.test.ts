@@ -409,22 +409,22 @@ describe('executeInit', () => {
     expect(content.match(/<!-- weave:start -->/g)?.length).toBe(1);
   });
 
-  // ---- .mcp.json: user file, append-only servers ----
-  it('merges the weave server into an existing .mcp.json', async () => {
+  // ---- .mcp.json: weave server 生成已退役（daemon 托管 MCP）——init 不再写 ----
+  it('weave server 退役后 init 不写 .mcp.json（用户文件零改动）', async () => {
     const mcpPath = path.join(tmpDir, '.mcp.json');
-    await writeFile(mcpPath, JSON.stringify({
+    const original = JSON.stringify({
       mcpServers: { 'my-own': { command: 'foo' } },
-    }, null, 2) + '\n');
+    }, null, 2) + '\n';
+    await writeFile(mcpPath, original);
 
     const result = await executeInit({
       ...BASE_OPTIONS,
       targetDir: tmpDir,
       mcp: { weave: true },
     });
-    expect(result.merged).toContain(mcpPath);
-    const merged = JSON.parse(await readFile(mcpPath, 'utf-8'));
-    expect(merged.mcpServers['my-own']).toEqual({ command: 'foo' });
-    expect(merged.mcpServers.weave).toBeDefined();
+    expect(result.merged).not.toContain(mcpPath);
+    expect(result.created.files).not.toContain(mcpPath);
+    expect(await readFile(mcpPath, 'utf-8')).toBe(original);
   });
 
   it('leaves a corrupt .mcp.json untouched', async () => {
@@ -437,7 +437,6 @@ describe('executeInit', () => {
       targetDir: tmpDir,
       mcp: { weave: true },
     });
-    expect(result.skipped).toContain(mcpPath);
     expect(await readFile(mcpPath, 'utf-8')).toBe(corrupt);
   });
 });
