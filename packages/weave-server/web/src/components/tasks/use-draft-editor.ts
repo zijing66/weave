@@ -167,12 +167,22 @@ const insertText = (text: string): void => {
 /** 换行（移动端那枚按钮）：移动端没有 Shift+Enter 这个手势。 */
 const insertNewline = (): void => insertText('\n');
 
+/** 光标落点标记的序号：`insertHTML` 插进去的是**克隆**，手上那批节点不在 DOM 里
+ *  （按它们找尾巴永远找不到），只能自己在 HTML 尾巴塞一枚空 span 当锚。 */
+let caretMarkSeq = 0;
+const CARET_MARK_ATTR = 'data-weave-caret';
+
 /**
  * 用 `insertHTML` 插一批节点（粘贴 / 附件 / 引用回填共用）：`insertText` 会把
  * 插入并进「打字」撤销组，Ctrl+Z 一口气把之前的打字全撤掉；`insertHTML` 是
  * 独立撤销步，与原生粘贴一致（2026-10-31 Chromium 实测）。savedRange 有值且仍在
  * 框内时先恢复选区（选择器记下的位置），否则从当前光标插；不支持 insertHTML
  * 就退回手插节点（那条路没有撤销，但不至于插不进）。
+ *
+ * **光标一律落在插入内容之后**：insertHTML 插 `contenteditable=false` 的胶囊后，
+ * Chromium 会把光标丢到胶囊**前面**（粘贴进来的胶囊尤其明显——用户接着敲字却插到了
+ * 胶囊前）。所以插入时在尾巴带一枚空 span 当锚，插完按它在 DOM 里的实际位置摆光标
+ * 再摘掉：锚的位置就是「整批内容之后」，软换行/文本节点切分都不用再猜。
  */
 const insertNodesUndoably = (el: HTMLDivElement, nodes: Node[], savedRange: Range | null): void => {
   el.focus({ preventScroll: true });
@@ -187,9 +197,10 @@ const insertNodesUndoably = (el: HTMLDivElement, nodes: Node[], savedRange: Rang
   }
   const wrapper = document.createElement('div');
   nodes.forEach((n) => wrapper.appendChild(n));
+  const mark = `${++caretMarkSeq}`;
   let ok = false;
   try {
-    ok = document.execCommand('insertHTML', false, wrapper.innerHTML);
+    ok = document.execCommand('insertHTML', false, `${wrapper.innerHTML}<span ${CARET_MARK_ATTR}="${mark}"></span>`);
   } catch {
     ok = false;
   }
@@ -197,12 +208,13 @@ const insertNodesUndoably = (el: HTMLDivElement, nodes: Node[], savedRange: Rang
     insertNodes(nodes);
     return;
   }
-  // insertHTML 插 contenteditable=false 元素后光标会被 Chromium 丢到胶囊**前面**：
-  // 显式移到末个插入节点之后，接着敲正文才连贯
-  const tail = el.contains(nodes[nodes.length - 1] ?? null) ? nodes[nodes.length - 1] : null;
-  if (tail) {
+  const anchor = el.querySelector(`span[${CARET_MARK_ATTR}="${mark}"]`);
+  if (anchor?.parentNode) {
+    const parent = anchor.parentNode;
+    const at = Array.prototype.indexOf.call(parent.childNodes, anchor) as number;
+    anchor.remove();
     const after = document.createRange();
-    after.setStartAfter(tail);
+    after.setStart(parent, Math.min(at, parent.childNodes.length));
     after.collapse(true);
     const sel = window.getSelection();
     sel?.removeAllRanges();

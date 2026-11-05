@@ -217,7 +217,7 @@ export function NarrationStack({
               key={i}
               aria-hidden
               className={cn(
-                'absolute rounded-lg border border-edge/[0.08] bg-neutral-800/40',
+                'absolute rounded-lg border border-edge/[0.14] bg-neutral-800/40',
                 // 深层更淡：牌堆的远近感
                 i === 0 ? 'opacity-70' : i === 1 ? 'opacity-45' : i === 2 ? 'opacity-25' : 'opacity-15',
               )}
@@ -232,7 +232,7 @@ export function NarrationStack({
           {/* 顶卡：当前段完整正文（复用普通气泡的壳与 Collapsible） */}
           <div
             key={seg.key}
-            className="relative rounded-lg border border-edge/[0.08] bg-neutral-800/50 px-2 py-1.5 weave-card-in"
+            className="relative rounded-lg border border-edge/[0.1] bg-neutral-900 px-2 py-1.5 weave-card-in"
           >
             <span className="mb-0.5 flex items-center gap-1.5 text-10 text-neutral-600">
               {formatStamp(seg.at)}

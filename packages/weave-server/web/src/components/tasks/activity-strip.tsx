@@ -329,13 +329,15 @@ export function ActivityButton({ sessionId, busy }: { sessionId: string; busy: b
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'inline-flex shrink-0 items-center gap-1.5 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-7 max-lg:px-1',
+          // 图标与图片/文件那两个同尺寸（12px、gap-1）；宽度恒按内容长（窄屏也
+          // 不压成方钮——这枚按钮后面还挂着运行中的计数）
+          'inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:border-blue-500/40 hover:text-blue-300 disabled:opacity-40 max-lg:h-6 max-lg:px-1',
           open && 'border-blue-500/40 text-blue-300',
         )}
       >
         <Bot
           className={cn(
-            'h-4 w-4 shrink-0',
+            'h-3 w-3 shrink-0',
             busy && running.agents > 0 && 'animate-pulse text-blue-400',
           )}
         />

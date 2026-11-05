@@ -131,9 +131,9 @@ describe('layoutConversation', () => {
     expect(taller.bubbles[0]!.w).toBeLessThanOrEqual(IMG_WIDTH - 48);
   });
 
-  it('气泡配色按面板那四种分：weave 投递 / 手敲 / 失败 / 回复', () => {
+  it('气泡配色按面板那三种分：发送 / 失败 / 回复（发送不分投递来源）', () => {
     expect(variantOf({ role: 'user', at: AT, text: '', viaWeave: true })).toBe('user');
-    expect(variantOf({ role: 'user', at: AT, text: '' })).toBe('userTyped');
+    expect(variantOf({ role: 'user', at: AT, text: '' })).toBe('user');
     expect(variantOf({ role: 'user', at: AT, text: '', failed: true })).toBe('failed');
     expect(variantOf({ role: 'assistant', at: AT, text: '' })).toBe('assistant');
     const v = layoutConversation(measure, [{ role: 'assistant', at: AT, text: '', failed: true }], opts);

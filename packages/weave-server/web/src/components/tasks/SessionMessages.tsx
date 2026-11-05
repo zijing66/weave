@@ -1056,9 +1056,11 @@ export function SessionMessages({
                     )}
                   >
                     {selecting && <CheckBox on={picked.has(m.key)} className="mr-1.5 mt-1" />}
-                    {/* 气泡色分两侧：**回复（左）走中性灰、发送（右）走蓝**，一眼分得开；
-                        同一侧再按投递来源分深浅——weave 投递的深一点，终端里手敲的浅一点
-                        （tag/回执点另说，那两样才是「投递成功与否」） */}
+                    {/* 气泡色分两侧：**回复（左）走中性灰、发送（右）走蓝**，一眼分得开。
+                        送端不再按投递来源分深浅（原先 pipe 深一档、手敲浅一档）：递送行
+                        送达即删，下一拍同一条就落到「没有 pipe」那一档——新发的那条会比
+                        历史亮/暗一下，看着像换了一条消息（用户两次报「色差」）。来源
+                        改由 weave tag / 回执点交代，那两样才是「投递成功与否」 */}
                     <div
                       className={cn(
                         'min-w-0 max-w-[85%] overflow-x-auto rounded-lg border px-2 py-1.5',
@@ -1066,9 +1068,7 @@ export function SessionMessages({
                         // 一眼看出这条是宿主本地执行的命令、不是发给模型的 prompt
                         m.commandSigil === '!'
                           ? BASH_ECHO_CLASS.bubble
-                          : pipe
-                            ? 'border-blue-500/40 bg-blue-900'
-                            : 'border-blue-500/30 bg-blue-950',
+                          : 'border-blue-500/40 bg-blue-900',
                         // 被回退的段落：红虚线框 + 保留展示（与回复气泡同口径，不降不透明度）
                         m.rewound === true && 'border-dashed border-red-500/70',
                       )}
