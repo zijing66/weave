@@ -20,6 +20,7 @@ import {
   failedTail,
   removableOf,
   withCommands,
+  withLocalOptimistic,
   withNarration,
   withPlan,
   withPreQuestion,
@@ -163,7 +164,9 @@ export function useConvThread(deps: {
   /** 在途投递面（消息域管道视图，送达即删的本地队列 + 内存态）。 */
   const refreshMessages = useCallback(async (): Promise<void> => {
     try {
-      setMessages(await api.listSessionMessages(sessionId));
+      const rows = await api.listSessionMessages(sessionId);
+      // 全量替换要给还没落定的本地乐观行让路（拉起会话最长 15s 服务端还没有它）
+      setMessages((prev) => withLocalOptimistic(prev, rows, sessionId));
       setError(null);
     } catch (e) {
       fail(e);

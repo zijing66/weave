@@ -8,6 +8,7 @@ import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { WatchService } from '../watch/watch-service.js';
 import { createWeaveServer } from '../daemon/server.js';
+import { ApiLogger } from '../daemon/api-log.js';
 
 vi.setConfig({ testTimeout: 20000 });
 
@@ -36,6 +37,8 @@ describe('daemon server — GET /installations', () => {
   let projA: string;
   let projB: string;
   let watch: WatchService;
+  // 接口日志写入是异步串行链：不注入就拿共享实例，清理时删不掉它的目录。
+  let apiLog: ApiLogger;
   const envBak: Record<string, string | undefined> = {};
   let rows: Row[];
 
@@ -83,7 +86,8 @@ describe('daemon server — GET /installations', () => {
 
     watch = new WatchService(projects, { debounceMs: 30, reconcileMs: 60_000 });
     watch.start();
-    server = createWeaveServer({ projects, port: 0, watch });
+    apiLog = new ApiLogger();
+    server = createWeaveServer({ projects, port: 0, watch, apiLog });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
 
@@ -101,9 +105,10 @@ describe('daemon server — GET /installations', () => {
     rows = ((await res.json()) as { installations: Row[] }).installations;
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     watch.stop();
-    server.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await apiLog.onIdle();
     db.close();
     for (const [k, v] of Object.entries(envBak)) {
       if (v === undefined) delete process.env[k];

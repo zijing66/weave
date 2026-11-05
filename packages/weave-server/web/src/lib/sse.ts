@@ -63,6 +63,8 @@ export interface HookFrame {
   segs?: Array<{ at: string | null; text: string }>;
   /** message.* 帧：投递行的管道 id（就地改那一行，不等全量重拉）。 */
   messageId?: string;
+  /** message.opening 帧：这一步要拉起的判死会话（目标会话 + 正文引用的会话）。 */
+  targets?: string[];
   // ---- 编排域帧（orchestration.run / orchestration.delivery）：两条都带全量
   // 轻量态（投递数 + 每会话待回计数），画布就地更新、不重拉。 ----
   orchestrationId?: number;

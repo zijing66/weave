@@ -1115,6 +1115,30 @@ export class MessageDeliverer {
   }
 
   /**
+   * 关掉旁路会话（/btw）面板：**恰发一记 Kitty 编码的 Esc**，不读屏、不走
+   * `interrupt` 的键梯子。
+   *
+   * 为什么单开一个方法（2026-11-05 定案）：`interrupt` 自 2026-10-30 起是三键梯子
+   * （ESC_KITTY → 裸 ESC → Ctrl+B），每记之后读屏找 `Interrupted` / `· done`。
+   * 面板开着时第一记被面板消费关掉，屏上却没有那两句证据 ⇒ 梯子继续往下打：裸
+   * ESC 被 Kitty 协议吞掉，Ctrl+B 把跑着的工具转后台——主回合就这么被摁掉。收尾
+   * 只要那第一记。
+   *
+   * 残余代价照 2026-10-19 口径：用户已自己关掉面板且回合在跑时，这一记会打断
+   * 那一轮——只打一次、不重试、不补键。
+   */
+  async closeSidePanel(sessionId: string): Promise<AnswerResult> {
+    const target = await this.sessionKeysTarget(sessionId, '击键');
+    if (!target.ok) return target;
+    try {
+      await target.terminal.sendKeys(target.paneId, ESC_KITTY);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
    * 关掉会话所在的 pane（会话生命周期收尾）：宿主随 pane 一起退出——这是「退出
    * 会话」的远程等价（harness 没有「请退出」这种信号）。**会话行与它的对话照常
    * 保留**（那是历史，同 SessionEnd 口径），只把它从「活着」的世界里摘出去。

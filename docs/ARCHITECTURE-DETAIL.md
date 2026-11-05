@@ -580,7 +580,7 @@ claude = `/btw`，入口 = 对话面板头部**事件链左侧**那枚按钮 →
 - 回答由之后那条采集事件认领——判据归 harness 能力面 `MessagingSurface.sideQuestion`（`SideQuestionSpec.command/validate/answerOf`；claude 的 `answerOf` = `SubagentStop` 且宿主**没给这个 agent 留转录**（普通 / skill 子 agent 都有 `subagents/agent-*.jsonl`，skipTranscript 的 fork 才没有）+ 压缩摘要形态排除 + **后台任务进度播报排除**（单行 ≤80 字符、无 CJK、进行体动词开头——这类 narration fork 与侧问回答事件形状逐字节相同，不加门会先到抢答、真回答被静默丢弃），server/web 不认识宿主事件名）。
 - 认领 = 该会话**最早一条 pending 且提问在 10 分钟窗口内**的行（条件更新、幂等；窗口外落 `timeout`，读列表前惰性跑一次、不另起定时器）；人工在宿主面板里发的侧问没有 pending 行、天然不认领。认领后行在 **30s 稳定窗**内仍可被**严格更高分**候选替换（`answerScore`：语种一致 +2、长度 ≥120 +1、与问句 bigram Dice ≥0.15 +1，纯机械；平分保持现任 = 先到者赢），替换重发 `sideQuestion.answered` 帧；窗闭落定才发收尾 ESC——误认领被替换就不再多打一记。
 
-**宿主的 btw 面板是 local JSX UI、开着就一直吃键盘**（字母与方向键都是它自己的快捷键）⇒ 不收起来，weave 后续打到这个 pane 的层② 投递会落进面板里白丢一条：故**认领到回答的那一刻补一记 ESC**（`MessageDeliverer.interrupt`，ESC 就是面板的关闭键；主回合在跑时这一记由面板消费、回合不受影响——代价是用户若已自己关掉面板而回合在跑，这记会打断那一轮，故只打这一次、不延时也不重试）。
+**宿主的 btw 面板是 local JSX UI、开着就一直吃键盘**（字母与方向键都是它自己的快捷键）⇒ 不收起来，weave 后续打到这个 pane 的层② 投递会落进面板里白丢一条：故**认领到回答的那一刻补一记 ESC**，走 `MessageDeliverer.closeSidePanel`——**恰发一记 `ESC_KITTY`，不读屏、不走 `interrupt` 的键梯子**（面板被这一记消费关掉后屏上没有 `Interrupted`/`· done` 证据，梯子会继续打裸 ESC 与 Ctrl+B，Ctrl+B 把跑着的工具转后台 = 收尾把当前回合摁掉；2026-11-05 实测回归）。ESC 就是面板的关闭键；主回合在跑时这一记由面板消费、回合不受影响——代价是用户若已自己关掉面板而回合在跑，这记会打断那一轮，故只打这一次、不延时也不重试。
 
 界面：
 

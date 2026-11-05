@@ -30,6 +30,7 @@ import {
   type LifecycleGroup,
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
+import { openTerminalStateOf as openTerminalButtonState } from './conv-model';
 import { canInterrupt, hasTurnSignal, isSessionBusy } from './session-status';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
@@ -210,13 +211,64 @@ export function TasksPanel({
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
 
+  /** 服务端正在为它拉起终端的会话（`message.opening` 帧 = 投递前对判死目标走
+   *  `ensureOpen`，最长 15s）：会话行的终端按钮这期间必须转圈并禁用，否则再点一次
+   *  会 spawn 第二个 resume 抢同一会话。失败不收绿也要收圈，故挂兜底超时。 */
+  const [openingIds, setOpeningIds] = useState<ReadonlySet<string>>(() => new Set());
+  const openingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const clearOpening = useCallback((sessionId: string): void => {
+    const timer = openingTimers.current[sessionId];
+    if (timer) {
+      clearTimeout(timer);
+      delete openingTimers.current[sessionId];
+    }
+    setOpeningIds((prev) => {
+      if (!prev.has(sessionId)) return prev;
+      const next = new Set(prev);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
+  useEffect(
+    () =>
+      subscribeHook(
+        (frame) => {
+          if (frame.kind !== 'message.opening') return;
+          const ids = (frame.targets ?? []).filter(
+            (id) => sessionsRef.current?.find((s) => s.sessionId === id)?.pidAlive !== true,
+          );
+          if (ids.length === 0) return;
+          setOpeningIds((prev) => new Set([...prev, ...ids]));
+          for (const id of ids) {
+            const existing = openingTimers.current[id];
+            if (existing) clearTimeout(existing);
+            openingTimers.current[id] = setTimeout(
+              () => clearOpening(id),
+              OPEN_TERMINAL_ALIVE_MS,
+            );
+          }
+        },
+        ['message.opening'],
+      ),
+    [clearOpening],
+  );
+
   /** 「等已进入」的闸：会话行一变就 poke 一次——开终端与新建会话两个按钮的
-   *  loading 都挂到命中（或超时）为止，不轮询。 */
+   *  loading 都挂到命中（或超时）为止，不轮询。行转绿即摘掉服务端的拉起态。 */
   const gate = useRef(createAwaitGate(OPEN_TERMINAL_ALIVE_MS));
   useEffect(() => {
     gate.current.poke();
-  }, [sessions]);
+    for (const s of sessions ?? []) {
+      if (s.pidAlive) clearOpening(s.sessionId);
+    }
+  }, [sessions, clearOpening]);
   useEffect(() => () => gate.current.releaseAll(), []);
+  useEffect(
+    () => () => {
+      for (const timer of Object.values(openingTimers.current)) clearTimeout(timer);
+    },
+    [],
+  );
 
   /** 等该会话的 claude 进程转绿（或超时）：开终端按钮的 loading 一直挂到这时为止
    *  ——「已 spawn、绿还没到」的空窗里，多点是再起一个 claude --resume 抢同一会话。
@@ -631,8 +683,9 @@ export function TasksPanel({
     [sessions, runOpenTerminal],
   );
   const openTerminalStateOf = useCallback(
-    (sessionId: string) => fb.stateOf(`openTerm:${sessionId}`),
-    [fb],
+    (sessionId: string) =>
+      openTerminalButtonState(fb.stateOf(`openTerm:${sessionId}`), openingIds.has(sessionId)),
+    [fb, openingIds],
   );
 
   /** 关 pane（退出会话）：先弹应用内确认（closePaneTarget）——一键杀宿主的键，

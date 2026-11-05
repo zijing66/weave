@@ -309,8 +309,9 @@ async function main(): Promise<void> {
     bus: hookBus,
     // 稳定窗落定才收起宿主的 btw 面板（一记 ESC）：面板是 local JSX UI，开着会
     // 一直吃键盘——后续投递会落进面板里白丢。ESC 正是它的关闭键。挪到落定点，
-    // 稳定窗内的误认领被替换时就不再多打这一记。
-    settle: (row) => void messageDeliverer.interrupt(row.sessionId),
+    // 稳定窗内的误认领被替换时就不再多打这一记。**只发这一记**：走 interrupt 的
+    // 梯子会把后面的裸 ESC / Ctrl+B 打进主线程（Ctrl+B 转后台 = 收尾杀掉当前回合）。
+    settle: (row) => void messageDeliverer.closeSidePanel(row.sessionId),
   };
   const watch = new WatchService(projects);
   watch.start();

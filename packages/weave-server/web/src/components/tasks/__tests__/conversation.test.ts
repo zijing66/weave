@@ -7,9 +7,11 @@ import {
   failedTail,
   filterThread,
   isGenerating,
+  openTerminalStateOf,
   queueStatusKey,
   removableOf,
   withCommands,
+  withLocalOptimistic,
   withPlan,
   withNarration,
   withPreQuestion,
@@ -1671,5 +1673,50 @@ describe('isRewindCommand（`/rewind` 拦截）', () => {
     expect(isRewindCommand('/Rewind')).toBe(false);
     expect(isRewindCommand('/rewinds')).toBe(false);
     expect(isRewindCommand('')).toBe(false);
+  });
+});
+
+describe('withLocalOptimistic（全量刷新保住还没落定的乐观行）', () => {
+  const local = (over: Partial<SessionMessageRow> = {}): SessionMessageRow =>
+    delivery({ id: 'local:1', text: 'hi', at: at(10), status: 'pending', ...over });
+
+  it('① 服务端还没有这条（拉起会话期间）→ 乐观行原样留在末尾', () => {
+    const rows = [delivery({ id: 'm0', text: '旧消息', at: at(1), status: 'delivered' })];
+    expect(withLocalOptimistic([local()], rows, 's1').map((m) => m.id)).toEqual(['m0', 'local:1']);
+  });
+
+  it('② 服务端出现同文案、不早于它的行 → 乐观行让位（不会重复一条）', () => {
+    const rows = [delivery({ id: 'm1', text: 'hi', at: at(10), status: 'delivering' })];
+    expect(withLocalOptimistic([local()], rows, 's1').map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('③ 同文案连发：服务端只回来一条时只接走一条乐观行', () => {
+    const prev = [local(), local({ id: 'local:2', at: at(11) })];
+    const rows = [delivery({ id: 'm1', text: 'hi', at: at(10), status: 'delivered' })];
+    expect(withLocalOptimistic(prev, rows, 's1').map((m) => m.id)).toEqual(['m1', 'local:2']);
+  });
+
+  it('④ 同文案但服务端那条比它早（历史消息）→ 不让位', () => {
+    const rows = [delivery({ id: 'm-old', text: 'hi', at: at(5), status: 'delivered' })];
+    expect(withLocalOptimistic([local()], rows, 's1').map((m) => m.id)).toEqual(['m-old', 'local:1']);
+  });
+
+  it('⑤ 别的会话的乐观行不保留', () => {
+    expect(withLocalOptimistic([{ ...local(), sessionId: 's2' }], [], 's1')).toEqual([]);
+  });
+});
+
+describe('openTerminalStateOf（终端按钮：本地反馈优先，其次服务端拉起态）', () => {
+  it('本地这次点击的 loading / success 优先（拉起态不覆盖它）', () => {
+    expect(openTerminalStateOf('loading', false)).toBe('loading');
+    expect(openTerminalStateOf('success', true)).toBe('success');
+  });
+
+  it('本地 idle + 服务端正在拉起 → loading（按钮转圈并禁用）', () => {
+    expect(openTerminalStateOf('idle', true)).toBe('loading');
+  });
+
+  it('两边都没有 → idle', () => {
+    expect(openTerminalStateOf('idle', false)).toBe('idle');
   });
 });

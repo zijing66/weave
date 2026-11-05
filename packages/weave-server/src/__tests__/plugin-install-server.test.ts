@@ -9,6 +9,7 @@ import { createClaudePluginSurface, type PluginExecutor } from '@weavecode/harne
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { createWeaveServer } from '../daemon/server.js';
+import { ApiLogger } from '../daemon/api-log.js';
 
 /**
  * 路由面：POST /projects/:id/install 的 plugin 类别（user 档安装管理面，拍板
@@ -21,6 +22,8 @@ let port: number;
 let projectId: number;
 let projectDir: string;
 let base: string;
+// 接口日志写入是异步串行链：不注入就拿共享实例，清理时删不掉它的目录。
+let apiLog: ApiLogger;
 const envBak: Record<string, string | undefined> = {};
 let execCalls: string[][] = [];
 let marketPackDir: string;
@@ -77,17 +80,20 @@ beforeAll(async () => {
   const projects = new ProjectRepository(db);
   const row = projects.register({ path: projectDir, name: 'p', token: 't', source: 'init' });
   projectId = row.id;
+  apiLog = new ApiLogger();
   server = createWeaveServer({
     projects,
     port: 0,
     pluginSurface: createClaudePluginSurface({ exec: fakeExec }),
+    apiLog,
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   port = (server.address() as { port: number }).port;
 });
 
-afterAll(() => {
-  server.close();
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await apiLog.onIdle();
   db.close();
   for (const [k, v] of Object.entries(envBak)) {
     if (v === undefined) delete process.env[k];

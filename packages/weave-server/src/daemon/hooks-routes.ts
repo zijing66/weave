@@ -376,41 +376,48 @@ export async function handleHooksRoutes(
         }
         attachments = refs;
       }
-      // 引用标注的目标会话判死就先拉起（复用编排的 ensureOpen）：`#` 只是收件人
-      // 标注、代投归宿主模型，但目标没开时宿主 SendMessage 必 unreachable——
-      // 用户要的是「到 TUI 前先把它拉起来」。拉起失败即拒发（不当没看见）。
+      // 目标会话自己判死、或引用标注的目标判死，都先拉起（复用编排的 ensureOpen）：
+      // 没开着的会话发不进消息，与其回「先打开再重发」，不如替你打开；`#` 只算收件人
+      // 标注（代投仍归宿主模型），但目标没开时宿主 SendMessage 必 unreachable。
+      // 拉起失败即拒发（不当没看见）。
       const refs = referencedSessionIds(body.text).filter((id) => id !== sessionId);
-      if (refs.length > 0) {
+      const liveness = combinedLivenessOf();
+      // 判活要用带派生的行（harness / lastEventType / eventCount），单条查询没有
+      const rows = hookSessions.listWithCounts();
+      const isDead = (id: string): boolean => {
+        const row = rows.find((r) => r.sessionId === id);
+        return !!row && pidAliveOf(row, liveness) === false;
+      };
+      const dead: string[] = [];
+      if (isDead(sessionId)) dead.push(sessionId);
+      for (const id of refs) {
+        if (!rows.some((r) => r.sessionId === id)) {
+          sendJson(res, 404, { error: `Referenced session not found: ${id}` });
+          return true;
+        }
+        if (isDead(id)) dead.push(id);
+      }
+      if (dead.length > 0) {
         if (!deps.ensureOpen) {
           sendJson(res, 503, { error: 'Terminal auto-open unavailable' });
           return true;
         }
-        const liveness = combinedLivenessOf();
-        // 判活要用带派生的行（harness / lastEventType / eventCount），单条查询没有
-        const rows = hookSessions.listWithCounts();
-        const dead: string[] = [];
-        for (const id of refs) {
-          const row = rows.find((r) => r.sessionId === id);
-          if (!row) {
-            sendJson(res, 404, { error: `Referenced session not found: ${id}` });
+        // 拉起最长 15s：先广播一帧，发送方的乐观行改显「拉起会话中」再等
+        deps.hookBus?.emit({
+          kind: 'message.opening',
+          sessionId,
+          targets: dead,
+          at: new Date().toISOString(),
+        });
+        for (const id of dead) {
+          const opened = await deps.ensureOpen(id);
+          if (!opened.ok) {
+            sendJson(res, 502, {
+              error: id === sessionId
+                ? `会话未运行，自动打开失败：${opened.error}`
+                : `Failed to open referenced session ${id}: ${opened.error}`,
+            });
             return true;
-          }
-          if (pidAliveOf(row, liveness) === false) dead.push(id);
-        }
-        if (dead.length > 0) {
-          // 拉起最长 15s：先广播一帧，发送方的乐观行改显「拉起会话中」再等
-          deps.hookBus?.emit({
-            kind: 'message.opening',
-            sessionId,
-            targets: dead,
-            at: new Date().toISOString(),
-          });
-          for (const id of dead) {
-            const opened = await deps.ensureOpen(id);
-            if (!opened.ok) {
-              sendJson(res, 502, { error: `Failed to open referenced session ${id}: ${opened.error}` });
-              return true;
-            }
           }
         }
       }

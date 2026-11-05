@@ -6,6 +6,7 @@ import type {
   SessionPlan,
   UploadFile,
 } from '@/lib/api';
+import type { ActionState } from '@/lib/action-feedback';
 import { promptOf, rawOf, stripPromptDecor, taskNotificationOf, turnSummaryOf } from '@/lib/hook-payload';
 import { isCompactionEnd } from './lifecycle';
 import type { SessionStatus } from './session-status';
@@ -524,6 +525,16 @@ export function attachDeliveries(
     .filter((m) => !taken.has(m.id) && !supersededCommand(m, entries))
     .sort((a, b) => a.at.localeCompare(b.at));
   return { thread: out, outbox };
+}
+
+/**
+ * 会话行终端按钮的状态：本地这次点击的反馈优先（loading/success），否则看服务端
+ * 正在为它拉起终端——消息投递前会对判死的目标走 `ensureOpen`（最长 15s），那期间
+ * 按钮必须转圈并禁用，否则再点一次会 spawn 第二个 resume 抢同一会话。
+ */
+export function openTerminalStateOf(fbState: ActionState, opening: boolean): ActionState {
+  if (fbState !== 'idle') return fbState;
+  return opening ? 'loading' : 'idle';
 }
 
 /**

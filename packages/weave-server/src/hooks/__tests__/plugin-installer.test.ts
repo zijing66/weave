@@ -46,17 +46,20 @@ async function writeSourcePlugin(root: string, id: string, extra: Record<string,
 describe('plugin-installer', () => {
   let srcRoot: string;
   let destRoot: string;
+  // tmpRoot.dir 会被个别用例改写成子路径，清理必须认原始目录。
+  let tmpDir: string;
 
   beforeEach(async () => {
     srcRoot = await mkdtemp(path.join(tmpdir(), 'weave-pi-src-'));
     destRoot = await mkdtemp(path.join(tmpdir(), 'weave-pi-dest-'));
-    tmpRoot.dir = mkdtempSync(path.join(tmpdir(), 'weave-pi-tmp-'));
+    tmpDir = mkdtempSync(path.join(tmpdir(), 'weave-pi-tmp-'));
+    tmpRoot.dir = tmpDir;
   });
 
   afterEach(async () => {
     await rm(srcRoot, { recursive: true, force: true });
     await rm(destRoot, { recursive: true, force: true });
-    await rm(tmpRoot.dir, { recursive: true, force: true });
+    await rm(tmpDir, { recursive: true, force: true });
   });
 
   it('isGitSource：识别 URL，拒绝普通路径', () => {

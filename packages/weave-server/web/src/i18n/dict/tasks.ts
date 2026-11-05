@@ -138,6 +138,8 @@ export const tasksZh = {
   'tasks.editsTruncated': '内容太多，后面的改动没有摆出来',
   'tasks.convImgOk': '已复制 {n} 条对话图片',
   'tasks.convImgCopyFailed': '复制图片失败：该浏览器不支持，可改用「下载 PNG」',
+  'tasks.convImgCopyInsecure':
+    '复制图片失败：当前地址不是安全上下文，请改用页面上的 HTTPS 地址访问（或改用「下载 PNG」）',
   'tasks.convImgSaved': '图片已下载',
   'tasks.convImgFailed': '生成图片失败：{error}',
   'tasks.convRoleUser': '我',
@@ -731,6 +733,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.editsTruncated': 'Too much content — the remaining edits are not shown',
   'tasks.convImgOk': 'Copied {n} messages as an image',
   'tasks.convImgCopyFailed': 'Copying the image failed: this browser cannot do it — use "Download PNG"',
+  'tasks.convImgCopyInsecure':
+    'Copying the image failed: this address is not a secure context — open the HTTPS address instead (or use "Download PNG")',
   'tasks.convImgSaved': 'Image downloaded',
   'tasks.convImgFailed': 'Rendering the image failed: {error}',
   'tasks.convRoleUser': 'Me',
