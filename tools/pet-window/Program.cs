@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -240,6 +241,19 @@ public static class Program
                     }
                     else if (msg == "close")
                         window.Close();
+                    else if (msg.StartsWith("open:", StringComparison.Ordinal))
+                    {
+                        // 气泡/通知点击 → 默认浏览器开 dashboard：WebView2 的
+                        // window.open 只在壳内开新窗（无 NewWindowRequested 处理
+                        // 会吞掉），深链交给系统浏览器才「打开浏览器」。
+                        var openUrl = msg["open:".Length..];
+                        if (Uri.TryCreate(openUrl, UriKind.Absolute, out var u)
+                            && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
+                        {
+                            try { Process.Start(new ProcessStartInfo(openUrl) { UseShellExecute = true }); }
+                            catch { /* 打不开就吞：点气泡不该炸窗 */ }
+                        }
+                    }
                 };
                 core.Navigate(url);
             }

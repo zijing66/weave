@@ -21,6 +21,7 @@ const API_BASE = '/api';
 
 interface SessionRow {
   sessionId: string;
+  projectId: number | null;
   title: string | null;
   lastSeenAt: string;
   turnOpen?: boolean;
@@ -205,6 +206,24 @@ interface BubbleItem {
 
 const bubbleItems = new Map<string, BubbleItem>();
 
+/** 会话 → dashboard 对话深链：三级路由 `/p/<projectId>/tasks/<sid>` 直接落进
+ *  对应项目的对话（route.ts 的唯一真源）；会话不在列表上（归属未知）才退回首页。 */
+function dashboardUrlFor(sessionId: string | null): string {
+  if (!sessionId) return '/';
+  const pid = sessions.find((s) => s.sessionId === sessionId)?.projectId;
+  return pid != null
+    ? `${location.origin}/p/${pid}/tasks/${encodeURIComponent(sessionId)}`
+    : `${location.origin}/?focus=${encodeURIComponent(sessionId)}`;
+}
+
+/** 在默认浏览器里打开 dashboard：WebView2 壳内 window.open 只在壳里开新窗
+ * （宿主没有 NewWindowRequested 处理，会被吞）——宿主认 `open:<url>` 走
+ * Process.Start；普通浏览器调试没有 chrome.webview，退回 window.open。 */
+function openDashboard(url: string): void {
+  if (hostWebview()) postToHost(`open:${url}`);
+  else window.open(url, 'weave-dashboard');
+}
+
 function upsertBubble(
   key: string,
   text: string,
@@ -216,7 +235,7 @@ function upsertBubble(
     el.className = 'bubble';
     el.onclick = () => {
       const sid = bubbleItems.get(key)?.focusSessionId;
-      if (sid) window.open(`/?focus=${encodeURIComponent(sid)}`, 'weave-dashboard');
+      if (sid) openDashboard(dashboardUrlFor(sid));
     };
     bubblesEl.appendChild(el);
     item = { el, until: null, focusSessionId: null };
@@ -251,10 +270,12 @@ function pruneBubbles(): void {
 
 window.setInterval(pruneBubbles, 500);
 
-function notifySystem(title: string, body: string, tag: string): void {
+function notifySystem(title: string, body: string, tag: string, url: string): void {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   try {
-    new Notification(title, { body, tag });
+    const n = new Notification(title, { body, tag });
+    // 系统通知点击 → 默认浏览器落深链（WebView2 桌面通知带 onclick）
+    n.onclick = () => openDashboard(url);
   } catch {
     // 构造失败不影响动画
   }
@@ -496,9 +517,10 @@ function syncRegion(): void {
   const dpr = window.devicePixelRatio || 1;
   const box = contentBoxOf(player.current());
   const rects = [currentPetRect()];
-  // 只在过渡中取两端并集（防区域每帧缩张带出成对的 enter/leave）；
-  // 收敛后只认当前位——藏好了就只剩那条缝能点到。
-  if (peekSide !== null && peekProgress > 0.01 && peekProgress < 0.99)
+  // 过渡中与展开态都取「常态位 ∪ 藏身位」并集：只认当前位的话，过渡收敛的
+  // 一瞬间两块之间的空隙被踢出命中区——鼠标停在那儿就 enter/leave 循环，
+  // 宠物一伸一缩抖个不停（悬停抖动真凶）。全藏且鼠标不在窗上才收缩到那条缝。
+  if (peekSide !== null && (peekExpanded || (peekProgress > 0.01 && peekProgress < 0.99)))
     rects.push(normalPetRect(), peekPetRect(peekSide));
   let x0 = Infinity;
   let y0 = Infinity;
@@ -517,11 +539,18 @@ function syncRegion(): void {
       y1 = Math.max(y1, rect.y + rect.h);
     }
   }
-  const pad = LEAN_MAX + 2; // 视线微移 + 取整余量
+  // 视线微移 + 取整余量（CSS px；区域在设备像素坐标系，dpr 别丢）
+  const pad = (LEAN_MAX + 2) * dpr;
   x0 -= pad;
   y0 -= pad;
   x1 += pad;
   y1 += pad;
+  // 区域量化到 4 设备像素：lean 收敛、zzz 浮动这类 1~2px 的逐帧变化不再
+  // 触发 SetWindowRgn 重设（每帧重设带一拍重绘，肉眼即抖）。
+  x0 = Math.floor(x0 / 4) * 4;
+  y0 = Math.floor(y0 / 4) * 4;
+  x1 = Math.ceil(x1 / 4) * 4;
+  y1 = Math.ceil(y1 / 4) * 4;
   const overlays: Element[] = [...bubblesEl.children];
   if (zzzEl.classList.contains('show')) overlays.push(zzzEl);
   if (menuEl) overlays.push(menuEl);
@@ -633,9 +662,17 @@ let leanX = 0; // 平滑后的当前偏移
 let leanY = 0;
 
 window.addEventListener('mousemove', (e) => {
-  mouseX = e.clientX / Math.max(1, window.innerWidth);
-  mouseY = e.clientY / Math.max(1, window.innerHeight);
+  const nx = e.clientX / Math.max(1, window.innerWidth);
+  const ny = e.clientY / Math.max(1, window.innerHeight);
+  // 死区：手抖的亚像素晃动不更新目标（收敛值在 1px 边界来回跳 = 高频颤动）
+  if (Math.abs(nx - mouseX) < LEAN_DEAD_ZONE && Math.abs(ny - mouseY) < LEAN_DEAD_ZONE) return;
+  mouseX = nx;
+  mouseY = ny;
 });
+
+/** 目标死区（窗内归一位移）：手抖的亚像素晃动不该更新目标——否则收敛值
+ * 在 1px 取整边界来回跳，整只高频颤动（实测）。位移超过此值才认新位置。 */
+const LEAN_DEAD_ZONE = 0.02;
 
 /** 目标偏移 = 鼠标偏离中心的归一向量 × LEAN_MAX；逐帧向目标收敛。 */
 function leanOffset(): { x: number; y: number } {
@@ -681,7 +718,12 @@ function applyAggregated(next: Aggregated): void {
     }
     if (next.focusSessionId && settingsNotifications) {
       const title = next.anim === 'failed' ? 'Weave 失败' : 'Weave';
-      notifySystem(title, next.bubble.replace(/^[⏳✗]\s*/, ''), `weave-pet-${next.focusSessionId}`);
+      notifySystem(
+        title,
+        next.bubble.replace(/^[⏳✗]\s*/, ''),
+        `weave-pet-${next.focusSessionId}`,
+        dashboardUrlFor(next.focusSessionId),
+      );
     }
   }
   lastAnim = next.anim;
@@ -749,8 +791,14 @@ postToHost('pos-query');
 // 拖拽移动：按下即交宿主 DragMove 接管（模态循环，松手才返回）——页面只管
 // 发令与事后记位，不自己做 pointermove 追踪（透明窗里命中测试交给宿主最简）。
 // 右键不触发（留给菜单）；宿主侧没有 chrome.webview（普通浏览器调试）时静默。
+// **落在气泡/菜单上不进拖拽**：单击气泡是一次「零位移拖拽」，宿主模态循环
+// 会吞掉这次 click（mouseup 在 NC 拖拽里到不了页面）——open: 时序竞态，
+// 单击时灵时不灵、双击才行（实测）。可点元素上按住也不该挪窗，判据就一条：
+// target 在 bubbles/menu 里 = 手柄之外。
 window.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || menuEl) return;
+  const target = e.target as Element | null;
+  if (target?.closest('.bubble')) return; // #bubbles 容器本身 pointer-events:none，命中的必是 .bubble
   dragging = true; // DragMove 模态循环里 updatePeek 暂停挪窗，别跟手打架
   document.body.classList.add('dragging');
   postToHost('drag-start');
@@ -798,7 +846,7 @@ document.addEventListener('contextmenu', (e) => {
     return el;
   };
 
-  menuEl.appendChild(item('打开 Dashboard', () => window.open('/', 'weave-dashboard')));
+  menuEl.appendChild(item('打开 Dashboard', () => openDashboard(`${location.origin}/`)));
 
   // 播放开关：图标表明「点下去会怎样」，文字表明「现在是什么」——悬停时文字
   // 也从状态改成动作，一眼看出这一下会停止还是开始。
