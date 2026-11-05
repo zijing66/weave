@@ -104,6 +104,7 @@ export const tasksZh = {
   'tasks.convFilterRemote': '其他会话',
   'tasks.convFilterEmpty': '当前过滤下没有消息',
   'tasks.outboxBlockedByQuestion': '会话正卡在问题确认上——先作答，消息才会送达',
+  'tasks.msgBlockedByQuestion': '会话正等你回答上面的问题——答完才能继续输入',
   'tasks.convCount': '共 {n} 条',
   'tasks.convSelect': '多选',
   'tasks.convSelected': '已选 {n} 条',
@@ -692,6 +693,8 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.convFilterEmpty': 'No messages under this filter',
   'tasks.outboxBlockedByQuestion':
     'The session is blocked on a pending question — answer it first, then messages go through',
+  'tasks.msgBlockedByQuestion':
+    'The session is waiting for your answer above — answer it to continue typing',
   'tasks.convCount': '{n} messages',
   'tasks.convSelect': 'Select messages',
   'tasks.convSelected': '{n} selected',

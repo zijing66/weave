@@ -176,7 +176,10 @@ export function SessionMessages({
   const [sideOpen, setSideOpen] = useState(false);
   /** 回退选择器（输入框敲 `/rewind` 开）：宿主面板由服务端驱动，这扇只做选择。 */
   const [rewindOpen, setRewindOpen] = useState(false);
-  const { sessions, statuses, refresh, modelCatalog } = useSessionStatus();
+  const { sessions, statuses, refresh, modelCatalog, questions } = useSessionStatus();
+  /** 挂着待答问题时宿主在等键盘（模态框），此刻发的消息既送不进去也容易打乱作答
+   *  ⇒ 整个输入面（输入框与同排按钮）置灰。 */
+  const asking = questions.has(sessionId);
   /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。 */
   const { data: projects } = useQuery(PROJECTS_QUERY);
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
@@ -408,6 +411,7 @@ export function SessionMessages({
    *  宿主（投过去只是让 TUI 弹面板、网页这边毫无反馈），改开选择器，由服务端
    *  读屏把宿主面板驱动完。 */
   const submit = (): void => {
+    if (asking) return;
     if (isRewindCommand(serializeDraft(draftRef.current))) {
       setDraftText('');
       setRewindOpen(true);
@@ -1526,7 +1530,12 @@ export function SessionMessages({
              模式做成按钮（点 = Shift+Tab 一档）；模型有 `/model <名>`，做成下拉。
              **图片上传对齐位**：附件钮 + 预览缩略图居左，模式/模型居右（`ml-auto`），
              放不下即折行；别占到输入行与发送键那两格去。 */
-          <div className="mt-2 flex shrink-0 flex-col gap-1.5 max-lg:mt-1 max-lg:gap-1 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-1.5">
+          <div
+            className={cn(
+              'mt-2 flex shrink-0 flex-col gap-1.5 max-lg:mt-1 max-lg:gap-1 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-1.5',
+              asking && 'pointer-events-none opacity-50',
+            )}
+          >
             {/* 控制行（一条）：图片居左、模式/模型居右，放不下即折行（不做横向滚动）。 */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {/* 附件钮（图片/文件两枚）+ 两个预览区（图片区 / 文件区各自一段，
@@ -1777,8 +1786,10 @@ export function SessionMessages({
                   /* 触发符提示拼在文案尾部，窄屏一行摆不下会被 truncate 整段截掉
                      ⇒ 移动端放开换行（两行装得进两行的输入框），桌面维持单行截断 */
                   <span className="pointer-events-none absolute left-2 right-2 top-1.5 truncate text-xs text-neutral-600 max-lg:whitespace-normal max-lg:break-words">
-                    {t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}
-                    {refHints.length > 0 && (
+                    {asking
+                      ? t('tasks.msgBlockedByQuestion')
+                      : t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}
+                    {!asking && refHints.length > 0 && (
                       /* 比 600 再退半档用透明度而不是 700：浅色下 neutral≥700 已是底色侧（#d4d4d4），当文字色近乎隐形 */
                       <span className="text-neutral-600/70"> · {refHints.join(' · ')}</span>
                     )}
@@ -1825,7 +1836,8 @@ export function SessionMessages({
                   role="textbox"
                   aria-multiline="true"
                   aria-label={t('tasks.messagesPlaceholder')}
-                  contentEditable
+                  contentEditable={!asking}
+                  tabIndex={asking ? -1 : undefined}
                   suppressContentEditableWarning
                   onInput={(e) => {
                     if (maybeOpenPicker(e.currentTarget, e.nativeEvent as InputEvent)) return;
