@@ -51,11 +51,22 @@ web api client 十六域的归并（十六域 → 四组），边界沿用既有
 | **weave-sessions** | `/mcp/sessions` | 会话发现 / 观察 / 投递 / 问答 / 中断 / 订阅 / 改动汇总 | `list_sessions`（全字段版）、`get_session`、`send_message`、`list_questions`、`answer_question`、`interrupt_session`、`watch_session`、`get_session_edits`…（约 10–14 个） |
 | **weave-projects** | `/mcp/projects` | 项目 / 配置 / 插件 / 市场 / 上传 | `list_projects`、`get_config`、`set_config`（粒度对齐 config 槽词表，不暴露整键 JSON 编辑）、`list_plugins`、`install_plugin` / `uninstall_plugin`、`list_skills`…（约 10–12 个） |
 | **weave-events** | `/mcp/events` | 事件流查询 / 接口日志 / 仪表盘 | `list_events`、`get_dashboard`、`query_api_logs`…（约 4–6 个） |
+| (**weave-rpg**（缓做，RPG 稿§5.2） | `/mcp/rpg` | 游戏动词门面对外（修炼 / 组队 / 出征…） | RPG 域稳定后再立项，见 RPG 稿——此行只做互链登记，不进 MCP-1..5 批) |
 
 原则：
 
 - **策展不镜像**：MCP 工具是给 agent 用的动词，不是 REST CRUD 的转写；每工具带
   `outputSchema`（既有惯例）；回包裁最小字段（`list_sessions` 先例）。
+- **契约增量登记（2026-11-06 核对，上表为 10-25 版）**：此后 web api 新落地的域，
+  候选进组如下、逐个过「外部 agent 真的 需要吗」闸后才入工具清单——
+  weave-sessions 候补：**rewind**（`POST /sessions/:id/rewind/*`，四步状态机，agent
+  用需判——多半只读回退点列表不代 commit）、**activity**（`GET /sessions/:id/activity`，
+  子 agent / 任务清单 / 后台 shell 合账，观察语义、候选面大）、**narration**（旁路
+  会话读，观察语义）、**`#` 会话引用**（收件人标注——它不是投递通道，是正文语法，
+  send 工具的入参说明须提到）；可单列组：**notify channels**（提醒通道管理，§22）、
+  **visualizations**（fragment/stats，arguably agent 可消费）；**显式不进**：pets
+  （内部 UI 专用面）、statusline / settings 专用面（照 §六既有红线）。
+  MCP-2/3 落地时按此登记刷新工具清单。
 - **同名工具不跨服务重复**：`list_sessions` 全字段版归 weave-sessions；orchestration 里
   现有的那份是「选编排节点」的最小面，保留但描述里写明用途差异（或迁移后留别名）。
 - **安装仍是 user 档一枚令牌**：MCP 页内置行从 1 行变 4 行，各自独立安装/卸载/启停。

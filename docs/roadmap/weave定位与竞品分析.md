@@ -78,7 +78,7 @@ Telegram、Lark、微信聊天通道。功能面（README 实测）：
 | 接线方式 | ACP：把 agent 装进自己的壳（spawn 子进程、结构化流） | hook 采集 + 终端共生：不搬家、寄生用户已有终端 |
 | 会话观 | 工作台 UI（编辑器 + 分屏 + 画布）；DB 只存元数据 | 会话运行时（六态状态机、事件链、投递语义、编排状态机） |
 | agent 协作 | LLM 驱动委派（MCP 工具 + 轮询，结果仅内存） | 图驱动编排（DAG + when/condition/autoFire）+ 三层投递 + 回执闸 |
-| 多 harness | ACP 适配即接入（广而浅，20 家；差异靠 744 处硬编码分支） | 十八能力槽深度适配（窄而深；不支持也是面） |
+| 多 harness | ACP 适配即接入（广而浅，20 家；差异靠 744 处硬编码分支） | 二十一能力槽深度适配（窄而深；不支持也是面） |
 | 任务/隔离 | worktree to-do + review/approve + 两阶段 merge | 短板（B5 worktree + A1 批阅在路上） |
 | 重启续跑 | boot reconcile 判 interrupted，用户手动 retry | rearm 最小续跑（pending 原样重建） |
 | 成本面 | Token Usage 全套（per-turn 表 + sync 水位） | 短板（B4 在路上） |
@@ -97,7 +97,7 @@ judgeBatch/autoFire/扇入语义）、**重启不续跑**（在途任务判 inte
 **战略注：ACP 是威胁也是机会**（经 claude-agent-acp v0.98 源码实证强化）。ACP 正在成为
 IDE 侧事实标准（Zed/JetBrains 联合 + 公共 ACP registry），官方
 [@agentclientprotocol/claude-agent-acp](https://github.com/zed-industries/claude-agent-acp)
-适配器已把 weave 十八能力槽里大半件事协议化：permission 审批、plan 模式、**steer 插话**
+适配器已把 weave 二十一能力槽里大半件事协议化：permission 审批、plan 模式、**steer 插话**
 （`_session/steering` 三态回执——weave 人在场闸 defer 的协议版）、fork 会话、模型 /
 effort 切换、subagent 子会话（RFD）、usage 上报。更值得注意的是它的 session-index 对
 **不是自己起的**会话走 CLI 注册表 + 转录扫描判活——与 weave 的
@@ -163,7 +163,7 @@ promptRequired）——weave 层② mid-turn 投递的结果语义可对照（�
 
 ### 4. 多 harness 一等公民 + 能力面抽象
 
-十六能力槽、声明式规格、「不支持也是面」（置灰必给原因）。claude + codex 统一管理，dsh /
+二十一能力槽、声明式规格、「不支持也是面」（置灰必给原因）。claude + codex 统一管理，dsh /
 zcode 接入计划已备好图纸。竞品的「多 harness」多是启动器层面（能起 claude 也能起 gemini），
 采集 / 投递 / 问答的深度适配只有 claude。**weave 的抽象让「接一家新 harness」从重写产品
 变成实现一个 driver**。
