@@ -184,8 +184,8 @@ export function configSurfaces(): Array<{ harness: Harness; surface: ConfigSurfa
 }
 
 /**
- * 按 harness 取会话标题读写面；null = 该 harness 无宿主侧名字通道
- * （claude 走 hook session_title 双向管线，不经此面）。
+ * 按 harness 取会话标题面；null = 该 harness 无宿主侧名字通道。
+ * claude 只挂读半边（注册表派生名），写走 hook pending 管线（见 PATCH 路由）。
  */
 export function sessionTitleSurfaceFor(harness: Harness): SessionTitleSurface | null {
   return registry.get(harness)?.titles ?? null;
