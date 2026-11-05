@@ -60,7 +60,7 @@ export function MermaidBlock({ code }: { code: string }) {
   };
 
   return (
-    <div className="my-1.5 overflow-hidden rounded border border-edge/[0.08] bg-neutral-950/40">
+    <div className="my-1.5 min-w-0 max-w-full overflow-hidden rounded border border-edge/[0.08] bg-neutral-950/40">
       <div className="flex items-center gap-2 border-b border-edge/[0.06] px-2 py-1">
         <span className="text-10 font-medium text-neutral-500">mermaid</span>
         {error && (
@@ -94,7 +94,7 @@ export function MermaidBlock({ code }: { code: string }) {
         <pre className="m-0 max-w-full overflow-x-auto p-2 text-11 text-neutral-300">{code}</pre>
       ) : svg ? (
         <div
-          className="max-w-full overflow-x-auto p-2 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
+          className="min-w-0 max-w-full overflow-x-auto p-2 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
           // mermaid 在 strict 档下已过滤过 HTML/脚本
           dangerouslySetInnerHTML={{ __html: svg }}
         />

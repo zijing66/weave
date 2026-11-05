@@ -1103,7 +1103,8 @@ export function SessionMessages({
                             {t('tasks.msgStalled')}
                           </span>
                         )}
-                        <span className="ml-auto shrink-0 text-10 text-neutral-600">
+                        {/* 蓝底上 600 太暗（深色主题几乎看不见时间）；400 两套主题都读得出来 */}
+                        <span className="ml-auto shrink-0 text-10 text-neutral-400">
                           {formatStamp(m.at)}
                         </span>
                       </div>
@@ -1369,7 +1370,7 @@ export function SessionMessages({
                                 {m.attachments?.length ? (
                                   <Paperclip className="h-3 w-3 shrink-0 text-neutral-500" />
                                 ) : null}
-                                <span className="ml-auto shrink-0 text-10 text-neutral-600">
+                                <span className="ml-auto shrink-0 text-10 text-neutral-400">
                                   {formatStamp(m.at)}
                                 </span>
                               </div>
@@ -1392,7 +1393,7 @@ export function SessionMessages({
                                 <span className="min-w-0 flex-1 truncate text-12 text-neutral-200">
                                   {m.text || m.attachments?.[0]?.name}
                                 </span>
-                                <span className="shrink-0 text-10 text-neutral-600">
+                                <span className="shrink-0 text-10 text-neutral-400">
                                   {formatStamp(m.at)}
                                 </span>
                                 </button>

@@ -90,6 +90,12 @@
   background: rgb(var(--w-edge) / 0.22);
 }
 
+/* 细滚动条（4px）：空间紧张的行内横滚条——预览头的文件路径行等 */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
 /* Markdown prose — dashboard tuning。代码块两套主题都保持深底：
    highlight.js 只引了 github-dark 一套，底翻白等于把浅色字铺在浅色底上。 */
 .prose pre {

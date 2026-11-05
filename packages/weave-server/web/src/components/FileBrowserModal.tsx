@@ -122,7 +122,7 @@ function cacheSet<T>(cache: Map<string, T>, key: string, value: T, max: number):
 function MarkdownPreview({ text }: { text: string }) {
   const parsed = splitFrontmatter(text);
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4">
       {parsed.frontmatter && <FrontmatterCard data={parsed.frontmatter} />}
       <div className="prose prose-invert prose-sm max-w-none">
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{ pre: markdownPre }}>
@@ -1023,20 +1023,9 @@ export function FileBrowserModal({
   const previewPane = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-edge/[0.06] px-2 py-1">
-        {!isDesktop && (
-          <Tooltip label={t('tasks.fileBack')}>
-            <button
-              type="button"
-              aria-label={t('tasks.fileBack')}
-              onClick={() => setScreen('list')}
-              className="rounded p-0.5 text-neutral-400 hover:text-neutral-100"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-        )}
+        {/* 文件路径行：超长不截断，给横向滚动（细滚条）——用户要完整看着路径走 */}
         <span
-          className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-300"
+          className="scrollbar-thin min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-11 text-neutral-300"
           title={current ? joinAbsPath(root, current.path) : root || undefined}
         >
           {current ? joinAbsPath(root, current.path) : ''}
@@ -1291,7 +1280,15 @@ export function FileBrowserModal({
                   type="button"
                   aria-label={t('tasks.fileUp')}
                   disabled={crumb.length === 0 && !picked}
-                  onClick={goUp}
+                  onClick={() => {
+                    // 窄屏预览态：这枚键先「回列表」（唯一返回键，不与预览头的
+                    // 旧返回键叠两层）；列表态才是目录上一级。
+                    if (!isDesktop && screen === 'preview') {
+                      setScreen('list');
+                      return;
+                    }
+                    goUp();
+                  }}
                   className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />
