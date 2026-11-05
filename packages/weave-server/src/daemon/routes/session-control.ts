@@ -10,6 +10,11 @@ const SideQuestionBody = z.object({ question: z.string().min(1).max(4_000) });
 /** 模型切换：名字用户自填（网关模型 ID 会增删，不做静态映射表），形态由 deliverer 验。 */
 const SetModelBody = z.object({ model: z.string().min(1).max(128) });
 const SetEffortBody = z.object({ level: z.string().min(1).max(32) });
+/** 回退选条目：面板里的列表绝对索引（进确认屏后会读回宿主给的选项）。 */
+const RewindPrepareBody = z.object({ index: z.number().int().min(0).max(10_000) });
+
+/** 回退提交：确认屏上原样的选项文案（档位由宿主决定，weave 不自己编）。 */
+const RewindCommitBody = z.object({ option: z.string().min(1).max(120) });
 
 /** 阻塞问答作答：整 call 一次提交（含收尾屏的 Submit/Cancel 选项）——每问送选项
  *  下标（多选 = 勾选集，空 = 未作答）、输入行另带文本；键序由 harness 规格拼装，
@@ -175,6 +180,57 @@ export async function handleSessionControlRoutes(
       return true;
     }
     sendJson(res, 200, { ok: true, sessionId });
+    return true;
+  }
+
+  // ---- 对话回退（/rewind 面板）：开面板 → 选条目 → 读回宿主选项 → 按选项提交 ----
+  const rewindMatch = pathname.match(/^\/sessions\/([^/]+)\/rewind\/(open|prepare|commit|cancel)$/);
+  if (rewindMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(rewindMatch[1]!);
+    const step = rewindMatch[2]!;
+    if (step === 'open') {
+      const result = await deps.messageDeliverer.rewindOpen(sessionId);
+      if (!result.ok) {
+        sendJson(res, result.status, { error: result.error });
+        return true;
+      }
+      sendJson(res, 200, result.view);
+      return true;
+    }
+    if (step === 'cancel') {
+      const result = await deps.messageDeliverer.rewindCancel(sessionId);
+      sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: result.error });
+      return true;
+    }
+    if (step === 'prepare') {
+      const body = RewindPrepareBody.safeParse(await readJson(req));
+      if (!body.success) {
+        sendJson(res, 400, { error: 'Invalid rewind request' });
+        return true;
+      }
+      const result = await deps.messageDeliverer.rewindPrepare(sessionId, body.data.index);
+      if (!result.ok) {
+        sendJson(res, result.status, { error: result.error });
+        return true;
+      }
+      sendJson(res, 200, { prompt: result.prompt, options: result.options });
+      return true;
+    }
+    const body = RewindCommitBody.safeParse(await readJson(req));
+    if (!body.success) {
+      sendJson(res, 400, { error: 'Invalid rewind request' });
+      return true;
+    }
+    const result = await deps.messageDeliverer.rewindCommit(sessionId, body.data.option);
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, prompt: result.prompt, cleared: result.cleared });
     return true;
   }
 

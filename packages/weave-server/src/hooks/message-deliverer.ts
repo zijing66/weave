@@ -16,7 +16,7 @@ import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { isImageMediaType } from '../repositories/uploads.js';
-import { commandsSurfaceFor, messagingSurfaceFor } from '../surfaces.js';
+import { commandsSurfaceFor, messagingSurfaceFor, rewindSurfaceFor } from '../surfaces.js';
 import { pidAliveOf } from '../daemon/claude-liveness.js';
 import { combinedLivenessOf } from '../daemon/liveness.js';
 import type { SessionTerminal } from '../daemon/opener.js';
@@ -55,6 +55,12 @@ import {
   sessionJudgedDead as sessionJudgedDeadIn,
 } from './delivery/queue.js';
 import { runRelay as runRelayIn, type RelayDeps } from './delivery/relay.js';
+import {
+  RewindPanels,
+  type RewindCommitResult,
+  type RewindOpenResult,
+  type RewindPrepareResult,
+} from './delivery/rewind.js';
 import {
   listInflightCounts as listInflightCountsIn,
   listVisible as listVisibleIn,
@@ -500,6 +506,11 @@ export class MessageDeliverer {
   private readonly dismissedIds = new Set<string>();
   /** 回执闸 + 暂停闸（判定与计时逻辑在 delivery/ack-gate.ts，状态仍在本类）。 */
   private readonly gate: AckGate;
+  /** `/rewind` 面板驱动（宿主模态界面的读屏 + 打键状态机）。 */
+  private readonly rewindPanels = new RewindPanels({
+    target: (sessionId, action) => this.sessionKeysTarget(sessionId, action),
+    pickerOf: (sessionId) => this.rewindSurfaceOf(sessionId)?.picker ?? null,
+  });
 
   constructor(private readonly deps: MessageDelivererDeps) {
     this.headless =
@@ -976,6 +987,30 @@ export class MessageDeliverer {
   /** 置闸（成因消息标记 stalled + message.stalled 帧）。 */
   private stall(sessionId: string, msg: PipeMessage, reason: 'unacked' | 'failed'): void {
     this.gate.stall(sessionId, msg, reason);
+  }
+
+  /**
+   * 打开宿主的回退面板并返回当前一屏（`/rewind` 只能读屏 + 打键，文法归 harness）。
+   * 「忙不忙」由驱动看屏判（`esc to interrupt`），不看 `turnOpen`：被打断的回合不发
+   * Stop，`turnOpen` 会一直挂着——那样会把明明闲着的会话永久锁在门外。
+   */
+  async rewindOpen(sessionId: string): Promise<RewindOpenResult> {
+    return this.rewindPanels.open(sessionId);
+  }
+
+  /** 选中条目进确认屏，读回**宿主真正给的那几项**（档位不自己编）。 */
+  async rewindPrepare(sessionId: string, index: number): Promise<RewindPrepareResult> {
+    return this.rewindPanels.prepare(sessionId, index);
+  }
+
+  /** 按屏上原样的选项文案提交。 */
+  async rewindCommit(sessionId: string, option: string): Promise<RewindCommitResult> {
+    return this.rewindPanels.commit(sessionId, option);
+  }
+
+  /** 关掉回退面板（用户取消）。 */
+  async rewindCancel(sessionId: string): Promise<AnswerResult> {
+    return this.rewindPanels.cancel(sessionId);
   }
 
   /**
@@ -1662,6 +1697,14 @@ export class MessageDeliverer {
     const src = latest[latest.length - 1]?.source;
     if (!isHarness(src)) return null;
     return this.deps.surfaceFor?.(src) ?? messagingSurfaceFor(src);
+  }
+
+  /** 该会话的回退面（与 surfaceOfSession 同一条 harness 归属解析）。 */
+  private rewindSurfaceOf(sessionId: string) {
+    const latest = this.deps.hookEvents.listBySession(sessionId, 1);
+    const src = latest[latest.length - 1]?.source;
+    if (!isHarness(src)) return null;
+    return rewindSurfaceFor(src);
   }
 
   /** 这段输入命中哪种命令形态（触发符表归能力面）；null = 普通 prompt。 */

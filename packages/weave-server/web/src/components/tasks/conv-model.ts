@@ -59,6 +59,7 @@ export function writeConvCache(sessionId: string, entries: readonly ConvEntry[])
 /** 消息状态徽标（在途 = 冷色，终态 = 绿/红）。 */
 export const STATUS_BADGE: Record<SessionMessageRow['status'], string> = {
   pending: 'bg-amber-900/40 text-amber-300',
+  opening: 'bg-violet-900/40 text-violet-300',
   delivering: 'bg-sky-900/40 text-sky-300',
   running: 'bg-sky-900/40 text-sky-300',
   injected: 'bg-sky-900/40 text-sky-300',
@@ -70,6 +71,7 @@ export const STATUS_BADGE: Record<SessionMessageRow['status'], string> = {
 export const STATUS_KEY: Record<
   SessionMessageRow['status'],
   | 'tasks.msgStatusQueued'
+  | 'tasks.msgStatusOpening'
   | 'tasks.msgStatusDelivering'
   | 'tasks.msgStatusRunning'
   | 'tasks.msgStatusInjected'
@@ -79,6 +81,7 @@ export const STATUS_KEY: Record<
   | 'tasks.msgStatusTimeout'
 > = {
   pending: 'tasks.msgStatusQueued',
+  opening: 'tasks.msgStatusOpening',
   delivering: 'tasks.msgStatusDelivering',
   running: 'tasks.msgStatusRunning',
   injected: 'tasks.msgStatusInjected',
@@ -484,6 +487,8 @@ function supersededCommand(
  *  条多半压根没进去，留着只是化石。 */
 export function removableOf(m: SessionMessageRow): boolean {
   if (m.status === 'running') return false;
+  // 正在拉起被引用的会话：还没进服务端队列（本地乐观行），删除会打到不存在的 id
+  if (m.status === 'opening') return false;
   if (m.status === 'delivered') {
     // 已回执但没有认领事件 = 宿主自己执行的内建命令（/rewind 之类），永远不会有
     // 气泡来接它；留着只会占在对话尾巴上，给手动移除。
@@ -635,22 +640,24 @@ export function withNarration(
 
 /**
  * 回退标记：宿主 rewind（Esc Esc / `/rewind`）把对话退回历史某处后，被退掉的
- * 那段（上一次回退边界 → 这一次回退时刻之间的既有气泡）置灰保留展示。锚点
- * 时刻是「回退前最后活动」的上界——**晚于它**的既有气泡都在被退掉的区间里；
- * 更早的回退同理逐段叠加（多次 rewind 各管各的段）。
+ * 那段气泡置灰保留展示。区间语义 = `[boundaryAt, at)`：boundaryAt 是**第一条
+ * 被退掉的 prompt**（含），at 是回退后第一条新 prompt（不含）——两者都由 harness
+ * 从转录的轮次计数给出（claude 的 `turnPosition.promptIndex` 严格下降）。
+ * 多次回退各管各的段，取并集。
  */
 export function withRewinds(
   entries: readonly ConvEntry[],
   rewinds: ReadonlyArray<{ at: string; boundaryAt: string | null }> | null,
 ): ConvEntry[] {
   if (!rewinds?.length) return [...entries];
-  const bounds = rewinds.map((r) => Date.parse(r.at)).filter(Number.isFinite);
-  if (bounds.length === 0) return [...entries];
+  const ranges = rewinds
+    .map((r) => ({ from: r.boundaryAt === null ? -Infinity : Date.parse(r.boundaryAt), to: Date.parse(r.at) }))
+    .filter((r) => Number.isFinite(r.to) && (r.from === -Infinity || Number.isFinite(r.from)));
+  if (ranges.length === 0) return [...entries];
   return entries.map((e) => {
     const at = Date.parse(e.at);
     if (!Number.isFinite(at)) return e;
-    // 任一回退锚点晚于该气泡 = 这一段被退掉过（多次回退取并集）
-    if (bounds.some((b) => b > at)) return { ...e, rewound: true };
+    if (ranges.some((r) => at >= r.from && at < r.to)) return { ...e, rewound: true };
     return e;
   });
 }

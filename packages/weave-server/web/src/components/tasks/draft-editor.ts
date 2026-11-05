@@ -497,6 +497,12 @@ export function commandModeOf(
   return null;
 }
 
+/** `/rewind`：weave 自己接管（回退面板只能读屏驱动，投给宿主网页这边毫无反馈）。
+ *  整条正文只有它才算——写了别的字仍然是普通 prompt。 */
+export function isRewindCommand(text: string): boolean {
+  return text.trim() === '/rewind';
+}
+
 /** 输入框的模式色：claude 的输入框在 bash 模式换成品红边框（`bashBorder`），
  *  斜杠命令用与命令胶囊同色系的琥珀——一眼看出这条会不会被宿主当 prompt 提交。 */
 export function commandModeClass(mode: CommandInputModeRow): string {

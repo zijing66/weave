@@ -547,5 +547,7 @@ export function useConvThread(deps: {
     pull,
     refreshMessages,
     setMessages,
+    /** 回退跑完后手动补拍：回退不改事件账，SSE 那一套不会自己触发重拉。 */
+    reload: { conversation: loadNewest, rewinds: loadRewinds },
   };
 }

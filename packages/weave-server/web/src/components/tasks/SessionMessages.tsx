@@ -30,7 +30,9 @@ import { FilePicker, type PickTarget } from './FilePicker';
 import { SessionShuttlePicker } from './SessionShuttlePicker';
 import { SessionEditsDialog } from './SessionEditsDialog';
 import { SideQuestionDialog } from './SideQuestionDialog';
+import { RewindPicker } from './RewindPicker';
 import { StatuslineBar } from './StatuslineBar';
+import { ActivityButton } from './activity-strip';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import { formatStamp } from '@/lib/hook-payload';
@@ -76,6 +78,7 @@ import {
   commandTokensOf,
   refSigilsOf,
   SIGIL_KEY,
+  isRewindCommand,
   serializeDraft,
   ATTACH_ATTR,
   REF_ATTR,
@@ -90,7 +93,7 @@ import {
   MENU_H,
   MENU_W,
 } from './conv-widgets';
-import { NarrationStack, stackUnitsOf } from './conv-stack';
+import { convUnits, NarrationStack } from './conv-stack';
 
 /** ESC 键帽点完歇几秒：连点会连发好几记（宿主的 ESC 后面接 rewind，连发会把
  *  刚开的那层菜单也退掉）。冷却只为防连发，与「能不能点」无关。 */
@@ -171,6 +174,8 @@ export function SessionMessages({
   const theme = useTheme();
   /** 旁路会话弹窗（旁路历史与提问都在这扇里）。 */
   const [sideOpen, setSideOpen] = useState(false);
+  /** 回退选择器（输入框敲 `/rewind` 开）：宿主面板由服务端驱动，这扇只做选择。 */
+  const [rewindOpen, setRewindOpen] = useState(false);
   const { sessions, statuses, refresh, modelCatalog } = useSessionStatus();
   /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。 */
   const { data: projects } = useQuery(PROJECTS_QUERY);
@@ -189,6 +194,7 @@ export function SessionMessages({
     pull,
     refreshMessages,
     setMessages,
+    reload,
   } = useConvThread({
     sessionId,
     projectId,
@@ -397,6 +403,42 @@ export function SessionMessages({
     setMessages,
     newestQueuedId,
   });
+
+  /** 发送入口（回车与按钮共用）：`/rewind` 是 weave 自己的回退入口——不投给
+   *  宿主（投过去只是让 TUI 弹面板、网页这边毫无反馈），改开选择器，由服务端
+   *  读屏把宿主面板驱动完。 */
+  const submit = (): void => {
+    if (isRewindCommand(serializeDraft(draftRef.current))) {
+      setDraftText('');
+      setRewindOpen(true);
+      return;
+    }
+    send();
+  };
+
+  /** 回退跑完：转录被就地改写（事件账不变），补拉对话与回退锚点；被回退的那条
+   *  原文回到输入框（TUI 里的回填已由服务端清掉），改完即可直接重发。 */
+  const onRewindDone = (prompt: string, cleared: boolean): void => {
+    setRewindOpen(false);
+    if (cleared && prompt) {
+      setDraftText(prompt);
+      const el = draftRef.current;
+      if (el) {
+        el.focus({ preventScroll: true });
+        const sel = window.getSelection();
+        if (sel) {
+          const r = document.createRange();
+          r.selectNodeContents(el);
+          r.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        }
+      }
+    }
+    void reload.conversation();
+    void reload.rewinds();
+    void refreshMessages();
+  };
 
   /** 用户编辑正文后的对账：占位与暂存格是同一条附件的两个面（1:1）——胶囊被
    *  退格/剪切/撤销删掉时，暂存格随之撤掉（反向的「撤格摘胶囊」在 unstage 里）。
@@ -812,7 +854,17 @@ export function SessionMessages({
                   {t('tasks.convFilterEmpty')}
                 </p>
               )}
-              {stackUnitsOf(visible, selecting).map((unit) => {
+              {convUnits(visible, selecting).map((unit) => {
+                if (unit.kind === 'rewind') {
+                  // 回退点：以上被退掉、以下从新分支继续（不是谁说的话，不参与勾选）
+                  return (
+                    <div key={unit.key} className="flex items-center gap-2 py-1 text-10 text-red-300/80">
+                      <span className="h-px flex-1 border-t border-dashed border-red-500/40" />
+                      <span className="shrink-0">{t('tasks.convRewindPoint', { n: unit.count })}</span>
+                      <span className="h-px flex-1 border-t border-dashed border-red-500/40" />
+                    </div>
+                  );
+                }
                 if (unit.kind === 'group') {
                   const g = unit.group;
                   return (
@@ -1560,6 +1612,9 @@ export function SessionMessages({
                   <FileCode className="h-3 w-3" />
                   <span className="max-lg:hidden">{t('tasks.fileAttach')}</span>
                 </button>
+                {/* 会话活动（子 agent/任务/后台 shell）：与图片/文件同排；无活动时
+                    disabled，点开 portal popover 向上弹（不占布局）。 */}
+                <ActivityButton sessionId={sessionId} busy={statuses.get(sessionId) === 'running'} />
                 {/* 两个预览区：<lg 各占一行（basis-full），lg 起同行自适应折行。
                     没有暂存件时整块不渲染——空的 `basis-full` 照样占满一行，
                     会把右侧「模式/模型」挤到下一行去（移动端每多一行都是从气泡区挤的）。 */}
@@ -1824,7 +1879,7 @@ export function SessionMessages({
                     // 发送/换行的键序随全局偏好（发送键旁那枚钮可交换）
                     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) === (sendKey === 'ctrl-enter')) {
                       e.preventDefault();
-                      send();
+                      submit();
                       return;
                     }
                     if (e.key === 'Enter') {
@@ -1984,7 +2039,7 @@ export function SessionMessages({
                         : (capability.unsupportedReasons?.prompt ?? t('tasks.msgUnsupported'))
                     }
                     aria-label={t('tasks.messagesSend')}
-                    onClick={send}
+                    onClick={submit}
                     className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-l bg-blue-600/80 text-white transition-colors hover:bg-blue-500 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:rounded-r"
                   >
                     <FeedbackIcon
@@ -2247,6 +2302,15 @@ export function SessionMessages({
           open={editsOpen}
           onClose={() => setEditsOpen(false)}
         />
+
+        {/* 回退选择器（`/rewind`）：列表与范围都在这里选，服务端读屏驱动宿主面板 */}
+        {rewindOpen && (
+          <RewindPicker
+            sessionId={sessionId}
+            onClose={() => setRewindOpen(false)}
+            onDone={onRewindDone}
+          />
+        )}
 
         {/* 旁路会话（claude = /btw）：问句只有 weave 自己记，回答由采集事件认领回来 */}
         {sideOpen && (

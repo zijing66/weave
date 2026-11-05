@@ -60,6 +60,34 @@ export function stackUnitsOf(entries: readonly ConvEntry[], flat = false): Stack
   return units;
 }
 
+/** 回退节点：一段被回退的气泡跑完、新分支第一条气泡之前的那枚分隔。 */
+export type RewindUnit = { kind: 'rewind'; key: string; count: number };
+
+/**
+ * 渲染单元（含回退节点）：在 `stackUnitsOf` 的分组之上，给每一段被回退的
+ * 气泡尾部挂一枚分隔——它就是「回退点」，此后是新分支。挂点 = 紧跟其后的
+ * 第一条正常气泡（`rewound` 由 `withRewinds` 的区间判定给出）。
+ */
+export function convUnits(entries: readonly ConvEntry[], flat = false): Array<StackUnit | RewindUnit> {
+  const dividers = new Map<string, number>();
+  let run = 0;
+  for (const e of entries) {
+    if (e.rewound === true) run++;
+    else if (run > 0) {
+      dividers.set(e.key, run);
+      run = 0;
+    }
+  }
+  const out: Array<StackUnit | RewindUnit> = [];
+  for (const unit of stackUnitsOf(entries, flat)) {
+    const head = unit.kind === 'group' ? unit.group.segs[0]! : unit.entry;
+    const count = dividers.get(head.key);
+    if (count !== undefined) out.push({ kind: 'rewind', key: `rw:${head.key}`, count });
+    out.push(unit);
+  }
+  return out;
+}
+
 /** 每 FOLD_STEP 张隐藏卡露一层卡边（用户裁决：剩 5 张 1 层、10 张以上 2 层，
  *  以此类推）。 */
 const FOLD_STEP = 5;

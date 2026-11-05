@@ -1,6 +1,6 @@
 /** 会话域：会话行、命令返显、计划、改动汇总、文件选择器与旁路会话。 */
 
-import type { ModelAliasTarget } from '@weavecode/harness';
+import type { ModelAliasTarget, RewindPickerOption, RewindPickerView } from '@weavecode/harness';
 import type { Harness } from '@weavecode/core/harness';
 import { apiFetch } from './client';
 import type { SessionTerminal } from './projects';
@@ -145,6 +145,52 @@ export interface SideQuestionRow {
   answeredAt: string | null;
 }
 
+/** mirror of `ActivityAgentRow` in packages/weave-harness/src/driver.ts。 */
+export interface ActivityAgentRow {
+  agentId: string;
+  agentType?: string;
+  description?: string;
+  status: 'running' | 'completed';
+  transcriptPath: string | null;
+  startedAt: string | null;
+  /** 子转录最后写入时刻（时间的展示与倒序都按它，缺省退回 startedAt）。 */
+  updatedAt?: string | null;
+}
+
+/** mirror of `ActivityTaskRow` in packages/weave-harness/src/driver.ts。 */
+export interface ActivityTaskRow {
+  id: string;
+  subject: string;
+  activeForm?: string;
+  status: string;
+  blocks: string[];
+  blockedBy: string[];
+}
+
+/** mirror of `ActivityShellRow`（server 合账后带 lastSeenAt）。 */
+export interface ActivityShellRow {
+  taskId: string;
+  command?: string;
+  description?: string;
+  status: string;
+  lastSeenAt: string;
+}
+
+/** 会话活动快照（GET /sessions/:id/activity）。三类都只含**当前还在的**
+ *  （子 agent 转录、tasks 目录、host 后台任务快照），已移除的不下发。 */
+export interface SessionActivity {
+  supported: boolean;
+  agents: ActivityAgentRow[] | null;
+  tasks: ActivityTaskRow[] | null;
+  shells: ActivityShellRow[] | null;
+}
+
+/** 子 agent 转录的一段 assistant 正文（narration 文法）。 */
+export interface ActivityTranscriptSeg {
+  at: string | null;
+  text: string;
+}
+
 export const sessionApi = {
   /** 不带 projectId 返回全部会话（最近活跃在前，最多 200 条）。`ids` = 只取这几行
    *  （事件增量补丁：一条事件只改它自己那条会话，不必把整张表重算一遍）。 */
@@ -200,6 +246,25 @@ export const sessionApi = {
     sessionId: string,
   ): Promise<{ supported: boolean; executions: CommandExecutionRow[] | null }> =>
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/command-executions`),
+  /** 会话活动（子 agent/任务/后台 shell 合账快照；supported=false = 该 harness 无此面）。 */
+  sessionActivity: (sessionId: string): Promise<SessionActivity> =>
+    apiFetch<SessionActivity>(`/sessions/${encodeURIComponent(sessionId)}/activity`),
+  /** 子 agent 转录增量段（offset 传上次返回的 nextOffset；null = 已到文件尾）。 */
+  agentTranscript: (
+    sessionId: string,
+    agentId: string,
+    offset?: number,
+  ): Promise<{ segs: ActivityTranscriptSeg[]; nextOffset: number | null }> => {
+    const qs = offset !== undefined ? `?offset=${offset}` : '';
+    return apiFetch(
+      `/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(agentId)}/transcript${qs}`,
+    );
+  },
+  /** 后台 shell 输出 tail（32KB；truncated = 还有更早的被裁了）。 */
+  shellOutput: (sessionId: string, taskId: string): Promise<{ text: string; truncated: boolean }> =>
+    apiFetch(
+      `/sessions/${encodeURIComponent(sessionId)}/shells/${encodeURIComponent(taskId)}/output`,
+    ),
   /** 最近一次计划模式交出的计划正文（无计划 / 正文已不可得 = null）。 */
   sessionPlan: (sessionId: string): Promise<SessionPlan | null> =>
     apiFetch<{ plan: SessionPlan | null }>(
@@ -260,6 +325,31 @@ export const sessionApi = {
       method: 'POST',
       body: JSON.stringify({ level }),
     }),
+  /** 回退面板：请宿主弹出 `/rewind` 并读回当前一屏（条目带列表绝对索引）。 */
+  rewindOpen: (sessionId: string): Promise<RewindPickerView> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/rewind/open`, { method: 'POST' }),
+  /** 回退选条目：进确认屏并读回宿主真正给的那几项（档位不自己编）。 */
+  rewindPrepare: (
+    sessionId: string,
+    index: number,
+  ): Promise<{ prompt: string; options: RewindPickerOption[] }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/rewind/prepare`, {
+      method: 'POST',
+      body: JSON.stringify({ index }),
+    }),
+  /** 回退提交：确认屏上原样的选项文案。`cleared` = 宿主回填进输入框的原消息
+   *  已被 weave 清掉（Ctrl+U；拿不准就不清，如实回 false）。 */
+  rewindCommit: (
+    sessionId: string,
+    option: string,
+  ): Promise<{ ok: boolean; prompt: string; cleared: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/rewind/commit`, {
+      method: 'POST',
+      body: JSON.stringify({ option }),
+    }),
+  /** 关掉宿主里的回退面板（Esc）。 */
+  rewindCancel: (sessionId: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/rewind/cancel`, { method: 'POST' }),
   /** 旁路会话（claude = /btw）：问句经层② 终端打进会话 pane，服务端落一条历史行。 */
   askSideQuestion: (
     sessionId: string,

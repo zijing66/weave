@@ -13,6 +13,7 @@ import {
   withPlan,
   withNarration,
   withPreQuestion,
+  withRewinds,
   readConvCache,
   writeConvCache,
   type ConvEntry,
@@ -25,13 +26,14 @@ import {
   commandTokensOf,
   draftSnapshotOf,
   hasRefCandidate,
+  isRewindCommand,
   pickerIntent,
   refSigilsOf,
   serializeDraft,
   textBeforeCaret,
 } from '../draft-editor';
 import { imageMarkerSegments, pipePathSegments } from '../conv-model';
-import { stackUnitsOf } from '../conv-stack';
+import { convUnits, stackUnitsOf } from '../conv-stack';
 import { attachedFilesFrom } from '../attach';
 import { exportConversationText, exportConversationMarkdown, exportStamp } from '../conv-export';
 import { HARNESS_LIFECYCLE } from '../lifecycle';
@@ -359,6 +361,10 @@ describe('removableOf（队列里的行能不能删）', () => {
     expect(removableOf(delivery({ status: 'running' }))).toBe(false);
   });
 
+  it('②-b 正在拉起引用会话（opening）不删——还没进服务端队列，删会打到不存在的 id', () => {
+    expect(removableOf(delivery({ status: 'opening' }))).toBe(false);
+  });
+
   it('③ 已发出且拿到回执（delivered + acked）不删——会话确实收到了，只是气泡还没到', () => {
     expect(removableOf(delivery({ status: 'delivered', acked: true, ackedEventId: 3 }))).toBe(false);
   });
@@ -552,6 +558,103 @@ describe('withNarration（转录补采的中间输出当对话气泡）', () => 
       { at: at(7), text: '第二段' },
     ]);
     expect(out.map((e) => e.text)).toEqual(['问', '第一段', '第二段', '收尾那句']);
+  });
+});
+
+describe('withRewinds（被回退的气泡置灰保留展示）', () => {
+  const thread: ConvEntry[] = [
+    { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '第一句' },
+    { key: 'e5', eventId: 5, role: 'assistant', at: at(5), text: '回复' },
+    { key: 'e9', eventId: 9, role: 'user', at: at(9), text: '回退后的新句' },
+  ];
+
+  it('① 无锚点 / 无有效时刻 = 原样返回', () => {
+    expect(withRewinds(thread, null)).toEqual(thread);
+    expect(withRewinds(thread, [])).toEqual(thread);
+    expect(withRewinds(thread, [{ at: 'not-a-date', boundaryAt: null }]).every((e) => !e.rewound)).toBe(
+      true,
+    );
+  });
+
+  it('② 区间 [boundaryAt, at) 内的气泡标 rewound；区间外不动', () => {
+    const out = withRewinds(thread, [{ at: at(9), boundaryAt: at(2) }]);
+    expect(out.map((e) => e.rewound === true)).toEqual([false, true, false]);
+  });
+
+  it('③ 边界含、上界不含：第一条被退掉的 prompt 也标，回退后的新 prompt 不标', () => {
+    const out = withRewinds(thread, [{ at: at(9), boundaryAt: at(1) }]);
+    expect(out.map((e) => e.rewound === true)).toEqual([true, true, false]);
+    const noOut = withRewinds(thread, [{ at: at(5), boundaryAt: at(1) }]);
+    expect(noOut.map((e) => e.rewound === true)).toEqual([true, false, false]);
+  });
+
+  it('④ boundaryAt:null = 从会话开头退起；多次 rewind 取并集', () => {
+    const out = withRewinds(thread, [{ at: at(5), boundaryAt: null }]);
+    expect(out.map((e) => e.rewound === true)).toEqual([true, false, false]);
+
+    const both = withRewinds(thread, [
+      { at: at(5), boundaryAt: at(1) },
+      { at: at(10), boundaryAt: at(9) },
+    ]);
+    // 第二段的上界 at(5) 是回退后的新 prompt，不算被退掉
+    expect(both.map((e) => e.rewound === true)).toEqual([true, false, true]);
+  });
+});
+
+describe('convUnits（回退节点）', () => {
+  const mk = (key: string, at0: string, rewound = false): ConvEntry => ({
+    key,
+    eventId: Number(key.slice(1)),
+    role: 'user',
+    at: at0,
+    text: key,
+    ...(rewound ? { rewound: true } : {}),
+  });
+
+  it('一段被回退的气泡之后、新分支第一条之前挂节点；计数 = 段内条数', () => {
+    const units = convUnits([mk('e1', at(1), true), mk('e2', at(2), true), mk('e3', at(3))]);
+    expect(units.map((u) => u.kind)).toEqual(['entry', 'entry', 'rewind', 'entry']);
+    expect(units[2]).toMatchObject({ kind: 'rewind', count: 2 });
+  });
+
+  it('没有回退 → 与 stackUnitsOf 同形', () => {
+    const entries = [mk('e1', at(1)), mk('e2', at(2))];
+    expect(convUnits(entries)).toEqual(stackUnitsOf(entries));
+  });
+
+  it('多段回退各挂各的节点；末尾没有新分支就不摆', () => {
+    const units = convUnits([
+      mk('e1', at(1), true),
+      mk('e2', at(2)),
+      mk('e3', at(3), true),
+      mk('e4', at(4)),
+      mk('e5', at(5), true),
+    ]);
+    expect(units.map((u) => u.kind)).toEqual([
+      'entry',
+      'rewind',
+      'entry',
+      'entry',
+      'rewind',
+      'entry',
+      'entry',
+    ]);
+    expect(units.filter((u) => u.kind === 'rewind').map((u) => (u as { count: number }).count)).toEqual([1, 1]);
+  });
+
+  it('被回退的过程输出成叠时，节点挂在叠之后（分组不被拆开）', () => {
+    const nar = (key: string, at0: string): ConvEntry => ({
+      key,
+      eventId: Number(key.slice(1)),
+      role: 'assistant',
+      at: at0,
+      text: key,
+      narration: true,
+      rewound: true,
+    });
+    const units = convUnits([nar('e1', at(1)), nar('e2', at(2)), mk('e3', at(3))]);
+    expect(units.map((u) => u.kind)).toEqual(['group', 'rewind', 'entry']);
+    expect(units[1]).toMatchObject({ kind: 'rewind', count: 2 });
   });
 });
 
@@ -1553,5 +1656,20 @@ describe('stackUnitsOf（连续过程输出折成叠层）', () => {
       { kind: 'group', group: { key: 'stk:n1', at: 'b', segs: entries } },
     ]);
     expect(stackUnitsOf([])).toEqual([]);
+  });
+});
+
+describe('isRewindCommand（`/rewind` 拦截）', () => {
+  it('① 只有它（可带首尾空白）才算——命令胶囊序列化后尾随空格也命中', () => {
+    expect(isRewindCommand('/rewind')).toBe(true);
+    expect(isRewindCommand('  /rewind ')).toBe(true);
+    expect(isRewindCommand('/rewind\n')).toBe(true);
+  });
+
+  it('② 带别的字、大小写不同、前缀相同都不拦（那仍是普通 prompt）', () => {
+    expect(isRewindCommand('/rewind 到第二条')).toBe(false);
+    expect(isRewindCommand('/Rewind')).toBe(false);
+    expect(isRewindCommand('/rewinds')).toBe(false);
+    expect(isRewindCommand('')).toBe(false);
   });
 });

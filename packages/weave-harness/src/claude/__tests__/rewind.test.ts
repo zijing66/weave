@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CLAUDE_REWIND, parseRewindLine } from '../rewind.js';
+import { CLAUDE_REWIND, stepRewind, type RewindState } from '../rewind.js';
 
 let dir: string;
 
@@ -19,112 +19,133 @@ const write = (lines: unknown[]): string => {
   return path;
 };
 
-/** 会话开头那条（parentUuid:null，不算 rewind）。 */
-const firstRoot = (text: string, ts: string) => ({
+/** 一条普通 prompt：宿主自己的轮次计数是回退的唯一痕迹。 */
+const prompt = (text: string, ts: string, promptIndex: number) => ({
   type: 'user',
-  parentUuid: null,
+  isSidechain: false,
+  parentUuid: 'prev',
+  turnPosition: { promptIndex, turnIndex: promptIndex },
   message: { role: 'user', content: text },
   timestamp: ts,
 });
 
-/** 普通续轮（parentUuid 指向前一行，经 attachment 桥接）。 */
-const followUp = (text: string, ts: string, parent: string) => ({
-  type: 'user',
-  parentUuid: parent,
-  message: { role: 'user', content: text },
-  timestamp: ts,
-});
+const at = (h: number) => `2026-11-04T0${h}:00:00.000Z`;
 
-/** rewind 后的新链根（下一次提交时宿主写；parentUuid:null + 自带 timestamp）。 */
-const rewindRoot = (text: string, ts: string) => ({
-  type: 'user',
-  parentUuid: null,
-  message: { role: 'user', content: text },
-  timestamp: ts,
-});
+/** 一轮收尾笔（宿主正常收尾；被打断时是中断行）。 */
+const turnDone = (ts: string) => ({ type: 'system', subtype: 'turn_duration', timestamp: ts });
 
-/** 普通 last-prompt 行（每轮都写，与 rewind 无关——旧文法的干扰项）。 */
-const lastPrompt = (prompt: string, leaf: string) => ({
-  type: 'last-prompt',
-  lastPrompt: prompt,
-  leafUuid: leaf,
-});
+describe('stepRewind', () => {
+  const fresh = (): RewindState => ({ turns: [], prevP: null, turnEnded: false, marks: [] });
 
-/** explicit last-prompt 行（普通轮也写，不是 rewind 信号——旧文法的干扰项）。 */
-const explicitPrompt = () => ({
-  type: 'last-prompt',
-  leafUuid: '00000000-0000-0000-0000-000000000000',
-  explicit: true,
-});
-
-describe('parseRewindLine', () => {
-  it('只认第 2 条及以后的 parentUuid:null user 行；会话开头那条不算', () => {
-    expect(
-      parseRewindLine(JSON.stringify(rewindRoot('again', '2026-10-28T02:00:00.000Z')), true),
-    ).toEqual({ at: '2026-10-28T02:00:00.000Z', boundaryAt: null });
-    expect(parseRewindLine(JSON.stringify(firstRoot('hi', '2026-10-28T01:00:00.000Z')), false)).toBeNull();
+  it('正常递增（回退不存在）→ 无标记', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(s, JSON.stringify(prompt('c', at(3), 3)));
+    expect(s.marks).toEqual([]);
   });
 
-  it('斜杠命令展开（command-message 开头）立根但不算 rewind', () => {
-    const cmd = {
-      type: 'user',
-      parentUuid: null,
-      message: { role: 'user', content: '<command-message>init</command-message>' },
-      timestamp: '2026-10-28T01:30:00.000Z',
-    };
-    // 命令展开是第一个根：它自己不算 rewind……
-    expect(parseRewindLine(JSON.stringify(cmd), false)).toBeNull();
-    // ……但它立了根，其后的普通新链根就算 rewind
-    expect(
-      parseRewindLine(JSON.stringify(rewindRoot('again', '2026-10-28T02:00:00.000Z')), true),
-    ).toEqual({ at: '2026-10-28T02:00:00.000Z', boundaryAt: null });
+  it('退回最后一轮重发（计数相等 + 上一轮已收尾）→ 回退', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(turnDone(at(1))));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(s, JSON.stringify(turnDone(at(2))));
+    stepRewind(s, JSON.stringify(prompt('b2', at(5), 2)));
+    expect(s.marks).toEqual([{ at: at(5), boundaryAt: at(2) }]);
   });
 
-  it('普通续轮（parentUuid 非空）/ 侧链 / 无 timestamp 一律 null', () => {
-    expect(
-      parseRewindLine(JSON.stringify(followUp('x', '2026-10-28T01:00:00.000Z', 'abc')), true),
-    ).toBeNull();
-    expect(
-      parseRewindLine(JSON.stringify({ type: 'user', parentUuid: null, isSidechain: true, timestamp: 'x' }), true),
-    ).toBeNull();
-    expect(parseRewindLine(JSON.stringify({ type: 'user', parentUuid: null }), true)).toBeNull();
+  it('被打断的一轮同样算收尾（中断行）', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify({ type: 'user', message: { content: '[Request interrupted by user]' }, timestamp: at(1) }));
+    stepRewind(s, JSON.stringify(prompt('a2', at(4), 1)));
+    expect(s.marks).toEqual([{ at: at(4), boundaryAt: at(1) }]);
   });
 
-  it('坏 JSON / 非 user 行一律 null（尾部半行不是标记）', () => {
-    expect(parseRewindLine('{"type":"user","pare', true)).toBeNull();
-    expect(parseRewindLine(JSON.stringify(explicitPrompt()), true)).toBeNull();
+  it('weave / 别的会话注入的消息复用计数，不当作回退', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(turnDone(at(1))));
+    stepRewind(s, JSON.stringify(prompt('[weave message] from=dashboard', at(2), 1)));
+    stepRewind(s, JSON.stringify(turnDone(at(2))));
+    stepRewind(s, JSON.stringify(prompt('a', at(3), 2)));
+    expect(s.marks).toEqual([]);
+  });
+
+  it('同一轮里连发多条（计数相等）不算回退', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(s, JSON.stringify(prompt('b2', at(3), 2)));
+    stepRewind(s, JSON.stringify(prompt('c', at(4), 3)));
+    expect(s.marks).toEqual([]);
+  });
+
+  it('退到第一条之前：整段旧对话被退掉（boundaryAt = 第一条 prompt）', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(s, JSON.stringify(prompt('a', at(5), 1)));
+    expect(s.marks).toEqual([{ at: at(5), boundaryAt: at(1) }]);
+  });
+
+  it('退到中间（p=3 → p=2）：boundaryAt = 旧状态第 2 轮，之后计数继续', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(s, JSON.stringify(prompt('c', at(3), 3)));
+    stepRewind(s, JSON.stringify(prompt('b2', at(6), 2)));
+    stepRewind(s, JSON.stringify(prompt('c2', at(7), 3)));
+    expect(s.marks).toEqual([{ at: at(6), boundaryAt: at(2) }]);
+  });
+
+  it('压缩续跑的合成 prompt（计数重排）不当作回退', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(
+      s,
+      JSON.stringify(prompt('This session is being continued from a previous conversation: …', at(3), 1)),
+    );
+    expect(s.marks).toEqual([]);
+  });
+
+  it('没有 turnPosition 的行（工具结果、system、中断）一律跳过', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify({ type: 'user', message: { content: '[Request interrupted by user]' }, timestamp: at(2) }));
+    stepRewind(s, JSON.stringify({ type: 'user', isSidechain: true, turnPosition: { promptIndex: 1 }, timestamp: at(3) }));
+    expect(s.marks).toEqual([]);
   });
 });
 
 describe('CLAUDE_REWIND.sessionRewinds', () => {
-  it('rewind 痕迹 = 会话开头之外的新链根；时刻 = 该行自身 timestamp', async () => {
-    const path = write([
-      firstRoot('hi', '2026-10-28T01:00:00.000Z'),
-      { type: 'assistant', timestamp: '2026-10-28T01:00:10.000Z', message: { content: [] } },
-      // rewind 确认后下一次提交：explicit LP（干扰项）+ 新链根
-      explicitPrompt(),
-      lastPrompt('hi', 'deadbeef'),
-      rewindRoot('again', '2026-10-28T02:00:00.000Z'),
-      followUp('more', '2026-10-28T02:30:00.000Z', 'abc'),
+  it('增量读：第二次读只吃到新行，marks 不重复累积', async () => {
+    const path = write([prompt('a', at(1), 1), prompt('b', at(2), 2)]);
+    expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: path })).toEqual([]);
+
+    appendFileSync(path, JSON.stringify(prompt('a', at(5), 1)) + '\n');
+    expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: path })).toEqual([
+      { at: at(5), boundaryAt: at(1) },
     ]);
     expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: path })).toEqual([
-      { at: '2026-10-28T02:00:00.000Z', boundaryAt: null },
+      { at: at(5), boundaryAt: at(1) },
     ]);
   });
 
-  it('多次回退各成一条（时间序）；没有回退 = 空数组', async () => {
+  it('多次回退各成一条（时间序）', async () => {
     const path = write([
-      firstRoot('a', '2026-10-28T01:00:00.000Z'),
-      rewindRoot('b', '2026-10-28T02:00:00.000Z'),
-      rewindRoot('c', '2026-10-28T03:00:00.000Z'),
+      prompt('a', at(1), 1),
+      prompt('b', at(2), 2),
+      prompt('a2', at(5), 1),
+      prompt('b2', at(6), 2),
+      prompt('a3', at(8), 1),
     ]);
     expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: path })).toEqual([
-      { at: '2026-10-28T02:00:00.000Z', boundaryAt: null },
-      { at: '2026-10-28T03:00:00.000Z', boundaryAt: null },
+      { at: at(5), boundaryAt: at(1) },
+      { at: at(8), boundaryAt: at(5) },
     ]);
-
-    const plain = write([firstRoot('a', '2026-10-28T01:00:00.000Z'), followUp('b', '2026-10-28T01:01:00.000Z', 'x')]);
-    expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: plain })).toEqual([]);
   });
 
   it('路径未知 / 读不到 → null（不猜）', async () => {
