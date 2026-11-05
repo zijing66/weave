@@ -86,7 +86,7 @@ export {
   stripWeaveSettings,
   type SettingsGeneratorInput,
 } from './settings-gen.js';
-export { generateMcpJson, mergeMcpJson, stripWeaveMcp, type McpGeneratorInput } from './mcp-gen.js';
+export { mergeMcpJson, stripWeaveMcp } from './mcp-gen.js';
 export { generateAutoMemoryHook } from './helpers-gen.js';
 export { CLAUDE_STATUSLINE } from './statusline/surface.js';
 export { CLAUDE_CONFIG, ensureTrustAccepted as ensureClaudeTrustAccepted } from './config.js';

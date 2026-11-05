@@ -8,7 +8,6 @@ import type {
 } from '@weavecode/core';
 import { generateHookHandler, readUserCapture } from '../claude/capture.js';
 import { generateAutoMemoryHook } from '../claude/helpers-gen.js';
-import { generateMcpJson, mergeMcpJson } from '../claude/mcp-gen.js';
 import { generateSettingsJson, mergeSettingsJson } from '../claude/settings-gen.js';
 
 /** weave 特性文件的覆写判据：内容带它 = weave 自己的生成物，可覆写刷新。 */
@@ -129,17 +128,8 @@ async function claudeInitFiles(ctx: InitFileContext): Promise<InitGeneratedFile[
     });
   }
 
-  // init 只在至少有一个 server 时才落 .mcp.json（weave server 默认关）——
-  // 同一口径：没得写就不入清单，免得自动同步凭空造出文件。
-  if (ctx.components.mcp && ctx.mcp.weave) {
-    out.push({
-      relPath: '.mcp.json',
-      content: serializeJson(
-        generateMcpJson({ platform: ctx.platform, includeWeaveServer: true }),
-      ),
-      merge: mergeJsonEntry(mergeMcpJson),
-    });
-  }
+  // .mcp.json 的 weave stdio 条目已退役（daemon 托管 MCP 取代，见 install/builtin-mcp.ts）；
+  // 存量项目由 uninstall 的 stripWeaveMcp 清理。
 
   return out;
 }
