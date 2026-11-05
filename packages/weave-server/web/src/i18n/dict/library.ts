@@ -22,6 +22,10 @@ export const libraryZh = {
   'picker.addCount': '添加（{count}）',
   'picker.pathPlaceholder': '完整路径：勾选文件夹后显示在此，也可粘贴一个路径',
   'picker.addPathTip': '把这一路径加入选择',
+  'picker.quickAdd': '添加到快速访问',
+  'picker.quickAlready': '已在快速访问中',
+  'picker.quickRemove': '从快速访问中移除',
+  'picker.columnHint': '从左侧选择一个位置开始浏览',
 
   // —— CategoryDetail（category.*）——
   'category.tabAllTip': '展示全部工具的资产',
@@ -146,6 +150,10 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'picker.addCount': 'Add ({count})',
   'picker.pathPlaceholder': 'Full path: shown here after checking a folder, or paste one',
   'picker.addPathTip': 'Add this path to the selection',
+  'picker.quickAdd': 'Add to quick access',
+  'picker.quickAlready': 'Already in quick access',
+  'picker.quickRemove': 'Remove from quick access',
+  'picker.columnHint': 'Pick a location on the left to browse',
 
   // —— CategoryDetail（category.*）——
   'category.tabAllTip': 'Show assets from every tool',
