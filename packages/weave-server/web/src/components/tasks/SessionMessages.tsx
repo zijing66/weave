@@ -253,6 +253,27 @@ export function SessionMessages({
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const coarse = useMediaQuery('(pointer: coarse)');
+  /** 输入框右边到整行右边的距离（发送组 + 中间的附件条 + 两道 gap）：对话区框的
+      右边以输入框为准，按它让出。窄屏发送组折到下一行，那时这段是 0。 */
+  const sendGroupRef = useRef<HTMLDivElement | null>(null);
+  const [composerInset, setComposerInset] = useState(0);
+  useEffect(() => {
+    const el = sendGroupRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const row = el.parentElement;
+    const editor = row?.querySelector('[contenteditable]');
+    if (!row || !editor) return;
+    const sync = () =>
+      setComposerInset(
+        Math.round(row.getBoundingClientRect().right - editor.getBoundingClientRect().right),
+      );
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    ro.observe(row);
+    ro.observe(editor);
+    sync();
+    return () => ro.disconnect();
+  }, []);
   const [inputRows, setInputRows] = useState<number>(() => {
     const v = Number(localStorage.getItem('weave:conv-input-rows'));
     return Number.isFinite(v) && v > 0
@@ -635,15 +656,17 @@ export function SessionMessages({
         ref={panelRef}
         // 浮窗：桌面宽高跟屏幕走、拖角可改（记住）、拖标题栏可挪位；<lg 铺满可视宽。
         // 缺省高走 h-[70%]（父容器 inset-0 蒙版有确定高），size.h 拖过后行内覆盖。
-        style={
-          !embedded && isDesktop && !fullscreen
+        style={{
+          ...(!embedded && isDesktop && !fullscreen
             ? {
                 width: size.w,
                 height: size.h || undefined,
                 transform: pos.x || pos.y ? `translate(${pos.x}px, ${pos.y}px)` : undefined,
               }
-            : undefined
-        }
+            : {}),
+          // 对话区框右边与输入框右边对齐（见滚动区那圈框），让出的宽度实测
+          ...{ '--conv-inset': `${composerInset}px` },
+        }}
         className={cn(
           'relative min-h-0 w-full flex-col overflow-hidden p-3 max-lg:pt-2',
           fullscreen
@@ -818,10 +841,13 @@ export function SessionMessages({
           onTouchCancel={pull.touchEnd}
           // 嵌入右栏时右栏本身没有卡片壳（见上面的面板类），气泡区就成了「白底上
           // 一片没有边的对话」——给滚动区自己描一圈（用户报「气泡显示区域没有边框」）。
-          // 浮窗/全屏那份外层已经有一圈边框，这里不再叠
+          // 浮窗/全屏那份外层已经有一圈边框，这里不再叠。
+          // 这圈框与输入框同款（圆角/线色/底色），右边也对齐输入框右边：让出发送组
           className={cn(
             'relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain',
-            embedded ? 'rounded-lg border border-edge/[0.28] p-2' : 'pr-1',
+            embedded
+              ? 'rounded border border-edge/[0.1] bg-neutral-950 p-2 lg:mr-[var(--conv-inset,0px)]'
+              : 'pr-1',
           )}
           // 渲染块的高度上限按这个容器算（见 lib/visualization 的 CONV_SCROLLER_ATTR）
           {...{ [CONV_SCROLLER_ATTR]: '' }}
@@ -922,13 +948,13 @@ export function SessionMessages({
                       <div
                         className={cn(
                           'min-w-0 max-w-[92%] overflow-x-auto rounded-lg border px-2 py-1.5',
-                          // 气泡边要看得见：0.16 在白底上几乎和气泡底色糊在一起
-                          //（用户报「看不见边框」），统一提到 0.28
+                          // 气泡边的线色/线宽与输入框、对话区框同款（0.1）：更重会比
+                          // 那两圈框抢眼（用户报「气泡边框太粗」）
                           // 底色一律实心（用户裁决：气泡不要半透明，半透明只留给过程输出
                           // 叠层的下层卡边）——半透明底色在白底上被读成「没上色」
                           m.failed
                             ? 'border-red-500/40 bg-red-950'
-                            : 'border-edge/[0.28] bg-neutral-900',
+                            : 'border-edge/[0.1] bg-neutral-900',
                           // 被回退的段落：红虚线框 + 保留展示（一眼看出已退场）。整块不再降
                           // 不透明度（用户裁决：气泡不要半透明），只靠虚线认；线宽与普通气泡
                           // 同为 1px，靠颜色提亮而不是加粗
@@ -1041,8 +1067,8 @@ export function SessionMessages({
                         m.commandSigil === '!'
                           ? BASH_ECHO_CLASS.bubble
                           : pipe
-                            ? 'border-blue-500/55 bg-blue-900'
-                            : 'border-blue-500/45 bg-blue-950',
+                            ? 'border-blue-500/40 bg-blue-900'
+                            : 'border-blue-500/30 bg-blue-950',
                         // 被回退的段落：红虚线框 + 保留展示（与回复气泡同口径，不降不透明度）
                         m.rewound === true && 'border-dashed border-red-500/70',
                       )}
@@ -1291,9 +1317,11 @@ export function SessionMessages({
                       'min-w-0 max-w-[95%] overflow-x-auto rounded-lg border border-dashed px-2 py-1.5',
                       // bash 命令行（`!`）：品红——与输入框的 bash 形态同色（落定后的
                       // 回显气泡同款），发出那一刻就能看出这条是命令、不是普通 prompt
+                      // 底色与落定后的发送气泡同档（blue-900）：它在队列里等、落定后
+                      // 原地上位，深浅跟着变会像「换了一条消息」；虚线已足够标「未落定」
                       bashQueueIds.size > 0
                         ? BASH_ECHO_CLASS.queue
-                        : 'border-blue-500/40 bg-blue-950',
+                        : 'border-blue-500/40 bg-blue-900',
                     )}
                   >
                     {outbox.map((m, i) => {
@@ -1969,7 +1997,7 @@ export function SessionMessages({
                   第二行靠右（`ml-auto`，与左边那枚换行分开拇指够得到的两头）；
                   桌面并排一行。停止与事件链组头同一判据与 fb 键。通道下拉贴着
                   发送键——它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
-              <div className="flex shrink-0 items-center gap-1 max-lg:ml-auto">
+              <div ref={sendGroupRef} className="flex shrink-0 items-center gap-1 max-lg:ml-auto">
                 {/* 停止 = 一枚 ESC 键帽：位置恒在（进出会拉动旁边的发送键），尺寸恒方
                     （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；**恒可点**
                     （宿主里 ESC 后面还要接 rewind，这一枚就是那记键），只在点完之后

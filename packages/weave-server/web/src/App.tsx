@@ -42,7 +42,7 @@ import { navigate, parseRoute, useRoutePath } from '@/lib/route';
 import { setThemePreference, useThemePreference } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { ChevronDown, Github, Library, LogOut, Moon, PanelLeft, Search, Settings, Sun, SunMoon, X } from 'lucide-react';
+import { ChevronDown, FolderTree, Github, Library, LogOut, Moon, PanelLeft, Search, Settings, Sun, SunMoon, X } from 'lucide-react';
 import type { MessageKey } from '@/i18n/dict';
 import { useToast } from '@/components/Toast';
 import { CopyPathButton } from '@/components/ui/copy-button';
@@ -158,8 +158,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   /** 资源市场弹层页（顶栏按钮唤起；开闭态不进 URL——先例裁决）。 */
   const [marketOpen, setMarketOpen] = useState(false);
-  /** 项目文件浏览器（只读 modal）：项目卡快捷按钮与全局搜索的文件结果共用。 */
+  /** 项目文件浏览器（只读 modal）：全局搜索的文件结果与全项目浏览器共用。 */
   const [fileBrowser, setFileBrowser] = useState<{ projectId: number; path?: string } | null>(null);
+  /** 全项目文件浏览器（Ctrl+B / 顶栏按钮）：FileBrowserModal 的全项目模式。 */
+  const [browserPickerOpen, setBrowserPickerOpen] = useState(false);
   const themePref = useThemePreference();
   // 移动端外壳（<1024px 单栏）：左栏改滑出抽屉。
   const isDesktop = useMediaQuery('(min-width: 1024px)');
@@ -184,6 +186,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setMarketOpen((v) => !v);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setBrowserPickerOpen((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -757,7 +763,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       }}
       onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
       onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
-      onOpenFiles={(p) => setFileBrowser({ projectId: p.id })}
       openExplorerStateOf={openExplorerStateOf}
       openTerminalStateOf={openTerminalProjectStateOf}
       onCloseTerminal={closeProjectTerminal}
@@ -801,10 +806,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             <TrafficLight />
             {/* 组合标（图形 + 手写 WEAVE 单词）：图形部分固定品牌色，单词吃 currentColor。 */}
             <WeaveLogo className="h-[18px] w-auto text-neutral-200" />
-            {/* 项目计数只桌面摆：<lg 顶栏要给搜索/主题/设置/退出留位，这行字会被挤成竖条。 */}
-            <span className={cn('text-xs text-neutral-500', !isDesktop && 'hidden')}>
-              {t('app.projectCount', { n: projects.length })}
-            </span>
             {/* 资源市场（独立弹层页，Ctrl/Cmd+P）：安装落点在弹层内选定，不跟随锚定项目。 */}
             <Tooltip label={`${t('app.openMarket')} (Ctrl+P)`} side="top">
               <button
@@ -812,6 +813,16 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
               >
                 <Library className="h-4 w-4" />
+              </button>
+            </Tooltip>
+            {/* 全项目文件浏览器（Ctrl/Cmd+B）：进入即文件选择器，中栏第一屏列项目。 */}
+            <Tooltip label={`${t('app.openFileBrowser')} (Ctrl+B)`} side="top">
+              <button
+                onClick={() => setBrowserPickerOpen(true)}
+                className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                aria-label={t('app.openFileBrowser')}
+              >
+                <FolderTree className="h-4 w-4" />
               </button>
             </Tooltip>
             {/* 全局搜索（Ctrl/Cmd+K；顶栏按钮兼作移动端入口）。 */}
@@ -1169,6 +1180,16 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           projectName={projects.find((p) => p.id === fileBrowser.projectId)?.name ?? ''}
           path={fileBrowser.path}
           onClose={() => setFileBrowser(null)}
+        />
+      )}
+      {/* 全项目文件浏览器：FileBrowserModal 的全项目模式——中栏第一屏列项目
+          （顺序与左栏一致），点项目就地切进；归档的不列（浏览的是工作区文件）。 */}
+      {browserPickerOpen && (
+        <FileBrowserModal
+          projectId={projects.find((p) => !p.archivedAt)?.id ?? 0}
+          projectName={projects.find((p) => !p.archivedAt)?.name ?? ''}
+          projects={projects.filter((p) => !p.archivedAt)}
+          onClose={() => setBrowserPickerOpen(false)}
         />
       )}
       {/* 资源市场弹层页：安装 handler 失败必抛（弹层 fb.run 统一报错），

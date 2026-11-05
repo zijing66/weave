@@ -76,17 +76,18 @@ export function SessionShuttlePicker({
     for (const list of byProject.values()) {
       list.sort((a, b) => (a.lastSeenAt < b.lastSeenAt ? 1 : -1));
     }
+    // 项目顺序与用户的项目列表一致（左栏同源），无名项目垫底
     const keys = [...byProject.keys()].sort((a, b) => {
       if (a === null) return 1;
       if (b === null) return -1;
-      return (projectName.get(a) ?? `#${a}`).localeCompare(projectName.get(b) ?? `#${b}`);
+      return projects.findIndex((p) => p.id === a) - projects.findIndex((p) => p.id === b);
     });
     return keys.map((id) => ({
       projectId: id,
       name: id === null ? t('tasks.sessionPickerNoProject') : (projectName.get(id) ?? `#${id}`),
       rows: byProject.get(id)!,
     }));
-  }, [sessions, projectName, t]);
+  }, [sessions, projects, projectName, t]);
 
   // 打开那拍落在当前会话所属的项目上（惰性初始化：首算即定，之后不随数据刷新漂）
   const [projIdx, setProjIdx] = useState(() =>

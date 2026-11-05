@@ -15,11 +15,12 @@ import {
   Loader2,
   Maximize,
   Minimize,
+  RefreshCw,
   Search,
   TextSearch,
   X,
 } from 'lucide-react';
-import { api, type ProjectFileEntry, type ProjectRow } from '@/lib/api';
+import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Resizer } from '@/components/Resizer';
 import { useToast } from '@/components/Toast';
@@ -309,6 +310,24 @@ export function FileBrowserModal({
   }, [query, dir, load, activeProjectId, picked, projects]);
 
   useEffect(() => () => ctrlRef.current?.abort(), []);
+
+  // 手动索引重建（懒语义）：点按钮才定向重扫当前目录子树，await 新账回来后重拉列表。
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshIndex = (): void => {
+    if (refreshing || !activeProjectId) return;
+    setRefreshing(true);
+    api
+      .refreshProjectFilesDir(activeProjectId, dir)
+      .catch(() => {})
+      .then(() => {
+        // 重扫完成后静默重拉当前目录（沿用既有 load，带新索引的常规一拍）
+        const ctrl = new AbortController();
+        ctrlRef.current = ctrl;
+        return load(query.trim(), dir, ctrl.signal);
+      })
+      .catch(() => {})
+      .finally(() => setRefreshing(false));
+  };
 
   // 选中项滚进视野：回上一级时那一层可能远在折叠区外（项目列表同理，见 projectListShown）
   const projScrollRef = useRef<HTMLUListElement | null>(null);
@@ -611,12 +630,19 @@ export function FileBrowserModal({
     if (!isDesktop) setScreen('preview');
   };
 
-  /** 全项目模式点一条项目：就地切进该项目（从根开始浏览）。 */
-  const pickProject = (p: ProjectRow): void => {
+  /** 全项目模式点一条项目：就地切进该项目（从根开始浏览）。
+   *  `targetPath` = 搜索命中落点：直接定位到该文件/目录。 */
+  const pickProject = (p: ProjectRow, targetPath?: string): void => {
     setPicked(p);
     userTouched.current = false;
     setQuery('');
-    setDir('');
+    if (targetPath) {
+      const slash = targetPath.lastIndexOf('/');
+      setDir(slash >= 0 ? targetPath.slice(0, slash) : '');
+      focusPath.current = targetPath;
+    } else {
+      setDir('');
+    }
     setSelected(0);
     setEntries([]);
     setScreen('list');
@@ -634,21 +660,39 @@ export function FileBrowserModal({
     // 搜索框不同：打完词按 ↓ 进列表是主路径，故它下面的方向键照样算导航
     const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (inInput && e.target !== searchRef.current) return;
-    // 全项目第一屏：↑↓ 走项目列表，Enter 进项目（方向键 → 无意义，忽略）
+    // 全项目第一屏：搜索态 ↑↓/Enter 走跨项目文件命中；否则走项目列表
     if (projectListShown) {
-      const list = projects ?? [];
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        kbdNav.current = true;
-        const step = e.key === 'ArrowDown' ? 1 : -1;
-        setProjSelected((i) => Math.min(list.length - 1, Math.max(0, i + step)));
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const hit = list[projSelected];
-        if (hit) pickProject(hit);
-        return;
+      const hits = fileHitsRef.current;
+      if (hits) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          kbdNav.current = true;
+          const step = e.key === 'ArrowDown' ? 1 : -1;
+          setProjSelected((i) => Math.min(hits.length - 1, Math.max(0, i + step)));
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const hit = hits[projSelected];
+          const proj = hit && projects?.find((p) => p.id === hit.projectId);
+          if (proj) pickProject(proj, hit.path);
+          return;
+        }
+      } else {
+        const list = projects ?? [];
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          kbdNav.current = true;
+          const step = e.key === 'ArrowDown' ? 1 : -1;
+          setProjSelected((i) => Math.min(list.length - 1, Math.max(0, i + step)));
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const hit = list[projSelected];
+          if (hit) pickProject(hit);
+          return;
+        }
       }
     } else {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -704,8 +748,42 @@ export function FileBrowserModal({
   /** 搜索是当前目录子树的（带 q 时 `dir` 照传）：行与预览头都按这个口径换展示。 */
   const searching = query.trim() !== '';
 
-  /** 全项目模式第一屏：中栏列项目（顺序与左栏项目列表一致），搜索框按名/路径过滤。 */
+  /** 全项目模式第一屏：中栏列项目（顺序与左栏项目列表一致）。搜索框走全局
+   *  检索的文件路（`/search`，跨项目窥视就绪索引，冷项目跳过）——命中行带
+   *  项目名，点击/Enter 直接落进该项目并定位到文件；命中前照旧列项目。 */
   const projectListShown = picked === null && !!projects;
+  const [fileHits, setFileHits] = useState<SearchFileHit[] | null>(null);
+  const [hitsTruncated, setHitsTruncated] = useState(false);
+  /** 键盘 handler（挂一次转闭包）读的命中快照。 */
+  const fileHitsRef = useRef<SearchFileHit[] | null>(null);
+  fileHitsRef.current = fileHits;
+  useEffect(() => {
+    if (!projectListShown) {
+      setFileHits(null);
+      return;
+    }
+    const q = query.trim();
+    if (!q) {
+      setFileHits(null);
+      setProjSelected(0);
+      return;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      api
+        .searchAll(q, ctrl.signal)
+        .then((r) => {
+          setFileHits(r.files);
+          setHitsTruncated(r.truncated.files);
+        })
+        .catch(() => {});
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [query, projectListShown]);
+
   const projectList = projectListShown ? (
     <ul
       ref={projScrollRef}
@@ -716,60 +794,110 @@ export function FileBrowserModal({
       }}
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
     >
-      {projects.length === 0 ? (
-        <li className="px-3 py-6 text-11 text-neutral-500">{t('app.noProjects')}</li>
+      {fileHits ? (
+        // 搜索态：跨项目文件命中平铺（CommandPalette 同源数据），每行带所属项目
+        <>
+          {fileHits.length === 0 && (
+            <li className="px-3 py-6 text-11 text-neutral-500">{t('search.empty')}</li>
+          )}
+          {fileHits.map((hit, i) => {
+            const proj = projects.find((p) => p.id === hit.projectId);
+            return (
+              <li key={`${hit.projectId}:${hit.path}`}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={i === projSelected}
+                  onMouseEnter={() => {
+                    if (!kbdNav.current) setProjSelected(i);
+                  }}
+                  onClick={() => {
+                    if (!proj) return;
+                    userTouched.current = true;
+                    pickProject(proj, hit.path);
+                  }}
+                  className={cn(
+                    'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors',
+                    i === projSelected ? 'bg-blue-500/15' : 'hover:bg-edge/[0.04]',
+                  )}
+                >
+                  <span className="flex w-full min-w-0 items-center gap-2">
+                    {hit.kind === 'dir' ? (
+                      <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
+                    ) : (
+                      iconFor({ kind: 'file', name: hit.path.split('/').pop() ?? hit.path, path: hit.path })
+                    )}
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-neutral-200">
+                      {hit.path.split('/').pop()}
+                    </span>
+                    <span className="shrink-0 rounded bg-neutral-800 px-1.5 text-10 text-neutral-400">
+                      {proj?.name ?? hit.projectId}
+                    </span>
+                  </span>
+                  <span className="truncate pl-5.5 font-mono text-10 text-neutral-600" title={hit.path}>
+                    {hit.path}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+          {hitsTruncated && (
+            <li className="px-3 py-1.5 text-10 text-neutral-600">{t('search.more')}</li>
+          )}
+        </>
       ) : (
-        projects
-          .filter((p) => {
-            const q = query.trim().toLowerCase();
-            if (!q) return true;
-            return p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q);
-          })
-          .map((p, i) => (
-          <li key={p.id}>
-            <button
-              type="button"
-              role="option"
-              aria-selected={i === projSelected}
-              onMouseEnter={() => {
-                if (!kbdNav.current) setProjSelected(i);
-              }}
-              onClick={() => {
-                // 长按刚开的菜单：这一击是抬手补的，不当点选
-                if (suppressRowClick.current) {
-                  suppressRowClick.current = false;
-                  return;
-                }
-                userTouched.current = true;
-                setProjSelected(i);
-                pickProject(p);
-              }}
-              onPointerDown={onProjPointerDown(p)}
-              onPointerMove={onProjPointerMove}
-              onPointerUp={clearRowPress}
-              onPointerCancel={clearRowPress}
-              onContextMenu={(e) => {
-                // 触屏长按也会弹原生菜单：一律压掉，但那条路走长按
-                e.preventDefault();
-                e.stopPropagation();
-                if (!finePointer) return;
-                openRowMenu({ kind: 'dir', name: p.name, path: p.path }, e.clientX, e.clientY);
-              }}
-              className={cn(
-                'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors',
-                i === projSelected ? 'bg-blue-500/15' : 'hover:bg-edge/[0.04]',
-              )}
-            >
-              <span className="flex w-full min-w-0 items-center gap-2">
-                <Folder className={cn('h-3.5 w-3.5 shrink-0 text-blue-300/80')} />
-                <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">{p.name}</span>
-              </span>
-              <span className="truncate pl-5.5 font-mono text-10 text-neutral-600" title={p.path}>
-                {p.path}
-              </span>
-            </button>
-          </li>
-        ))
+        <>
+          {projects.length === 0 ? (
+            <li className="px-3 py-6 text-11 text-neutral-500">{t('app.noProjects')}</li>
+          ) : (
+            projects
+              .map((p, i) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={i === projSelected}
+                  onMouseEnter={() => {
+                    if (!kbdNav.current) setProjSelected(i);
+                  }}
+                  onClick={() => {
+                    // 长按刚开的菜单：这一击是抬手补的，不当点选
+                    if (suppressRowClick.current) {
+                      suppressRowClick.current = false;
+                      return;
+                    }
+                    userTouched.current = true;
+                    setProjSelected(i);
+                    pickProject(p);
+                  }}
+                  onPointerDown={onProjPointerDown(p)}
+                  onPointerMove={onProjPointerMove}
+                  onPointerUp={clearRowPress}
+                  onPointerCancel={clearRowPress}
+                  onContextMenu={(e) => {
+                    // 触屏长按也会弹原生菜单：一律压掉，但那条路走长按
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!finePointer) return;
+                    openRowMenu({ kind: 'dir', name: p.name, path: p.path }, e.clientX, e.clientY);
+                  }}
+                  className={cn(
+                    'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors',
+                    i === projSelected ? 'bg-blue-500/15' : 'hover:bg-edge/[0.04]',
+                  )}
+                >
+                  <span className="flex w-full min-w-0 items-center gap-2">
+                    <Folder className={cn('h-3.5 w-3.5 shrink-0 text-blue-300/80')} />
+                    <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">{p.name}</span>
+                  </span>
+                  <span className="truncate pl-5.5 font-mono text-10 text-neutral-600" title={p.path}>
+                    {p.path}
+                  </span>
+                </button>
+              </li>
+            ))
+          )}
+        </>
       )}
     </ul>
   ) : null;
@@ -1178,6 +1306,20 @@ export function FileBrowserModal({
               </button>
             )}
           </div>
+          {/* 刷新索引：手动定向重建当前目录子树（懒语义——不自动扫，点了才扫） */}
+          {!projectList && (
+            <Tooltip label={t('tasks.fileRefreshIndex')} side="top">
+              <button
+                type="button"
+                aria-label={t('tasks.fileRefreshIndex')}
+                onClick={refreshIndex}
+                disabled={refreshing}
+                className="inline-flex shrink-0 items-center rounded border border-edge/[0.08] p-1 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 disabled:opacity-40"
+              >
+                <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+              </button>
+            </Tooltip>
+          )}
           {/* 全屏：样式与 SessionMessages 那枚同款（图标四角括线 + 文字） */}
           <Tooltip
             label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
