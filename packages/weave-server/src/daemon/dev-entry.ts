@@ -533,6 +533,7 @@ async function main(): Promise<void> {
     hookDispatcher,
     hookRunner,
     messageDeliverer,
+    ensureOpen,
     terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
     uploads,
     questionTracker,

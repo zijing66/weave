@@ -15,6 +15,7 @@ import { CLAUDE_IMAGES } from './images.js';
 import { CLAUDE_NARRATION } from './narration.js';
 import { CLAUDE_COMMANDS } from './commands.js';
 import { CLAUDE_LIVENESS } from './liveness.js';
+import { CLAUDE_TITLES } from './titles.js';
 import { CLAUDE_REWIND } from './rewind.js';
 import { CLAUDE_ACTIVITY } from './activity.js';
 
@@ -42,8 +43,19 @@ export {
 export { CLAUDE_EDITS } from './edits.js';
 export { CLAUDE_IMAGES } from './images.js';
 export { CLAUDE_NARRATION } from './narration.js';
-export { CLAUDE_REWIND, parseRewindLine } from './rewind.js';
+export { CLAUDE_REWIND, stepRewind, type RewindState } from './rewind.js';
+export {
+  CLAUDE_REWIND_PICKER,
+  parseRewindList,
+  parseRewindOptions,
+  isRewindConfirm,
+  rewindConfirmPrompt,
+  pendingInputOf,
+  rewindBusyOf,
+  rewindEmptyOf,
+} from './rewind-ui.js';
 export { CLAUDE_COMMANDS, commandExecutions } from './commands.js';
+export { CLAUDE_TITLES, claudeSessionTitleOf } from './titles.js';
 export {
   CLAUDE_LIVENESS,
   claudeLivenessById,
@@ -133,4 +145,5 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   liveness: CLAUDE_LIVENESS,
   rewind: CLAUDE_REWIND,
   activity: CLAUDE_ACTIVITY,
+  titles: CLAUDE_TITLES,
 };

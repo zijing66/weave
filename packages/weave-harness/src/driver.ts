@@ -1194,18 +1194,75 @@ export interface LivenessSurface {
   alive(ids?: readonly string[]): Promise<Map<string, boolean>>;
 }
 
-/** 一次对话回退（宿主 rewind）：何时发生的、退回到了哪里之前。 */
+/** 一次对话回退（宿主 rewind）：退掉的区间 = `[boundaryAt, at)`。 */
 export interface RewindMark {
   /**
-   * 回退发生的时刻（ISO）。claude 的锚点行自身不带 timestamp，取锚点行之前
-   * 最近一条带 timestamp 转录行的时刻——rewind 只能发生在最后活动之后。
+   * 回退后第一条新 prompt 的时刻（ISO，**不含**）——该时刻起是新分支，
+   * 晚于它的气泡不属于被退掉的那段。
    */
   at: string;
   /**
-   * 回退边界（退回到哪条消息之前）的时刻；宿主锚点只给 uuid 不给时刻，
-   * server 按事件时刻近似——这里恒 null（不猜）。
+   * 被退掉的第一条 prompt 的时刻（ISO，**含**）；null = 从会话开头退起。
    */
   boundaryAt: string | null;
+}
+
+/** 确认屏上的一个选项（宿主真实渲染的那份；weave 不自己编档位）。 */
+export interface RewindPickerOption {
+  /** 屏上原样的选项文案（`Restore conversation` / `Summarize from here` …）。 */
+  label: string;
+  /** 宿主此刻把焦点放在这一项上。 */
+  selected: boolean;
+  /** 「什么都不做」那一项（`Never mind`）：等于取消，前端不摆。 */
+  cancel: boolean;
+}
+
+/** 回退面板里的一条（索引是**列表绝对索引**，含被窗口裁掉的条目）。 */
+export interface RewindPickerItem {
+  index: number;
+  /** 可回退到的消息原文；null = 不是消息行（`(current)` / 前会话行 / 认不出的行）。 */
+  text: string | null;
+  /** 焦点指针落在这条上（屏上可读；选完先核对再回车）。 */
+  focused: boolean;
+}
+
+/** 回退面板当前一屏（可视窗口）。 */
+export interface RewindPickerView {
+  items: RewindPickerItem[];
+  /** 窗口上方被裁掉的条数（屏上 `↑ N more`）。 */
+  moreAbove: number;
+  /** 窗口下方被裁掉的条数。 */
+  moreBelow: number;
+}
+
+/**
+ * `/rewind` 交互面板的宿主文法：怎么开、屏上长什么样、键怎么打。
+ * 面板是宿主 TUI 的模态界面，weave 只能读屏 + 打键——故「屏文」「键字节」
+ * 都是 harness 知识，server 只跑「打开 → 读屏 → 按索引打键 → 在宿主给的选项里选一项」的循环。
+ */
+export interface RewindPickerSpec {
+  /** 唤醒面板的命令原文（server 经层② 打进输入框并提交）。 */
+  openCommand: string;
+  /** 列表屏的屏上锚（开面板失败时用它区分「面板开着但不认识」与「命令没生效」）。 */
+  listHeader: RegExp;
+  /** 解析列表屏；不是列表屏 → null。 */
+  parseList(screen: string): RewindPickerView | null;
+  /**
+   * 确认屏的选项表（宿主渲染的编号行 + `❯` 焦点）；不是确认屏 → null。
+   * **选项只能从屏上读**：同一会话不同消息能退的东西不一样（有的消息挂了文件改动、
+   * 有的没有），列表头猜不出来。
+   */
+  parseConfirm(screen: string): RewindPickerOption[] | null;
+  /** 确认屏里回显的「被选中那条消息」原文（核对落点；取不到 → null）。 */
+  confirmPrompt?(screen: string): string | null;
+  /** 屏上输入框里未发送的内容（`''` = 空，读不到 = null）——命令只能从空输入框敲。 */
+  pendingInputOf?(screen: string): string | null;
+  /** 屏上有没有「正在跑回合」的证据（此时敲命令会被当普通消息排队）。 */
+  busyOf?(screen: string): boolean;
+  /** 面板开着但没有任何可回退点（空面板也是面板：要按 Esc 关掉，不能当没开）。 */
+  emptyOf?(screen: string): boolean;
+  /** 键字节（含 Kitty 键盘协议编码；`clearInput` = 清空当前输入行的控制字节）。 */
+  keys: { up: string; down: string; accept: string; cancel: string; clearInput: string };
 }
 
 /**
@@ -1223,20 +1280,24 @@ export interface RewindSurface {
     /** 转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
     transcriptPath: string | null;
   }): Promise<RewindMark[] | null>;
+  /** 回退面板文法；缺位 = 该 harness 的回退只能人工在 TUI 里做（前端不摆入口）。 */
+  picker?: RewindPickerSpec;
 }
 
 /**
  * 会话标题读写面：宿主侧**用户自定义名**（codex = thread name，落 session_index
- * 与 sqlite threads.name）的读/写通道。读 = 宿主持久层 diff 采纳（TUI 改名反显
- * 前端）；写 = 官方 RPC（thread/name/set，前端改名进宿主）。claude 不挂此槽——
- * 它的名字通道是 hook session_title 双向管线，不经这里。
+ * 与 sqlite threads.name）的读写通道。读 = 宿主持久层 diff 采纳（TUI 改名反显
+ * 前端）；写 = 官方 RPC（thread/name/set，前端改名进宿主）。claude 只挂读半边
+ * ——名字写走 hook session_title 双向管线（本面无 setSessionTitle），读则补
+ * 注册表里的派生默认名（hook 从不上报 `session_title` 的会话也能有名字）。
  */
 export interface SessionTitleSurface {
   readonly harness: Harness;
-  /** 宿主侧当前用户自定义名；无名/无文件返回 null（宿主清除名字时置空串 → null）。 */
+  /** 宿主侧当前名（自定义或宿主派生）；无名/无文件返回 null（宿主清除名字时置空串 → null）。 */
   sessionTitleOf(sessionId: string): Promise<string | null>;
-  /** 经官方通道写宿主侧名字；trim 后空串抛错，宿主拒绝/超时/协议不认识抛错。 */
-  setSessionTitle(sessionId: string, name: string): Promise<void>;
+  /** 经官方通道写宿主侧名字；trim 后空串抛错，宿主拒绝/超时/协议不认识抛错。
+   *  缺位 = 该 harness 的写另有通道（claude = hook 回执 pending）。 */
+  setSessionTitle?(sessionId: string, name: string): Promise<void>;
 }
 
 /**
@@ -1252,6 +1313,8 @@ export interface ActivityAgentRow {
   /** 子 agent 独立转录绝对路径（详情端点的白名单锚点）；null = 不知道在哪。 */
   transcriptPath: string | null;
   startedAt: string | null;
+  /** 转录最后写入时刻：事件账缺账时 server 用它判静默期（久未动 = 已结束）。 */
+  updatedAt?: string | null;
 }
 
 export interface ActivityTaskRow {
@@ -1274,8 +1337,8 @@ export interface ActivityShellRow {
 
 export interface ActivitySnapshot {
   agents: ActivityAgentRow[];
-  /** null = 该会话没有任务清单痕迹（文件与事件账都没有）。 */
-  tasks: { rows: ActivityTaskRow[]; source: 'file' | 'events' } | null;
+  /** 当前存在的任务清单（宿主清空目录后文件没了 ⇒ null，不再从事件账重建）。 */
+  tasks: ActivityTaskRow[] | null;
   shells: ActivityShellRow[];
 }
 

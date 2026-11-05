@@ -21,6 +21,7 @@ import type { TerminalTopologyRefresher } from './terminal-topology-refresher.js
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import type { SnapshotRefresher } from './snapshot-refresher.js';
 import type { SessionProbe } from './session-probe.js';
+import type { EnsureOpenResult } from './session-open.js';
 import { importPromptImagesOnce, needsImageImport } from './prompt-images.js';
 import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
@@ -132,6 +133,9 @@ export interface WeaveServerDeps {
   hookRunner?: ResumeRunner;
   /** 消息域投递器（消息域重塑：纯管道裁决 + prompt 三层）；/sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
+  /** 判死拉起（共享工厂 session-open.ts，与编排引擎同一实例）：带 `#` 引用标注的
+   *  发送在投递前把未启动的目标会话拉起来。缺省 = 无此能力（报 503）。 */
+  ensureOpen?: (sessionId: string) => Promise<EnsureOpenResult>;
   /**
    * 层② 终端通道（promptTerminalChannel 的产物，与 messageDeliverer 的 terminal
    * 同一实例）：new-session 的引导注入（`resume.bootstrapText`）借它定位 pane env
@@ -145,7 +149,7 @@ export interface WeaveServerDeps {
   /** 阻塞问答跟踪器（AskUserQuestion / 计划与权限确认）；/messaging/questions 与 /sessions/:id/answer 依赖它。 */
   questionTracker?: QuestionTracker;
   /** 会话活动账（子 agent/后台 shell/任务清单的事件面）；/sessions/:id/activity 合账依赖它。 */
-  activityTracker?: Pick<ActivityTracker, 'agentsOf' | 'shellsOf' | 'tasksOf'>;
+  activityTracker?: Pick<ActivityTracker, 'agentsOf' | 'shellsOf'>;
   /** 旁路会话历史（claude = /btw）：问句只有 weave 自己发过才知道，故得自己记；
    *  `/sessions/:id/side-question(s)` 与删会话级联依赖它。 */
   sideQuestions?: SideQuestionDeps;

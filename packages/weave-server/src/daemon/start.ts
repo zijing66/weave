@@ -563,6 +563,7 @@ export function startDaemon(): void {
     hookDispatcher,
     hookRunner,
     messageDeliverer,
+    ensureOpen,
     terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
     uploads,
     questionTracker,
