@@ -118,7 +118,8 @@ export function Combobox({
     const r = anchor.getBoundingClientRect();
     // 全程视觉 px（锚点矩形 + 视口），只在落 style 前经 cssPx 除回 CSS 值——
     // 根 zoom 会把 fixed 的 CSS 值再乘一次，不换算弹层会飞离锚点。
-    const width = Math.max(r.width, 220);
+    // 上限跟着视口收：窄屏（手机）上锚点可能比视口还宽，不收就溢出屏幕。
+    const width = Math.min(Math.max(r.width, 220), window.innerWidth - 16);
     const left = align === 'end' ? r.right - width : r.left;
     const below = window.innerHeight - r.bottom;
     const above = r.top;

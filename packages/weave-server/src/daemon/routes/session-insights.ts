@@ -90,6 +90,9 @@ function readPlanFile(filePath: string | null): string | null {
  * 改动汇总的取数上限：一次对话可以改几百处、整份 Write 也不小，全量回给浏览器
  * 只会把面板拖死。超长的单处裁掉尾巴（前端标「已截断」），总额用完就不再取。
  */
+/** 子 agent 转录静默期（事件账缺账时的终态判据）：超过这么久没写 = 已结束。 */
+const AGENT_STALE_MS = 120_000;
+
 const EDIT_MAX_FIELD_CHARS = 200_000;
 const EDIT_MAX_TOTAL_CHARS = 4_000_000;
 
@@ -339,7 +342,9 @@ export async function handleSessionInsightRoutes(
 
   // ---- 会话活动（第 21 能力槽 activity）：子 agent / 任务清单 / 后台 shell。
   // 合账：meta 与路径归 surface 文件面，running/completed 状态归 server 事件账
-  // （ActivityTracker）；任务清单文件易失，读不到时用事件账重建并标 source。----
+  // （ActivityTracker）。**存量只认「当前还在的」**（用户裁决）：子 agent 看转录
+  // 文件、任务清单看 tasks 目录、shell 看最近一次 background_tasks 快照——
+  // 已移除的一律不显示，不管运行状态。----
   const activityMatch = pathname.match(/^\/sessions\/([^/]+)\/activity$/);
   if (activityMatch && req.method === 'GET') {
     const sessionId = decodeURIComponent(activityMatch[1]!);
@@ -356,28 +361,19 @@ export async function handleSessionInsightRoutes(
     });
     const agents = deps.activityTracker?.agentsOf(sessionId);
     const shells = deps.activityTracker?.shellsOf(sessionId);
-    const trackedTasks = deps.activityTracker?.tasksOf(sessionId) ?? [];
-    // agents：并集——surface 给 id/meta/路径，tracker 给状态（账上没有的保持 running，
-    // 那是文件在而 SubagentStop 还没到/没采到的形态）。
+    // 账上没有的子 agent（daemon 重启后窗口外、或 spawn/stop 帧都没采到）：子 agent
+    // 必在父会话某一轮内活着 ⇒ 父会话不忙时一律 completed；忙时再看转录静默期
+    // （超过 AGENT_STALE_MS 没写 = 已结束，避免历史转录永远挂着 running）。
+    const busy = deps.hookSessions?.getBySessionId(sessionId)?.turnOpen === true;
     const mergedAgents = (fileFace?.agents ?? []).map((a) => {
       const t = agents?.get(a.agentId);
-      return { ...a, ...(t ? { status: t.status } : {}) };
+      if (t) return { ...a, status: t.status };
+      const idleMs = a.updatedAt ? Date.now() - Date.parse(a.updatedAt) : Number.POSITIVE_INFINITY;
+      const status = !busy || idleMs > AGENT_STALE_MS ? ('completed' as const) : ('running' as const);
+      return { ...a, status };
     });
-    // 任务清单：文件为准（含 blocks/blockedBy）；文件缺 → 事件账重建（只有末态）。
-    const tasks =
-      fileFace?.tasks ?? (trackedTasks.length > 0
-        ? {
-            source: 'events' as const,
-            rows: trackedTasks.map((t) => ({
-              id: t.taskId,
-              subject: t.subject ?? `Task ${t.taskId}`,
-              ...(t.activeForm ? { activeForm: t.activeForm } : {}),
-              status: t.status,
-              blocks: [] as string[],
-              blockedBy: [] as string[],
-            })),
-          }
-        : null);
+    // 任务清单：只认文件面（宿主清空目录 = 清单没了，事件账不再重建）。
+    const tasks = fileFace?.tasks ?? null;
     sendJson(res, 200, {
       supported: true,
       agents: mergedAgents,

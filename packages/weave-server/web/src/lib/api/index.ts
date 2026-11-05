@@ -73,6 +73,11 @@ export type {
   SessionEdits,
   RecognizedRef,
   SideQuestionRow,
+  ActivityAgentRow,
+  ActivityTaskRow,
+  ActivityShellRow,
+  SessionActivity,
+  ActivityTranscriptSeg,
 } from './sessions';
 export type {
   SessionMessageRow,

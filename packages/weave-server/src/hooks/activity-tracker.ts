@@ -4,20 +4,24 @@ import type { SessionRepository } from '../repositories/sessions.js';
 import type { NormalizedHookPayload } from './types.js';
 
 /**
- * 会话活动跟踪器（内存态状态机）：从 ingest 事件流派生「子 agent / 后台 shell /
- * 任务清单」的运行态账本，供对话头部活动行展示。文件面事实（subagents 目录、
- * tasks 目录、shell 输出文件）归 harness 的 activity 槽（surface），事件面归这里
- * ——两边在 `GET /sessions/:id/activity` 合账。
+ * 会话活动跟踪器（内存态状态机）：从 ingest 事件流派生「子 agent / 后台 shell」的
+ * 运行态账本，供对话头部活动行展示。文件面事实（subagents 目录、tasks 目录、shell
+ * 输出文件）归 harness 的 activity 槽（surface），事件面归这里——两边在
+ * `GET /sessions/:id/activity` 合账。
+ *
+ * 存量口径 = 「当前还在的」（用户裁决：已移除的不显示，不管运行状态）：
+ * - 子 agent 的存量由文件面（subagents 目录里的转录）决定，账只管状态；
+ * - 后台 shell 没有文件面判据，账本只增不删：快照里没有的说明它结束了，
+ *   翻 completed 交给前端收纳（已停止的仍要可查）。
  *
  * 置位/翻转（状态机输入 = 归一化 payload）：
- * - PostToolUse(Agent) 带 isAsync+agentId → 子 agent 出生（running）；
+ * - PostToolUse(Agent) 带 isAsync+agentId → 子 agent 出生（running，后台 agent）；
+ * - SubagentStart 的 agent_id → 子 agent 出生（running，前台 agent 唯一的结构化信号）；
  * - PostToolUse(Bash) 带 backgroundTaskId → 后台 shell 出生（running，command 取
  *   本次 toolInput.command——同帧就有，不必等 background_tasks 快照）；
  * - agent_id（子 agent 自身事件）→ 活性续期；
- * - Stop/SubagentStop 的 background_tasks 快照 → 整集对账（status 翻转权威）；
- * - SubagentStop 的 agent_id → 该子 agent completed；
- * - PreToolUse(TaskCreate/TaskUpdate) → 任务账（subject/activeForm/status 流水
- *   末态）。tasks 文件易失（宿主收尾清目录），事件账是唯一的兜底重建源。
+ * - Stop/SubagentStop 的 background_tasks 快照 → 整集对账（status 翻转 + 存量权威）；
+ * - SubagentStop 的 agent_id → 该子 agent completed。
  *
  * daemon 重启由 seedFromDb 按最近事件窗口重放重建。
  */
@@ -39,14 +43,6 @@ export interface TrackedShell {
   lastSeenAt: string;
 }
 
-/** 事件账重建的任务条目（只有流水末态，没有 blocks/blockedBy——如实标注 source）。 */
-export interface TrackedTask {
-  taskId: string;
-  subject?: string;
-  activeForm?: string;
-  status: string;
-}
-
 /** 状态机输入（handleIngestedRecords 逐条喂给；seedFromDb 重放同形）。 */
 export interface ActivityEventInput {
   sessionId: string;
@@ -59,23 +55,18 @@ export interface ActivityEventInput {
 
 export interface ActivityTrackerDeps {
   sessions: Pick<SessionRepository, 'list'>;
-  hookEvents: Pick<HookEventRepository, 'listBySession' | 'listByTools'>;
+  hookEvents: Pick<HookEventRepository, 'listBySession'>;
 }
 
 /** seed 重放窗口（每会话最近事件条数：spawn→stop 之间事件少，窗口管住的是
- *  「最近一条带 background_tasks 的快照」与 TaskCreate/TaskUpdate 流水——50 够）。 */
+ *  「最近一条带 background_tasks 的快照」——50 够）。 */
 const SEED_WINDOW = 50;
-
-/** 事件账重建任务时 PreToolUse 工具调用数上限（TaskCreate/TaskUpdate 极少超此）。 */
-const TASK_REPLAY_LIMIT = 200;
 
 export class ActivityTracker {
   /** sessionId → agentId → 账。 */
   private readonly agents = new Map<string, Map<string, TrackedAgent>>();
   /** sessionId → taskId → 账。 */
   private readonly shells = new Map<string, Map<string, TrackedShell>>();
-  /** sessionId → taskId → 任务账（TaskCreate/TaskUpdate 流水末态）。 */
-  private readonly tasks = new Map<string, Map<string, TrackedTask>>();
 
   constructor(private readonly deps: ActivityTrackerDeps) {}
 
@@ -123,6 +114,28 @@ export class ActivityTracker {
       }
       return;
     }
+    // 子 agent 出生（SubagentStart）：前台的子 agent 没有 Agent 工具的 isAsync 回执，
+    // 这条是唯一的结构化出生信号——不记就只能在收尾快照里第一次看见它。
+    if (eventType === 'SubagentStart') {
+      const raw = payload.raw as { agent_id?: unknown; agent_type?: unknown } | null;
+      const agentId = raw && typeof raw === 'object' && typeof raw.agent_id === 'string' ? raw.agent_id : null;
+      if (agentId) {
+        const agentType = raw && typeof raw.agent_type === 'string' && raw.agent_type ? raw.agent_type : undefined;
+        const hit = this.agents.get(sessionId)?.get(agentId);
+        if (hit) {
+          hit.status = 'running';
+          hit.lastSeenAt = now;
+          if (agentType && !hit.agentType) hit.agentType = agentType;
+        } else {
+          this.agentMap(sessionId).set(agentId, {
+            status: 'running',
+            ...(agentType ? { agentType } : {}),
+            lastSeenAt: now,
+          });
+        }
+      }
+      return;
+    }
     // 子 agent 自身事件：活性续期。
     if (eventType !== 'Stop' && eventType !== 'SubagentStop') {
       const raw = payload.raw as { agent_id?: unknown } | null;
@@ -131,10 +144,6 @@ export class ActivityTracker {
         const map = this.agents.get(sessionId);
         const hit = map?.get(agentId);
         if (hit) hit.lastSeenAt = now;
-      }
-      // 任务清单：TaskCreate/TaskUpdate 的 toolInput 流水。
-      if (eventType === 'PreToolUse' && (toolName === 'TaskCreate' || toolName === 'TaskUpdate')) {
-        this.applyTaskEvent(sessionId, toolName, payload.toolInput);
       }
       return;
     }
@@ -161,13 +170,15 @@ export class ActivityTracker {
     if (input.backgroundTasks) this.reconcile(sessionId, input.backgroundTasks, now);
   }
 
-  /** background_tasks 快照整集对账：running 的按 type 补/翻账，不在快照里的保持。 */
+  /** background_tasks 快照整集对账：按 type 补/翻账。 */
   private reconcile(sessionId: string, tasks: BackgroundTaskFact[], now: string): void {
     for (const task of tasks) {
       if (task.type === 'subagent') {
         const hit = this.agents.get(sessionId)?.get(task.id);
         if (hit) {
-          hit.status = task.status === 'running' ? 'running' : hit.status;
+          // 快照说停 → 翻 completed；说 running → 已 completed 的不翻回去（快照滞后一拍）。
+          if (task.status !== 'running') hit.status = 'completed';
+          else if (hit.status !== 'completed') hit.status = 'running';
           hit.lastSeenAt = now;
           if (task.description && !hit.description) hit.description = task.description;
           if (task.agentType && !hit.agentType) hit.agentType = task.agentType;
@@ -197,37 +208,13 @@ export class ActivityTracker {
         }
       }
     }
-  }
-
-  /** TaskCreate/TaskUpdate 的 toolInput 流水（末态权威）。 */
-  private applyTaskEvent(sessionId: string, toolName: string, toolInput: unknown): void {
-    const map = this.tasks.get(sessionId) ?? new Map<string, TrackedTask>();
-    this.tasks.set(sessionId, map);
-    const input = toolInput && typeof toolInput === 'object' ? (toolInput as Record<string, unknown>) : {};
-    if (toolName === 'TaskCreate') {
-      const taskId = typeof input.taskId === 'string' ? input.taskId : null;
-      if (!taskId) return;
-      const prev = map.get(taskId);
-      map.set(taskId, {
-        taskId,
-        ...(typeof input.subject === 'string' ? { subject: input.subject } : prev?.subject ? { subject: prev.subject } : {}),
-        ...(typeof input.activeForm === 'string' ? { activeForm: input.activeForm } : prev?.activeForm ? { activeForm: prev.activeForm } : {}),
-        status: typeof input.status === 'string' ? input.status : prev?.status ?? 'pending',
-      });
-      return;
+    // 快照 = 宿主此刻的后台任务列表：不在里面的 shell 已经结束了，翻 completed
+    // 留给前端收纳（**不删账**——已停止的仍要可查），避免永远挂着 running。
+    const shellMap = this.shells.get(sessionId);
+    if (shellMap) {
+      const alive = new Set(tasks.filter((t) => t.type === 'shell').map((t) => t.id));
+      for (const [id, hit] of shellMap) if (!alive.has(id)) hit.status = 'completed';
     }
-    // TaskUpdate：{taskId, status}（可能只带 status）。
-    const taskId = typeof input.taskId === 'string' ? input.taskId : null;
-    if (!taskId) return;
-    const prev = map.get(taskId);
-    map.set(taskId, {
-      taskId,
-      ...(prev?.subject ? { subject: prev.subject } : {}),
-      ...(prev?.activeForm ? { activeForm: prev.activeForm } : {}),
-      ...(typeof input.subject === 'string' ? { subject: input.subject } : {}),
-      ...(typeof input.activeForm === 'string' ? { activeForm: input.activeForm } : {}),
-      status: typeof input.status === 'string' ? input.status : prev?.status ?? 'pending',
-    });
   }
 
   private agentMap(sessionId: string): Map<string, TrackedAgent> {
@@ -252,12 +239,7 @@ export class ActivityTracker {
     return this.shells.get(sessionId) ?? new Map();
   }
 
-  /** 某会话的事件账任务（surface 的文件面 tasks 为 null 时的兜底）。 */
-  tasksOf(sessionId: string): TrackedTask[] {
-    return [...(this.tasks.get(sessionId)?.values() ?? [])];
-  }
-
-  /** daemon 重启重建：每会话重放最近事件窗口 + TaskCreate/TaskUpdate 全流水。 */
+  /** daemon 重启重建：每会话重放最近事件窗口。 */
   seedFromDb(): void {
     for (const session of this.deps.sessions.list()) {
       for (const row of this.deps.hookEvents.listBySession(session.sessionId, SEED_WINDOW)) {
@@ -275,19 +257,6 @@ export class ActivityTracker {
           : undefined;
         this.onEvent({ sessionId: session.sessionId, payload, backgroundTasks });
       }
-      // TaskCreate/TaskUpdate 流水按 id 正序重放（listByTools 倒序取，翻回来）。
-      const rows = this.deps.hookEvents
-        .listByTools(session.sessionId, ['TaskCreate', 'TaskUpdate'], null, TASK_REPLAY_LIMIT)
-        .reverse();
-      for (const row of rows) {
-        let payload: NormalizedHookPayload | null = null;
-        try {
-          payload = JSON.parse(row.payload) as NormalizedHookPayload;
-        } catch {
-          payload = null;
-        }
-        this.onEvent({ sessionId: session.sessionId, payload });
-      }
     }
   }
 
@@ -295,6 +264,5 @@ export class ActivityTracker {
   forgetSession(sessionId: string): void {
     this.agents.delete(sessionId);
     this.shells.delete(sessionId);
-    this.tasks.delete(sessionId);
   }
 }

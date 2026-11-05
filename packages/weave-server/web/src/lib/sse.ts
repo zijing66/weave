@@ -34,7 +34,16 @@ export interface HookFrame {
   /** 后台子 agent 出生信号（PostToolUse Agent isAsync 的 tool_response.agentId）。 */
   spawnAgentId?: string;
   /** Stop/SubagentStop 携带的后台任务快照——存活集权威对账源。 */
-  backgroundTasks?: Array<{ id: string; status: string }>;
+  backgroundTasks?: Array<{
+    id: string;
+    status: string;
+    type?: string;
+    description?: string;
+    agentType?: string;
+    command?: string;
+  }>;
+  /** 后台 shell 出生信号（PostToolUse(Bash) 的 tool_response.backgroundTaskId）。 */
+  bgShell?: { taskId: string };
   /** raw.source（SessionStart 的 startup/resume/compact/clear——压缩收尾笔靠它认）。 */
   rawSource?: string;
   ruleId?: string;

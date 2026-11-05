@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import type {
   ActivityAgentRow,
@@ -12,9 +12,10 @@ import { assistantTextOf } from './narration.js';
 
 /**
  * 会话活动（claude）：三类运行态的文件面事实——
- * - 子 agent：转录目录旁的 `subagents/agent-<id>.jsonl` + `.meta.json`（宿主在
- *   spawn 时落，SubagentStop 的 raw.agent_transcript_path 也直接给绝对路径）。
- *   文件在 = 曾活过；running/completed 的分野归 server 的事件账（SubagentStop）。
+ * - 子 agent：`<projects>/<slug>/<会话id>/subagents/agent-<id>.jsonl` + `.meta.json`
+ *   （子 agent 目录挂在**去掉 .jsonl 的同名目录**下，不在转录文件旁边）。
+ *   文件在 = 曾活过；running/completed 的分野归 server 的事件账（SubagentStop），
+ *   账上缺时 server 用 `updatedAt` 静默期兜底。
  * - 任务清单：`~/.claude/tasks/<会话id>/<N>.json`。**易失**——任务收尾后宿主会
  *   清目录（2026-11-04 实测 4994bf90 整目录空），读不到时 server 从事件账兜底。
  * - 后台 shell：输出文件在 `<tmp>/claude/<cwdSlug>/<raw会话id>/tasks/<taskId>.output`。
@@ -25,9 +26,10 @@ import { assistantTextOf } from './narration.js';
 const AGENT_FILE = /^agent-([A-Za-z0-9-]+)\.jsonl$/;
 const TASK_FILE = /^\d+\.json$/;
 
-/** 会话 cwd → 宿主 tmp 目录名（`D:\GitRepo\AIRepo\weave` → `D--GitRepo-AIRepo-weave`）。 */
+/** 会话 cwd → 宿主 tmp 目录名：**每个**非 `[A-Za-z0-9.-]` 字符各换一个 `-`
+ *  （`D:\GitRepo\AIRepo\weave` → `D--GitRepo-AIRepo-weave`，盘符后是两个横线）。 */
 function cwdSlugOf(cwd: string): string {
-  return cwd.replace(/[^A-Za-z0-9.-]+/g, '-');
+  return cwd.replace(/[^A-Za-z0-9.-]/g, '-');
 }
 
 interface AgentMeta {
@@ -52,8 +54,17 @@ function firstTimestampOf(path: string): string | null {
   }
 }
 
+/** 转录最后写入时刻（server 判「账上没有、但文件久未动」的静默期）。 */
+function mtimeOf(path: string): string | null {
+  try {
+    return statSync(path).mtime.toISOString();
+  } catch {
+    return null;
+  }
+}
+
 function tasksDirOf(sessionId: string): string | null {
-  const home = process.env.USERPROFILE ?? process.env.HOME;
+  const home = process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME;
   if (!home) return null;
   return join(home, '.claude', 'tasks', sessionId);
 }
@@ -121,15 +132,13 @@ export const CLAUDE_ACTIVITY: ActivitySurface = {
           status: 'running', // 终态由 server 的事件账翻转（SubagentStop）
           transcriptPath: file,
           startedAt: firstTimestampOf(file),
+          updatedAt: mtimeOf(file),
         });
       }
     }
     const tasksDir = tasksDirOf(sessionId);
     const rows = tasksDir ? readTasks(tasksDir) : null;
-    return {
-      agents,
-      ...(rows && rows.length > 0 ? { tasks: { rows, source: 'file' as const } } : { tasks: null }),
-    };
+    return { agents, tasks: rows && rows.length > 0 ? rows : null };
   },
 
   async agentTranscript({ transcriptPath, offset }) {
@@ -166,10 +175,8 @@ export const CLAUDE_ACTIVITY: ActivitySurface = {
       'tasks',
     );
     const file = join(dir, `${taskId}.output`);
-    // 白名单：命中文件必须就是扫描目录里那个（防 taskId 带 .. 之类逃逸）
-    if (resolve(file) !== file || !file.startsWith(dir + (dir.endsWith('\\') || dir.endsWith('/') ? '' : '\\'))) {
-      return null;
-    }
+    // 白名单：解析后的路径必须就在这个 tasks 目录下（taskId 带 .. 之类逃逸即拒）。
+    if (dirname(resolve(file)) + sep !== dir + sep) return null;
     let size: number;
     try {
       size = statSync(file).size;
@@ -184,6 +191,8 @@ export const CLAUDE_ACTIVITY: ActivitySurface = {
 
   subagentsDirOf(transcriptPath) {
     if (!transcriptPath) return null;
-    return join(transcriptPath, '..', 'subagents');
+    // 结构：`<projects>/<slug>/<会话id>.jsonl` + `<projects>/<slug>/<会话id>/subagents/`
+    // ——子 agent 目录挂在**去掉 .jsonl 的同名目录**下，不在转录文件旁边。
+    return join(dirname(transcriptPath), basename(transcriptPath, '.jsonl'), 'subagents');
   },
 };
