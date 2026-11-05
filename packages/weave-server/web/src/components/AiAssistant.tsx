@@ -105,7 +105,7 @@ export function AiAssistant() {
       {/* 定位挂在外层：Tooltip 的 wrapper 是参与文档流的 inline-flex，
           直接包 fixed 按钮会在 #root 尾部多出一个空行 box（页面多一条滚动条） */}
       <span className="fixed bottom-4 right-4 z-50">
-        <Tooltip label={open ? t('ai.close') : t('ai.open')} side="top">
+        <Tooltip label={open ? t('ai.close') : t('ai.open')} side="top" align="end">
           <button
             type="button"
             onClick={() => setOpen((value) => !value)}

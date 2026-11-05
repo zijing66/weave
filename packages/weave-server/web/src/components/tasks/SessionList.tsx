@@ -493,15 +493,16 @@ export function SessionList({
                   禁用——再点只会又 spawn 一个宿主进程抢同一会话。loading 的挂法
                   见 TasksPanel（一直挂到转绿），期间同样禁用。 */}
               {s.canOpenTerminal && (
+                <Tooltip label={t('tasks.openSessionTerminal')}>
                 <button
                   type="button"
                   disabled={noTranscript || !!s.pidAlive || openTermState === 'loading'}
                   title={
-                    noTranscript
-                      ? t('tasks.transcriptMissingTip')
-                      : s.pidAlive
-                        ? t('tasks.sessionTerminalRunning')
-                        : t('tasks.openSessionTerminal')
+                    noTranscript || s.pidAlive
+                      ? (noTranscript
+                          ? t('tasks.transcriptMissingTip')
+                          : t('tasks.sessionTerminalRunning'))
+                      : undefined
                   }
                   onClick={(e) => {
                     e.stopPropagation();
@@ -524,6 +525,7 @@ export function SessionList({
                     }
                   />
                 </button>
+                </Tooltip>
               )}
               {/* 关 pane / 退出会话：会话进程活着才出现（没得关就不占位）——
                   关掉 = 宿主随 pane 一起退出，会话行与它的对话照常保留，之后仍

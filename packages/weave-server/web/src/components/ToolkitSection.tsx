@@ -403,9 +403,11 @@ export function ToolkitSection({
             <p className="text-11 font-medium text-amber-300">
               {t('toolkit.legacyTitle', { n: legacyCopies.length })}
             </p>
-            <p className="truncate text-10 text-amber-200/60" title={legacyCopies.join('\n')}>
-              {t('toolkit.legacyHint')}
-            </p>
+            <Tooltip label={legacyCopies.join('\n')}>
+              <p className="truncate text-10 text-amber-200/60">
+                {t('toolkit.legacyHint')}
+              </p>
+            </Tooltip>
           </div>
           <button
             type="button"
@@ -492,9 +494,11 @@ export function ToolkitSection({
                   total: repo.groups.length,
                 })}
               </StatusPill>
-              <span className="shrink-0 text-10 text-neutral-600" title={t('repo.namespaceTip')}>
-                {t('repo.packCount', { n: packCount })}
-              </span>
+              <Tooltip label={t('repo.namespaceTip')}>
+                <span className="shrink-0 text-10 text-neutral-600">
+                  {t('repo.packCount', { n: packCount })}
+                </span>
+              </Tooltip>
             </div>
             {!repoCollapsed && (
               <div className="px-3 pb-3 pt-1 space-y-2">

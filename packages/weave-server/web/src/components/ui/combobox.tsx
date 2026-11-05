@@ -7,6 +7,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
 import { cssPx } from '@/lib/font-scale';
 import { cn } from '@/lib/utils';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 下拉里的一行：value 唯一；label 缺省用 value；hint 是第二行灰字（说明/真名）。 */
 export interface ComboboxOption {
@@ -212,28 +213,32 @@ export function Combobox({
     }
   };
 
+  const anchor = (
+    <button
+      type="button"
+      ref={anchorRef}
+      disabled={disabled}
+      title={disabled ? title : undefined}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      aria-controls={listId}
+      onClick={() => setOpen((v) => !v)}
+      onKeyDown={onKeyDown}
+      className={cn(
+        'flex min-w-0 items-center gap-1 rounded-md bg-neutral-900 border border-edge/[0.08] px-2 py-1 text-xs text-neutral-200 focus:outline-none focus:border-mac-accent/50 disabled:opacity-40',
+        className,
+      )}
+    >
+      <span className={cn('min-w-0 flex-1 truncate text-left', current ? '' : 'text-neutral-500')}>
+        {current ? (current.label ?? current.value) : (placeholder ?? t('common.empty'))}
+      </span>
+      <ChevronDown className={cn('h-3 w-3 shrink-0 text-neutral-500 transition-transform', open && 'rotate-180')} />
+    </button>
+  );
+
   return (
     <>
-      <button
-        type="button"
-        ref={anchorRef}
-        disabled={disabled}
-        title={title}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={listId}
-        onClick={() => setOpen((v) => !v)}
-        onKeyDown={onKeyDown}
-        className={cn(
-          'flex min-w-0 items-center gap-1 rounded-md bg-neutral-900 border border-edge/[0.08] px-2 py-1 text-xs text-neutral-200 focus:outline-none focus:border-mac-accent/50 disabled:opacity-40',
-          className,
-        )}
-      >
-        <span className={cn('min-w-0 flex-1 truncate text-left', current ? '' : 'text-neutral-500')}>
-          {current ? (current.label ?? current.value) : (placeholder ?? t('common.empty'))}
-        </span>
-        <ChevronDown className={cn('h-3 w-3 shrink-0 text-neutral-500 transition-transform', open && 'rotate-180')} />
-      </button>
+      {title && !disabled ? <Tooltip label={title} className="contents">{anchor}</Tooltip> : anchor}
       {open &&
         rect &&
         createPortal(

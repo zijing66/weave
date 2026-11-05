@@ -223,9 +223,11 @@ function AssetTreeNode({
           {/* 所属仓库（服务端给的 namespace）：谁铺的与「这是什么」是两个维度，
               故排在类别 tag 之后、用描边区分，缺省（用户自己写的文件）不显示。 */}
           {a.namespace && (
-            <span className={cn(ROW_TAG_BASE, NAMESPACE_TAG)} title={t('repo.namespaceTip')}>
-              {a.namespace}
-            </span>
+            <Tooltip label={t('repo.namespaceTip')}>
+              <span className={cn(ROW_TAG_BASE, NAMESPACE_TAG)}>
+                {a.namespace}
+              </span>
+            </Tooltip>
           )}
           {update?.outdated && (
             <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-10 font-sans">

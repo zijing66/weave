@@ -1,12 +1,12 @@
 /** App 壳、项目列表、skill 详情抽屉的词条（批次 3a 填充）。 */
 export const appZh = {
   // —— App 壳 ——
-  'app.projectCount': '{n} 个项目',
-  'app.settingsTooltip': '设置（默认终端等）',
+  'app.settingsTooltip': '设置',
   'app.themeDark': '主题：深色（点击切换到浅色）',
   'app.themeLight': '主题：浅色（点击切换到跟随系统）',
   'app.themeAuto': '主题：跟随系统（点击切换到深色）',
   'app.resizeLeft': '拖拽调整左侧宽度',
+  'app.resizePreview': '拖拽调整预览宽度',
   'app.resizeTaskHeight': '拖拽调整任务区高度',
   'app.resizeDialog': '拖拽调整窗口大小',
   'app.globalTitle': '全局配置',
@@ -27,6 +27,8 @@ export const appZh = {
   'app.scopeCoverageChip': '覆盖 Skills · MCP · 资源管理 · init 生成物',
   'app.selectProject': '请选择一个项目',
   'app.openMarket': '资源市场',
+  'app.openFileBrowser': '浏览项目文件',
+  'app.noProjects': '还没有项目，先在左侧接入一个。',
   'app.mobileProjects': '项目列表',
   'app.mobileDrawerClose': '收起',
   'app.booting': '正在载入工作台',
@@ -142,12 +144,12 @@ export const appZh = {
 
 export const appEn: Record<keyof typeof appZh, string> = {
   // —— App shell ——
-  'app.projectCount': '{n} projects',
-  'app.settingsTooltip': 'Settings (default terminal, etc.)',
+  'app.settingsTooltip': 'Settings',
   'app.themeDark': 'Theme: dark (tap for light)',
   'app.themeLight': 'Theme: light (tap for follow-system)',
   'app.themeAuto': 'Theme: follow system (tap for dark)',
   'app.resizeLeft': 'Drag to resize the left pane',
+  'app.resizePreview': 'Drag to resize the preview pane',
   'app.resizeTaskHeight': 'Drag to resize the task area height',
   'app.resizeDialog': 'Drag to resize this window',
   'app.globalTitle': 'Global config',
@@ -168,6 +170,8 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.scopeCoverageChip': 'Covers Skills · MCP · resources · init artefacts',
   'app.selectProject': 'Select a project',
   'app.openMarket': 'Resource market',
+  'app.openFileBrowser': 'Browse project files',
+  'app.noProjects': 'No projects yet — connect one in the sidebar first.',
   'app.mobileProjects': 'Projects',
   'app.mobileDrawerClose': 'Dismiss',
   'app.booting': 'Loading workspace',

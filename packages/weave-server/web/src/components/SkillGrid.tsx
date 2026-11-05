@@ -687,23 +687,21 @@ function GroupedSkills({
                   {isLocal ? t('repo.local') : namespace}
                 </span>
                 {!isLocal && (
-                  <span
-                    className="shrink-0 text-10 text-neutral-600"
-                    title={t('repo.namespaceTip')}
-                  >
-                    {t('repo.packCount', { n: repo.groups.length })}
-                  </span>
+                  <Tooltip label={t('repo.namespaceTip')}>
+                    <span className="shrink-0 text-10 text-neutral-600">
+                      {t('repo.packCount', { n: repo.groups.length })}
+                    </span>
+                  </Tooltip>
                 )}
                 {/* 「本地」= weave 亲手装到全局位置的技能，只有这里我们才决定得了
                     链接还是副本——CC 自有的 plugins/cache 副本不在此列（那是 CC 解引用
                     后自己复制的，提示用户改设置是误导）。 */}
                 {isLocal && (
-                  <span
-                    className="shrink-0 text-10 text-neutral-600"
-                    title={t('repo.formTip')}
-                  >
-                    {t('repo.formLegend')}
-                  </span>
+                  <Tooltip label={t('repo.formTip')}>
+                    <span className="shrink-0 text-10 text-neutral-600">
+                      {t('repo.formLegend')}
+                    </span>
+                  </Tooltip>
                 )}
                 <Badge variant="skill" className="ml-1">
                   {skillCount}

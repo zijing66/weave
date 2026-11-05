@@ -483,14 +483,13 @@ export function ProjectList({
                 {/* 已接入 harness（init 选择结果，服务端派生）：起会话的 harness
                     选项同一份事实。 */}
                 {(p.harnesses?.length ?? 0) > 0 && (
-                  <span
-                    className="flex w-full flex-wrap items-center gap-1"
-                    title={t('project.harnessesTip')}
-                  >
-                    {p.harnesses!.map((h) => (
-                      <AgentBadge key={h.id} agent={h.id} />
-                    ))}
-                  </span>
+                  <Tooltip label={t('project.harnessesTip')} className="w-full">
+                    <span className="flex w-full flex-wrap items-center gap-1">
+                      {p.harnesses!.map((h) => (
+                        <AgentBadge key={h.id} agent={h.id} />
+                      ))}
+                    </span>
+                  </Tooltip>
                 )}
               </button>
               </div>
@@ -498,12 +497,11 @@ export function ProjectList({
                   stopPropagation 在 QuickButton 内双保险。 */}
               <div className="flex items-center gap-1 px-2 pb-1 pl-9">
                 {needsInit && (
-                  <span
-                    title={t('project.needsInitTip')}
-                    className="shrink-0 rounded-full bg-amber-900/40 px-1.5 text-10 leading-4 text-amber-300"
-                  >
-                    {t('project.needsInit')}
-                  </span>
+                  <Tooltip label={t('project.needsInitTip')}>
+                    <span className="shrink-0 rounded-full bg-amber-900/40 px-1.5 text-10 leading-4 text-amber-300">
+                      {t('project.needsInit')}
+                    </span>
+                  </Tooltip>
                 )}
                 <span className="relative">
                   <QuickButton
@@ -928,22 +926,20 @@ function SessionBadges({ counts }: { counts: HarnessSessionCounts[] }) {
       {counts.map((c) => (
         <span key={c.harness ?? 'unknown'} className="flex shrink-0 items-center gap-1">
           {c.running > 0 && (
-            <span
-              className="flex items-center gap-0.5"
-              title={t('project.sessionsRunning', { n: c.running })}
-            >
-              <HarnessIcon harness={c.harness} running />
-              <span className="text-10 font-medium text-orange-300">{c.running}</span>
-            </span>
+            <Tooltip label={t('project.sessionsRunning', { n: c.running })}>
+              <span className="flex items-center gap-0.5">
+                <HarnessIcon harness={c.harness} running />
+                <span className="text-10 font-medium text-orange-300">{c.running}</span>
+              </span>
+            </Tooltip>
           )}
           {c.open > 0 && (
-            <span
-              className="flex items-center gap-0.5"
-              title={t('project.sessionsOpen', { n: c.open })}
-            >
-              <HarnessIcon harness={c.harness} />
-              <span className="text-10 font-medium text-neutral-400">{c.open}</span>
-            </span>
+            <Tooltip label={t('project.sessionsOpen', { n: c.open })}>
+              <span className="flex items-center gap-0.5">
+                <HarnessIcon harness={c.harness} />
+                <span className="text-10 font-medium text-neutral-400">{c.open}</span>
+              </span>
+            </Tooltip>
           )}
         </span>
       ))}
@@ -980,7 +976,11 @@ function HealthBadge({ projectId }: { projectId: number }) {
   if (fails === null) return null;
 
   if (fails.length === 0) {
-    return <span title={t('health.okTip')} className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />;
+    return (
+      <Tooltip label={t('health.okTip')}>
+        <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+      </Tooltip>
+    );
   }
 
   const tip = [
@@ -992,8 +992,10 @@ function HealthBadge({ projectId }: { projectId: number }) {
   ].join('\n');
 
   return (
-    <span title={tip} className="shrink-0">
-      <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />
-    </span>
+    <Tooltip label={tip}>
+      <span className="shrink-0">
+        <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />
+      </span>
+    </Tooltip>
   );
 }

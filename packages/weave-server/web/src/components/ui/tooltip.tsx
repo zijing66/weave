@@ -11,12 +11,13 @@ import { useMediaQuery } from '@/lib/use-media-query';
  * 越界就夹回视口内，底部/顶部放不下就地翻侧（偏好侧只是偏好不是硬承诺）。
  */
 
-const GAP = 6;
+const GAP = 10;
 const MARGIN = 8;
 
 interface TipBox {
   anchor: DOMRect;
   side: 'top' | 'bottom';
+  align: 'center' | 'end';
   /** 量宽后算出的最终位置（首次渲染前 null → 摆屏外防闪）。 */
   pos: { left: number; top: number } | null;
 }
@@ -25,6 +26,9 @@ export function Tooltip(props: {
   label: ReactNode;
   /** 偏好侧（缺省下侧；贴顶的控件给 top）。放不下时自动翻转。 */
   side?: 'top' | 'bottom';
+  /** 水平对齐：缺省锚点居中；'end' = 弹层右缘对齐锚点右缘（右下角控件用，
+   *  居中会让弹层横到锚点左侧之外、悬在移动路径上）。 */
+  align?: 'center' | 'end';
   children: ReactNode;
   className?: string;
 }) {
@@ -39,7 +43,7 @@ export function Tooltip(props: {
     if (coarse) return;
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
-    setBox({ anchor: r, side: props.side ?? 'bottom', pos: null });
+    setBox({ anchor: r, side: props.side ?? 'bottom', align: props.align ?? 'center', pos: null });
   };
   const hide = (): void => setBox(null);
 
@@ -53,7 +57,10 @@ export function Tooltip(props: {
     const tip = tipRef.current;
     if (!tip) return;
     const { width, height } = tip.getBoundingClientRect();
-    const centerX = box.anchor.left + box.anchor.width / 2;
+    const centerX =
+      box.align === 'end'
+        ? box.anchor.right - width / 2
+        : box.anchor.left + box.anchor.width / 2;
     const left = Math.min(
       Math.max(centerX, width / 2 + MARGIN),
       window.innerWidth - width / 2 - MARGIN,
