@@ -239,6 +239,12 @@ export const projectApi = {
       opts.signal ? { signal: opts.signal } : {},
     );
   },
+  /** 手动定向重建：只重扫 `dir` 子树（文件浏览器「刷新索引」按钮，await 新账回来）。 */
+  refreshProjectFilesDir: (projectId: number, dir: string): Promise<{ at: number; files: number }> =>
+    apiFetch<{ at: number; files: number }>(
+      `/projects/${projectId}/files/refresh-dir?dir=${encodeURIComponent(dir)}`,
+      { method: 'POST' },
+    ),
   /** 预览栏的字节源（`<img src>` 与文本 fetch 共用；Content-Type 由服务端定）。 */
   projectFileUrl: (projectId: number, relPath: string): string =>
     `${API_BASE}/projects/${projectId}/file?path=${encodeURIComponent(relPath)}`,

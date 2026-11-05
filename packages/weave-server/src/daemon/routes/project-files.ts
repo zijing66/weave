@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
-import { listDirOf, matchPaths, projectFileIndex } from '../project-files.js';
+import { listDirOf, matchPaths, projectFileIndex, refreshDir } from '../project-files.js';
 import { resolveWithinProject } from '../../install/reader.js';
 
 /**
@@ -174,6 +174,26 @@ export async function handleProjectFileRoutes(
       capped: false,
       truncated: index.truncated,
       entries,
+    });
+    return true;
+  }
+
+  // ---- 手动定向重建：只重扫 `dir` 子树（文件浏览器「刷新索引」按钮，懒语义） ----
+  const refreshMatch = pathname.match(/^\/projects\/(\d+)\/files\/refresh-dir$/);
+  if (refreshMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(refreshMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    const dir = (url.searchParams.get('dir') ?? '').replace(/^\/+|\/+$/g, '');
+    const index = await refreshDir(project.id, project.path, dir);
+    sendJson(res, 200, {
+      root: project.path,
+      dir,
+      at: index.at,
+      truncated: index.truncated,
+      files: index.files.length,
     });
     return true;
   }

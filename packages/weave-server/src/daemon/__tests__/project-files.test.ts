@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -14,6 +24,7 @@ import {
   pruneFileIndexes,
   setFileIndexRoot,
   startMatch,
+  updateIndexFrom,
 } from '../project-files.js';
 
 const hasGit = (() => {
@@ -276,6 +287,106 @@ describe('buildIndex', () => {
   });
 });
 
+describe('updateIndexFrom（增量：只重扫变过的那几段）', () => {
+  /** 把目录 mtime 拨到某个时刻——复用判据看的是它，测试要能自己摆。 */
+  const ageTo = (rel: string, ms: number): void => {
+    const at = ms / 1000;
+    utimesSync(path.join(root, rel), at, at);
+  };
+
+  it.skipIf(!hasGit)('① 没有任何改动：增量与全量逐项相同', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    write(root, 'out/a.js');
+    write(root, 'out/deep/b.js');
+    commit(root);
+    write(root, 'out/untracked.ts');
+    const full = await buildIndex(root);
+    const delta = await updateIndexFrom(full, root);
+    expect(delta.files).toEqual(full.files);
+    expect(delta.dirs).toEqual(full.dirs);
+  });
+
+  it.skipIf(!hasGit)('② 未动过的折叠目录整段复用：盘上删了也不起 git，条目照旧', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    commit(root);
+    write(root, 'out/a.ts');
+    write(root, 'out/deep/b.ts');
+    ageTo('out', Date.now() - 60_000);
+    ageTo('out/deep', Date.now() - 60_000);
+    const full = await buildIndex(root);
+    expect(full.files).toEqual(['m.ts', 'out/a.ts', 'out/deep/b.ts']);
+    // 删掉一个、mtime 摆回上一份账之前：复用走得通就等于没看见这次删除
+    rmSync(path.join(root, 'out/deep/b.ts'), { force: true });
+    ageTo('out', Date.now() - 60_000);
+    ageTo('out/deep', Date.now() - 60_000);
+    const delta = await updateIndexFrom(full, root);
+    expect(delta.files).toEqual(full.files);
+  });
+
+  it.skipIf(!hasGit)('③ mtime 落在松量窗内按「变过」处理：删掉的文件不再回来', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    commit(root);
+    write(root, 'out/a.ts');
+    ageTo('out', Date.now() - 60_000);
+    const full = await buildIndex(root);
+    rmSync(path.join(root, 'out/a.ts'), { force: true });
+    ageTo('out', full.at - 1_000);
+    const delta = await updateIndexFrom(full, root);
+    expect(delta.files).toEqual(['m.ts']);
+  });
+
+  it.skipIf(!hasGit)('④ 深处改动、新增目录、删整目录、散文件增删：增量与全量仍逐项相同', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    write(root, 'keep/a.ts');
+    commit(root);
+    write(root, 'out/deep/b.ts');
+    write(root, 'drop/b.ts');
+    const full = await buildIndex(root);
+    // 深处的目录 mtime 会变（祖先不变）——判据必须看整棵子树
+    write(root, 'out/deep/c.ts');
+    write(root, 'fresh/x.ts');
+    rmSync(path.join(root, 'drop'), { recursive: true, force: true });
+    write(root, 'loose.ts');
+    const delta = await updateIndexFrom(full, root);
+    const again = await buildIndex(root);
+    expect(delta.files).toEqual(again.files);
+    expect(delta.dirs).toEqual(again.dirs);
+    expect(delta.files).toContain('out/deep/c.ts');
+    expect(delta.files).toContain('fresh/x.ts');
+    expect(delta.files).toContain('loose.ts');
+    expect(delta.files).not.toContain('drop/b.ts');
+  });
+
+  it.skipIf(!hasGit)('⑤ git add / commit 后：同一批路径仍只出现一次', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    commit(root);
+    write(root, 'out/a.ts');
+    const full = await buildIndex(root);
+    commit(root);
+    const delta = await updateIndexFrom(full, root);
+    expect(delta.files).toEqual(['m.ts', 'out/a.ts']);
+    expect(delta.dirs).toEqual(['out']);
+  });
+
+  it.skipIf(!hasGit)('⑥ 嵌套仓里新增的文件照样进来（嵌套仓每次全扫）', async () => {
+    execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
+    write(root, 'm.ts');
+    commit(root);
+    mkdirSync(path.join(root, 'inner'), { recursive: true });
+    execFileSync('git', ['init'], { cwd: path.join(root, 'inner'), stdio: 'ignore' });
+    write(root, 'inner/a.ts');
+    const full = await buildIndex(root);
+    write(root, 'inner/b.ts');
+    const delta = await updateIndexFrom(full, root);
+    expect(delta.files).toEqual(['inner/a.ts', 'inner/b.ts', 'm.ts']);
+  });
+});
+
 describe('listDirOf', () => {
   it('① 只列直接子项，目录在前、父目录不重复出现', async () => {
     write(root, 'src/a.ts');
@@ -505,6 +616,22 @@ describe('projectFileIndex（落盘）', () => {
     const served = await projectFileIndex(1, root, { fresh: true });
     expect(served.files).toEqual(['a.ts']); // 旧账先出，不等重建
     const rebuilt = await projectFileIndex(1, root, { fresh: true }); // 跟进搭在飞的车
+    expect(rebuilt.files).toEqual([]);
+  });
+
+  it('⑨-b `fresh` 的快照再老也先端（旧账好过白等整棵重建）', async () => {
+    write(root, 'a.ts');
+    await projectFileIndex(1, root);
+    await waitForFile(path.join(indexDir, '1.json'));
+    // 把落盘快照的年纪推过 INDEX_MAX_STALE_MS（11 分钟）
+    const snapPath = path.join(indexDir, '1.json');
+    const snap = JSON.parse(readFileSync(snapPath, 'utf8'));
+    writeFileSync(snapPath, JSON.stringify({ ...snap, at: Date.now() - 11 * 60_000 }));
+    rmSync(path.join(root, 'a.ts'));
+    clearFileIndexCache();
+    const served = await projectFileIndex(1, root, { fresh: true });
+    expect(served.files).toEqual(['a.ts']); // 过龄也先出旧账
+    const rebuilt = await projectFileIndex(1, root, { fresh: true });
     expect(rebuilt.files).toEqual([]);
   });
 

@@ -34,6 +34,12 @@ const INDEX_MAX_STALE_MS = 10 * 60_000;
 /** 最多留几个项目的索引（大仓库索引按 MB 计）。 */
 const MAX_CACHED_PROJECTS = 3;
 
+/** 复用折叠目录的松量：目录 mtime 与 `prev.at` 同毫秒附近时按「变过」处理。 */
+const REUSE_SLACK_MS = 2_000;
+
+/** 嵌套仓递归的并发上限：Windows 上每次 spawn 数百 ms，串行十仓就是两秒。 */
+const NESTED_CONCURRENCY = 4;
+
 /** 非 git 目录的回落枚举跳过这些重量级目录。 */
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -163,17 +169,205 @@ async function excludeArgsCached(root: string): Promise<string[]> {
   return args;
 }
 
-/** `--stage` 一枪两用：160000 = 子模块 gitlink、120000 = 已跟踪符号链接
- *  （avic/temp 实测形态），路径都读 tab 之后那一截（可能带空格）。 */
-async function stagedSpecialOf(root: string): Promise<{ links: string[]; symlinks: string[] }> {
-  const staged = await gitLsFiles(root, ['--stage']);
-  const links: string[] = [];
-  const symlinks: string[] = [];
-  for (const l of staged ?? []) {
-    if (l.startsWith('160000 ')) links.push(l.slice(l.indexOf('\t') + 1));
-    else if (l.startsWith('120000 ')) symlinks.push(l.slice(l.indexOf('\t') + 1));
+/** 一枪 `git ls-files` 的三种行：`--stage` 的 `<mode> <sha> <stage>\t<path>`
+ *  （tracked / gitlink 160000 / 已跟踪符号链接 120000）、`--others` 的裸路径、
+ *  `--others --directory` 折叠目录（带尾斜杠）。 */
+interface GitScan {
+  tracked: string[];
+  untracked: string[];
+  /** `--directory` 折叠出来的未跟踪目录（无尾斜杠）。 */
+  folded: string[];
+  /** 子模块 gitlink（160000）。 */
+  links: string[];
+  /** 已跟踪符号链接（120000）——目标可能是目录（avic/temp 实测形态）。 */
+  symlinks: string[];
+  /** 被 ignore 但真有 `.git` 的目录（Obsidian 库 / 独立笔记仓）。 */
+  ignoredRepos: string[];
+}
+
+const STAGE_LINE = /^\d{6} [0-9a-f]+ \d$/;
+
+/**
+ * 一次枚举本仓的三件事（两枪并行）：已跟踪 + 未跟踪（`--directory` 折叠，省掉
+ * 逐文件 ignore 判定——bsw 实测 3.2s → 0.15s），以及被忽略的嵌套仓候选。
+ * 非 git 仓 / 没 git / 超时返回 null，调用方回落目录遍历。
+ *
+ * 第二枪（只看忽略项）用 `--exclude-standard`，不用主枪那套显式排除：同样的
+ * `--directory` 下单独给 `--exclude-per-directory` 要 **2.1s**（bsw 实测），standard
+ * 174ms——两者只差「`info/exclude` 里的条目算不算忽略」，而这一枪只用来找仓库边界，
+ * 算不算都不影响索引（那批文件照旧走主枪的未跟踪路径进来）。
+ */
+async function scanGit(root: string, excludeArgs: string[]): Promise<GitScan | null> {
+  const [listed, ignored] = await Promise.all([
+    gitLsFiles(root, ['--cached', '--stage', '--others', ...excludeArgs, '--directory']),
+    gitLsFiles(root, ['--others', '--ignored', '--exclude-standard', '--directory']),
+  ]);
+  if (!listed) return null;
+  const scan: GitScan = {
+    tracked: [],
+    untracked: [],
+    folded: [],
+    links: [],
+    symlinks: [],
+    ignoredRepos: [],
+  };
+  for (const line of listed) {
+    const tab = line.indexOf('\t');
+    const meta = tab > 0 ? line.slice(0, tab) : '';
+    const p = tab > 0 ? line.slice(tab + 1) : line;
+    if (STAGE_LINE.test(meta)) {
+      const mode = meta.slice(0, 6);
+      if (mode === '160000') scan.links.push(p);
+      else if (mode === '120000') scan.symlinks.push(p);
+      else scan.tracked.push(p);
+    } else if (p.endsWith('/')) {
+      scan.folded.push(p.slice(0, -1));
+    } else {
+      scan.untracked.push(p);
+    }
   }
-  return { links, symlinks };
+  for (const p of ignored ?? []) {
+    if (!p.endsWith('/')) continue;
+    const dir = p.slice(0, -1);
+    if (await hasGitDir(path.join(root, dir))) scan.ignoredRepos.push(dir);
+  }
+  return scan;
+}
+
+/** 增量复用的上一份账（`FileIndex` 与盘上快照都满足这个形状）。 */
+export interface PrevIndex {
+  files: readonly string[];
+  at: number;
+  truncated?: boolean;
+}
+
+/**
+ * 折叠目录的子树状态：目录 mtime 的最大值 + 能不能整段复用。
+ *
+ * 为什么不是只看折叠目录自己的 mtime：往深处加删文件只动那一层的直属目录，
+ * 祖先的 mtime 一点不变（`gen/a/b/new.ts` 不会动 `gen` 的 mtime）。要判「这一整段
+ * 自上次建索引以来没变过」必须看子树里**每一个目录**的 mtime —— 于是这遍走法本身
+ * 必须便宜：**逐层并发**（一层 Promise.all 再下一层），实测 bsw 的 `temp`（7.5k 目录 /
+ * 89k 条目）629ms；串行 + 逐目录 realpath 是 7.9s，比它要省的定向扫描还贵。
+ *
+ * 不可复用（`blocked`）三种：子树里有 `.git`（嵌套仓按用户裁决每次全扫）、
+ * 有指向目录的符号链接 / junction（git 会把目标内容平铺进来，本遍走不到那里，
+ * mtime 判据会漏）、条目过多走不完——宁可多扫一次，不拿旧账充数。
+ */
+async function subtreeStateOf(dir: string): Promise<{ maxMtime: number; blocked: boolean }> {
+  let maxMtime = 0;
+  let entries = 0;
+  let level = [dir];
+  while (level.length > 0) {
+    const next: string[] = [];
+    let blocked = false;
+    await Promise.all(
+      level.map(async (at) => {
+        let kids;
+        try {
+          kids = await readdir(at, { withFileTypes: true });
+        } catch {
+          // 读不动：这一层作废，别拿旧账充数
+          blocked = true;
+          return;
+        }
+        entries += kids.length;
+        if (entries > MAX_INDEX_FILES) {
+          blocked = true;
+          return;
+        }
+        const st = await stat(at).catch(() => null);
+        if (st === null) {
+          blocked = true;
+          return;
+        }
+        maxMtime = Math.max(maxMtime, st.mtimeMs);
+        for (const e of kids) {
+          if (e.name === '.git') {
+            blocked = true;
+            return;
+          }
+          if (e.isDirectory()) {
+            next.push(path.join(at, e.name));
+          } else if (e.isSymbolicLink()) {
+            // 指到目录的链接 git 会把目标内容平铺进来，本遍走不到 ⇒ 不可复用；
+            // 指到文件的链接只是叶子，不影响 mtime 判据
+            const to = await stat(path.join(at, e.name)).catch(() => null);
+            if (to?.isDirectory()) {
+              blocked = true;
+              return;
+            }
+          }
+        }
+      }),
+    );
+    if (blocked) return { maxMtime, blocked: true };
+    level = next;
+  }
+  return { maxMtime, blocked: false };
+}
+
+/**
+ * 展开一个折叠出来的未跟踪目录：**整段复用**上一份账，或定向重扫这一个目录。
+ *
+ * 复用判据 = 子树可复用且每个目录的 mtime 都早于 `prev.at - REUSE_SLACK_MS`（见
+ * subtreeStateOf）**且**上一份账里真有这一段。否则定向 `git ls-files --others`——
+ * 与全量扫用的是同一套 ignore 语义，不做本地 readdir 猜忽略规则。
+ *
+ * 空目录（readdir 一发就知道）直接给空：定向扫也要几百 ms 起子进程，而这类
+ * 「刚清空的临时目录」在 note 仓一次刷新能碰见四五个。
+ */
+async function expandFolded(
+  root: string,
+  prev: PrevIndex | null,
+  prefix: string,
+  dir: string,
+  excludeArgs: string[],
+): Promise<{ files: string[]; repos: string[] }> {
+  const under = `${prefix}${dir}/`;
+  const kids = await readdir(path.join(root, dir)).catch(() => null);
+  if (kids !== null && kids.length === 0) return { files: [], repos: [] };
+  if (prev && prev.truncated !== true) {
+    const start = firstIndexOf(prev.files, under);
+    const hasPrev = start < prev.files.length && prev.files[start]!.startsWith(under);
+    if (hasPrev) {
+      const state = await subtreeStateOf(path.join(root, dir));
+      if (!state.blocked && state.maxMtime < prev.at - REUSE_SLACK_MS) {
+        const files: string[] = [];
+        for (let i = start; i < prev.files.length && prev.files[i]!.startsWith(under); i++) {
+          files.push(prev.files[i]!.slice(prefix.length));
+        }
+        return { files, repos: [] };
+      }
+    }
+  }
+  const listed = await gitLsFiles(root, ['--others', ...excludeArgs, '--', `:(literal)${dir}/`]);
+  const files: string[] = [];
+  const repos: string[] = [];
+  for (const p of listed ?? []) {
+    if (p.endsWith('/')) repos.push(p.slice(0, -1));
+    else files.push(p);
+  }
+  return { files, repos };
+}
+
+/** 有并发上限的 map（嵌套仓递归用；不引依赖）。 */
+async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]!);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
 /** 该目录是不是一个仓库的根（`.git` 目录 = 普通仓，`.git` 文件 = worktree / 子模块）。 */
@@ -215,62 +409,54 @@ async function nestedHeadOf(dir: string): Promise<string | null> {
 }
 
 /**
- * 被 ignore 的目录里也可能立着独立仓库（Obsidian 库 / 独立笔记仓）：外层 git 只给一条
- * 折叠后的 `Notes/`，里面的文件同样得各自进去列一遍（同子模块口径）。只认真有 `.git`
- * 的——`.trash`、`.obsidian/.tmp` 这类被忽略目录照旧不进来；而 `--directory` 折叠到最
- * 外层忽略目录，`node_modules` 里夹着的杂仓也不会被翻出来。
- */
-async function ignoredReposOf(root: string): Promise<string[]> {
-  const listed = await gitLsFiles(root, [
-    '--others',
-    '--ignored',
-    ...(await excludeArgsCached(root)),
-    '--directory',
-  ]);
-  const out: string[] = [];
-  for (const p of listed ?? []) {
-    if (!p.endsWith('/')) continue;
-    const dir = p.slice(0, -1);
-    if (await hasGitDir(path.join(root, dir))) out.push(dir);
-  }
-  return out;
-}
-
-/**
  * git 索引 + **仓库边界里的索引**：git 只给仓库边界一个名字，里面的文件得各自进去
  * 列一遍（`--recurse-submodules` 只认 `--cached`/`--stage`，给不了 `--others`，
  * 里面刚建还没 add 的文件正是最想引用的那种）。边界有三种同形的来源——子模块的
  * gitlink、未跟踪的嵌套仓（`--others` 给 `dir/`）、被 ignore 的嵌套仓。前后两种
  * 都是「用户的另一个仓」，不是「该被忽略的文件」，故一律进去列。
+ *
+ * 增量：`--directory` 把未跟踪目录折叠成一条，展开时**整段复用上一份账**（子树
+ * 没动过）或定向重扫那一个目录（见 expandFolded）。嵌套仓本身按用户裁决每次全扫，
+ * 但递归改并发（串行十仓 ~2s → 并发 ~0.3s）。
  */
 async function listViaGit(
   root: string,
+  prev: PrevIndex | null = null,
   prefix = '',
   excludeArgs: string[] = [],
 ): Promise<{ files: string[]; links: string[]; heads: Record<string, string> } | null> {
-  // 三枪并行：Windows 上每次 spawn 数百 ms，串行四枪是重建的大头（实测 550ms → ~220ms）
-  const [listed, staged, ignored] = await Promise.all([
-    (async () => {
-      // 个人排除文件（.git/info/exclude）里的未跟踪文件也进索引（用户的收纳区，
-      // 日常还要引用）——不用 --exclude-standard（它把 info/exclude 也算上），改
-      // 显式「各级 .gitignore + 全局 excludesFile」两件套，实测与 standard 同判
-      const args = ['--cached', '--others', ...(excludeArgs.length ? excludeArgs : await excludeArgsCached(root))];
-      return gitLsFiles(root, args);
-    })(),
-    stagedSpecialOf(root),
-    ignoredReposOf(root),
-  ]);
-  if (!listed) return null;
+  // 个人排除文件（.git/info/exclude）里的未跟踪文件也进索引（用户的收纳区，
+  // 日常还要引用）——不用 --exclude-standard（它把 info/exclude 也算上），改
+  // 显式「各级 .gitignore + 全局 excludesFile」两件套，实测与 standard 同判
+  const exclude = excludeArgs.length ? excludeArgs : await excludeArgsCached(root);
+  const scan = await scanGit(root, exclude);
+  if (!scan) return null;
   const nested = new Set<string>();
   // gitlink 直接认 `--stage` 的 160000 行——不门在 `.gitmodules` 上（子模块可以
   // 没登记进它，avic/aadl-adapter 实测：gitlink 在、.gitmodules 无，门住就进不去）
-  for (const p of staged.links) nested.add(p);
-  for (const p of listed) if (p.endsWith('/')) nested.add(p.slice(0, -1));
-  for (const p of ignored) nested.add(p);
+  for (const p of scan.links) nested.add(p);
+  for (const p of scan.ignoredRepos) nested.add(p);
+  const collected: string[] = [...scan.tracked, ...scan.untracked];
+  // 折叠出来的未跟踪目录：自己就是仓库边界（没 add 的嵌套仓）→ 递归；否则展开。
+  // 并发跑（每个展开都要么走树要么起 git 子进程，串行四五个就是大半秒）
+  const expanded = await mapLimit(scan.folded, NESTED_CONCURRENCY, async (p) => ({
+    p,
+    got: (await hasGitDir(path.join(root, p)))
+      ? null
+      : await expandFolded(root, prev, prefix, p, exclude),
+  }));
+  for (const { p, got } of expanded) {
+    if (got === null) {
+      nested.add(p);
+      continue;
+    }
+    collected.push(...got.files);
+    for (const r of got.repos) nested.add(r);
+  }
   // 已跟踪的目录型符号链接也当目录（avic/temp 实测：git 记 120000 叶子，但用户眼里
   // 它就是个能进的文件夹）——stat 穿透判型，目标目录的挪进 links 并递归列内容
   const dirLinks = new Set<string>();
-  for (const p of staged.symlinks) {
+  for (const p of scan.symlinks) {
     if (nested.has(p)) continue;
     try {
       if ((await stat(path.join(root, p))).isDirectory()) dirLinks.add(p);
@@ -279,23 +465,27 @@ async function listViaGit(
     }
   }
   // 边界自身不是文件——它由 links 当目录给出，留在 files 里会让同一行出现两次
-  const files = listed
-    .filter((f) => !f.endsWith('/') && !nested.has(f) && !dirLinks.has(f))
+  const files = [...new Set(collected)]
+    .filter((f) => !nested.has(f) && !dirLinks.has(f))
     .map((f) => prefix + f);
   const links = [...nested, ...dirLinks].map((p) => prefix + p);
   const heads: Record<string, string> = {};
-  for (const p of nested) {
+  const inners = await mapLimit([...nested], NESTED_CONCURRENCY, async (p) => {
     const dir = path.join(root, p);
     // 没克隆的子模块（工作区里没有 `.git`）别去问 git：那样的空目录里 `ls-files`
     // 会一路上溯找到外层仓库，把外层文件挂到子模块名下
-    if (!(await hasGitDir(dir))) continue;
+    if (!(await hasGitDir(dir))) return null;
     const head = await nestedHeadOf(dir);
-    if (head) heads[`${prefix}${p}`] = head;
-    const inner = await listViaGit(dir, `${prefix}${p}/`, excludeArgs);
-    if (!inner) continue;
-    files.push(...inner.files);
-    links.push(...inner.links);
-    Object.assign(heads, inner.heads);
+    const inner = await listViaGit(dir, prev, `${prefix}${p}/`, excludeArgs);
+    return { p, head, inner };
+  });
+  for (const r of inners) {
+    if (!r) continue;
+    if (r.head) heads[`${prefix}${r.p}`] = r.head;
+    if (!r.inner) continue;
+    files.push(...r.inner.files);
+    links.push(...r.inner.links);
+    Object.assign(heads, r.inner.heads);
   }
   // 目录链接的内容：目标可能在仓外（temp → 别的仓/普通目录），git/walk 各按其形；
   // 环防护 = 祖先 realpath 集（起点 root 在内，指回根的链接第一次就拦下）。
@@ -311,8 +501,9 @@ async function listViaGit(
     for (let i = files.length - 1; i >= 0; i--) {
       if (files[i]!.startsWith(withPrefix)) files.splice(i, 1);
     }
-    const inner = (await listViaGit(dir, withPrefix, excludeArgs)) ?? {
-      files: await listViaWalk(dir),
+    const inner = (await listViaGit(dir, prev, withPrefix, excludeArgs)) ?? {
+      // walk 给的是相对链接目标的路径，挂回本项目要补前缀
+      files: (await listViaWalk(dir)).map((f) => withPrefix + f),
       links: [] as string[],
       heads: {} as Record<string, string>,
     };
@@ -410,9 +601,9 @@ async function gitStamp(root: string): Promise<string | null> {
   }
 }
 
-/** 枚举 → 快照（这一层只落可序列化的东西）。 */
-async function enumerateIndex(root: string): Promise<FileIndexSnapshot> {
-  const fromGit = await listViaGit(root);
+/** 枚举 → 快照（这一层只落可序列化的东西）。`prev` 给出时走增量（见 expandFolded）。 */
+async function enumerateIndex(root: string, prev: PrevIndex | null): Promise<FileIndexSnapshot> {
+  const fromGit = await listViaGit(root, prev);
   const files = fromGit?.files ?? (await listViaWalk(root));
   const truncated = files.length > MAX_INDEX_FILES;
   const kept = truncated ? files.slice(0, MAX_INDEX_FILES) : files;
@@ -454,8 +645,18 @@ export function hydrateIndex(snap: FileIndexSnapshot): FileIndex {
   return { ...snap, lower, dirLower, children, submodules: snap.submodules ?? {} };
 }
 
+/** 首建（手里没有上一份账）：整棵全扫。 */
 export async function buildIndex(root: string): Promise<FileIndex> {
-  return hydrateIndex(await enumerateIndex(root));
+  return hydrateIndex(await enumerateIndex(root, null));
+}
+
+/**
+ * 增量重建：拿着上一份账（内存命中或刚读的盘上快照）只重扫「可能变过」的部分——
+ * 未动过的折叠目录整段复用，嵌套仓照旧全扫（并发）。结果与 `buildIndex` 等价，
+ * 只是不再把 80k 条重建的 3.8s 花在没变的地方。
+ */
+export async function updateIndexFrom(prev: PrevIndex, root: string): Promise<FileIndex> {
+  return hydrateIndex(await enumerateIndex(root, prev));
 }
 
 const cache = new Map<number, FileIndex>();
@@ -523,10 +724,15 @@ function remember(projectId: number, index: FileIndex): void {
   }
 }
 
-function rebuild(projectId: number, root: string): Promise<FileIndex> {
+/** 重建：手里有上一份账就走增量，没有才整棵全扫。 */
+function rebuild(
+  projectId: number,
+  root: string,
+  prev: PrevIndex | null = null,
+): Promise<FileIndex> {
   const flying = inflight.get(projectId);
   if (flying) return flying;
-  const job = buildIndex(root).then((index) => {
+  const job = (prev ? updateIndexFrom(prev, root) : buildIndex(root)).then((index) => {
     remember(projectId, index);
     void writeSnapshot(projectId, index);
     return index;
@@ -570,15 +776,18 @@ export async function projectFileIndex(
 
   if (mem && opts.fresh) {
     // 旧账先出（毫秒级），重建在后台跑；指纹变了也一样——旧账好过白等，
-    // 跟进的请求拿新账
-    void rebuild(projectId, root).catch(() => {});
+    // 跟进的请求拿新账。重建拿这份旧账当基准做增量。
+    void rebuild(projectId, root, mem).catch(() => {});
     return mem;
   }
+  let prev: PrevIndex | null = null;
   if (mem && (await gitStamp(root)) === mem.stamp) {
     if (Date.now() - mem.at < INDEX_TTL_MS) return mem;
     cache.delete(projectId);
+    prev = mem;
   } else if (mem) {
-    cache.delete(projectId); // 指纹变了：非 fresh 走重建（正确性优先）
+    cache.delete(projectId); // 指纹变了：非 fresh 走重建（正确性优先），旧账当增量基准
+    prev = mem;
   }
 
   const flying = inflight.get(projectId);
@@ -589,20 +798,28 @@ export async function projectFileIndex(
   // 的旧账好过白等一场重建），后台重建随后把它换掉。
   if (!mem) {
     const snap = await readSnapshot(projectId, root);
-    if (snap && Date.now() - snap.at < INDEX_MAX_STALE_MS) {
+    // fresh = 打开选择器那一拍：快照再老也先端（旧账好过白等一场整棵重建），
+    // 后台那一拍随后把它换掉；非 fresh 仍按硬窗重验。
+    if (snap && (opts.fresh || Date.now() - snap.at < INDEX_MAX_STALE_MS)) {
       const index = hydrateIndex(snap);
       if (opts.fresh) {
         remember(projectId, index);
-        void rebuild(projectId, root).catch(() => {});
+        void rebuild(projectId, root, index).catch(() => {});
         return index;
       }
       if ((await gitStamp(root)) === snap.stamp) {
         remember(projectId, index);
         return index;
       }
+      // 指纹变了：盘上这份照样是合法的增量基准（「启动后补上次刷新到现在的变动」
+      // 就是这条路）
+      prev = index;
+    } else if (snap) {
+      // 过龄也不整棵重扫：进没变过的目录靠 mtime 判，基准多老都不影响正确性
+      prev = hydrateIndex(snap);
     }
   }
-  return rebuild(projectId, root);
+  return rebuild(projectId, root, prev);
 }
 
 /**
@@ -630,6 +847,55 @@ export async function peekCachedIndex(
     return index;
   }
   return null;
+}
+
+/**
+ * 手动定向重建：只重扫 `dir` 子树，其余整段复用现账（文件浏览器里的「刷新索引」
+ * 按钮——懒语义，点一下才扫这一刀，不等 30s TTL / 下一次打开）。
+ *
+ * 手法：把现账里 `dir/` 前缀段整体剔掉，按「刚建索引」的口径拼一份 prev（at=0
+ * 让 expandFolded 的 mtime 复用判据必不命中 → 定向 `git ls-files --others` 重扫
+ * 这一刀），再走既有增量管线合并回整棵树。subtreeStateOf 的 mtime 判据被 at=0
+ * 打穿，但 blocked 检查（嵌套仓/目录链接）照常生效——该全扫的子树照旧全扫。
+ * 手里没有任何现账时退化为整棵重建（没有可复用的东西，「只扫这一刀」无从谈起）。
+ * 在飞去重沿用 rebuild 同一把 inflight 锁。
+ */
+export async function refreshDir(
+  projectId: number,
+  root: string,
+  dir: string,
+): Promise<FileIndex> {
+  const clean = dir.replace(/^\/+|\/+$/g, '');
+  const hit = cache.get(projectId);
+  const current = hit && hit.root === root ? hit : ((await peekCachedIndex(projectId, root)) ?? null);
+  if (!current || clean === '') return rebuild(projectId, root, current);
+  const under = `${clean}/`;
+  const keep: string[] = [];
+  const scoped: string[] = [];
+  for (const f of current.files) (f.startsWith(under) ? scoped : keep).push(f);
+  const prev: PrevIndex = { files: scoped, at: 0, truncated: current.truncated === true };
+  const flying = inflight.get(projectId);
+  if (flying) return flying;
+  const job = updateIndexFrom(prev, root).then((fresh) => {
+    // 定向扫只认得 `dir/` 子树，整包 = 现账剔掉子树 + 新扫的子树
+    const merged = [...keep, ...fresh.files].sort();
+    const dirs = [...new Set([...current.dirs.filter((d) => !d.startsWith(under) && d !== clean),
+      ...fresh.dirs, ...dirsOf(merged)])].sort();
+    const submodules: Record<string, string> = {};
+    for (const [k, v] of Object.entries(current.submodules)) if (!k.startsWith(under)) submodules[k] = v;
+    // 子树里嵌套仓的 HEAD 重新探（ freshly 扫出来的 links 带 HEAD）
+    const index = hydrateIndex({
+      v: current.v, root, at: Date.now(), stamp: current.stamp,
+      truncated: current.truncated, files: merged, dirs, submodules,
+    });
+    remember(projectId, index);
+    void writeSnapshot(projectId, index);
+    return index;
+  });
+  inflight.set(projectId, job);
+  const done = (): void => { inflight.delete(projectId); };
+  job.then(done, done);
+  return job;
 }
 
 /** 测试用：清空索引缓存。 */
