@@ -229,6 +229,8 @@ export const en: Record<keyof typeof zh, string> = {
   'init.commit.failed': 'Commit failed: {error}',
   'init.commit.done': 'Created commit {sha} ({count} files)',
   'init.exclude.done': 'Local files registered in git exclude: {file}',
+  'init.rerere.enabled': 'Enabled git rerere (reuse recorded conflict resolutions)',
+  'init.rerere.failed': 'Failed to enable git rerere: {error}',
   'init.instruction.localCreated': 'Wrote local instruction file {file} (not version-controlled)',
   'init.instruction.agentsMerged': "Merged weave's block into {file} (codex reads shared instructions from it)",
   'init.hooksUnknownKeys': 'Ignored unknown hook event names: {keys}',
