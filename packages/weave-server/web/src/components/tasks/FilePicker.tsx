@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { EditorView, drawSelection, lineNumbers } from '@codemirror/view';
-import { SearchCursor, SearchQuery, search, setSearchQuery } from '@codemirror/search';
+import {
+  Compartment,
+  EditorState,
+  type Extension,
+  RangeSet,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+} from '@codemirror/state';
+import { Decoration, EditorView, drawSelection, lineNumbers } from '@codemirror/view';
+import { SearchCursor } from '@codemirror/search';
 import {
   CheckSquare,
   ChevronDown,
@@ -48,9 +56,8 @@ import { useTheme } from '@/lib/theme';
  * 底条出「插入 N 项」，一次落定一批胶囊（顺序 = 点选顺序）。
  *
  * 预览是一个**只读**的 CodeMirror：行号可点（第一下起、第二下止）。查找与跳行
- * 用自己的一条小条（`SearchQuery` + `SearchCursor`）而不是它自带的搜索面板——
- * 那面板带替换与编辑，而预览只该看。选它是因为行号槽、行号上的鼠标事件、选区
- * 绘制与匹配高亮都是现成的，手写这四件只会四件都做不好。
+ * 用自己的一条小条而不是它自带的搜索面板——那面板带替换与编辑，而预览只该看；
+ * 匹配高亮也是自绘的（search 扩展的高亮只在面板打开时才画）。
  *
  * 移动端返回键/侧滑先归弹窗自己的层（工具条 → 预览回列表 → 清搜索 → 回上一级
  * → 关弹窗），退完了才落回路由——压一枚带标记的历史记录消费 `popstate` 实现，
@@ -218,6 +225,28 @@ export const cmTheme = (dark: boolean): Extension =>
 /** 主题翻的时候只重配这一格，不重建视图（重建会丢滚动位置与选区）。 */
 export const themeConf = new Compartment();
 
+/** 自绘查找高亮：`@codemirror/search` 的高亮**只在它自己的面板打开时才画**
+ *  （源码 `highlight({query, panel})` 开头 `if (!panel …) return Decoration.none`），
+ *  而这里查找是程序化的、面板从不开 ⇒ 高亮恒空（活体复现：计数有、跳转有、
+ *  看不见）。命中区间由组件层用这个 effect 推进来，扩展只管画。 */
+export const setFindRanges = StateEffect.define<{ from: number; to: number }[] | null>();
+
+const findHighlighter = StateField.define<RangeSet<Decoration>>({
+  create: () => RangeSet.empty,
+  update(ranges, tr) {
+    for (const e of tr.effects) if (e.is(setFindRanges)) {
+      if (!e.value) return RangeSet.empty;
+      const builder = new RangeSetBuilder<Decoration>();
+      for (const m of [...e.value].sort((a, b) => a.from - b.from)) {
+        builder.add(m.from, m.to, Decoration.mark({ class: 'cm-searchMatch' }));
+      }
+      return builder.finish();
+    }
+    return tr.docChanged ? RangeSet.empty : ranges;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 /** 只读代码视图。`viewRef` 由父组件持有：查找与跳行都要拿它现算。 */
 export function CodePreview({
   text,
@@ -255,9 +284,8 @@ export function CodePreview({
             },
           }),
           drawSelection(),
-          // 只留 `search` 的**匹配高亮**（查询由外面那条自绘的小条设）。它自带的
-          // 面板不做：那面板带替换与编辑，而这里只是预览。
-          search({ top: true }),
+          // 查找高亮走上面的自绘层（search() 扩展的高亮只在它面板打开时才画）。
+          findHighlighter,
           EditorView.lineWrapping,
           EditorView.editable.of(false),
           themeConf.of(cmTheme(theme === 'dark')),
@@ -277,14 +305,14 @@ export function CodePreview({
     viewRef.current?.dispatch({ effects: themeConf.reconfigure(cmTheme(theme === 'dark')) });
   }, [theme]);
 
-  // 换文件：整篇换掉并回到顶部，上一份的查询随之作废
+  // 换文件：整篇换掉并回到顶部，上一份的查找高亮随之作废
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: text },
       selection: { anchor: 0 },
-      effects: setSearchQuery.of(new SearchQuery({ search: '' })),
+      effects: setFindRanges.of(null),
     });
     view.scrollDOM.scrollTop = 0;
   }, [text, viewRef]);
@@ -658,16 +686,17 @@ export function FilePicker({
   };
 
   /** 打字时只落到「光标之后最近的那处」——跟着每次输入往后跳会跳过前几处。
-   *  高亮由 `search` 扩展按同一个查询画。 */
+   *  高亮走自绘层（findHighlighter），选中那条之外全都画。 */
   const runFind = (q: string): void => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: q })) });
     if (!q) {
+      view.dispatch({ effects: setFindRanges.of(null) });
       setHits(null);
       return;
     }
     const all = matchesOf(view, q);
+    view.dispatch({ effects: setFindRanges.of(all) });
     setHits(all.length);
     if (all.length === 0) return;
     const from = view.state.selection.main.from;
@@ -1223,17 +1252,20 @@ export function FilePicker({
       >
         {/* 头：面包屑 + 搜索 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
-          <Tooltip label={t('tasks.fileUp')}>
-            <button
-              type="button"
-              aria-label={t('tasks.fileUp')}
-              disabled={crumb.length === 0}
-              onClick={goUp}
-              className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
+          {/* 窄屏预览屏已有自己的「返回列表」，这一枚收起——两行各一个左箭头会读成重复 */}
+          {(isDesktop || screen === 'list') && (
+            <Tooltip label={t('tasks.fileUp')}>
+              <button
+                type="button"
+                aria-label={t('tasks.fileUp')}
+                disabled={crumb.length === 0}
+                onClick={goUp}
+                className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+          )}
           <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
             {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
             <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">

@@ -723,7 +723,7 @@ dashboard ↔ 服务端只有一条事件流 = `GET /events`（`packages/weave-s
 3. 拖拽传感器按 `(pointer: fine)` 分流（鼠标 PointerSensor 位移 5px / 触屏 TouchSensor 长按 200ms 容差 8px），不裸用 PointerSensor。
 4. 固定宽列（列头/数据行）必须同构收缩（同一组 width 工具类），放不下的列折进行内第二行（`basis-full`）或 `hidden lg:block`，不做横向滚动。
 5. 纵向 flex 堆叠的下区要 `min-h-0` 才能收缩，否则被外层 `overflow-hidden` 裁掉。
-6. **右键面触屏给等价手势**（触屏没有右键这回事）：默认长按 450ms、位移 >8px 即取消（不夺滚动/拖拽），**只在粗指针下挂**（`useMediaQuery('(pointer: coarse)')`），触屏下 `onContextMenu` 只 `preventDefault`（压掉原生菜单）不开自家菜单，且**长按生效后抬手补的那个 click 要吞掉**（否则会顺手点选/把刚开的菜单关掉；账本见 `ProjectList`）。**对话面板（`SessionMessages` 气泡）例外走双击**——同一条气泡、两击间 ≤300ms、位移 >8px 即取消，开的是桌面右键那一份菜单（多选只是菜单里的一项，长按不再直接进多选），气泡挂 `touch-manipulation` 压掉移动浏览器双击缩放，桌面端仍只有右键。
+6. **右键面触屏给等价手势**（触屏没有右键这回事）：默认长按 450ms、位移 >8px 即取消（不夺滚动/拖拽），**只在粗指针下挂**（`useMediaQuery('(pointer: coarse)')`），触屏下 `onContextMenu` 只 `preventDefault`（压掉原生菜单）不开自家菜单，且**长按生效后抬手补的那个 click 要吞掉**（否则会顺手点选/把刚开的菜单关掉；账本见 `ProjectList`）。**对话面板（`SessionMessages` 气泡）例外走双击**——同一条气泡、两击间 ≤300ms、位移 >8px 即取消，开的是桌面右键那一份菜单（多选只是菜单里的一项，长按不直接进多选），气泡挂 `touch-manipulation` 压掉移动浏览器双击缩放，桌面端仍只有右键；**长按留给浏览器原生**（气泡内选中部分文字 + 复制，压掉就没法选段复制）。
 7. **滚动加载一律拉动触发**（唯一实现 = `web/src/lib/pull-load.ts`）：贴边本身不加载、贴边后**继续**滚/拖够 120px 才取一页（预设加载与「刚贴边就取」都让用户没得选），一拉一页、离开边沿才重新上膛；位移用 `transform: translateY` 让位——**不进布局**，否则与翻页的 `scrollHeight` 补偿打架，提示条是绝对定位叠层；`overscroll-contain` 管住滚轮/触屏串动。今天两处：对话面板往顶、事件链往底。
 8. **`<lg` 的整屏对话一开，AI 助手（浮球 + 那扇弹窗）整个退场**——它钉在右下角，正是对话发送区的位置，让位也挤（浮球位置归 `AiAssistant` 一处）；置位方在对话侧（`TasksPanel` 依 `!isDesktop && paneOpen && hasConv` 写 `lib/conv-screen` 的模块级 store，卸载即清），`AiAssistant` 用 `useConvScreenOpen` 订阅后返回 null——只是不渲染，会话历史留在内存、抽屉关掉照旧；桌面不触发（三栏并排，对话是右栏、盖不到右下角）。
 

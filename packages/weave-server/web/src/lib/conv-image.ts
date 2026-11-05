@@ -110,22 +110,23 @@ export interface Palette {
 
 export type BubbleVariant = 'assistant' | 'user' | 'userTyped' | 'failed';
 
+/** 底色一律实心（与面板同口径：气泡不半透明，半透明只留给过程输出叠层的下层卡边）。 */
 const BUBBLE_SKIN: Record<Theme, Record<BubbleVariant, { fill: string; stroke: string }>> = {
   dark: {
-    // 回复：`bg-neutral-800/50` + `border-edge/[0.08]`
-    assistant: { fill: 'rgba(38,38,38,0.5)', stroke: 'rgba(255,255,255,0.08)' },
-    // weave 投递：`bg-blue-500/[0.12]` + `border-blue-500/30`
-    user: { fill: 'rgba(59,130,246,0.12)', stroke: 'rgba(59,130,246,0.3)' },
-    // 终端里手敲：同色再淡一档（`/[0.05]` + `/15`）
-    userTyped: { fill: 'rgba(59,130,246,0.05)', stroke: 'rgba(59,130,246,0.15)' },
-    // 失败：`bg-red-950/20` + `border-red-500/30`
-    failed: { fill: 'rgba(69,10,10,0.2)', stroke: 'rgba(239,68,68,0.3)' },
+    // 回复：`bg-neutral-900` + `border-edge/[0.28]`
+    assistant: { fill: '#171717', stroke: 'rgba(255,255,255,0.28)' },
+    // weave 投递：`bg-blue-900` + `border-blue-500/55`
+    user: { fill: '#1e3a8a', stroke: 'rgba(59,130,246,0.55)' },
+    // 终端里手敲：同色再淡一档（`bg-blue-950` + `/45`）
+    userTyped: { fill: '#172554', stroke: 'rgba(59,130,246,0.45)' },
+    // 失败：`bg-red-950` + `border-red-500/40`
+    failed: { fill: '#450a0a', stroke: 'rgba(239,68,68,0.4)' },
   },
   light: {
-    assistant: { fill: 'rgba(229,229,229,0.5)', stroke: 'rgba(0,0,0,0.08)' },
-    user: { fill: 'rgba(59,130,246,0.12)', stroke: 'rgba(59,130,246,0.3)' },
-    userTyped: { fill: 'rgba(59,130,246,0.05)', stroke: 'rgba(59,130,246,0.15)' },
-    failed: { fill: 'rgba(254,242,242,0.2)', stroke: 'rgba(239,68,68,0.3)' },
+    assistant: { fill: '#f5f5f5', stroke: 'rgba(0,0,0,0.28)' },
+    user: { fill: '#dbeafe', stroke: 'rgba(59,130,246,0.55)' },
+    userTyped: { fill: '#eff6ff', stroke: 'rgba(59,130,246,0.45)' },
+    failed: { fill: '#fef2f2', stroke: 'rgba(239,68,68,0.4)' },
   },
 };
 

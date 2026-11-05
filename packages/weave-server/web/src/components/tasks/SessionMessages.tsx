@@ -816,7 +816,13 @@ export function SessionMessages({
           onTouchMove={(e) => pull.touchMove(e.touches[0]?.clientY ?? 0)}
           onTouchEnd={pull.touchEnd}
           onTouchCancel={pull.touchEnd}
-          className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain pr-1"
+          // 嵌入右栏时右栏本身没有卡片壳（见上面的面板类），气泡区就成了「白底上
+          // 一片没有边的对话」——给滚动区自己描一圈（用户报「气泡显示区域没有边框」）。
+          // 浮窗/全屏那份外层已经有一圈边框，这里不再叠
+          className={cn(
+            'relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain',
+            embedded ? 'rounded-lg border border-edge/[0.28] p-2' : 'pr-1',
+          )}
           // 渲染块的高度上限按这个容器算（见 lib/visualization 的 CONV_SCROLLER_ATTR）
           {...{ [CONV_SCROLLER_ATTR]: '' }}
         >
@@ -918,11 +924,15 @@ export function SessionMessages({
                           'min-w-0 max-w-[92%] overflow-x-auto rounded-lg border px-2 py-1.5',
                           // 气泡边要看得见：0.16 在白底上几乎和气泡底色糊在一起
                           //（用户报「看不见边框」），统一提到 0.28
+                          // 底色一律实心（用户裁决：气泡不要半透明，半透明只留给过程输出
+                          // 叠层的下层卡边）——半透明底色在白底上被读成「没上色」
                           m.failed
-                            ? 'border-red-500/40 bg-red-950/20'
-                            : 'border-edge/[0.28] bg-neutral-800/50',
-                          // 被回退的段落：红虚线框 + 整体降不透明度（保留展示，一眼看出已退场）
-                          m.rewound === true && 'border-dashed border-red-500/40 opacity-50',
+                            ? 'border-red-500/40 bg-red-950'
+                            : 'border-edge/[0.28] bg-neutral-900',
+                          // 被回退的段落：红虚线框 + 保留展示（一眼看出已退场）。整块不再降
+                          // 不透明度（用户裁决：气泡不要半透明），只靠虚线认；线宽与普通气泡
+                          // 同为 1px，靠颜色提亮而不是加粗
+                          m.rewound === true && 'border-dashed border-red-500/70',
                           m.narration === true && 'weave-card-in',
                         )}
                       >
@@ -1031,10 +1041,10 @@ export function SessionMessages({
                         m.commandSigil === '!'
                           ? BASH_ECHO_CLASS.bubble
                           : pipe
-                            ? 'border-blue-500/55 bg-blue-500/[0.12]'
-                            : 'border-blue-500/45 bg-blue-500/[0.05]',
-                        // 被回退的段落：红虚线框 + 整体降不透明度（与回复气泡同口径）
-                        m.rewound === true && 'border-dashed border-red-500/40 opacity-50',
+                            ? 'border-blue-500/55 bg-blue-900'
+                            : 'border-blue-500/45 bg-blue-950',
+                        // 被回退的段落：红虚线框 + 保留展示（与回复气泡同口径，不降不透明度）
+                        m.rewound === true && 'border-dashed border-red-500/70',
                       )}
                     >
                       {/* 时刻与左侧回复气泡同布局：气泡上部、靠屏幕边缘那一侧
@@ -1283,7 +1293,7 @@ export function SessionMessages({
                       // 回显气泡同款），发出那一刻就能看出这条是命令、不是普通 prompt
                       bashQueueIds.size > 0
                         ? BASH_ECHO_CLASS.queue
-                        : 'border-blue-500/30 bg-blue-500/[0.07]',
+                        : 'border-blue-500/40 bg-blue-950',
                     )}
                   >
                     {outbox.map((m, i) => {
@@ -1421,7 +1431,7 @@ export function SessionMessages({
                         'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10',
                         failed
                           ? 'border-red-500/30 bg-red-950/30 text-red-300'
-                          : 'border-edge/[0.16] bg-neutral-800/50 text-neutral-500',
+                          : 'border-edge/[0.16] bg-neutral-900 text-neutral-500',
                       )}
                     >
                       {interrupted ? (
@@ -1462,7 +1472,7 @@ export function SessionMessages({
         {/* 多选态：composer 换成工具条（投递与挑选是两件事，不并排摆）。窄屏放不下
             就整组折到第二行——按钮不等宽也不做横向滚动 */}
         {selecting ? (
-          <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-2">
+          <div className="mt-1 flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1">
             <span className="min-w-0 truncate text-11 text-neutral-400">
               {t('tasks.convSelected', { n: picked.size })}
             </span>
@@ -1535,7 +1545,9 @@ export function SessionMessages({
              放不下即折行；别占到输入行与发送键那两格去。 */
           <div
             className={cn(
-              'mt-2 flex shrink-0 flex-col gap-1.5 max-lg:mt-1 max-lg:gap-1 max-lg:border-t max-lg:border-edge/[0.08] max-lg:pt-1.5',
+              // 气泡区自己已有边框，这行不要再画分隔线（窄屏原先靠 border-t 分家，
+              // 与边框叠成两条）；间距收到 4px，让输入区和气泡区读作一组
+              'mt-1 flex shrink-0 flex-col gap-1.5 max-lg:gap-1',
               asking && 'pointer-events-none opacity-50',
             )}
           >

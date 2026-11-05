@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { EditorView } from '@codemirror/view';
-import { SearchCursor, SearchQuery, setSearchQuery } from '@codemirror/search';
+import { SearchCursor } from '@codemirror/search';
 import {
   ChevronDown,
   ChevronLeft,
@@ -19,8 +19,11 @@ import {
   TextSearch,
   X,
 } from 'lucide-react';
-import { api, type ProjectFileEntry } from '@/lib/api';
+import { api, type ProjectFileEntry, type ProjectRow } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Resizer } from '@/components/Resizer';
+import { useToast } from '@/components/Toast';
+import { copyText } from '@/lib/clipboard';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
@@ -34,6 +37,7 @@ import {
   dirBadge,
   iconFor,
   segmentsOf,
+  setFindRanges,
   sizeText,
 } from './tasks/FilePicker';
 
@@ -53,6 +57,28 @@ import {
 
 /** 搜索输入的防抖窗（FilePicker 同款）。 */
 const SEARCH_DEBOUNCE_MS = 120;
+
+/** 三栏宽度的可调范围（px）与 sessionStorage 键（会话级记忆：重开弹窗还在，重开浏览器归位）。 */
+const LEFT_W_MIN = 120;
+const LEFT_W_MAX = 360;
+const PREVIEW_W_MIN = 200;
+const PREVIEW_W_MAX = 720;
+const SPLIT_KEY = 'weave:file-browser-split';
+
+/** 触屏长按 = 右键的等价动作（ProjectList 同款参数）。 */
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP = 8;
+
+/** 项目绝对根 + 条目相对路径：分隔符跟服务端给的 root 走（root 是本机原生
+ *  形态，Windows 反斜杠 / POSIX 正斜杠），绝不自己定；根可能有尾斜杠，归一掉。
+ *  根空时只剩相对路径。rel 内部已是正斜杠（服务端相对路径口径），整体替换成
+ *  root 的分隔符——空格等特殊字符原样保留（剪贴板走纯文本，消费方按路径解析）。 */
+const joinAbsPath = (root: string, rel: string): string => {
+  if (!root) return rel;
+  const sep = root.includes('\\') ? '\\' : '/';
+  const base = root.replace(/[\\/]+$/, '');
+  return `${base}${sep}${rel.replaceAll('/', sep)}`;
+};
 
 /** 换一条选中之后的防抖窗：箭头连滑过十行不该打十次预览。 */
 const SELECT_DEBOUNCE_MS = 150;
@@ -108,6 +134,7 @@ export function FileBrowserModal({
   projectId,
   projectName,
   path,
+  projects,
   onClose,
 }: {
   projectId: number;
@@ -115,10 +142,16 @@ export function FileBrowserModal({
   projectName: string;
   /** 初始定位：文件 → 落在其目录并直接预览；目录 → 落在该目录。 */
   path?: string;
+  /** 全项目模式（Ctrl+B）：给全部活跃项目——中栏第一屏列项目，点项目就地进入
+   *  该项目（同一弹窗切换 projectId），面包屑退回根时回到项目列表。 */
+  projects?: ProjectRow[];
   onClose: () => void;
 }) {
   const t = useT();
+  const { show } = useToast();
   const isDesktop = useMediaQuery('(min-width: 1024px)');
+  /** 长按只在粗指针下挂（鼠标不该有长按，§11 同款口径）。 */
+  const finePointer = useMediaQuery('(pointer: fine)');
 
   const [query, setQuery] = useState('');
   const [dir, setDir] = useState(() => {
@@ -147,6 +180,19 @@ export function FileBrowserModal({
   const [hits, setHits] = useState<number | null>(null);
   /** 全屏（SessionMessages 先例）：面板类切换，ESC 链里优先于关闭。 */
   const [fullscreen, setFullscreen] = useState(false);
+  /** 三栏拖宽（只桌面）：sessionStorage 会话级记忆，重开弹窗还在。 */
+  const [leftW, setLeftW] = useState<number>(() => {
+    const v = Number(sessionStorage.getItem(`${SPLIT_KEY}:left`));
+    return Number.isFinite(v) && v > 0 ? Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, v)) : 160;
+  });
+  const [previewW, setPreviewW] = useState<number>(() => {
+    const v = Number(sessionStorage.getItem(`${SPLIT_KEY}:preview`));
+    return Number.isFinite(v) && v > 0 ? Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, v)) : 384;
+  });
+  useEffect(() => {
+    sessionStorage.setItem(`${SPLIT_KEY}:left`, String(leftW));
+    sessionStorage.setItem(`${SPLIT_KEY}:preview`, String(previewW));
+  }, [leftW, previewW]);
 
   const searchRef = useRef<HTMLInputElement>(null);
   /** 弹窗自己收焦点：不让按键漏到背后的页面。 */
@@ -168,6 +214,21 @@ export function FileBrowserModal({
   const focusPath = useRef<string | null>(path ?? null);
   /** 键盘导航中：方向键按下后悬停不再抢选中，直到鼠标真的动一下（键盘优先）。 */
   const kbdNav = useRef(false);
+  /** 用户是否亲手选过行（hover/点击/方向键）：置位后列表回来自动不再跳回第一行。 */
+  const userTouched = useRef(false);
+  /** 项目绝对根（服务端每拍都带）：复制绝对路径与头部完整路径都拼它。 */
+  const [root, setRoot] = useState('');
+  /** 行右键菜单（桌面右键 / 触屏长按）：只有一项——复制绝对路径。 */
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; entry: ProjectFileEntry } | null>(null);
+  /** 全项目第一屏的选中项目（↑↓/Enter 与 hover 共用；进入文件树后闲置）。 */
+  const [projSelected, setProjSelected] = useState(0);
+  const rowMenuRef = useRef<HTMLDivElement | null>(null);
+  /** 全项目模式：null = 还没进任何项目（中栏第一屏列项目）；非 null = 已进入。
+   *  面包屑退回根（goTo('')）时回到项目列表。 */
+  const [picked, setPicked] = useState<ProjectRow | null>(null);
+  /** 全项目模式真正生效的 projectId/projectName：跟随 picked 漂移。 */
+  const activeProjectId = picked?.id ?? projectId;
+  const activeProjectName = picked?.name ?? projectName;
 
   const load = useCallback(
     (q: string, target: string, signal: AbortSignal, fresh = false): Promise<void> => {
@@ -178,14 +239,15 @@ export function FileBrowserModal({
       const slash = target.lastIndexOf('/');
       const parent = target === '' ? null : slash >= 0 ? target.slice(0, slash) : '';
       return Promise.all([
-        api.listProjectFiles(projectId, { q, dir: target, signal, fresh }),
+        api.listProjectFiles(activeProjectId, { q, dir: target, signal, fresh }),
         // 左栏 = 父目录的条目（根没有父，摆一行项目名占位）
         !q && isDesktop && parent !== null
-          ? api.listProjectFiles(projectId, { dir: parent, signal }).catch(() => null)
+          ? api.listProjectFiles(activeProjectId, { dir: parent, signal }).catch(() => null)
           : Promise.resolve(null),
       ])
         .then(([listing, parentListing]) => {
           if (mine !== seq.current) return;
+          setRoot(listing.root);
           setEntries(listing.entries);
           setTotal(listing.total);
           setCapped(listing.capped ?? false);
@@ -195,8 +257,14 @@ export function FileBrowserModal({
           const want = focusPath.current;
           const at = want ? listing.entries.findIndex((e) => e.path === want) : -1;
           focusPath.current = null;
-          setSelected(at >= 0 ? at : 0);
-          if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
+          // 用户已经用鼠标/键盘选过行就不覆盖（否则列表回来自动跳回第一行，
+          // 正盯着的选项被顶掉）；重置只发生在初始定位与换目录
+          if (userTouched.current) {
+            setSelected((i) => Math.min(i, listing.entries.length - 1));
+          } else {
+            setSelected(at >= 0 ? at : 0);
+            if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
+          }
         })
         .catch((e: unknown) => {
           if (mine !== seq.current || signal.aborted) return;
@@ -207,12 +275,13 @@ export function FileBrowserModal({
           if (mine === seq.current) setLoading(false);
         });
     },
-    [projectId, isDesktop],
+    [activeProjectId, isDesktop],
   );
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
   useEffect(() => {
+    if (!picked && projects) return; // 全项目模式第一屏：还没进项目，不打文件请求
     const timer = setTimeout(() => {
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -225,7 +294,7 @@ export function FileBrowserModal({
         if (!fresh || ctrl.signal.aborted) return;
         const mine = seq.current;
         return api
-          .listProjectFiles(projectId, { q: query.trim(), dir, signal: ctrl.signal, fresh: true })
+          .listProjectFiles(activeProjectId, { q: query.trim(), dir, signal: ctrl.signal, fresh: true })
           .then((listing) => {
             if (mine !== seq.current || ctrl.signal.aborted) return;
             setEntries(listing.entries);
@@ -237,14 +306,18 @@ export function FileBrowserModal({
       });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [query, dir, load, projectId]);
+  }, [query, dir, load, activeProjectId, picked, projects]);
 
   useEffect(() => () => ctrlRef.current?.abort(), []);
 
-  // 选中项滚进视野：回上一级时那一层可能远在折叠区外
+  // 选中项滚进视野：回上一级时那一层可能远在折叠区外（项目列表同理，见 projectListShown）
+  const projScrollRef = useRef<HTMLUListElement | null>(null);
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [selected, entries]);
+  useEffect(() => {
+    projScrollRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [projSelected]);
 
   /** 第三栏要读的东西：目录 → 子项列表，文本文件 → 正文；图片/iframe/下载型
    *  什么也不读（<img>/<iframe>/<a download> 自己取字节）。
@@ -269,7 +342,7 @@ export function FileBrowserModal({
     const timer = setTimeout(() => {
       if (cur.kind === 'dir') {
         void api
-          .listProjectFiles(projectId, { dir: cur.path, limit: 100 })
+          .listProjectFiles(activeProjectId, { dir: cur.path, limit: 100 })
           .then((listing) => {
             if (!alive || mine !== previewSeq.current) return;
             const value = cacheSet(
@@ -286,7 +359,7 @@ export function FileBrowserModal({
         return;
       }
       void api
-        .projectFileText(projectId, cur.path)
+        .projectFileText(activeProjectId, cur.path)
         .then(({ text, truncated: cut }) => {
           if (!alive || mine !== previewSeq.current) return;
           setPreview({ path: cur.path, ...cacheSet(textCache.current, cur.path, { text, truncated: cut }, TEXT_CACHE_MAX) });
@@ -303,7 +376,7 @@ export function FileBrowserModal({
       alive = false;
       clearTimeout(timer);
     };
-  }, [current, projectId]);
+  }, [current, activeProjectId]);
 
   /** 行号选区已退役（用户裁决：那是引用选择器的行为，浏览器不需要）——
    *  CodePreview 的 `lines`/`onGutterClick` 传空壳，行号纯展示。 */
@@ -323,6 +396,18 @@ export function FileBrowserModal({
   fullscreenRef.current = fullscreen;
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  /** 全项目模式退回项目列表第一屏（ESC 链与移动端返回共用）：退到根先是这层，
+   *  再退才轮到 onClose。返回 false/true 表达「层退完了没」。 */
+  const backOfPickedRef = useRef(false);
+  backOfPickedRef.current = !!(projects && picked);
+  const exitOneLevel = (): boolean => {
+    if (backOfPickedRef.current) {
+      setPicked(null);
+      userTouched.current = false;
+      return true;
+    }
+    return false;
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return;
@@ -330,6 +415,7 @@ export function FileBrowserModal({
       e.stopPropagation();
       if (barRef.current) setBar(null);
       else if (fullscreenRef.current) setFullscreen(false);
+      else if (exitOneLevel()) return;
       else closeRef.current();
     };
     document.addEventListener('keydown', onKey, true);
@@ -360,6 +446,7 @@ export function FileBrowserModal({
       goUp();
       return false;
     }
+    if (exitOneLevel()) return true;
     closeRef.current();
     return true;
   });
@@ -375,14 +462,87 @@ export function FileBrowserModal({
         focusPath.current = target ? `${target}/${seg}` : seg;
       }
     }
+    // 全项目模式退回根 = 回到项目列表第一屏（picked 置空后 activeProjectId
+    // 回落 props 的占位，列表请求停发——中栏改列项目）
+    if (projects && target === '') setPicked(null);
+    userTouched.current = false;
     setQuery('');
     setDir(target);
   };
 
   const goUp = (): void => {
+    if (dir === '') {
+      // 全项目模式站在文件树根：上一级 = 项目列表第一屏
+      exitOneLevel();
+      return;
+    }
     const slash = dir.lastIndexOf('/');
     goTo(dir === '' ? '' : slash >= 0 ? dir.slice(0, slash) : '');
   };
+
+  /** 行右键菜单：桌面右键直开；触屏长按等价（粗指针才挂，位移即取消——滑动
+   *  列表不是长按）。抬手补的那个 click 要吞掉，否则它顺带改选中。 */
+  const suppressRowClick = useRef(false);
+  const rowPress = useRef<{ x: number; y: number; timer: number } | null>(null);
+  const clearRowPress = (): void => {
+    if (!rowPress.current) return;
+    window.clearTimeout(rowPress.current.timer);
+    rowPress.current = null;
+  };
+  const openRowMenu = (entry: ProjectFileEntry, x: number, y: number): void => {
+    setRowMenu({ x, y, entry });
+  };
+  const onRowPointerDown = (entry: ProjectFileEntry) => (e: React.PointerEvent): void => {
+    suppressRowClick.current = false;
+    if (finePointer || e.button !== 0) return;
+    const { clientX: x, clientY: y } = e;
+    const timer = window.setTimeout(() => {
+      rowPress.current = null;
+      suppressRowClick.current = true;
+      openRowMenu(entry, x, y);
+    }, LONG_PRESS_MS);
+    rowPress.current = { x, y, timer };
+  };
+  const onRowPointerMove = (e: React.PointerEvent): void => {
+    const p = rowPress.current;
+    if (!p) return;
+    if (Math.abs(e.clientX - p.x) > LONG_PRESS_SLOP || Math.abs(e.clientY - p.y) > LONG_PRESS_SLOP) {
+      clearRowPress();
+    }
+  };
+  /** 项目行长按/右键 = 同款菜单（项目根当作一条目录条目，「复制绝对路径」即根路径）。 */
+  const onProjPointerDown = (p: ProjectRow) => (e: React.PointerEvent): void => {
+    suppressRowClick.current = false;
+    if (finePointer || e.button !== 0) return;
+    const { clientX: x, clientY: y } = e;
+    const timer = window.setTimeout(() => {
+      rowPress.current = null;
+      suppressRowClick.current = true;
+      openRowMenu({ kind: 'dir', name: p.name, path: p.path }, x, y);
+    }, LONG_PRESS_MS);
+    rowPress.current = { x, y, timer };
+  };
+  const onProjPointerMove = onRowPointerMove;
+
+  // 菜单开着时点外面 / 滚动 / Esc / 再右键即关（ProjectList 同款：菜单内的事件
+  // 留给条目自己的 onClick，这里先关会在派发中途卸载条目、React 丢掉那一击）。
+  useEffect(() => {
+    if (!rowMenu) return;
+    const close = (e: Event): void => {
+      if (rowMenuRef.current?.contains(e.target as Node)) return;
+      setRowMenu(null);
+    };
+    window.addEventListener('pointerdown', close, true);
+    window.addEventListener('contextmenu', close, true);
+    window.addEventListener('scroll', close, { capture: true, passive: true });
+    window.addEventListener('keydown', close);
+    return () => {
+      window.removeEventListener('pointerdown', close, true);
+      window.removeEventListener('contextmenu', close, true);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', close);
+    };
+  }, [rowMenu]);
 
   /** 全文命中（一次扫描同时供计数与前后跳；预览上限 1MB，够快）。 */
   const matchesOf = (view: EditorView, q: string): { from: number; to: number }[] => {
@@ -401,16 +561,17 @@ export function FileBrowserModal({
   };
 
   /** 打字时只落到「光标之后最近的那处」——跟着每次输入往后跳会跳过前几处。
-   *  高亮由 `search` 扩展按同一个查询画。 */
+   *  高亮走自绘层（CodePreview 的 findHighlighter），区间由这里推给它。 */
   const runFind = (q: string): void => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: q })) });
     if (!q) {
+      view.dispatch({ effects: setFindRanges.of(null) });
       setHits(null);
       return;
     }
     const all = matchesOf(view, q);
+    view.dispatch({ effects: setFindRanges.of(all) });
     setHits(all.length);
     if (all.length === 0) return;
     const from = view.state.selection.main.from;
@@ -450,6 +611,18 @@ export function FileBrowserModal({
     if (!isDesktop) setScreen('preview');
   };
 
+  /** 全项目模式点一条项目：就地切进该项目（从根开始浏览）。 */
+  const pickProject = (p: ProjectRow): void => {
+    setPicked(p);
+    userTouched.current = false;
+    setQuery('');
+    setDir('');
+    setSelected(0);
+    setEntries([]);
+    setScreen('list');
+    firstLoad.current = true;
+  };
+
   /** 方向键/回车的导航。挂 document 捕获阶段：点空白处焦点会落到 `body`，
    *  那时事件目标的祖先链上没有弹窗，容器级监听根本收不到——只有 document 级
    *  才保证焦点在哪都还能用键盘。查找 / 跳行那两个小输入框除外：那里打的是字，
@@ -461,30 +634,49 @@ export function FileBrowserModal({
     // 搜索框不同：打完词按 ↓ 进列表是主路径，故它下面的方向键照样算导航
     const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (inInput && e.target !== searchRef.current) return;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      // 键盘接管：此后鼠标只是停着不动（悬停）就不许把选中抢回去
-      kbdNav.current = true;
-      const step = e.key === 'ArrowDown' ? 1 : -1;
-      setSelected((i) => Math.min(entries.length - 1, Math.max(0, i + step)));
-      return;
-    }
-    if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      goUp();
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const hit = entries[selected];
-      if (hit) enter(hit);
-      return;
-    }
-    if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      const hit = entries[selected];
-      if (hit?.kind === 'dir') enter(hit);
-      return;
+    // 全项目第一屏：↑↓ 走项目列表，Enter 进项目（方向键 → 无意义，忽略）
+    if (projectListShown) {
+      const list = projects ?? [];
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        kbdNav.current = true;
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setProjSelected((i) => Math.min(list.length - 1, Math.max(0, i + step)));
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const hit = list[projSelected];
+        if (hit) pickProject(hit);
+        return;
+      }
+    } else {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        // 键盘接管：此后鼠标只是停着不动（悬停）就不许把选中抢回去
+        kbdNav.current = true;
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        userTouched.current = true;
+        setSelected((i) => Math.min(entries.length - 1, Math.max(0, i + step)));
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        goUp();
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const hit = entries[selected];
+        if (hit) enter(hit);
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const hit = entries[selected];
+        if (hit?.kind === 'dir') enter(hit);
+        return;
+      }
     }
     // 打进搜索框的字：默认焦点不在输入框（不然空格就成了打字），故可打印字符
     // 一律转过去——打开浏览器直接敲就是了，跟从搜索框里打一样。
@@ -511,6 +703,76 @@ export function FileBrowserModal({
   const crumb = dir ? dir.split('/') : [];
   /** 搜索是当前目录子树的（带 q 时 `dir` 照传）：行与预览头都按这个口径换展示。 */
   const searching = query.trim() !== '';
+
+  /** 全项目模式第一屏：中栏列项目（顺序与左栏项目列表一致），搜索框按名/路径过滤。 */
+  const projectListShown = picked === null && !!projects;
+  const projectList = projectListShown ? (
+    <ul
+      ref={projScrollRef}
+      role="listbox"
+      aria-label={t('app.openFileBrowser')}
+      onMouseMove={() => {
+        kbdNav.current = false;
+      }}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
+    >
+      {projects.length === 0 ? (
+        <li className="px-3 py-6 text-11 text-neutral-500">{t('app.noProjects')}</li>
+      ) : (
+        projects
+          .filter((p) => {
+            const q = query.trim().toLowerCase();
+            if (!q) return true;
+            return p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q);
+          })
+          .map((p, i) => (
+          <li key={p.id}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={i === projSelected}
+              onMouseEnter={() => {
+                if (!kbdNav.current) setProjSelected(i);
+              }}
+              onClick={() => {
+                // 长按刚开的菜单：这一击是抬手补的，不当点选
+                if (suppressRowClick.current) {
+                  suppressRowClick.current = false;
+                  return;
+                }
+                userTouched.current = true;
+                setProjSelected(i);
+                pickProject(p);
+              }}
+              onPointerDown={onProjPointerDown(p)}
+              onPointerMove={onProjPointerMove}
+              onPointerUp={clearRowPress}
+              onPointerCancel={clearRowPress}
+              onContextMenu={(e) => {
+                // 触屏长按也会弹原生菜单：一律压掉，但那条路走长按
+                e.preventDefault();
+                e.stopPropagation();
+                if (!finePointer) return;
+                openRowMenu({ kind: 'dir', name: p.name, path: p.path }, e.clientX, e.clientY);
+              }}
+              className={cn(
+                'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors',
+                i === projSelected ? 'bg-blue-500/15' : 'hover:bg-edge/[0.04]',
+              )}
+            >
+              <span className="flex w-full min-w-0 items-center gap-2">
+                <Folder className={cn('h-3.5 w-3.5 shrink-0 text-blue-300/80')} />
+                <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">{p.name}</span>
+              </span>
+              <span className="truncate pl-5.5 font-mono text-10 text-neutral-600" title={p.path}>
+                {p.path}
+              </span>
+            </button>
+          </li>
+        ))
+      )}
+    </ul>
+  ) : null;
 
   const list = (
     <ul
@@ -548,11 +810,31 @@ export function FileBrowserModal({
               aria-selected={i === selected}
               onMouseEnter={() => {
                 // 键盘刚走过的行不许被「指针刚好停在那儿」抢回去
-                if (isDesktop && !kbdNav.current) setSelected(i);
+                if (isDesktop && !kbdNav.current) {
+                  userTouched.current = true;
+                  setSelected(i);
+                }
               }}
               onClick={() => {
+                // 长按刚开的菜单：这一击是抬手补的，不当点选
+                if (suppressRowClick.current) {
+                  suppressRowClick.current = false;
+                  return;
+                }
+                userTouched.current = true;
                 setSelected(i);
                 if (!isDesktop) enter(entry);
+              }}
+              onPointerDown={onRowPointerDown(entry)}
+              onPointerMove={onRowPointerMove}
+              onPointerUp={clearRowPress}
+              onPointerCancel={clearRowPress}
+              onContextMenu={(e) => {
+                // 触屏长按也会弹原生菜单：一律压掉，但那条路走长按
+                e.preventDefault();
+                e.stopPropagation();
+                if (!finePointer) return;
+                openRowMenu(entry, e.clientX, e.clientY);
               }}
               onDoubleClick={() => isDesktop && enter(entry)}
               className={cn(
@@ -621,9 +903,9 @@ export function FileBrowserModal({
         )}
         <span
           className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-300"
-          title={searching ? current?.path : undefined}
+          title={current ? joinAbsPath(root, current.path) : root || undefined}
         >
-          {(searching ? current?.path : current?.name) ?? ''}
+          {current ? joinAbsPath(root, current.path) : ''}
         </span>
         {current?.kind === 'file' && previewKindOf(current.name) === 'text' && preview?.text != null && (
           <>
@@ -766,7 +1048,7 @@ export function FileBrowserModal({
       ) : current && previewKindOf(current.name) === 'image' ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-3">
           <img
-            src={api.projectFileUrl(projectId, current.path)}
+            src={api.projectFileUrl(activeProjectId, current.path)}
             alt={current.name}
             className="max-h-full max-w-full object-contain"
           />
@@ -777,7 +1059,7 @@ export function FileBrowserModal({
         // 叠（双层 sandbox 会让 contentDocument 都读不到）。key 换文件强制重载。
         <iframe
           key={current.path}
-          src={api.projectFileUrl(projectId, current.path)}
+          src={api.projectFileUrl(activeProjectId, current.path)}
           title={current.name}
           className="min-h-0 flex-1 border-0 bg-white"
         />
@@ -786,7 +1068,7 @@ export function FileBrowserModal({
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-3">
           <p className="text-11 text-neutral-500">{t('tasks.fileDownloadHint')}</p>
           <a
-            href={api.projectFileUrl(projectId, current.path)}
+            href={api.projectFileUrl(activeProjectId, current.path)}
             download={current.name}
             className="flex items-center gap-1.5 rounded border border-edge/[0.14] px-3 py-1.5 text-xs text-neutral-200 hover:bg-edge/[0.06]"
           >
@@ -838,37 +1120,44 @@ export function FileBrowserModal({
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 头：面包屑 + 搜索 + 全屏 + 关闭 */}
+        {/* 头：面包屑 + 搜索 + 全屏 + 关闭。全项目第一屏没有面包屑（还没进项目），
+            搜索框照摆——打字即可按名过滤项目。 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
-          <Tooltip label={t('tasks.fileUp')}>
-            <button
-              type="button"
-              aria-label={t('tasks.fileUp')}
-              disabled={crumb.length === 0}
-              onClick={goUp}
-              className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-          <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
-            {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
-            <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
-              {projectName}
-            </button>
-            {crumb.map((seg, i) => (
-              <span key={`${seg}-${i}`}>
-                {'/'}
+          {projectList ? (
+            <span className="min-w-0 flex-1 truncate text-xs text-neutral-300">{t('app.openFileBrowser')}</span>
+          ) : (
+            <>
+              <Tooltip label={t('tasks.fileUp')}>
                 <button
                   type="button"
-                  onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
-                  className="text-neutral-300 hover:text-neutral-100"
+                  aria-label={t('tasks.fileUp')}
+                  disabled={crumb.length === 0 && !picked}
+                  onClick={goUp}
+                  className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
                 >
-                  {seg}
+                  <ChevronLeft className="h-3.5 w-3.5" />
                 </button>
-              </span>
-            ))}
-          </div>
+              </Tooltip>
+              <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
+                {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
+                <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
+                  {activeProjectName}
+                </button>
+                {crumb.map((seg, i) => (
+                  <span key={`${seg}-${i}`}>
+                    {'/'}
+                    <button
+                      type="button"
+                      onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
+                      className="text-neutral-300 hover:text-neutral-100"
+                    >
+                      {seg}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
           <div className="relative w-56 shrink-0 max-lg:w-40">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
             <input
@@ -917,20 +1206,42 @@ export function FileBrowserModal({
         </div>
 
         {/* 体：父目录 | 当前目录 | 预览。窄屏一屏一栏（列表 ⇄ 预览）。
-            键盘处理只挂在列表这一侧——预览里是编辑器，方向键归它。 */}
+            键盘处理只挂在列表这一侧——预览里是编辑器，方向键归它。
+            全项目模式第一屏三栏照摆：中栏 = 项目列表，左/预览栏空占位——
+            键盘操作（↑↓/Enter）从第一拍起就是主路径。 */}
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
-            {isDesktop ? (
+            {projectList ? (
+              // 全项目模式第一屏：桌面三栏照摆（键盘第一拍就能用），中栏 = 项目
+              // 列表，左/预览栏空占位；窄屏一屏一栏（固定宽的三栏会互相挤没）。
+              isDesktop ? (
+                <>
+                  <div className="flex shrink-0 flex-col border-r border-edge/[0.06]" style={{ width: leftW }} />
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
+                  <Resizer
+                    onResize={(d) => setLeftW((w) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, w + d)))}
+                    title={t('app.resizeLeft')}
+                  />
+                  <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }} />
+                  <Resizer
+                    onResize={(d) => setPreviewW((w) => Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, w - d)))}
+                    title={t('app.resizePreview')}
+                  />
+                </>
+              ) : (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
+              )
+            ) : isDesktop ? (
               <>
                 {/* 左栏 = 父目录（superfile 那套）：横向跳同级目录用。文件只是给个
                     上下文、只有目录可点（点文件没有去处）；站在项目根时父就是自己，
                     那一格是项目名，三栏恒在、不塌成两栏。 */}
-                <div className="flex w-40 shrink-0 flex-col border-r border-edge/[0.06]">
+                <div className="flex shrink-0 flex-col border-r border-edge/[0.06]" style={{ width: leftW }}>
                   <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
                     {dir === '' ? (
                       <li className="flex items-center gap-2 bg-blue-500/15 px-2.5 py-1 text-11 text-neutral-100">
                         <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
-                        <span className="truncate">{projectName}</span>
+                        <span className="truncate">{activeProjectName}</span>
                       </li>
                     ) : (
                       siblings.map((sib) =>
@@ -971,13 +1282,26 @@ export function FileBrowserModal({
                   </ul>
                 </div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
-                <div className="flex w-2/5 shrink-0 flex-col border-l border-edge/[0.06]">{previewPane}</div>
+                <Resizer
+                  onResize={(d) => setLeftW((w) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, w + d)))}
+                  title={t('app.resizeLeft')}
+                />
+                <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }}>
+                  {previewPane}
+                </div>
+                <Resizer
+                  onResize={(d) => setPreviewW((w) => Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, w - d)))}
+                  title={t('app.resizePreview')}
+                />
               </>
             ) : screen === 'list' ? (
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
             ) : (
               previewPane
             )}
+          </div>
+          {/* 底条：条数 / 截断提示（全项目第一屏不摆——还没有「条数」可数） */}
+          <div className={cn('shrink-0 items-center gap-2 border-t border-edge/[0.06] px-3 py-1.5 text-10 text-neutral-600', picked ? 'flex' : projectList ? 'hidden' : 'flex')}>
           </div>
           {/* 底条：条数 / 截断提示 */}
           <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-3 py-1.5 text-10 text-neutral-600">
@@ -1002,6 +1326,37 @@ export function FileBrowserModal({
             </span>
           </div>
         </div>
+        {/* 行右键菜单 — portal 到 body：弹窗容器的 overflow 会裁剪 fixed 后代。
+            只有一项：复制绝对路径（项目根 + 条目相对路径）。 */}
+        {rowMenu &&
+          createPortal(
+            <div
+              ref={rowMenuRef}
+              style={{
+                left: Math.min(rowMenu.x, window.innerWidth - 220),
+                top: Math.min(rowMenu.y, window.innerHeight - 64),
+              }}
+              className="fixed z-[65] w-52 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              <p className="truncate px-3 pb-1 pt-0.5 text-10 text-neutral-500" title={rowMenu.entry.path}>
+                {rowMenu.entry.name}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void copyText(joinAbsPath(root, rowMenu.entry.path)).then((ok) => {
+                    if (!ok) show('error', t('common.copyFailed'));
+                  });
+                  setRowMenu(null);
+                }}
+                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-edge/[0.06] hover:text-neutral-100"
+              >
+                {t('tasks.fileCopyAbsPath')}
+              </button>
+            </div>,
+            document.body,
+          )}
       </div>
     </div>,
     document.body,

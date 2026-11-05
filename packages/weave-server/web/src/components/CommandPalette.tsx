@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Folder, MessageSquareText, Search } from 'lucide-react';
+import { FileText, Folder, Loader2, MessageSquareText, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { navigate } from '@/lib/route';
 import { useBackPop } from '@/lib/back-pop';
@@ -242,7 +242,7 @@ export function CommandPalette({ open, onClose, onOpenFile }: CommandPaletteProp
             placeholder={t('search.placeholder')}
             className="min-w-0 flex-1 bg-transparent text-sm text-neutral-200 placeholder:text-neutral-600 focus:outline-none"
           />
-          {loading && <span className="text-11 text-neutral-600 shrink-0">…</span>}
+          {loading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-500" />}
         </div>
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {rows.length === 0 && !loading && (

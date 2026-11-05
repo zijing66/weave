@@ -3533,6 +3533,53 @@ describe('MessageDeliverer 裁决表', () => {
     });
   });
 
+  describe('closeSidePanel（旁路收尾 → 只发一记 Kitty Esc）', () => {
+    const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
+      const sendKeys = vi.fn().mockResolvedValue(undefined);
+      const terminal: PromptTerminal = {
+        available: () => true,
+        listPanes: vi.fn().mockResolvedValue(panes),
+        sendText: vi.fn(),
+        sendKeys,
+        closePane: vi.fn(),
+      };
+      return { terminal, sendKeys };
+    };
+
+    it('屏上没有任何「已停」证据也只打这一记——不再补裸 ESC / Ctrl+B（那两记会打进主线程）', async () => {
+      db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+      const { terminal, sendKeys } = paneFixture([
+        { id: 'pane-1', title: '✻ msg-target', cwd: PROJECT_PATH },
+      ]);
+      const getPaneText = vi.fn(async () => '╭─ Side from main thread ─╮');
+      const deliverer = new MessageDeliverer(
+        makeDeps({ terminal: { ...terminal, getPaneText }, interruptVerifyMs: 0 }),
+      );
+
+      await expect(deliverer.closeSidePanel(SESSION_ID)).resolves.toEqual({ ok: true });
+      expect(sendKeys.mock.calls).toEqual([['pane-1', '\x1b[27u']]);
+      expect(getPaneText).not.toHaveBeenCalled();
+    });
+
+    it('落点判定与中断同一套：会话没有 404 / 无终端通道 409', async () => {
+      const deliverer = new MessageDeliverer(makeDeps({ terminal: paneFixture([]).terminal }));
+      await expect(deliverer.closeSidePanel('sess-ghost')).resolves.toMatchObject({
+        ok: false,
+        status: 404,
+      });
+      await expect(deliverer.closeSidePanel(SESSION_ID)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+        error: '找不到会话所在的终端窗口——这个会话所在终端没有可用的远程击键通道',
+      });
+      await expect(new MessageDeliverer(makeDeps()).closeSidePanel(SESSION_ID)).resolves.toMatchObject({
+        ok: false,
+        status: 409,
+        error: '终端通道未装配，无法远程击键',
+      });
+    });
+  });
+
   describe('closePane（关 pane = 会话生命周期收尾）', () => {
     const paneFixture = (panes: Array<{ id: string; title: string | null; cwd: string | null }>) => {
       const closePane = vi.fn().mockResolvedValue(undefined);
