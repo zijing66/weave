@@ -139,7 +139,7 @@ export const tasksZh = {
   'tasks.convImgOk': '已复制 {n} 条对话图片',
   'tasks.convImgCopyFailed': '复制图片失败：该浏览器不支持，可改用「下载 PNG」',
   'tasks.convImgCopyInsecure':
-    '复制图片失败：当前地址不是安全上下文，请改用页面上的 HTTPS 地址访问（或改用「下载 PNG」）',
+    '复制图片失败：当前地址不是安全上下文（HTTP），浏览器也不支持老式图片复制——请改用页面上的 HTTPS 地址访问（或改用「下载 PNG」）',
   'tasks.convImgSaved': '图片已下载',
   'tasks.convImgFailed': '生成图片失败：{error}',
   'tasks.convRoleUser': '我',
@@ -198,6 +198,7 @@ export const tasksZh = {
   'tasks.fileHintBrowse': '↑↓ 选择 · →/双击 进入 · Enter 预览 · ← 返回',
   'tasks.fileVisibilityHint':
     '未跟踪的文件与 .git/info/exclude（个人排除）里的文件都在列表中；.gitignore 与全局排除的不在。',
+  'tasks.fileCopyAbsPath': '复制绝对路径',
   'tasks.fileBack': '返回列表',
   'tasks.fileFind': '查找',
   'tasks.fileGoToLine': '跳到行',
@@ -734,7 +735,7 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.convImgOk': 'Copied {n} messages as an image',
   'tasks.convImgCopyFailed': 'Copying the image failed: this browser cannot do it — use "Download PNG"',
   'tasks.convImgCopyInsecure':
-    'Copying the image failed: this address is not a secure context — open the HTTPS address instead (or use "Download PNG")',
+    'Copying the image failed: this is an insecure (HTTP) address and the browser has no legacy image copy either — open the HTTPS address instead (or use "Download PNG")',
   'tasks.convImgSaved': 'Image downloaded',
   'tasks.convImgFailed': 'Rendering the image failed: {error}',
   'tasks.convRoleUser': 'Me',
@@ -794,6 +795,7 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.fileHintBrowse': '↑↓ select · →/double-click open · Enter preview · ← back',
   'tasks.fileVisibilityHint':
     'Untracked files and files in .git/info/exclude (personal excludes) are listed; .gitignore and global excludes are not.',
+  'tasks.fileCopyAbsPath': 'Copy absolute path',
   'tasks.fileBack': 'Back to list',
   'tasks.fileFind': 'Find',
   'tasks.fileGoToLine': 'Go to line',

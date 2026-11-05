@@ -383,10 +383,11 @@ export function SideQuestionDialog({
         if (to === 'download') {
           downloadBlob(blob, imageFileName(label));
           show('success', t('tasks.convImgSaved'));
-        } else if (await copyImage(blob)) {
-          show('success', t('tasks.convImgOk', { n: chosen.length }));
         } else {
-          throw new Error(t('tasks.convImgCopyFailed'));
+          const copied = await copyImage(blob);
+          if (copied === 'ok') show('success', t('tasks.convImgOk', { n: chosen.length }));
+          else if (copied === 'insecure') throw new Error(t('tasks.convImgCopyInsecure'));
+          else throw new Error(t('tasks.convImgCopyFailed'));
         }
       },
       { fail: errorText },
@@ -560,14 +561,18 @@ export function SideQuestionDialog({
                             </>
                           )}
                           {row.status === 'pending' && (
-                            <span title={t('tasks.sidePending')} className="shrink-0">
-                              <Loader2 className="h-3 w-3 animate-spin text-neutral-500" />
-                            </span>
+                            <Tooltip label={t('tasks.sidePending')}>
+                              <span className="shrink-0">
+                                <Loader2 className="h-3 w-3 animate-spin text-neutral-500" />
+                              </span>
+                            </Tooltip>
                           )}
                           {row.status === 'timeout' && (
-                            <span title={t('tasks.sideTimeout')} className="shrink-0">
-                              <AlertTriangle className="h-3 w-3 text-amber-400/80" />
-                            </span>
+                            <Tooltip label={t('tasks.sideTimeout')}>
+                              <span className="shrink-0">
+                                <AlertTriangle className="h-3 w-3 text-amber-400/80" />
+                              </span>
+                            </Tooltip>
                           )}
                         </div>
                         {open && (

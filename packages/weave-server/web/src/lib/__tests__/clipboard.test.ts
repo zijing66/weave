@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { copyText } from '../clipboard';
+import { copyImage, copyText } from '../clipboard';
 
 /**
  * 手机经局域网 HTTP 打开时 `navigator.clipboard` 整个不存在（无安全上下文）——
@@ -42,5 +42,89 @@ describe('copyText', () => {
       body: { appendChild: vi.fn(), removeChild: vi.fn() },
     });
     await expect(copyText('x')).resolves.toBe(false);
+  });
+});
+
+/**
+ * 局域网 HTTP 打开时连 `navigator.clipboard` 都不存在——这类失败要报成
+ * 「地址不安全、换 HTTPS」，不能和「浏览器不支持」混成一条文案。
+ */
+describe('copyImage', () => {
+  const blob = new Blob(['x'], { type: 'image/png' });
+  const write = vi.fn().mockResolvedValue(undefined);
+
+  /** 老式图片复制那套 DOM：离屏容器 + 选中 img + execCommand。`ok` = 复制是否成功。 */
+  const stubLegacyDom = (ok: boolean): ReturnType<typeof vi.fn> => {
+    const exec = vi.fn().mockReturnValue(ok);
+    const img = { src: '', alt: '', decode: () => Promise.resolve() };
+    const holder = {
+      contentEditable: '',
+      style: { cssText: '' },
+      setAttribute: vi.fn(),
+      appendChild: vi.fn(),
+      remove: vi.fn(),
+    };
+    vi.stubGlobal('document', {
+      createElement: (tag: string) => (tag === 'img' ? img : holder),
+      createRange: () => ({ selectNode: vi.fn() }),
+      execCommand: exec,
+      body: { appendChild: vi.fn() },
+    });
+    vi.stubGlobal('window', { getSelection: () => ({ removeAllRanges: vi.fn(), addRange: vi.fn() }) });
+    vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: vi.fn() });
+    return exec;
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    write.mockClear();
+  });
+
+  it('非安全上下文 → insecure（不碰 Clipboard API）', async () => {
+    vi.stubGlobal('isSecureContext', false);
+    vi.stubGlobal('navigator', { clipboard: { write } });
+    await expect(copyImage(blob)).resolves.toBe('insecure');
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('非安全上下文但老式图片复制能成 → ok（局域网 HTTP 照常能复制）', async () => {
+    vi.stubGlobal('isSecureContext', false);
+    vi.stubGlobal('navigator', { clipboard: { write } });
+    const exec = stubLegacyDom(true);
+    await expect(copyImage(blob)).resolves.toBe('ok');
+    expect(write).not.toHaveBeenCalled();
+    expect(exec).toHaveBeenCalledWith('copy');
+  });
+
+  it('Clipboard API 被拒但老式图片复制能成 → ok（不误报失败）', async () => {
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('navigator', { clipboard: { write: vi.fn().mockRejectedValue(new Error('denied')) } });
+    vi.stubGlobal('ClipboardItem', class {});
+    stubLegacyDom(true);
+    await expect(copyImage(blob)).resolves.toBe('ok');
+  });
+
+  it('安全上下文但没有 ClipboardItem、老式路也不行 → unsupported', async () => {
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('navigator', { clipboard: { write } });
+    vi.stubGlobal('ClipboardItem', undefined);
+    stubLegacyDom(false);
+    await expect(copyImage(blob)).resolves.toBe('unsupported');
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('安全上下文且支持 → 写进剪贴板', async () => {
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('navigator', { clipboard: { write } });
+    vi.stubGlobal('ClipboardItem', class {});
+    await expect(copyImage(blob)).resolves.toBe('ok');
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('被权限拒绝 → failed', async () => {
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('navigator', { clipboard: { write: vi.fn().mockRejectedValue(new Error('denied')) } });
+    vi.stubGlobal('ClipboardItem', class {});
+    await expect(copyImage(blob)).resolves.toBe('failed');
   });
 });

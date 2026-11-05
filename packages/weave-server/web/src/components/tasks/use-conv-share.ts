@@ -84,10 +84,11 @@ const shareImage = (to: 'clipboard' | 'download'): void => {
       if (to === 'download') {
         downloadBlob(blob, imageFileName(label));
         show('success', t('tasks.convImgSaved'));
-      } else if (await copyImage(blob)) {
-        show('success', t('tasks.convImgOk', { n: chosen.length }));
       } else {
-        throw new Error(t('tasks.convImgCopyFailed'));
+        const copied = await copyImage(blob);
+        if (copied === 'ok') show('success', t('tasks.convImgOk', { n: chosen.length }));
+        else if (copied === 'insecure') throw new Error(t('tasks.convImgCopyInsecure'));
+        else throw new Error(t('tasks.convImgCopyFailed'));
       }
     },
     { fail: errorText },
