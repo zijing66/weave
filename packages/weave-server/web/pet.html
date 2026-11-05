@@ -61,11 +61,13 @@
         opacity: 1;
       }
       /* 休息打呼：三个 z 依次上浮淡出，悬在宠物头右上方。
-       * 尺寸随宠物档缩放（--zzz-scale 由 main.ts 按 SIZE_PX 设），这里只写相对几何。 */
+       * 尺寸随宠物档缩放（--zzz-scale 由 main.ts 按 SIZE_PX 设），这里只写相对几何。
+       * 字号对齐精灵实测的眼睛尺寸（眼白 16×12 精灵 px，small 档屏上 ≈12×9）：
+       * z 字形高 ≈ 0.72×字号 ⇒ 13/15/17px 的字形高 ≈ 眼高。 */
       #zzz {
         position: absolute;
-        width: calc(24px * var(--zzz-scale, 1));
-        height: calc(20px * var(--zzz-scale, 1));
+        width: calc(44px * var(--zzz-scale, 1));
+        height: calc(40px * var(--zzz-scale, 1));
         display: none;
         pointer-events: none;
       }
@@ -77,21 +79,21 @@
         bottom: 0;
         left: 0;
         color: #c9bcff;
-        font: calc(9px * var(--zzz-scale, 1)) / 1 system-ui, sans-serif;
+        font: calc(13px * var(--zzz-scale, 1)) / 1 system-ui, sans-serif;
         text-shadow: 0 0 2px rgba(0, 0, 0, 0.55);
         opacity: 0;
         animation: zzz-float 2.4s ease-out infinite;
       }
       #zzz span:nth-child(2) {
-        left: calc(5px * var(--zzz-scale, 1));
-        bottom: calc(4px * var(--zzz-scale, 1));
-        font-size: calc(11px * var(--zzz-scale, 1));
+        left: calc(9px * var(--zzz-scale, 1));
+        bottom: calc(6px * var(--zzz-scale, 1));
+        font-size: calc(15px * var(--zzz-scale, 1));
         animation-delay: 0.8s;
       }
       #zzz span:nth-child(3) {
-        left: calc(11px * var(--zzz-scale, 1));
-        bottom: calc(8px * var(--zzz-scale, 1));
-        font-size: calc(13px * var(--zzz-scale, 1));
+        left: calc(20px * var(--zzz-scale, 1));
+        bottom: calc(14px * var(--zzz-scale, 1));
+        font-size: calc(17px * var(--zzz-scale, 1));
         animation-delay: 1.6s;
       }
       #zzz.frozen span {
@@ -107,7 +109,7 @@
         }
         100% {
           opacity: 0;
-          transform: translate(calc(3px * var(--zzz-scale, 1)), calc(-12px * var(--zzz-scale, 1))) scale(1.1);
+          transform: translate(calc(5px * var(--zzz-scale, 1)), calc(-16px * var(--zzz-scale, 1))) scale(1.1);
         }
       }
       @media (prefers-reduced-motion: reduce) {

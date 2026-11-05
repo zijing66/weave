@@ -974,7 +974,6 @@ export function OrchestrationCanvas({
                       value={draft.name}
                       onChange={(e) => patch((d) => ({ ...d, name: e.target.value }))}
                       placeholder={t('orch.namePlaceholder')}
-                      title={t('orch.nameLabel')}
                       className="min-w-[10rem] flex-1 rounded border border-edge/[0.1] bg-neutral-950 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                     />
                     {dirty && <span className="text-11 text-amber-400/80">{t('orch.unsaved')}</span>}
@@ -982,7 +981,7 @@ export function OrchestrationCanvas({
                       type="button"
                       disabled={!canSave}
                       onClick={save}
-                      title={check && !check.ok ? check.error : t('orch.save')}
+                      title={check && !check.ok ? check.error : undefined}
                       className="inline-flex items-center gap-1 rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-1 text-11 text-neutral-200 transition-colors hover:bg-neutral-800 disabled:opacity-40"
                     >
                       <FeedbackIcon
@@ -992,15 +991,16 @@ export function OrchestrationCanvas({
                       />
                       {t('orch.save')}
                     </button>
+                    <Tooltip label={t('orch.deleteOrch')}>
                     <button
                       type="button"
                       disabled={fb.stateOf('orch:delete') === 'loading'}
                       onClick={remove}
-                      title={t('orch.deleteOrch')}
                       className="inline-flex items-center gap-1 rounded-md border border-red-500/30 px-2 py-1 text-11 text-red-300 transition-colors hover:bg-red-950/40 disabled:opacity-40"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
+                    </Tooltip>
                     {needsProject && (
                       <Combobox
                         value={editing.projectId != null ? String(editing.projectId) : ''}
@@ -1042,7 +1042,6 @@ export function OrchestrationCanvas({
                 type="button"
                 disabled={draft.nodes.length >= ORCH_MAX_NODES}
                 onClick={() => setPickerOpen(true)}
-                title={t('orch.addNode')}
                 className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
               >
                 <Plus className="h-3 w-3" />
@@ -1052,7 +1051,6 @@ export function OrchestrationCanvas({
                 type="button"
                 disabled={draft.nodes.length >= ORCH_MAX_NODES}
                 onClick={() => patch(addWebhookNode)}
-                title={t('orch.addWebhook')}
                 className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
               >
                 <Globe className="h-3 w-3" />
@@ -1062,7 +1060,6 @@ export function OrchestrationCanvas({
                 type="button"
                 disabled={draft.nodes.length >= ORCH_MAX_NODES}
                 onClick={() => patch(addTriggerNode)}
-                title={t('orch.addTrigger')}
                 className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
               >
                 <Zap className="h-3 w-3" />
@@ -1103,7 +1100,6 @@ export function OrchestrationCanvas({
                                 : [...base, entry.id];
                             })
                           }
-                          title={nodeLabel(entry.id)}
                           className={cn(
                             'inline-flex max-w-[12rem] items-center gap-1 rounded border px-1.5 py-0.5 text-11 transition-colors',
                             checked
@@ -1160,7 +1156,6 @@ export function OrchestrationCanvas({
                         { fail: (e) => t('orch.saveFailed', { error: errorText(e) }) },
                       );
                     }}
-                    title={t('orch.enabledHint')}
                     className={cn(
                       'shrink-0 rounded-md border px-2 py-1 text-11 transition-colors',
                       current.enabled
@@ -1313,7 +1308,6 @@ export function OrchestrationCanvas({
                   }}
                   rows={5}
                   placeholder={t('orch.edgeText')}
-                  title={t('orch.edgeVars')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 <p className="text-10 leading-relaxed text-neutral-600">{t('orch.edgeVars')}</p>
@@ -1330,7 +1324,6 @@ export function OrchestrationCanvas({
                   }}
                   rows={3}
                   placeholder={t('orch.edgeExtractHint')}
-                  title={t('orch.edgeExtract')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 <textarea
@@ -1346,7 +1339,6 @@ export function OrchestrationCanvas({
                   }}
                   rows={2}
                   placeholder={t('orch.edgeWhenHint')}
-                  title={t('orch.edgeWhen')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 <textarea
@@ -1362,7 +1354,6 @@ export function OrchestrationCanvas({
                   }}
                   rows={4}
                   placeholder={t('orch.edgeConditionHint')}
-                  title={t('orch.edgeCondition')}
                   className="w-full resize-y rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
                 {/* 判定引擎信号：谁在判这条边（决策模型配了先问它，判不准回落 fork）。 */}
@@ -1393,15 +1384,16 @@ export function OrchestrationCanvas({
                     <span className="min-w-0 flex-1 truncate text-11 font-medium text-neutral-100">
                       {t('orch.triggerNode')}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setSel(null)}
-                      title={t('common.close')}
-                      aria-label={t('common.close')}
-                      className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+                    <Tooltip label={t('common.close')} side="top">
+                      <button
+                        type="button"
+                        onClick={() => setSel(null)}
+                        aria-label={t('common.close')}
+                        className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Tooltip>
                   </div>
                   <p className="text-10 leading-relaxed text-neutral-600">
                     {t('orch.triggerNodeHint')}
@@ -1553,15 +1545,16 @@ export function OrchestrationCanvas({
             )}
             {/* 状态行贴底居中：连线被拒 > 起点未定 / 校验不过 > 操作提示。 */}
             <Panel position="bottom-center" className="pointer-events-none max-w-[70%]">
-              <p
-                title={statusText}
-                className={cn(
-                  'min-w-0 truncate text-11',
-                  statusWarn ? 'text-amber-400/80' : 'text-neutral-600',
-                )}
-              >
-                {statusText}
-              </p>
+              <Tooltip label={statusText} className="max-w-full">
+                <p
+                  className={cn(
+                    'min-w-0 truncate text-11',
+                    statusWarn ? 'text-amber-400/80' : 'text-neutral-600',
+                  )}
+                >
+                  {statusText}
+                </p>
+              </Tooltip>
               {edgeTone.size > 0 && (
                 <p className="truncate text-center text-10 text-neutral-600">
                   {t('orch.edgePendingHint')}
@@ -1675,12 +1668,11 @@ export function OrchestrationCanvas({
                             {t('orch.runPending', { n: pending })}
                           </span>
                         )}
-                        <span
-                          className="shrink-0 text-11 text-neutral-600"
-                          title={`${t('orch.runStarted', { time: new Date(row.createdAt).toLocaleString() })}`}
-                        >
-                          {formatStamp(row.createdAt)}
-                        </span>
+                        <Tooltip label={t('orch.runStarted', { time: new Date(row.createdAt).toLocaleString() })}>
+                          <span className="shrink-0 text-11 text-neutral-600">
+                            {formatStamp(row.createdAt)}
+                          </span>
+                        </Tooltip>
                         {row.status === 'running' && (
                           <button
                             type="button"

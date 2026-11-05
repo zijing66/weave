@@ -2,6 +2,6 @@
   "id": "weave-spider",
   "displayName": "Weave Spider",
   "description": "The default weave pet — a small spider that weaves alongside you.",
-  "spriteVersionNumber": 2,
+  "spriteVersionNumber": 3,
   "spritesheetPath": "spritesheet.png"
 }

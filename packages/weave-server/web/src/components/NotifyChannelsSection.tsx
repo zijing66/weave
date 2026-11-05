@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { FieldHint } from '@/components/ui/field-hint';
 import { Combobox } from '@/components/ui/combobox';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { Tooltip } from '@/components/ui/tooltip';
 import { errorText } from '@/lib/action-feedback';
 import type { MessageKey } from '@/i18n/dict';
 
@@ -165,32 +166,35 @@ export function NotifyChannelsSection() {
               </span>
               <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">{c.name}</span>
               <Switch checked={c.enabled} onChange={(v) => void toggle(c, v)} title={t('settings.notifyEnabled')} />
+              <Tooltip label={t('settings.notifyTest')}>
               <button
                 type="button"
                 onClick={() => void test(c)}
                 className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-                title={t('settings.notifyTest')}
               >
                 <Send className="h-3.5 w-3.5" />
               </button>
+              </Tooltip>
+              <Tooltip label={t('common.edit')}>
               <button
                 type="button"
                 onClick={() =>
                   setDraft({ id: c.id, kind: c.kind, name: c.name, config: { ...c.config } })
                 }
                 className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-                title={t('common.edit')}
               >
                 <Pencil className="h-3.5 w-3.5" />
               </button>
+              </Tooltip>
+              <Tooltip label={t('common.delete')}>
               <button
                 type="button"
                 onClick={() => setRemoving(c)}
                 className="rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-red-300"
-                title={t('common.delete')}
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
+              </Tooltip>
             </li>
           ))}
         </ul>

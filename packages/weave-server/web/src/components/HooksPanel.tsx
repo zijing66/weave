@@ -414,9 +414,9 @@ function CaptureSection() {
               {harnessUiOf(row.harness).label}
             </span>
             {row.installed && !row.helperPresent && (
-              <Badge variant="warning" title={t('hooks.capture.halfTip')}>
-                {t('hooks.capture.half')}
-              </Badge>
+              <Tooltip label={t('hooks.capture.halfTip')}>
+                <Badge variant="warning">{t('hooks.capture.half')}</Badge>
+              </Tooltip>
             )}
             <span className="ml-auto flex shrink-0 items-center gap-2">
               <FeedbackIcon state={fb.stateOf(`capture:${row.harness}`)} className="h-3 w-3" />
@@ -747,27 +747,27 @@ export function HooksPanel({
                 : t('hooks.scopeProjectId', { id: rule.projectId })}
           </Badge>
           {tools.length > 0 && (
-            <span
-              className="inline-flex items-center gap-0.5"
-              title={t('hooks.filterToolTip', { names: tools.join(', ') })}
-            >
-              <Wrench className="h-3 w-3" />
-              {tools.length}
-            </span>
+            <Tooltip label={t('hooks.filterToolTip', { names: tools.join(', ') })}>
+              <span className="inline-flex items-center gap-0.5">
+                <Wrench className="h-3 w-3" />
+                {tools.length}
+              </span>
+            </Tooltip>
           )}
           {globs.length > 0 && (
-            <span
-              className="inline-flex items-center gap-0.5"
-              title={t('hooks.filterPathTip', { paths: globs.join(', ') })}
-            >
-              <FileText className="h-3 w-3" />
-              {globs.length}
-            </span>
+            <Tooltip label={t('hooks.filterPathTip', { paths: globs.join(', ') })}>
+              <span className="inline-flex items-center gap-0.5">
+                <FileText className="h-3 w-3" />
+                {globs.length}
+              </span>
+            </Tooltip>
           )}
           {rule.filter.crossProjectOnly && (
-            <span className="inline-flex items-center gap-0.5" title={t('hooks.filterCrossTip')}>
-              <GitBranch className="h-3 w-3" />
-            </span>
+            <Tooltip label={t('hooks.filterCrossTip')}>
+              <span className="inline-flex items-center gap-0.5">
+                <GitBranch className="h-3 w-3" />
+              </span>
+            </Tooltip>
           )}
           {tools.length === 0 && globs.length === 0 && !rule.filter.crossProjectOnly && (
             <span>{t('hooks.filterNone')}</span>

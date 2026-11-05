@@ -1488,11 +1488,11 @@ export function SessionMessages({
                 <Copy className="h-3 w-3" />
                 {t('tasks.convCopy')}
               </button>
+              <Tooltip label={t('tasks.convShare')}>
               <button
                 type="button"
                 disabled={picked.size === 0}
                 onClick={openShareMenu}
-                title={t('tasks.convShare')}
                 className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
               >
                 <FeedbackIcon
@@ -1508,6 +1508,7 @@ export function SessionMessages({
                   <ChevronDown className="h-3 w-3 shrink-0 text-neutral-500" />
                 )}
               </button>
+              </Tooltip>
               <button
                 type="button"
                 onClick={() => {
@@ -1570,12 +1571,13 @@ export function SessionMessages({
                     e.target.value = '';
                   }}
                 />
+                <Tooltip label={t('tasks.msgAttachImageHint')}>
                 <button
                   type="button"
                   disabled={!attachKinds.includes('image') || staged.length >= ATTACH_MAX_COUNT}
                   title={
                     attachKinds.includes('image')
-                      ? t('tasks.msgAttachImageHint')
+                      ? undefined
                       : (capability.unsupportedReasons?.prompt ?? t('tasks.msgAttachUnsupported'))
                   }
                   aria-label={t('tasks.msgAttachImage')}
@@ -1585,12 +1587,14 @@ export function SessionMessages({
                   <ImageIcon className="h-3 w-3" />
                   <span className="max-lg:hidden">{t('tasks.msgAttachImage')}</span>
                 </button>
+                </Tooltip>
+                <Tooltip label={t('tasks.msgAttachFileHint')}>
                 <button
                   type="button"
                   disabled={!attachKinds.includes('file') || staged.length >= ATTACH_MAX_COUNT}
                   title={
                     attachKinds.includes('file')
-                      ? t('tasks.msgAttachFileHint')
+                      ? undefined
                       : (capability.unsupportedReasons?.prompt ?? t('tasks.msgAttachUnsupported'))
                   }
                   aria-label={t('tasks.msgAttachFile')}
@@ -1604,14 +1608,16 @@ export function SessionMessages({
                   )}
                   <span className="max-lg:hidden">{t('tasks.msgAttachFile')}</span>
                 </button>
+                </Tooltip>
                 {/* 引用文件（@ 路径引用选择器）：与上传是两扇门——它插的是项目内
                     文件的引用胶囊，不占附件格。 */}
+                <Tooltip label={t('tasks.fileAttachHint')}>
                 <button
                   type="button"
                   disabled={!capability.pathRefs}
                   title={
                     capability.pathRefs
-                      ? t('tasks.fileAttachHint')
+                      ? undefined
                       : (capability.unsupportedReasons?.pathRefs ?? t('tasks.fileUnsupported'))
                   }
                   aria-label={t('tasks.fileAttach')}
@@ -1621,6 +1627,7 @@ export function SessionMessages({
                   <FileCode className="h-3 w-3" />
                   <span className="max-lg:hidden">{t('tasks.fileAttach')}</span>
                 </button>
+                </Tooltip>
                 {/* 会话活动（子 agent/任务/后台 shell）：与图片/文件同排；无活动时
                     disabled，点开 portal popover 向上弹（不占布局）。 */}
                 <ActivityButton sessionId={sessionId} busy={statuses.get(sessionId) === 'running'} />
@@ -1953,9 +1960,9 @@ export function SessionMessages({
                     （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；**恒可点**
                     （宿主里 ESC 后面还要接 rewind，这一枚就是那记键），只在点完之后
                     冷却几秒——连发会把刚开的那层菜单也退掉。 */}
+                <Tooltip label={t('tasks.stopTooltip')}>
                 <button
                   type="button"
-                  title={t('tasks.stopTooltip')}
                   aria-label={t('tasks.stopTooltip')}
                   disabled={escCooldown > 0}
                   onClick={() => {
@@ -1974,11 +1981,12 @@ export function SessionMessages({
                     }
                   />
                 </button>
+                </Tooltip>
                 {/* 硬中断 = 一枚 Ctrl+C 键帽：与 ESC 同格同冷却口径（连发没有意义）。
                     不落转录标记，「停没停」判不了，只报送出。 */}
+                <Tooltip label={t('tasks.ctrlCTooltip')}>
                 <button
                   type="button"
-                  title={t('tasks.ctrlCTooltip')}
                   aria-label={t('tasks.ctrlCTooltip')}
                   disabled={ctrlCCooldown > 0}
                   onClick={() => {
@@ -2007,12 +2015,13 @@ export function SessionMessages({
                     }
                   />
                 </button>
+                </Tooltip>
                 {/* 手动提交 = 一枚 Enter 键帽：提交宿主输入框里现成的内容（层② 自动
                     补打的手动版）。盲打回车提交的是整个输入框——框里若有别的东西会
                     一起出去，tooltip 如实说明。 */}
+                <Tooltip label={t('tasks.enterTooltip')}>
                 <button
                   type="button"
-                  title={t('tasks.enterTooltip')}
                   aria-label={t('tasks.enterTooltip')}
                   disabled={!capability.prompt || fb.stateOf(`pressEnter:${sessionId}`) === 'loading'}
                   onClick={() => {
@@ -2032,6 +2041,7 @@ export function SessionMessages({
                     icon={<CornerDownLeft className="h-3 w-3" />}
                   />
                 </button>
+                </Tooltip>
                 {/* 发送 = split button：主体发送；桌面端贴一枚下拉箭头展开键序菜单
                     （发送/换行键序切换，全局偏好 localStorage 记住，placeholder 文案
                     跟着走）。移动端只有发送钮本体——换行有专门的键帽，键序无从谈起。 */}

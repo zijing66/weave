@@ -21,6 +21,14 @@ export const PET_ANIMATIONS = {
   sleep: { row: 10, frames: 6, frameMs: 420, finalMs: 900 },
 } as const;
 
+/**
+ * 注视行（row 11，weave-spider v3 资产增补）：idle 六帧的**眼白右移 3px** 变体，
+ * 帧结构/时长与 idle 完全一致。鼠标在中心右侧时摆这行、左侧用原行——动图不
+ * 动画布，瞳孔方向感不引入任何逐帧定位抖动（整只 lean 已因此退役）。
+ * 资产没有第 12 行（v1/v2 旧资产）时静默退回原行。
+ */
+export const GAZE_ROW = 11;
+
 export type PetAnimation = keyof typeof PET_ANIMATIONS;
 
 /** mirror of `PET_SPRITE_CONTRACT` 网格常量 — 保持同步。 */

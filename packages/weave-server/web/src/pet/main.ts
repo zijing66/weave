@@ -11,7 +11,7 @@
  * 一页一线程一条流，断线重连 EventSource 自带）。
  */
 
-import { createSpritePlayer, SPRITE_GRID, type PetAnimation } from './sprite';
+import { createSpritePlayer, GAZE_ROW, SPRITE_GRID, type PetAnimation } from './sprite';
 
 const API_BASE = '/api';
 
@@ -360,7 +360,9 @@ function snapToEdge(side: PeekSide, g: Geo): void {
   if (side === 'left') nx = g.availLeft;
   else if (side === 'right') nx = g.availLeft + g.sw - g.ww;
   else ny = g.availTop + g.sh - g.wh;
-  if (nx !== g.wx || ny !== g.wy) postToHost(`moveto:${nx},${ny}`);
+  // 目标与当前差不足半像素就视为已到位：浮点严格比较会把 DIP 换算的零点几
+  // 像素残差当「没到位」，moveto 每拍重发、窗持续微挪。
+  if (Math.abs(nx - g.wx) >= 0.5 || Math.abs(ny - g.wy) >= 0.5) postToHost(`moveto:${nx},${ny}`);
 }
 
 /** 每帧推进：贴边检测、一次性吸附、进度缓动（藏/露全在绘制层，不再挪窗）。 */
@@ -387,12 +389,15 @@ function updatePeek(now: number): void {
   if (!snapped) {
     snapToEdge(peekSide, windowGeometry()); // moveto 异步，到位前每拍补发
     const g = windowGeometry();
+    // ≤2px 就算到位：moveto 目标与宿主实际落点差 1px 时，≤1 的判据永远不满
+    // 足 ⇒ snapped 反复跳变、moveto 每拍重发、窗持续 1px 微挪 = 整只高频颤动
+    // （悬停贴边时实测）。
     const done =
       peekSide === 'left'
-        ? g.wx - g.availLeft <= 1
+        ? g.wx - g.availLeft <= 2
         : peekSide === 'right'
-          ? g.availLeft + g.sw - (g.wx + g.ww) <= 1
-          : g.availTop + g.sh - (g.wy + g.wh) <= 1;
+          ? g.availLeft + g.sw - (g.wx + g.ww) <= 2
+          : g.availTop + g.sh - (g.wy + g.wh) <= 2;
     if (done) snapped = true;
     return;
   }
@@ -540,12 +545,12 @@ function syncRegion(): void {
     }
   }
   // 视线微移 + 取整余量（CSS px；区域在设备像素坐标系，dpr 别丢）
-  const pad = (LEAN_MAX + 2) * dpr;
+  const pad = 5 * dpr; // 取整余量（原视线微移 LEAN_MAX 已退役，留 5px 抗边缘裁切）
   x0 -= pad;
   y0 -= pad;
   x1 += pad;
   y1 += pad;
-  // 区域量化到 4 设备像素：lean 收敛、zzz 浮动这类 1~2px 的逐帧变化不再
+  // 区域量化到 4 设备像素：zzz 浮动这类 1~2px 的逐帧变化不再
   // 触发 SetWindowRgn 重设（每帧重设带一拍重绘，肉眼即抖）。
   x0 = Math.floor(x0 / 4) * 4;
   y0 = Math.floor(y0 / 4) * 4;
@@ -586,8 +591,9 @@ function syncZzz(): void {
   const box = contentBoxOf('idle');
   const right = box ? r.x + ((box.x1 + 1) / SPRITE_GRID.cellWidth) * r.w : r.x + r.w;
   const top = box ? r.y + (box.y0 / SPRITE_GRID.cellHeight) * r.h : r.y;
-  zzzEl.style.left = `${Math.round(right + leanX - 12 * s)}px`;
-  zzzEl.style.top = `${Math.round(top + leanY - 12 * s)}px`;
+  // 容器（44×40×s）右上角锚在头部右上：偏移量随容器放大同步调大
+  zzzEl.style.left = `${Math.round(right - 22 * s)}px`;
+  zzzEl.style.top = `${Math.round(top - 20 * s)}px`;
 }
 
 function fitCanvas(): void {
@@ -607,7 +613,7 @@ function startLoop(): void {
       if (sheet) {
         const r = currentPetRect();
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(sheet, 0, PET_ANIM_ROW_ZERO, SPRITE_GRID.cellWidth, SPRITE_GRID.cellHeight, r.x, r.y, r.w, r.h);
+        ctx.drawImage(sheet, 0, drawRowOf('idle') * SPRITE_GRID.cellHeight, SPRITE_GRID.cellWidth, SPRITE_GRID.cellHeight, r.x, r.y, r.w, r.h);
         syncZzz();
         syncRegion();
       }
@@ -624,20 +630,16 @@ function startLoop(): void {
       lastTick = now;
       if (!paused) animClock += dt;
       const frame = player.tick(animClock);
-      const spec = PET_ANIMS[player.current()];
       const r = currentPetRect();
-      // 视线跟随：整只朝鼠标方向轻移（视差），Q 版「盯着你看」的效果——
-      // 精灵是预渲染的，瞳孔动不了，整体微移是同款观感的最廉价实现
-      const lean = leanOffset();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(
         sheet,
         Math.min(frame, SPRITE_GRID.columns - 1) * SPRITE_GRID.cellWidth,
-        spec.row * SPRITE_GRID.cellHeight,
+        drawRowOf(player.current()) * SPRITE_GRID.cellHeight,
         SPRITE_GRID.cellWidth,
         SPRITE_GRID.cellHeight,
-        r.x + lean.x,
-        r.y + lean.y,
+        r.x,
+        r.y,
         r.w,
         r.h,
       );
@@ -650,42 +652,28 @@ function startLoop(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 视线跟随（lean）：鼠标在窗内的位置 → 宠物朝那边轻移几像素
+// 瞳孔注视（gaze 行切换）：鼠标在中心右/左 → idle 画眼白右移行 / 原行。
+// 整只 lean 的高频颤动教训在此：动图不动画布——切行是离散选择（gaze 行的
+// 帧结构/时长与 idle 完全一致，切换无跳帧感），不产生任何逐帧定位变化。
 // ---------------------------------------------------------------------------
 
-/** 最大偏移（设备像素）：够看出「在看」又不破坏站姿。 */
-const LEAN_MAX = 3;
-
 let mouseX = 0.5; // 窗内归一位置（0..1；0.5 = 居中）
-let mouseY = 0.5;
-let leanX = 0; // 平滑后的当前偏移
-let leanY = 0;
 
 window.addEventListener('mousemove', (e) => {
-  const nx = e.clientX / Math.max(1, window.innerWidth);
-  const ny = e.clientY / Math.max(1, window.innerHeight);
-  // 死区：手抖的亚像素晃动不更新目标（收敛值在 1px 边界来回跳 = 高频颤动）
-  if (Math.abs(nx - mouseX) < LEAN_DEAD_ZONE && Math.abs(ny - mouseY) < LEAN_DEAD_ZONE) return;
-  mouseX = nx;
-  mouseY = ny;
+  mouseX = e.clientX / Math.max(1, window.innerWidth);
 });
 
-/** 目标死区（窗内归一位移）：手抖的亚像素晃动不该更新目标——否则收敛值
- * 在 1px 取整边界来回跳，整只高频颤动（实测）。位移超过此值才认新位置。 */
-const LEAN_DEAD_ZONE = 0.02;
+/** 资产是否带 gaze 行（row 11）：高度不足 = v1/v2 旧资产，静默退回原行。 */
+let hasGazeRow = false;
 
-/** 目标偏移 = 鼠标偏离中心的归一向量 × LEAN_MAX；逐帧向目标收敛。 */
-function leanOffset(): { x: number; y: number } {
-  const tx = (mouseX - 0.5) * 2 * LEAN_MAX;
-  const ty = (mouseY - 0.5) * 2 * LEAN_MAX;
-  leanX += (tx - leanX) * 0.12;
-  leanY += (ty - leanY) * 0.12;
-  return { x: Math.round(leanX * (window.devicePixelRatio || 1)), y: Math.round(leanY * (window.devicePixelRatio || 1)) };
+/** 当前绘制行：idle 且鼠标在中心右侧（留 0.1 居中死区）用 gaze 行。 */
+function drawRowOf(anim: PetAnimation): number {
+  if (hasGazeRow && anim === 'idle' && mouseX > 0.6) return GAZE_ROW;
+  return PET_ANIMS[anim].row;
 }
 
 // sprite.ts 的表在这里只读行号——直接引常量对象
 import { PET_ANIMATIONS as PET_ANIMS } from './sprite';
-const PET_ANIM_ROW_ZERO = PET_ANIMS.idle.row * SPRITE_GRID.cellHeight;
 
 // ---------------------------------------------------------------------------
 // 状态变迁 → 动画 + 气泡 + 系统通知
@@ -999,6 +987,8 @@ async function loadSheet(petId: string, updatedAt: number): Promise<void> {
   await img.decode().catch(() => {});
   if (img.naturalWidth > 0) {
     sheet = img;
+    // gaze 行在位（资产高 ≥ 12 行）才启用注视切换；旧资产静默退回原行
+    hasGazeRow = img.naturalHeight >= GAZE_ROW * SPRITE_GRID.cellHeight + SPRITE_GRID.cellHeight;
     contentBoxOf('idle'); // 预热：偷窥对齐与命中区立刻有真值
   }
 }
@@ -1032,10 +1022,23 @@ async function boot(): Promise<void> {
   };
   connectSse(onEvent);
 
-  // 聚合兜底节拍：无事件时「刚完成→idle」「运行痕迹过期」也要走到
+  // 聚合兜底节拍：无事件时「刚完成→idle」「运行痕迹过期」也要走到；顺带重拉
+  // ——问题清除不发帧（bus.ts：问题面只走 GET），最后一次 refreshAll 若在
+  // 清除前落空，缓存的 questions 会把「等你回答」挂到下一条 hook 帧为止。
   window.setInterval(() => {
-    applyAggregated(aggregate(sessions, dispatches, questions));
+    void refreshAll().then(() => applyAggregated(aggregate(sessions, dispatches, questions)));
   }, 15_000);
+
+  // WebView2 对非激活窗的定时器节流可达分钟级：SSE 帧与 15s 节拍都可能整段
+  // 睡过去，短暂挂起的问题整个错过窗口（实测「桌宠不提示问答」）。窗口一被
+  // 看到/拿到焦点立刻对账一次——前台时节流不生效，这一拍必准时。
+  const reconcile = (): void => {
+    void refreshAll().then(() => applyAggregated(aggregate(sessions, dispatches, questions)));
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') reconcile();
+  });
+  window.addEventListener('focus', reconcile);
 
   startLoop();
 }
