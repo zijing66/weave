@@ -255,6 +255,8 @@ export interface MessageDelivererDeps {
   /** 读屏通道的回答落库（codex 侧问）：按 (sessionId, question) 找到待答行直更。
    *  缺省 = 无落库（读屏取到的回答只发帧不存档）。 */
   sideAnswerStore?: { answerById(sessionId: string, question: string, answer: string): void };
+  /** 会话转录路径（`SessionProbe` 答）；回退点列表从转录生成，缺省 = 只能读屏。 */
+  transcriptPathOf?: (sessionId: string) => string | null;
 }
 
 /** send() 入参（路由层已做 zod 形状校验）。 */
@@ -510,6 +512,14 @@ export class MessageDeliverer {
   private readonly rewindPanels = new RewindPanels({
     target: (sessionId, action) => this.sessionKeysTarget(sessionId, action),
     pickerOf: (sessionId) => this.rewindSurfaceOf(sessionId)?.picker ?? null,
+    pointsOf: (sessionId) => {
+      const surface = this.rewindSurfaceOf(sessionId);
+      if (!surface?.sessionRewindPoints) return Promise.resolve(null);
+      return surface.sessionRewindPoints({
+        sessionId,
+        transcriptPath: this.deps.transcriptPathOf?.(sessionId) ?? null,
+      });
+    },
   });
 
   constructor(private readonly deps: MessageDelivererDeps) {

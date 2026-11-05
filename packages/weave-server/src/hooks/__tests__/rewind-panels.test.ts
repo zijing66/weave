@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CLAUDE_REWIND_PICKER, type RewindPickerSpec } from '@weavecode/harness';
+import { CLAUDE_REWIND_PICKER, type RewindPickerSpec, type RewindPoint } from '@weavecode/harness';
 import { RewindPanels, type RewindDeps, type RewindTiming } from '../delivery/rewind.js';
 
 const TIMING: RewindTiming = {
@@ -194,9 +194,14 @@ function makeTerminal(opts: TerminalOpts) {
   return { terminal, fake };
 }
 
-const deps = (picker: RewindPickerSpec | null, terminal: object): RewindDeps => ({
+const deps = (
+  picker: RewindPickerSpec | null,
+  terminal: object,
+  points: RewindPoint[] | null = null,
+): RewindDeps => ({
   target: async () => ({ ok: true, terminal: terminal as never, paneId: 'p1' }),
   pickerOf: () => picker,
+  pointsOf: async () => points,
 });
 
 const convConfirm = (prompt: string, sel = 0) => ({
@@ -583,5 +588,65 @@ describe('RewindPanels.cancel', () => {
     const panels = new RewindPanels(deps(CLAUDE_REWIND_PICKER, terminal), TIMING);
     await expect(panels.cancel('s1')).resolves.toEqual({ ok: true });
     expect(fake.confirm).toBeNull();
+  });
+});
+
+describe('转录驱动的回退点（屏只当驱动器）', () => {
+  const pts = (...texts: string[]): RewindPoint[] =>
+    texts.map((text, index) => ({ index, text, at: `2026-11-05T0${index}:00:00.000Z` }));
+
+  it('条目文本以转录为准：屏上截断的那份不会漏到前端', async () => {
+    const { terminal } = makeTerminal({ open: list(['改一下登录页']) });
+    const full = '改一下登录页，顺手把测试补上，再跑一遍全量';
+    const panels = new RewindPanels(deps(CLAUDE_REWIND_PICKER, terminal, pts(full)), TIMING);
+    const r = await panels.open('s1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.view.items[0]!.text).toBe(full);
+    // `(current)` 仍是 null（不是转录里的条目）
+    expect(r.view.items[1]!.text).toBeNull();
+  });
+
+  it('屏上条目数与转录对不上 → 回落屏上文本（面板仍可用，索引仍由宿主给）', async () => {
+    const { terminal, fake } = makeTerminal({ open: list(['改一下登录页']) });
+    const panels = new RewindPanels(deps(CLAUDE_REWIND_PICKER, terminal, pts('a', 'b')), TIMING);
+    const r = await panels.open('s1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.view.items.map((i) => i.text)).toEqual(['改一下登录页', null]);
+    expect(fake.keys).not.toContain(K.cancel);
+  });
+
+  it('前会话行不进转录对账，那一屏回落屏上数据', async () => {
+    const { terminal } = makeTerminal({ open: list(['/resume 0f9c1a2b (previous session)', '改一下登录页']) });
+    const panels = new RewindPanels(
+      deps(CLAUDE_REWIND_PICKER, terminal, pts('完全不同的一条', '另一条', '第三条')),
+      TIMING,
+    );
+    const r = await panels.open('s1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.view.previousSession).toBe(true);
+    expect(r.view.items.map((i) => i.text)).toEqual([null, '改一下登录页', null]);
+  });
+
+  it('prepare 的落点原文取转录全文，确认屏截断回显照样对得上', async () => {
+    const { terminal } = makeTerminal({ open: list(['改一下登录页']), confirm: convConfirm('') });
+    const full = '改一下登录页，顺手把测试补上';
+    const panels = new RewindPanels(deps(CLAUDE_REWIND_PICKER, terminal, pts(full)), TIMING);
+    await panels.open('s1');
+    const r = await panels.prepare('s1', 0);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.prompt).toBe(full);
+  });
+
+  it('转录读不到 → 回落读屏（现状行为不变）', async () => {
+    const { terminal } = makeTerminal({ open: list(['改一下登录页']) });
+    const panels = new RewindPanels(deps(CLAUDE_REWIND_PICKER, terminal, null), TIMING);
+    const r = await panels.open('s1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.view.items[0]!.text).toBe('改一下登录页');
   });
 });

@@ -30,10 +30,17 @@ import type {
  */
 // 头行在窄屏会被折成两行（`… to the` / `point before…`），故锚只取尾巴
 const LIST_HEADER = /point before/;
+/**
+ * 面板标题行（`│ Rewind`）。**光凭头行里的 `point before` 认面板不够**：会话转录
+ * 里也可能出现这半句（用户消息、模型回复原文），2026-11-05 实测把一个普通会话的
+ * 代码行 / 中断提示 / 压缩状态行当成了回退点。标题行 + `(current)` 收尾才是面板。
+ */
+const PANEL_TITLE = /^[ \t]*[│|]?[ \t]*Rewind[ \t]*[│|]?[ \t]*$/m;
 
-/** 面板里非条目的行：元数据（`foo.ts +3 -1` / `foo.ts +35` / `N files changed +3 -1`）与空态。 */
+/** 面板里非条目的行：元数据（`foo.ts +3 -1` / `foo.ts +35` / `N files changed +3 -1`）与空态。
+ *  空态带图标前缀（`⚠ No code restore`，2026-11-05 活体读屏实测），不带前缀的旧形一并认。 */
 const META_LINE =
-  /^No code changes$|^No code restore$|^\d+\s+files?\s+changed(?:\s+[+-]\d+)*$|^\S*[./]\S*\s+[+-]\d+(?:\s+[+-]\d+)?$/;
+  /^(?:⚠\s*)?(?:No code changes|No code restore)$|^\d+\s+files?\s+changed(?:\s+[+-]\d+)*$|^\S*[./]\S*\s+[+-]\d+(?:\s+[+-]\d+)?$/;
 /** 溢出行：`↑ 3 more` / `↓ 2 more`（箭头字形不写死，方向按位置判）。 */
 const MORE_LINE = /^\S*\s*(\d+)\s+more$/;
 /** 列表屏结束：底部引导 / 分隔线——再往下是 TUI 的常驻 chrome。 */
@@ -65,11 +72,16 @@ export function parseRewindList(screen: string): RewindPickerView | null {
   // 确认屏的头也含 `point before`，不先排掉会把选项行当成条目
   if (isRewindConfirm(screen)) return null;
   const lines = screen.split('\n').map((l) => l.replace(/\s+$/, ''));
+  const titleAt = lines.findIndex((l) => PANEL_TITLE.test(stripFrame(l).text));
+  if (titleAt < 0) return null;
   const head = lines.findIndex((l) => LIST_HEADER.test(l));
-  if (head < 0) return null;
+  // 头行必须紧跟在标题之后（中间只允许空行/折行），转录里别处的 `point before` 不算
+  if (head < 0 || head < titleAt || head - titleAt > 3) return null;
   const items: RewindPickerItem[] = [];
   let moreAbove = 0;
   let moreBelow = 0;
+  let currentSeen = false;
+  let previousSession = false;
   for (let i = head + 1; i < lines.length; i++) {
     const { text: line, focused } = stripFrame(lines[i]!);
     if (!line) continue;
@@ -83,15 +95,25 @@ export function parseRewindList(screen: string): RewindPickerView | null {
     if (STOP_LINE.test(line)) break;
     // 元数据行只出现在某条消息之后（首条位置上的「+35 结尾」是用户原文）
     if (items.length > 0 && META_LINE.test(line)) continue;
+    if (isCurrentRow(line)) currentSeen = true;
+    if (isPreviousSessionRow(line)) previousSession = true;
     const text = isCurrentRow(line) || isPreviousSessionRow(line) ? null : line;
     items.push({ index: moreAbove + items.length, text, focused });
   }
+  // 列表恒以 `(current)` 收尾（被滚出屏时至少有下方溢出行）——两个都没有就不是面板
+  if (!currentSeen && moreBelow === 0) return null;
   if (items.length === 0) return null;
-  return { items, moreAbove, moreBelow };
+  return { items, moreAbove, moreBelow, previousSession };
 }
 
-/** 屏上是不是确认屏（`The conversation will be…` 描述行只在确认屏出现）。 */
+/**
+ * 屏上是不是确认屏：标题 + `you sent this message` 引导句 + 描述行三样齐全才算
+ * ——描述行本身会出现在转录里（weave 自己的文档/回复就常引用它），不能单独作锚。
+ */
 export function isRewindConfirm(screen: string): boolean {
+  const lines = screen.split('\n');
+  if (!lines.some((l) => PANEL_TITLE.test(stripFrame(l).text))) return false;
+  if (!/you sent this message/.test(screen)) return false;
   return /The conversation will be (?:forked|unchanged)\./.test(screen)
     || /The code will be (?:unchanged|restored|has not changed)/.test(screen);
 }
@@ -157,7 +179,8 @@ export function rewindEmptyOf(screen: string): boolean {
 
 export const CLAUDE_REWIND_PICKER: RewindPickerSpec = {
   openCommand: '/rewind',
-  listHeader: LIST_HEADER,
+  // 面板存在性锚 = 标题行（不是头行：头行的 `point before` 转录里也会有）
+  listHeader: PANEL_TITLE,
   parseList: parseRewindList,
   parseConfirm: parseRewindOptions,
   confirmPrompt: rewindConfirmPrompt,

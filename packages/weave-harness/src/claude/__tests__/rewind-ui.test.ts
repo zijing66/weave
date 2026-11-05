@@ -69,6 +69,23 @@ describe('parseRewindList（/rewind 列表屏）', () => {
     expect(texts.some((t) => t?.includes('escape cancel'))).toBe(false);
   });
 
+  it('空态图标前缀（`⚠ No code restore`）也不进条目', () => {
+    const screen = [
+      'Rewind',
+      'Restore the code and/or conversation to the point before…',
+      '  对了，鼠标聚焦时，桌宠抖动是否也是一个问题',
+      '  ⚠ No code restore',
+      '  整只轻微高频颤动',
+      '  main.ts +24 -16',
+      '  ❯ (current)',
+    ].join('\n');
+    expect(parseRewindList(screen)!.items.map((i) => i.text)).toEqual([
+      '对了，鼠标聚焦时，桌宠抖动是否也是一个问题',
+      '整只轻微高频颤动',
+      null,
+    ]);
+  });
+
   it('活体屏：`+35` 单文件元数据不进条目、`(current)` 不被指针行截断、焦点可读', () => {
     const view = parseRewindList(LIVE_SCREEN)!;
     expect(view.moreAbove).toBe(0);
@@ -114,6 +131,45 @@ describe('parseRewindList（/rewind 列表屏）', () => {
       parseRewindList('Restore the code and/or conversation to the point before…\n\n❯ '),
     ).toBeNull();
   });
+
+  // 2026-11-05 实测：普通会话的转录里恰好有 `point before` 半句，旧锚把代码行 /
+  // 中断提示 / 压缩状态行当成了回退点。面板必须三样俱全才认。
+  it('转录里出现 `point before` 不算面板（没有标题行）', () => {
+    const screen = [
+      '  恢复到 point before 那个点即可',
+      '  6 #include <openssl/ssl.h>',
+      '  Interrupted · What should Claude do instead?',
+      '  ✻ Clear 23% of context 231.2k / 1M last turns ▲ +25',
+      '❯ ',
+    ].join('\n');
+    expect(parseRewindList(screen)).toBeNull();
+  });
+
+  it('有标题但头行离得远（转录里的另一处 `point before`）→ null', () => {
+    const screen = [
+      '  Rewind',
+      '  第一行转录',
+      '  第二行转录',
+      '  第三行转录',
+      '  第四行转录',
+      '  Restore the code and/or conversation to the point before…',
+      '  (current)',
+    ].join('\n');
+    expect(parseRewindList(screen)).toBeNull();
+  });
+
+  it('有标题 + 头行但没有 `(current)` 收尾 → null', () => {
+    const screen = ['  Rewind', '  Restore the code and/or conversation to the point before…', '  修一下登录页'].join('\n');
+    expect(parseRewindList(screen)).toBeNull();
+  });
+
+  it('转录里出现确认屏的描述行不算确认屏', () => {
+    const screen = ['The conversation will be forked.', '❯ '].join('\n');
+    expect(isRewindConfirm(screen)).toBe(false);
+    expect(
+      isRewindConfirm(['Rewind', 'The conversation will be forked.'].join('\n')),
+    ).toBe(false);
+  });
 });
 
 describe('确认屏文法', () => {
@@ -157,7 +213,13 @@ describe('确认屏文法', () => {
   });
 
   it('引用块里的正文不误认成选项；不是确认屏 → null', () => {
-    const screen = ['  The conversation will be forked.', '  │ 1. 这不是选项', '  ❯ 1. Never mind'].join('\n');
+    const screen = [
+      '  Rewind',
+      '  Confirm you want to restore to the point before you sent this message:',
+      '  The conversation will be forked.',
+      '  │ 1. 这不是选项',
+      '  ❯ 1. Never mind',
+    ].join('\n');
     expect(parseRewindOptions(screen)!.map((o) => o.label)).toEqual(['Never mind']);
     expect(parseRewindOptions(LIST_SCREEN)).toBeNull();
   });

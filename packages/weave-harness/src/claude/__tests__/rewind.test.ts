@@ -34,8 +34,22 @@ const at = (h: number) => `2026-11-04T0${h}:00:00.000Z`;
 /** 一轮收尾笔（宿主正常收尾；被打断时是中断行）。 */
 const turnDone = (ts: string) => ({ type: 'system', subtype: 'turn_duration', timestamp: ts });
 
+/** 排队后被吸收的消息：宿主面板列它，但转录里没有 turnPosition。 */
+const queued = (text: string, ts: string) => ({
+  type: 'attachment',
+  isSidechain: false,
+  attachment: { type: 'queued_command', prompt: text, source_uuid: 'u', delivery_id: 'd' },
+  timestamp: ts,
+});
+
 describe('stepRewind', () => {
-  const fresh = (): RewindState => ({ turns: [], prevP: null, turnEnded: false, marks: [] });
+  const fresh = (): RewindState => ({
+    turns: [],
+    messages: [],
+    prevP: null,
+    turnEnded: false,
+    marks: [],
+  });
 
   it('正常递增（回退不存在）→ 无标记', () => {
     const s = fresh();
@@ -152,6 +166,119 @@ describe('CLAUDE_REWIND.sessionRewinds', () => {
     expect(await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: null })).toBeNull();
     expect(
       await CLAUDE_REWIND.sessionRewinds({ sessionId: 's', transcriptPath: join(dir, 'nope.jsonl') }),
+    ).toBeNull();
+  });
+});
+
+describe('CLAUDE_REWIND.sessionRewindPoints', () => {
+  it('正常分支：每条 prompt 一条，文本取自转录正文', async () => {
+    const path = write([
+      prompt('改一下登录页', at(1), 1),
+      turnDone(at(1)),
+      prompt('加个测试', at(2), 2),
+      turnDone(at(2)),
+      prompt('再跑一遍', at(3), 3),
+    ]);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toEqual([
+      { index: 0, text: '改一下登录页', at: at(1) },
+      { index: 1, text: '加个测试', at: at(2) },
+      { index: 2, text: '再跑一遍', at: at(3) },
+    ]);
+  });
+
+  it('回退后只留当前分支（被退掉的不再出现在列表里）', async () => {
+    const path = write([
+      prompt('a', at(1), 1),
+      turnDone(at(1)),
+      prompt('b', at(2), 2),
+      turnDone(at(2)),
+      prompt('c', at(3), 3),
+      turnDone(at(3)),
+      prompt('b2', at(4), 2),
+    ]);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toEqual([
+      { index: 0, text: 'a', at: at(1) },
+      { index: 1, text: 'b2', at: at(4) },
+    ]);
+  });
+
+  it('同一轮连发的真实消息各占一条；合成消息（weave 注入）不进列表', async () => {
+    const path = write([
+      prompt('a', at(1), 1),
+      prompt('a2', '2026-11-04T01:00:01.000Z', 1),
+      { ...prompt('[weave message] from=dashboard', at(1), 1), timestamp: '2026-11-04T01:00:02.000Z' },
+      turnDone(at(1)),
+      prompt('b', at(2), 2),
+    ]);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toEqual([
+      { index: 0, text: 'a', at: at(1) },
+      { index: 1, text: 'a2', at: '2026-11-04T01:00:01.000Z' },
+      { index: 2, text: 'b', at: at(2) },
+    ]);
+  });
+
+  it('排队后被吸收的消息（queued_command）也进列表，合成的那条不进', async () => {
+    const path = write([
+      prompt('a', at(1), 1),
+      queued('对了，还有个问题', '2026-11-04T01:00:30.000Z'),
+      queued('<task-notification>done', '2026-11-04T01:00:40.000Z'),
+      turnDone(at(1)),
+      prompt('b', at(2), 2),
+    ]);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toEqual([
+      { index: 0, text: 'a', at: at(1) },
+      { index: 1, text: '对了，还有个问题', at: '2026-11-04T01:00:30.000Z' },
+      { index: 2, text: 'b', at: at(2) },
+    ]);
+  });
+
+  it('回退按轮边界裁：边界之后的排队消息一并消失，之前的一并保留', async () => {
+    const path = write([
+      prompt('a', at(1), 1),
+      queued('边界前', '2026-11-04T01:30:00.000Z'),
+      turnDone(at(1)),
+      prompt('b', at(2), 2),
+      queued('边界后', '2026-11-04T02:30:00.000Z'),
+      turnDone(at(2)),
+      prompt('b2', at(4), 2),
+    ]);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toEqual([
+      { index: 0, text: 'a', at: at(1) },
+      { index: 1, text: '边界前', at: '2026-11-04T01:30:00.000Z' },
+      { index: 2, text: 'b2', at: at(4) },
+    ]);
+  });
+
+  it('多段 content 取 text 块拼接', async () => {
+    const path = write([
+      {
+        type: 'user',
+        isSidechain: false,
+        turnPosition: { promptIndex: 1, turnIndex: 1 },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: '第一段' },
+            { type: 'text', text: '第二段' },
+          ],
+        },
+        timestamp: at(1),
+      },
+    ]);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toEqual([
+      { index: 0, text: '第一段第二段', at: at(1) },
+    ]);
+  });
+
+  it('轮次表有缺档（不知情的历史）→ null（调用方回落读屏）', async () => {
+    const path = write([prompt('b', at(2), 2)]);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toBeNull();
+  });
+
+  it('路径未知 / 读不到 → null', async () => {
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: null })).toBeNull();
+    expect(
+      await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: join(dir, 'nope.jsonl') }),
     ).toBeNull();
   });
 });

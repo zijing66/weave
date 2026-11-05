@@ -1,4 +1,4 @@
-import type { RewindSurface, RewindMark } from '../driver.js';
+import type { RewindSurface, RewindMark, RewindPoint } from '../driver.js';
 import { readNewLines, transcriptSize, type LineCursor } from './transcript-cursor.js';
 import { CLAUDE_REWIND_PICKER } from './rewind-ui.js';
 
@@ -20,6 +20,11 @@ import { CLAUDE_REWIND_PICKER } from './rewind-ui.js';
  * 新 prompt 的时刻（不含）。气泡时刻落在 [boundaryAt, at) 即被回退。
  */
 export function stepRewind(state: RewindState, line: string): void {
+  // 排队后被「吸收」的消息不带 turnPosition，宿主面板却照样列出它 ⇒ 单独认。
+  if (line.includes('"queued_command"')) {
+    stepQueued(state, line);
+    return;
+  }
   // 预筛：只有带 turnPosition 的 user 行才值得 parse（转录动辄几十 MB）；
   // 其余行只认「这一轮结束了」的收尾笔（正常收尾 = turn_duration，被打断 = 中断行）。
   if (!line.includes('"turnPosition"')) {
@@ -47,13 +52,48 @@ export function stepRewind(state: RewindState, line: string): void {
   // 故靠「上一轮已结束」把同轮排队连发排除掉）。
   const rewound = state.prevP !== null && (p < state.prevP || (p === state.prevP && state.turnEnded));
   if (rewound && state.turns.length >= p) {
-    state.marks.push({ at: ts, boundaryAt: state.turns[p - 1] ?? null });
+    const cut = state.turns[p - 1]?.at ?? null;
+    state.marks.push({ at: ts, boundaryAt: cut });
     state.turns = state.turns.slice(0, p - 1);
+    // 消息表按时间裁（排队消息没有轮次号，只能拿轮边界当时间线）
+    const cutAt = cut === null ? Infinity : Date.parse(cut);
+    state.messages = state.messages.filter((m) => Date.parse(m.at) < cutAt);
   }
-  if (state.turns.length === p - 1) state.turns.push(ts);
-  else if (state.turns.length < p - 1) state.turns = new Array<string | null>(p - 1).fill(null).concat(ts);
+  const turn = { at: ts, text: promptTextOf(entry) };
+  state.messages.push(turn);
+  if (state.turns.length === p - 1) state.turns.push(turn);
+  else if (state.turns.length < p - 1) state.turns = new Array<Turn | null>(p - 1).fill(null).concat(turn);
   state.prevP = p;
   state.turnEnded = false;
+}
+
+/** 排队消息（`attachment.queued_command`）：宿主把它当用户消息列进回退面板，但没有轮次号。 */
+function stepQueued(state: RewindState, line: string): void {
+  let entry: Record<string, unknown>;
+  try {
+    entry = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  if (entry.type !== 'attachment' || entry.isSidechain === true) return;
+  const att = entry.attachment as { type?: unknown; prompt?: unknown } | undefined;
+  if (att?.type !== 'queued_command' || typeof att.prompt !== 'string') return;
+  const ts = entry.timestamp;
+  if (typeof ts !== 'string') return;
+  if (isSyntheticText(att.prompt)) return;
+  state.messages.push({ at: ts, text: att.prompt });
+}
+
+/** 一条 prompt 的正文（字符串或 text block 拼接；面板只认这些）。 */
+function promptTextOf(entry: Record<string, unknown>): string {
+  const content = (entry.message as { content?: unknown } | undefined)?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((b) =>
+      (b as { type?: unknown }).type === 'text' ? String((b as { text?: unknown }).text) : '',
+    )
+    .join('');
 }
 
 /**
@@ -65,19 +105,28 @@ const SYNTHETIC_PREFIX =
 
 function isSyntheticPrompt(entry: Record<string, unknown>): boolean {
   if (entry.isCompactSummary === true) return true;
-  const content = (entry.message as { content?: unknown } | undefined)?.content;
-  const text =
-    typeof content === 'string'
-      ? content
-      : Array.isArray(content)
-        ? content.map((b) => (b as { type?: unknown; text?: unknown }).type === 'text' ? String((b as { text?: unknown }).text) : '').join('')
-        : '';
+  return isSyntheticText(promptTextOf(entry));
+}
+
+function isSyntheticText(text: string): boolean {
   return SYNTHETIC_PREFIX.test(text);
 }
 
+interface Turn {
+  /** 该条消息的转录时刻。 */
+  at: string;
+  /** 该条消息的正文（回退面板的列表内容从这来，不读屏）。 */
+  text: string;
+}
+
 export interface RewindState {
-  /** 当前会话状态里的各轮（每项 = 该轮首条 prompt 的转录时刻；null = 计数跳档后补的空位）。 */
-  turns: Array<string | null>;
+  /** 当前分支的各轮首条（null = 计数跳档后补的空位，表示这段历史不可知）。 */
+  turns: Array<Turn | null>;
+  /**
+   * 当前分支的**每条**用户消息（含排队后被吸收的），顺序即宿主面板的顺序。
+   * 面板按消息列、不按轮列，故 points 取这份而不是 `turns`。
+   */
+  messages: Turn[];
   /** 上一条 prompt 的 promptIndex（同一轮连发时不变）。 */
   prevP: number | null;
   /** 上一条 prompt 之后这一轮是否已收尾（相等计数靠它区分「回退重发」与「同轮排队连发」）。 */
@@ -92,33 +141,53 @@ export interface RewindState {
 const cursors = new Map<string, { cur: LineCursor } & RewindState>();
 const CURSOR_MAX = 64;
 
+/** 把游标推到文件尾（回退标记与回退点共用这一份状态）。null = 这一刻读不到。 */
+function syncCursor(transcriptPath: string | null): RewindState | null {
+  if (!transcriptPath) return null;
+  const size = transcriptSize(transcriptPath);
+  if (size === null) {
+    cursors.delete(transcriptPath);
+    return null;
+  }
+  const hit = cursors.get(transcriptPath);
+  cursors.delete(transcriptPath);
+  const entry = hit ?? {
+    cur: { offset: 0 },
+    turns: [],
+    messages: [],
+    prevP: null,
+    turnEnded: false,
+    marks: [],
+  };
+  if (size < entry.cur.offset) {
+    entry.cur.offset = 0;
+    entry.turns = [];
+    entry.messages = [];
+    entry.prevP = null;
+    entry.turnEnded = false;
+    entry.marks = [];
+  }
+  const lines = readNewLines(transcriptPath, entry.cur, size);
+  if (lines === null) return null;
+  for (const line of lines) stepRewind(entry, line);
+  if (cursors.size >= CURSOR_MAX) {
+    const oldest = cursors.keys().next().value;
+    if (oldest !== undefined) cursors.delete(oldest);
+  }
+  cursors.set(transcriptPath, entry);
+  return entry;
+}
+
 export const CLAUDE_REWIND: RewindSurface = {
   async sessionRewinds({ transcriptPath }) {
-    if (!transcriptPath) return null;
-    const size = transcriptSize(transcriptPath);
-    if (size === null) {
-      cursors.delete(transcriptPath);
-      return null;
-    }
-    const hit = cursors.get(transcriptPath);
-    cursors.delete(transcriptPath);
-    const entry = hit ?? { cur: { offset: 0 }, turns: [], prevP: null, turnEnded: false, marks: [] };
-    if (size < entry.cur.offset) {
-      entry.cur.offset = 0;
-      entry.turns = [];
-      entry.prevP = null;
-      entry.turnEnded = false;
-      entry.marks = [];
-    }
-    const lines = readNewLines(transcriptPath, entry.cur, size);
-    if (lines === null) return null;
-    for (const line of lines) stepRewind(entry, line);
-    if (cursors.size >= CURSOR_MAX) {
-      const oldest = cursors.keys().next().value;
-      if (oldest !== undefined) cursors.delete(oldest);
-    }
-    cursors.set(transcriptPath, entry);
-    return entry.marks;
+    return syncCursor(transcriptPath)?.marks ?? null;
+  },
+  async sessionRewindPoints({ transcriptPath }): Promise<RewindPoint[] | null> {
+    const state = syncCursor(transcriptPath);
+    if (!state) return null;
+    // 有补位空档 = 这段历史的轮次不可知，整份不可信（调用方回落读屏）
+    if (state.turns.some((t) => t === null)) return null;
+    return state.messages.map((m, i) => ({ index: i, text: m.text, at: m.at }));
   },
   picker: CLAUDE_REWIND_PICKER,
 };

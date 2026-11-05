@@ -2,6 +2,7 @@ import type {
   RewindPickerOption,
   RewindPickerSpec,
   RewindPickerView,
+  RewindPoint,
 } from '@weavecode/harness';
 import type { AnswerResult, PromptTerminal } from '../message-deliverer.js';
 import { sleep } from './keys.js';
@@ -43,7 +44,10 @@ const DEFAULT_TIMING: RewindTiming = {
 
 interface PanelState {
   paneId: string;
+  /** **屏上**读到的结构（开面板那一刻；prepare 重读屏与它比对）。 */
   view: RewindPickerView;
+  /** 转录驱动的条目全文（对账通过时才有）；null = 回落屏上数据。 */
+  points: RewindPoint[] | null;
   at: number;
 }
 
@@ -65,6 +69,11 @@ export interface RewindDeps {
   >;
   /** 该会话的回退面板文法（harness 能力面）；null = 这个 harness 没有驱动面。 */
   pickerOf(sessionId: string): RewindPickerSpec | null;
+  /**
+   * 转录里「当前分支上的用户 prompt」序列（内容与索引的唯一真源）。
+   * null = 这个 harness 没有该面 / 转录读不到 → 回落读屏。
+   */
+  pointsOf(sessionId: string): Promise<RewindPoint[] | null>;
 }
 
 export type RewindOpenResult =
@@ -153,9 +162,15 @@ export class RewindPanels {
     // 若先问输入框就会把它当成没发出去的草稿。
     const onScreen = spec.parseList(before);
     if (onScreen) {
+      const resolved = await this.resolveView(sessionId, onScreen);
       this.prepared.delete(sessionId);
-      this.panels.set(sessionId, { paneId: target.paneId, view: onScreen, at: Date.now() });
-      return { ok: true, view: onScreen };
+      this.panels.set(sessionId, {
+        paneId: target.paneId,
+        view: onScreen,
+        points: resolved.points,
+        at: Date.now(),
+      });
+      return { ok: true, view: resolved.view };
     }
     // 面板开着但空：Esc 关掉，如实说没有可退的点
     if (spec.emptyOf?.(before)) {
@@ -199,8 +214,14 @@ export class RewindPanels {
       const screen = await read();
       const view = screen ? spec.parseList(screen) : null;
       if (view) {
-        this.panels.set(sessionId, { paneId: target.paneId, view, at: Date.now() });
-        return { ok: true, view };
+        const resolved = await this.resolveView(sessionId, view);
+        this.panels.set(sessionId, {
+          paneId: target.paneId,
+          view,
+          points: resolved.points,
+          at: Date.now(),
+        });
+        return { ok: true, view: resolved.view };
       }
     }
     // 空面板：开是开出来了，但一条能退的都没有（退过一次 = 历史已 fork 走）。如实报，关掉。
@@ -214,6 +235,33 @@ export class RewindPanels {
     const cleanupKey = now && spec.listHeader.test(now) ? spec.keys.cancel : spec.keys.clearInput;
     await target.terminal.sendKeys(target.paneId, cleanupKey).catch(() => {});
     return fail(409, '回退面板没有打开（会话可能正忙，或命令被当成了普通消息）');
+  }
+
+  /**
+   * 把「屏上读到的结构」换成「要交给前端的列表」：文本与索引以**转录**为准，
+   * 屏只提供窗口计数、焦点与 `(current)`/前会话行的占位。
+   *
+   * 对账不符 ⇒ 回落屏上文本（面板身份已由三样锚确认，退错点的风险不在这里）。
+   * 宿主面板的条目口径不透明（排队吸收的消息、`--resume` 带进来的前会话，
+   * 都只体现在屏上），对不上就说明有一类我们看不见的条目 —— 此时**降级而不拒答**：
+   * 屏上文本可能被截断，但位置与索引仍是宿主自己给的。
+   */
+  private async resolveView(
+    sessionId: string,
+    view: RewindPickerView,
+  ): Promise<{ view: RewindPickerView; points: RewindPoint[] | null }> {
+    const points = await this.deps.pointsOf(sessionId);
+    if (!points || view.previousSession) return { view, points: null };
+    const onScreen = view.items.filter((it) => it.text !== null).length;
+    if (view.moreAbove + onScreen + view.moreBelow !== points.length) {
+      return { view, points: null };
+    }
+    const items = view.items.map((it) => {
+      if (it.text === null) return it;
+      const p = points[it.index];
+      return p ? { ...it, text: p.text } : it;
+    });
+    return { view: { ...view, items }, points };
   }
 
   /** 选条目 → 进确认屏 → 读回**宿主真正给的那几项**（不自己编档位）。 */
@@ -252,7 +300,8 @@ export class RewindPanels {
     }
     const item = view.items.find((it) => it.index === index);
     if (!item || item.text === null) return fail(400, '这条不是可回退的消息');
-    const target0 = item.text;
+    // 落点原文取转录全文（盘上有、且不会被屏宽截断）；没有转录就退回屏上那份
+    const target0 = panel.points?.find((p) => p.index === index)?.text ?? item.text;
 
     // ② 焦点当前停在哪一条（读屏得到，不假设恒在 `(current)`：面板被 Esc 退回、
     // 或用户在 TUI 里动过，焦点都可能留在别处），朝目标方向打该打的键

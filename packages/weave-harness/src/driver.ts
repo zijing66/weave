@@ -1233,6 +1233,11 @@ export interface RewindPickerView {
   moreAbove: number;
   /** 窗口下方被裁掉的条数。 */
   moreBelow: number;
+  /**
+   * 列表里有没有「前会话行」（`/resume … (previous session)`，`--resume` 首屏才有）。
+   * 它不属于当前转录 ⇒ 该行没法用转录对账，调用方据此回落读屏数据。
+   */
+  previousSession: boolean;
 }
 
 /**
@@ -1243,7 +1248,10 @@ export interface RewindPickerView {
 export interface RewindPickerSpec {
   /** 唤醒面板的命令原文（server 经层② 打进输入框并提交）。 */
   openCommand: string;
-  /** 列表屏的屏上锚（开面板失败时用它区分「面板开着但不认识」与「命令没生效」）。 */
+  /**
+   * 「面板此刻开着」的屏上锚（开面板失败时用它区分「面板开着但不认识」与「命令没生效」）。
+   * 用面板标题这类**转录里不会出现**的行，别拿头行句子——那半句在对话正文里也有。
+   */
   listHeader: RegExp;
   /** 解析列表屏；不是列表屏 → null。 */
   parseList(screen: string): RewindPickerView | null;
@@ -1282,6 +1290,25 @@ export interface RewindSurface {
   }): Promise<RewindMark[] | null>;
   /** 回退面板文法；缺位 = 该 harness 的回退只能人工在 TUI 里做（前端不摆入口）。 */
   picker?: RewindPickerSpec;
+  /**
+   * **当前分支**上可回退的用户 prompt（转录驱动，列表内容与索引的唯一真源）。
+   * 顺序 = 宿主面板顺序（旧→新），`index` = 面板列表绝对索引（`(current)` 不在此列）。
+   * 读不到 / 轮次表有缺档 → null（调用方回落读屏，并把结果当不可信）。
+   */
+  sessionRewindPoints?(req: {
+    sessionId: string;
+    transcriptPath: string | null;
+  }): Promise<RewindPoint[] | null>;
+}
+
+/** 一个可回退点（面板里的一行消息）。 */
+export interface RewindPoint {
+  /** 面板列表绝对索引（0-based，与宿主 `(current)` 之前的位置一致）。 */
+  index: number;
+  /** 该条用户 prompt 的全文（屏上只会按宽度截断显示）。 */
+  text: string;
+  /** 转录时刻（ISO）。 */
+  at: string;
 }
 
 /**

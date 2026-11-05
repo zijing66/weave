@@ -214,6 +214,8 @@ async function main(): Promise<void> {
         sideQuestions.answerById(sessionId, question, answer);
       },
     },
+    // 回退点列表从转录生成（探针在下面构造，闭包惰性取）。
+    transcriptPathOf: (sessionId) => sessionProbe.transcriptPathOf(sessionId),
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2（与 start.ts 同装配）：空闲订阅引擎。
