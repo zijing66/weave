@@ -1007,3 +1007,20 @@ web 侧 ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChar
 - **实时性**：事件账在 ingest 时就地更新（`inbox-worker` → `ActivityTracker`），`sessionActivity` 失效帧（`SnapshotRefresher` invalidateOnly 15s，只对 `turnOpen` 会话、无活动不发）兜「SubagentStop 没到但文件面变了」；前端另订阅 `event.ingested` 的 `agentId`/`spawnAgentId`/`bgShell`/`backgroundTasks` 帧即时补拉一次（**节流 1.5s**——子 agent 的工具事件很密；只认收尾帧的话，运行中的子 agent 要等它停了才出现在面板上，且出生帧到达时转录文件可能还没建，故靠后续工具事件在节流窗后补上）。
 - **daemon 重启**：`ActivityTracker.seedFromDb()` 每会话重放最近 50 条事件（`listBySession` 正序）——最后一条带 `background_tasks` 的快照即 shell 存量与状态。shell 的 outputPath 不落账（端点现扫）。
 - **入口按钮与弹层几何**：输入框工具栏那枚按钮上摆**正在活动的分色计数**（子 agent 蓝 / 任务琥珀 / shell 紫；判据 = `running` / `in_progress` / `running`，唯一实现 `runningCountsOf`），全为 0 时退回中性总数——用户一眼能分出「哪种在跑」，不必展开。弹层宽度**先按视口与界面缩放收、再夹 left**（唯一实现 `popoverBox(anchorLeft, viewportW, scale)`，纯函数可测）：原来固定 440 宽只夹 left，视口窄于 456 时 left 算出负数把弹层推出屏幕（手机、页面缩放后都中招），125% 缩放下固定宽还会被根 zoom 再乘一次。`combobox` 的弹层同款上限（`window.innerWidth - 16`）。
+
+## §22 外发提醒通道（notify channels）
+
+提醒的第四腿起：**浏览器三腿之外，把同一份提醒外发到办公工具**。触发信号不变（bus 上 `watch.fired` / `question.pending`），载荷唯一真理源 = `hooks/push-notify.ts` 的 `notifyPayloadFor(message, labelOf)`——Web Push 与 `NotifyFanout` 都调它，措辞/tag 不会漂移。
+
+- **存储**：`notify_channels(id, kind, name, config JSON, enabled, created_at)`。`config` 含平台凭据，**GET 回显完整配置**（与编排 webhook 节点 `secret` 同口径：dashboard 在认证门后，管理面要能复制重验）；写入口 zod 按 kind 验必填（wecom/feishu/dingtalk 要 url、email 要 host+to、serverchan 要 sendKey、pushplus 要 token）。
+- **适配器**（`hooks/notify-channels.ts`，单模块）：`sendToChannel(channel, payload, fetchImpl?) → WebhookResult`。
+  - HTTP 类全走 `postJson` 唯一边界（协议白名单/5s 超时/响应截断）；
+  - **飞书**签名进 body：`timestamp`/`sign`，`sign = base64(HMAC-SHA256(key="${ts}\n${secret}", msg=""))`；
+  - **钉钉**签名进 URL：`&timestamp=…&sign=<urlencode(base64(HMAC-SHA256(key=secret, msg="${ts}\n${secret}")))>`；
+  - 企微 = `{msgtype:'text',text:{content}}`；Server酱 = `title/desp`；PushPlus = `token/title/content`；
+  - **邮件是唯一不经 `postJson` 的路径**：nodemailer **动态导入**（v6 是 CJS，`(await import('nodemailer')).default`），daemon 启动不硬载、测试可 mock；缺 host/to 直接 `failed` 不抛。
+  - 两个签名函数导出为纯函数，固定向量测试钉死（两者同为 HMAC-SHA256 base64 但 key 构造相反，最容易写混）。
+- **扇出**（`hooks/notify-fanout.ts`）：镜像 `PushNotifier`——订阅 bus，`watch.fired` 的 watcher 非 null 不外发（那是会话对会话），`question.pending` 恒外发；每次事件读一次 `listEnabled()`，空列表零开销；**逐通道 try/catch**，失败只 `console.warn`，绝不抛回 emit；**不自动禁用**（禁用是管理决策，诊断交设置页「测试发送」）。
+- **编排出口**：webhook 出口节点增可选 `channelId`（与裸 `url` 二选一）。`validateOrchestration` 放宽为 `channelId || 合法 http(s) url`（服务端与 web 同判据）；**通道存在性归运行时**——`deliverOnce` 查 `channelById`，查无/已停用记 `notify channel not found or disabled` 并走既有「失败重试一次」，成功/失败都照常落 RunEvent。载荷 = `{title: "weave · <编排名>", body: <边正文>}`。
+- **设置面**：设置页「通知」区新增「外发通道」子块（`NotifyChannelsSection.tsx`）：通道列表（类型徽章 / 启用开关 / 测试发送 / 编辑 / 删除）、内联表单按 kind 出字段、删除走 `ConfirmDialog`。编排画布 webhook 出口检查器加「出口目标」下拉（自定义 URL + 通道列表），选通道时隐藏 url/secret 输入。
+- **端点**：`GET/POST /notify/channels`、`PUT/DELETE /notify/channels/:id`、`POST /notify/channels/:id/test`（`routes/notify-channels.ts`，走既有认证门）；测试发送直接调 `sendToChannel`，回 `WebhookResult`。

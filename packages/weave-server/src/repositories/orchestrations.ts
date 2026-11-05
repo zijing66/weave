@@ -46,6 +46,8 @@ export interface OrchestrationNode {
   /** webhook 出口：出站 POST 目标与可选 HMAC 签名密钥。 */
   url?: string;
   secret?: string;
+  /** webhook 出口：改用已登记的提醒通道（设置页维护；设了就不要求 url）。 */
+  channelId?: string;
   /**
    * session 节点：中间节点也参与「自然回合触发下游」（入口恒可）。
    * 编排投出来的回合不算自然回合（消费前 pending 快照判），enabled 闸全局管。
@@ -74,6 +76,7 @@ function parseNodes(raw: unknown): OrchestrationNode[] {
     if (typeof o.webhookToken === 'string' && o.webhookToken) node.webhookToken = o.webhookToken;
     if (typeof o.url === 'string' && o.url) node.url = o.url;
     if (typeof o.secret === 'string' && o.secret) node.secret = o.secret;
+    if (typeof o.channelId === 'string' && o.channelId) node.channelId = o.channelId;
     if (o.autoFire === true) node.autoFire = true;
     out.push(node);
   }

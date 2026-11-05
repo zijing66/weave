@@ -146,6 +146,13 @@ describe('validateOrchestration', () => {
         edges: [edge('a', 'w:1')],
       }),
     ).toEqual({ ok: true });
+    // 选了已登记通道就不要求 URL（通道存在性归运行时）
+    expect(
+      validateOrchestration({
+        nodes: [sessionNode('a'), { id: 'w:1', kind: 'webhook', channelId: 'c-1' }],
+        edges: [edge('a', 'w:1')],
+      }),
+    ).toEqual({ ok: true });
   });
 
   it('成环 → 报出环路', () => {

@@ -22,6 +22,8 @@ const OrchestrationNodeBody = z.object({
   /** webhook 出口的出站目标与可选 HMAC 密钥。 */
   url: z.string().max(2_000).optional(),
   secret: z.string().max(400).optional(),
+  /** webhook 出口：改用已登记的提醒通道（与 url 二选一，设了就不要求 url）。 */
+  channelId: z.string().min(1).max(128).optional(),
   /** session 中间节点也参与自然回合触发（入口恒可；webhook 节点设了无效）。 */
   autoFire: z.boolean().optional(),
 });

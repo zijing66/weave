@@ -22,6 +22,7 @@ import { settingsApi } from './settings';
 import { searchApi } from './search';
 import { visualizationApi } from './visualizations';
 import { petApi } from './pets';
+import { notifyApi } from './notify';
 import { refreshDashboard, eventsUrl } from './client';
 
 export const api = {
@@ -40,6 +41,7 @@ export const api = {
   ...searchApi,
   ...visualizationApi,
   ...petApi,
+  ...notifyApi,
   refreshDashboard,
   eventsUrl,
 };
@@ -189,4 +191,11 @@ export type {
 export type { SearchMessageHit, SearchFileHit, SearchResult } from './search';
 export type { VisualizationFragment } from './visualizations';
 export type { PetRow } from './pets';
+export type {
+  NotifyChannelKind,
+  NotifyChannelConfig,
+  NotifyChannelRow,
+  NotifyChannelInput,
+  NotifySendResult,
+} from './notify';
 export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';

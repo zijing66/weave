@@ -14,13 +14,15 @@ import type {
 } from '../repositories/orchestrations.js';
 import { graphDirections, pendingCountsOf } from '../repositories/orchestrations.js';
 import type { SessionRepository } from '../repositories/sessions.js';
+import type { NotifyChannelRow } from '../repositories/notify-channels.js';
+import { sendToChannel } from './notify-channels.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 import { matchesMinute, minuteKey, parseCron } from '../daemon/cron.js';
 import { pidAliveOf } from '../daemon/claude-liveness.js';
 import { combinedLivenessOf } from '../daemon/liveness.js';
 import type { HookEventBus } from './bus.js';
 import type { MessageDeliverer } from './message-deliverer.js';
-import { postJson } from './handlers/webhook.js';
+import { postJson, type WebhookResult } from './handlers/webhook.js';
 import { renderTemplate } from './match.js';
 import { ORCH_MAX_DELIVERIES, ORCH_MAX_FORKS, validateOrchestration } from './orchestration-graph.js';
 
@@ -320,6 +322,10 @@ export class OrchestrationEngine {
       deferWhenUserPresent?: boolean;
       /** 出站 POST（测试注入）；缺省 handlers/webhook 的 postJson。 */
       postJsonImpl?: typeof postJson;
+      /** 已登记提醒通道查询（webhook 出口选了 channelId 时用）；缺省 = 查无此通道。 */
+      channelById?: (id: string) => Pick<NotifyChannelRow, 'kind' | 'config' | 'enabled'> | undefined;
+      /** 通道发送（测试注入）；缺省 hooks/notify-channels 的 sendToChannel。 */
+      sendToChannelImpl?: typeof sendToChannel;
     },
   ) {
     this.forkJudge = createForkConditionJudge({
@@ -948,13 +954,15 @@ export class OrchestrationEngine {
         return false;
       }
       if (target.kind === 'webhook') {
-        const result = await (this.deps.postJsonImpl ?? postJson)(target.url ?? '', target.secret, {
-          orchestrationName: rt.name,
-          runId: rt.id,
-          from: input.from,
-          text: input.text,
-          at: new Date().toISOString(),
-        });
+        const result = target.channelId
+          ? await this.deliverViaChannel(target.channelId, rt, input)
+          : await (this.deps.postJsonImpl ?? postJson)(target.url ?? '', target.secret, {
+              orchestrationName: rt.name,
+              runId: rt.id,
+              from: input.from,
+              text: input.text,
+              at: new Date().toISOString(),
+            });
         if (!rt.running) return false;
         rt.deliveries++;
         this.record(rt, { ...input, ok: result.ok, ...(result.ok ? {} : { error: result.error }) });
@@ -1045,6 +1053,22 @@ export class OrchestrationEngine {
     } finally {
       rt.inflight--;
     }
+  }
+
+  /** 出口 webhook 选了已登记通道：查通道 → 按平台格式发（查无/禁用 = 失败，走重试一次）。 */
+  private async deliverViaChannel(
+    channelId: string,
+    rt: Runtime,
+    input: { from: string; to: string; edgeId: string; text: string },
+  ): Promise<WebhookResult> {
+    const channel = this.deps.channelById?.(channelId);
+    if (!channel || !channel.enabled) {
+      return { ok: false, status: 'failed', error: 'notify channel not found or disabled' };
+    }
+    return (this.deps.sendToChannelImpl ?? sendToChannel)(
+      channel,
+      { title: `weave · ${rt.name}`, body: input.text },
+    );
   }
 
   /** 投递预算：到顶即 failed（环路兜底）。 */

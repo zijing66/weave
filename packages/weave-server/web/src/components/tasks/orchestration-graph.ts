@@ -313,7 +313,8 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
   }
   for (const node of draft.nodes) {
     if (node.kind !== 'webhook' || !hasIn.has(node.id)) continue;
-    // 出口 webhook 必须给出合法的出站 URL（入口的 token 由服务端补发，不在这验）。
+    // 出口二选一：已登记通道（存在性归运行时）或合法 URL（入口 token 由服务端补发，不在这验）。
+    if (node.channelId) continue;
     let parsed: URL | null = null;
     try {
       parsed = new URL(node.url ?? '');

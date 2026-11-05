@@ -33,6 +33,8 @@ import type { WatchEngine } from '../hooks/watch-engine.js';
 import type { SessionWatchRepository } from '../repositories/session-watches.js';
 import type { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
 import type { PushNotifier } from '../hooks/push-notify.js';
+import type { NotifyChannelRepository } from '../repositories/notify-channels.js';
+import type { sendToChannel } from '../hooks/notify-channels.js';
 import type {
   OrchestrationRepository,
   OrchestrationRunRepository,
@@ -55,6 +57,7 @@ import { handleMarketRoutes } from './routes/market.js';
 import { handleInstallationRoutes } from './routes/installations.js';
 import { handleProjectRoutes } from './routes/projects.js';
 import { handleSettingsRoutes } from './routes/settings-statusline.js';
+import { handleNotifyChannelRoutes } from './routes/notify-channels.js';
 import { handleSearchRoutes } from './routes/search.js';
 import { handleProjectFileRoutes } from './routes/project-files.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
@@ -159,6 +162,10 @@ export interface WeaveServerDeps {
   pushSubscriptions?: PushSubscriptionRepository;
   /** Web Push 发送器（提醒第三条腿）；GET /messaging/push/key 依赖它。 */
   pushNotifier?: Pick<PushNotifier, 'publicKey'>;
+  /** 外发提醒通道（企微/飞书/钉钉/邮件/Server酱/PushPlus）；/notify/channels 依赖它。 */
+  notifyChannels?: NotifyChannelRepository;
+  /** 通道测试发送（测试注入）；缺省 hooks/notify-channels 的 sendToChannel。 */
+  notifySend?: typeof sendToChannel;
   /** 空闲订阅引擎（批 2）；创建即空闲段的 fire 依赖它。 */
   watchEngine?: Pick<WatchEngine, 'created'>;
   /** 跨会话编排定义存储；/messaging/orchestrations 依赖它。 */
@@ -360,6 +367,9 @@ async function handleRequest(
 
   // --- 设置/状态栏域 → routes/settings-statusline.ts（settings/目录浏览/config/statusline/assets）---
   if (await handleSettingsRoutes(req, res, deps, pathname, url)) return;
+
+  // --- 外发提醒通道 → routes/notify-channels.ts（CRUD + 测试发送）---
+  if (await handleNotifyChannelRoutes(req, res, deps, pathname, url)) return;
 
   // --- 全局搜索 → routes/search.ts（Ctrl+K：会话名/聊天记录/项目文件三路聚合）---
   if (await handleSearchRoutes(req, res, deps, pathname, url)) return;

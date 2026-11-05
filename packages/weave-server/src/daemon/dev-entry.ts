@@ -39,6 +39,8 @@ import { PushSubscriptionRepository } from '../repositories/push-subscriptions.j
 import { UploadRepository } from '../repositories/uploads.js';
 import { defaultUploadSessions } from './upload-sessions.js';
 import { PushNotifier } from '../hooks/push-notify.js';
+import { NotifyFanout } from '../hooks/notify-fanout.js';
+import { NotifyChannelRepository } from '../repositories/notify-channels.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
@@ -234,6 +236,13 @@ async function main(): Promise<void> {
     subscriptions: pushSubscriptions,
     sessions: hookSessions,
     bus: hookBus,
+  });
+  // 外发提醒通道（与 start.ts 同装配）。
+  const notifyChannels = new NotifyChannelRepository(db);
+  new NotifyFanout({
+    channels: notifyChannels,
+    bus: hookBus,
+    labelOf: (sessionId) => hookSessions.getBySessionId(sessionId)?.title ?? sessionId.slice(0, 8),
   });
   // 跨会话编排（与 start.ts 同装配）：定义 + 运行日志 + 引擎。
   const orchestrations = new OrchestrationRepository(db);
@@ -448,6 +457,7 @@ async function main(): Promise<void> {
     // 人在场闸（与 start.ts 同口径）：目标闲着且用户刚在看 → defer 搭车。
     deferWhenUserPresent: true,
     ensureOpen,
+    channelById: (id) => notifyChannels.getById(id),
   });
   orchestrationEngine.rearm();
   const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
@@ -548,6 +558,7 @@ async function main(): Promise<void> {
     orchestrationEngine,
     pushSubscriptions,
     pushNotifier,
+    notifyChannels,
     onAttach: dashboardPusher.attach,
     dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,

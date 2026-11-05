@@ -22,6 +22,7 @@ import type { Harness } from '@weavecode/core/harness';
 import {
   api,
   type MessagingCapability,
+  type NotifyChannelRow,
   type OrchestrationNode,
   type OrchestrationRow,
   type OrchestrationRunStatus,
@@ -495,6 +496,15 @@ export function OrchestrationCanvas({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [cronOpen, setCronOpen] = useState(false);
   const [edgeError, setEdgeError] = useState<string | null>(null);
+  /** 外发提醒通道（webhook 出口可选用）；打开编辑面时拉一次。 */
+  const [notifyChannels, setNotifyChannels] = useState<NotifyChannelRow[] | null>(null);
+  useEffect(() => {
+    if (!editing) return;
+    api
+      .listNotifyChannels()
+      .then((r) => setNotifyChannels(r.channels))
+      .catch(() => setNotifyChannels([]));
+  }, [editing]);
 
   /** 项目视图里入口 session 落到了别的项目上（中间节点跨项目是允许的）。 */
   const statusText =
@@ -1465,34 +1475,66 @@ export function OrchestrationCanvas({
                     })()}
                   </>
                 ) : (
-                  <>
-                    <input
-                      value={draft.nodes.find((n) => n.id === selNode)?.url ?? ''}
-                      onChange={(e) => {
-                        const url = e.target.value;
-                        patch((d) => ({
-                          ...d,
-                          nodes: d.nodes.map((n) => (n.id === selNode ? { ...n, url } : n)),
-                        }));
-                      }}
-                      placeholder={t('orch.webhookUrlHint')}
-                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-                    />
-                    <input
-                      value={draft.nodes.find((n) => n.id === selNode)?.secret ?? ''}
-                      onChange={(e) => {
-                        const secret = e.target.value;
-                        patch((d) => ({
-                          ...d,
-                          nodes: d.nodes.map((n) =>
-                            n.id === selNode ? { ...n, secret: secret || undefined } : n,
-                          ),
-                        }));
-                      }}
-                      placeholder={t('orch.webhookSecretHint')}
-                      className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
-                    />
-                  </>
+                  (() => {
+                    const node = draft.nodes.find((n) => n.id === selNode);
+                    const channelId = node?.channelId ?? '';
+                    return (
+                      <>
+                        <label className="flex flex-col gap-1 text-10 text-neutral-500">
+                          {t('orch.webhookSource')}
+                          <Combobox
+                            value={channelId}
+                            options={[
+                              { value: '', label: t('orch.webhookCustomUrl') },
+                              ...(notifyChannels ?? []).map((c) => ({ value: c.id, label: c.name })),
+                            ]}
+                            onChange={(v) =>
+                              patch((d) => ({
+                                ...d,
+                                nodes: d.nodes.map((n) =>
+                                  n.id === selNode ? { ...n, channelId: v || undefined } : n,
+                                ),
+                              }))
+                            }
+                          />
+                        </label>
+                        {channelId ? (
+                          <p className="text-10 leading-relaxed text-neutral-600">
+                            {t('orch.webhookChannelHint')}
+                          </p>
+                        ) : (
+                          <>
+                            <input
+                              value={node?.url ?? ''}
+                              onChange={(e) => {
+                                const url = e.target.value;
+                                patch((d) => ({
+                                  ...d,
+                                  nodes: d.nodes.map((n) => (n.id === selNode ? { ...n, url } : n)),
+                                }));
+                              }}
+                              placeholder={t('orch.webhookUrlHint')}
+                              className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                            />
+                            <input
+                              value={node?.secret ?? ''}
+                              onChange={(e) => {
+                                const secret = e.target.value;
+                                patch((d) => ({
+                                  ...d,
+                                  nodes: d.nodes.map((n) =>
+                                    n.id === selNode ? { ...n, secret: secret || undefined } : n,
+                                  ),
+                                }));
+                              }}
+                              placeholder={t('orch.webhookSecretHint')}
+                              className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
+                            />
+                          </>
+                        )}
+                      </>
+                    );
+                  })()
                 )}
                 <button
                   type="button"

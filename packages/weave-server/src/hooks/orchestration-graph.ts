@@ -99,7 +99,9 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
   }
   for (const node of nodes) {
     if (node.kind !== 'webhook' || !hasIn.has(node.id)) continue;
-    // 出口 webhook 必须给出合法的出站 URL（入口的 token 由仓储补发，不在这验）。
+    // 出口 webhook 二选一：已登记通道（运行时校验存在性）或合法的出站 URL
+    // （入口的 token 由仓储补发，不在这验）。
+    if (node.channelId) continue;
     const url = node.url ?? '';
     let parsed: URL | null = null;
     try {

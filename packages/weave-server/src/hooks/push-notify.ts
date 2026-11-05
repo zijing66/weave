@@ -20,6 +20,34 @@ export interface PushPayload {
 }
 
 /**
+ * 提醒载荷的唯一构造点：Web Push、页面通知、外发通道（企微/飞书/…）共用同一
+ * 份措辞与 tag。会话对会话的 watch（watcher 非 null）不外发——那不是提醒用户。
+ */
+export function notifyPayloadFor(
+  message: Parameters<HookEventBus['emit']>[0],
+  labelOf: (sessionId: string) => string,
+): PushPayload | null {
+  if (message.kind === 'watch.fired') {
+    if (message.watcherSessionId !== null) return null;
+    return {
+      title: 'weave',
+      body: `Session ${labelOf(message.targetSessionId)} ${watchReasonPhrase(message.reason)}`,
+      tag: `weave-watch-${message.targetSessionId}`,
+      url: '/',
+    };
+  }
+  if (message.kind === 'question.pending') {
+    return {
+      title: 'weave',
+      body: `Session ${labelOf(message.sessionId)} is waiting for your answer`,
+      tag: `weave-question-${message.sessionId}`,
+      url: '/',
+    };
+  }
+  return null;
+}
+
+/**
  * Web Push 发送器（提醒通道的第三条腿）：浏览器把 dashboard 关掉后，本地
  * 通知路径全死——只有厂商推送服务能唤起 SW 的 push 事件。订阅 hookBus 的
  * `watch.fired`（watcher null = dashboard 订阅，与 web toast 同口径；会话
@@ -62,26 +90,9 @@ export class PushNotifier {
     void this.pushAll(subs, JSON.stringify(payload));
   }
 
-  /** 该帧推不推、推什么；不推的帧返回 null（tag 与 web 本地通知同值，双通道去重）。 */
+  /** 该帧推不推、推什么；不推的帧返回 null（与 web 本地通知、外发通道同口径）。 */
   private payloadFor(message: Parameters<HookEventBus['emit']>[0]): PushPayload | null {
-    if (message.kind === 'watch.fired') {
-      if (message.watcherSessionId !== null) return null;
-      return {
-        title: 'weave',
-        body: `Session ${this.labelOf(message.targetSessionId)} ${watchReasonPhrase(message.reason)}`,
-        tag: `weave-watch-${message.targetSessionId}`,
-        url: '/',
-      };
-    }
-    if (message.kind === 'question.pending') {
-      return {
-        title: 'weave',
-        body: `Session ${this.labelOf(message.sessionId)} is waiting for your answer`,
-        tag: `weave-question-${message.sessionId}`,
-        url: '/',
-      };
-    }
-    return null;
+    return notifyPayloadFor(message, (id) => this.labelOf(id));
   }
 
   private labelOf(sessionId: string): string {

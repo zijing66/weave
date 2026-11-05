@@ -28,6 +28,8 @@ export interface OrchestrationNode {
   /** webhook 出口的出站目标与可选 HMAC 密钥。 */
   url?: string;
   secret?: string;
+  /** webhook 出口：改用已登记的提醒通道（设了就不要求 url）。 */
+  channelId?: string;
   /** session 中间节点也参与自然回合触发（入口恒可；enabled 闸全局管）。 */
   autoFire?: boolean;
 }

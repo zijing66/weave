@@ -199,6 +199,18 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   created_at TEXT NOT NULL
 );
 
+-- 外发提醒通道（企微/飞书/钉钉/邮件/Server酱/PushPlus）：config 是 JSON，
+-- 含平台凭据（与编排 webhook 节点的 secret 同口径——dashboard 在认证门后，
+-- 管理面要能回显重验）。enabled = 参与提醒扇出与可被编排选用。
+CREATE TABLE IF NOT EXISTS notify_channels (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  config     TEXT NOT NULL,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+
 -- 会话图片上传：内容寻址 id = sha256（天然去重），文件落 <dataDir>/uploads/。
 -- 上传 ≠ 投递（资源三层里的「装到目标位」）；与会话的关系经 event_images。
 -- dir = 项目自定义存储目录（NULL = 全局默认 <dataDir>/uploads/）；存量行

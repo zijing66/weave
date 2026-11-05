@@ -35,6 +35,8 @@ import { PushSubscriptionRepository } from '../repositories/push-subscriptions.j
 import { UploadRepository } from '../repositories/uploads.js';
 import { defaultUploadSessions } from './upload-sessions.js';
 import { PushNotifier } from '../hooks/push-notify.js';
+import { NotifyFanout } from '../hooks/notify-fanout.js';
+import { NotifyChannelRepository } from '../repositories/notify-channels.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
@@ -243,6 +245,14 @@ export function startDaemon(): void {
     subscriptions: pushSubscriptions,
     sessions: hookSessions,
     bus: hookBus,
+  });
+  // 外发提醒通道（企微/飞书/钉钉/邮件/微信转发）：与 Web Push 同一份载荷，
+  // 设置页登记的启用通道全收（逐通道失败隔离，绝不抛进 ingest）。
+  const notifyChannels = new NotifyChannelRepository(db);
+  new NotifyFanout({
+    channels: notifyChannels,
+    bus: hookBus,
+    labelOf: (sessionId) => hookSessions.getBySessionId(sessionId)?.title ?? sessionId.slice(0, 8),
   });
   // 跨会话编排：定义 + 运行日志（统一视图），引擎的权威态在内存、日志落行。
   const orchestrations = new OrchestrationRepository(db);
@@ -485,6 +495,7 @@ export function startDaemon(): void {
     // 防层② 击键突袭手输中的输入框（评审点名的中高概率/高后果风险）。
     deferWhenUserPresent: true,
     ensureOpen,
+    channelById: (id) => notifyChannels.getById(id),
   });
   orchestrationEngine.rearm();
   // 定时触发：30s 一枪（同分钟只 fire 一次、跑着的跳过）。
@@ -579,6 +590,7 @@ export function startDaemon(): void {
     orchestrationEngine,
     pushSubscriptions,
     pushNotifier,
+    notifyChannels,
     onAttach: dashboardPusher.attach,
     dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,

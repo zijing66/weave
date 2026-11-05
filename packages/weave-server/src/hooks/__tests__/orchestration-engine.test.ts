@@ -111,6 +111,11 @@ const setup = (
       secret: string | undefined,
       body: unknown,
     ) => Promise<{ ok: boolean; status: string; error?: string }>;
+    channelById?: (id: string) => { kind: string; config: Record<string, unknown>; enabled: boolean } | undefined;
+    sendToChannel?: (
+      channel: unknown,
+      payload: { title: string; body: string },
+    ) => Promise<{ ok: boolean; status: string; error?: string }>;
   } = {},
 ) => {
   const bus = new HookEventBus();
@@ -134,6 +139,8 @@ const setup = (
     ...(opts.conditionJudge ? { conditionJudge: opts.conditionJudge } : {}),
     ...(opts.deferWhenUserPresent ? { deferWhenUserPresent: true } : {}),
     postJsonImpl: postJson as never,
+    ...(opts.channelById ? { channelById: opts.channelById } : {}),
+    ...(opts.sendToChannel ? { sendToChannelImpl: opts.sendToChannel as never } : {}),
   });
   const frames: Array<{ kind: string; [k: string]: unknown }> = [];
   bus.subscribe((m) => {
@@ -360,6 +367,50 @@ describe('webhook 出口', () => {
     );
     expect(run.state.pending['w:9']).toBeUndefined(); // webhook 出口不入待回
     expect(run.state.events.at(-1)).toMatchObject({ to: 'w:9', ok: true });
+  });
+
+  it('出口选已登记通道 = 按通道发送，不走裸 POST', async () => {
+    const channel = { kind: 'wecom', config: { url: 'https://qy.example/hook' }, enabled: true };
+    const sendToChannel = vi.fn(async () => ({ ok: true, status: 'succeeded' }) as const);
+    const { engine, postJson } = setup({ channelById: () => channel, sendToChannel });
+    sessions.touch('a', projectId);
+    const id = orchestrations.insert({
+      name: 'hook-out',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), { id: 'w:9', kind: 'webhook', channelId: 'c-1' }],
+      edges: [edge('a', 'w:9')],
+    }).id;
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    expect(postJson).not.toHaveBeenCalled();
+    expect(sendToChannel).toHaveBeenCalledWith(
+      channel,
+      expect.objectContaining({ title: 'weave · hook-out', body: 'msg to w:9' }),
+    );
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done');
+    expect(run.state.events.at(-1)).toMatchObject({ to: 'w:9', ok: true });
+  });
+
+  it('出口通道不存在/已停用 = 记失败事件（重试一次）', async () => {
+    const sendToChannel = vi.fn(async () => ({ ok: true, status: 'succeeded' }) as const);
+    const { engine, postJson } = setup({ channelById: () => undefined, sendToChannel });
+    sessions.touch('a', projectId);
+    const id = orchestrations.insert({
+      name: 'hook-out',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), { id: 'w:9', kind: 'webhook', channelId: 'c-gone' }],
+      edges: [edge('a', 'w:9')],
+    }).id;
+    await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    await flush();
+    expect(postJson).not.toHaveBeenCalled();
+    expect(sendToChannel).not.toHaveBeenCalled();
   });
 
   it('POST 失败记失败事件，不影响 run 里其他成功投递（重试一次仍失败）', async () => {

@@ -64,6 +64,7 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { registerInvalidator } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { NotifyChannelsSection } from '@/components/NotifyChannelsSection';
 import { useToast } from '@/components/Toast';
 import {
   ensurePushSubscribed,
@@ -1174,6 +1175,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   : t('settings.pushHint')}
             </p>
           </div>
+
+          {/* 外发提醒通道（企微/飞书/钉钉/邮件/微信转发）：与 Web Push 并行的一条腿。 */}
+          <NotifyChannelsSection />
 
           {/* 对外访问地址：服务端派生（全部 IP × 已开协议），只读展示 + 逐行复制。 */}
           {urls.length > 0 && (
