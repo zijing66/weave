@@ -642,6 +642,9 @@ export function FileBrowserModal({
     firstLoad.current = true;
   };
 
+  /** 项目行清单（虚拟根目录层）：键盘导航与渲染共用。 */
+  const projectRows: ProjectRow[] = projects ?? [];
+
   /** 方向键/回车的导航。挂 document 捕获阶段：点空白处焦点会落到 `body`，
    *  那时事件目标的祖先链上没有弹窗，容器级监听根本收不到——只有 document 级
    *  才保证焦点在哪都还能用键盘。查找 / 跳行那两个小输入框除外：那里打的是字，
@@ -672,18 +675,30 @@ export function FileBrowserModal({
           return;
         }
       } else {
-        const list = projects ?? [];
+        const list = projectRows;
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
           kbdNav.current = true;
           const step = e.key === 'ArrowDown' ? 1 : -1;
-          setProjSelected((i) => Math.min(list.length - 1, Math.max(0, i + step)));
+          const at = Math.min(list.length - 1, Math.max(0, projSelected + step));
+          setProjSelected(at);
+          // 项目 = 普通目录行：选中即在中栏展开它的文件树（与选中目录立即
+          // 在右列显示内容同构），不用再按一次 Enter。
+          const proj: ProjectRow | undefined = list[at];
+          if (proj && picked !== proj) pickProject(proj);
           return;
         }
         if (e.key === 'Enter') {
           e.preventDefault();
           const hit = list[projSelected];
           if (hit) pickProject(hit);
+          return;
+        }
+        if (e.key === 'ArrowRight') {
+          // 焦点移进中栏（中栏已随选中在渲染该项目的文件树）
+          e.preventDefault();
+          const hit = entries[selected];
+          if (hit) userTouched.current = true;
           return;
         }
       }
@@ -741,8 +756,8 @@ export function FileBrowserModal({
   /** 搜索是当前目录子树的（带 q 时 `dir` 照传）：行与预览头都按这个口径换展示。 */
   const searching = query.trim() !== '';
 
-  /** 全项目模式第一屏（中栏 = 项目列表）。搜索框走全局检索的文件路
-   *  （`/search`，跨项目窥视就绪索引，冷项目跳过）——命中行带项目名，
+  /** 全项目模式第一屏（左栏 = 项目列表 = 虚拟根目录层）。搜索框走全局检索
+   *  的文件路（`/search`，跨项目窥视就绪索引，冷项目跳过）——命中行带项目名，
    *  点击/Enter 直接落进该项目并定位到文件；命中前照旧列项目。 */
   const projectListShown = picked === null && !!projects;
 
@@ -842,10 +857,10 @@ export function FileBrowserModal({
         </>
       ) : (
         <>
-          {projects.length === 0 ? (
+          {projectRows.length === 0 ? (
             <li className="px-3 py-6 text-11 text-neutral-500">{t('app.noProjects')}</li>
           ) : (
-            projects
+            projectRows
               .map((p, i) => (
               <li key={p.id}>
                 <button
@@ -853,7 +868,10 @@ export function FileBrowserModal({
                   role="option"
                   aria-selected={i === projSelected}
                   onMouseEnter={() => {
-                    if (!kbdNav.current) setProjSelected(i);
+                    if (kbdNav.current) return;
+                    setProjSelected(i);
+                    // 项目 = 普通目录行：悬停即在中栏展开（同构选中目录的预览跟随）
+                    if (picked !== p) pickProject(p);
                   }}
                   onClick={() => {
                     // 长按刚开的菜单：这一击是抬手补的，不当点选
