@@ -80,6 +80,8 @@ export type {
   SessionPlan,
   SessionEditHunk,
   SessionEdits,
+  SessionUsageTurn,
+  SessionUsage,
   RecognizedRef,
   SideQuestionRow,
   ActivityAgentRow,
