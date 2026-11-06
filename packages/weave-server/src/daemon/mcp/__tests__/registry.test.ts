@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { MCP_SERVERS, mcpServerForPath } from '../registry.js';
 import { toolRequest as orchestrationToolRequest } from '../orchestration.js';
+import { toolRequest as sessionsToolRequest, SESSIONS_TOOLS } from '../sessions.js';
 
 /**
  * MCP-1 对账测试（「及时更新」的机器侧底线）：每个工具转发的 path 必须命中
@@ -27,6 +28,18 @@ const SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
   list_sessions: {},
 };
 
+const SESSION_SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
+  list_sessions: {},
+  get_session: { sessionId: 's1' },
+  send_message: { sessionId: 's1', text: 'hi' },
+  list_questions: {},
+  answer_question: { sessionId: 's1', answers: [{ questionKey: 'q', options: [0] }] },
+  interrupt_session: { sessionId: 's1' },
+  watch_session: { sessionId: 's1', on: ['idle'] },
+  get_session_edits: { sessionId: 's1' },
+  get_session_activity: { sessionId: 's1' },
+};
+
 describe('MCP 注册表', () => {
   it('/mcp 裸路径指向编排（存量已装配置不断）', () => {
     const def = mcpServerForPath('/mcp');
@@ -36,7 +49,123 @@ describe('MCP 注册表', () => {
   });
 
   it('未知 /mcp/<server> 不命中注册表（server.ts 回 404）', () => {
-    expect(mcpServerForPath('/mcp/sessions')).toBeNull();
+    expect(mcpServerForPath('/mcp/projects')).toBeNull();
+  });
+
+  it('/mcp/sessions 指向 weave-sessions；工具面 = 9 个、各自带 outputSchema', () => {
+    const def = mcpServerForPath('/mcp/sessions');
+    expect(def?.name).toBe('weave-sessions');
+    expect(def?.tools).toHaveLength(SESSIONS_TOOLS.length);
+    expect(SESSIONS_TOOLS.map((t) => t.name)).toEqual([
+      'list_sessions',
+      'get_session',
+      'send_message',
+      'list_questions',
+      'answer_question',
+      'interrupt_session',
+      'watch_session',
+      'get_session_edits',
+      'get_session_activity',
+    ]);
+    for (const tool of SESSIONS_TOOLS) {
+      expect(tool.outputSchema.type, `${tool.name} outputSchema`).toBeTruthy();
+    }
+  });
+
+  it('weave-sessions e2e：tools/list 出 9 工具、list_sessions/get_session 走通真返回', { timeout: 30_000 }, async () => {
+    const { openDatabase } = await import('../../../db/db.js');
+    const { ProjectRepository } = await import('../../../repositories/projects.js');
+    const { createWeaveServer } = await import('../../../daemon/server.js');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const projectDir = mkdtempSync(join(tmpdir(), 'weave-mcp-sessions-'));
+    const db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    const projectId = projects.register({ path: projectDir, name: 'e2e', token: 't', source: 'init' }).id;
+    const { SessionRepository } = await import('../../../repositories/sessions.js');
+    const sessions = new SessionRepository(db);
+    for (const id of ['s1', 's2']) sessions.touch(id, projectId);
+    const { HookEventRepository } = await import('../../../repositories/hook-events.js');
+    const { QuestionTracker } = await import('../../../hooks/question-tracker.js');
+    const questionTracker = new QuestionTracker({ sessions, hookEvents: new HookEventRepository(db) });
+    const { createServer: netCreate } = await import('node:net');
+    const probe = netCreate();
+    const port = await new Promise<number>((resolve) => {
+      probe.listen(0, '127.0.0.1', () => resolve((probe.address() as { port: number }).port));
+    }).finally(() => new Promise<void>((resolve) => probe.close(() => resolve())));
+    const httpServer = createWeaveServer({ projects, port, hookSessions: sessions, questionTracker });
+    await new Promise<void>((resolve) => httpServer.listen(port, '127.0.0.1', resolve));
+    const call = async (method: string, params?: unknown): Promise<{ status: number; body: any }> => {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp/sessions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      const listed = await call('tools/list');
+      expect(listed.status).toBe(200);
+      const names = (listed.body.result.tools as Array<{ name: string }>).map((t) => t.name);
+      expect(names).toHaveLength(9);
+      expect(names).toContain('send_message');
+
+      const list = await call('tools/call', { name: 'list_sessions', arguments: {} });
+      expect(list.status).toBe(200);
+      const listedSessions = list.body.result.structuredContent?.sessions;
+      expect(
+        listedSessions ?? `isError: ${(list.body.result.content as Array<{ text: string }>)[0]?.text}`,
+      ).toHaveLength(2);
+
+      const got = await call('tools/call', { name: 'get_session', arguments: { sessionId: 's1' } });
+      expect(got.body.result.structuredContent?.session?.sessionId).toBe('s1');
+
+      const missing = await call('tools/call', { name: 'get_session', arguments: { sessionId: 'nope' } });
+      expect(missing.body.result.isError).toBe(true);
+
+      const questions = await call('tools/call', { name: 'list_questions', arguments: {} });
+      expect(questions.body.result.structuredContent).toMatchObject({ questions: [] });
+    } finally {
+      httpServer.close();
+      db.close();
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('对账：weave-sessions 每个工具转发的请求都命中 daemon 路由（非 404）', { timeout: 30_000 }, async () => {
+    const { openDatabase } = await import('../../../db/db.js');
+    const { ProjectRepository } = await import('../../../repositories/projects.js');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const projectDir = mkdtempSync(join(tmpdir(), 'weave-mcp-sessions-recon-'));
+    const db = openDatabase(':memory:');
+    const projects = new ProjectRepository(db);
+    projects.register({ path: projectDir, name: 'recon', token: 't', source: 'init' });
+    const { createWeaveServer } = await import('../../../daemon/server.js');
+    const httpServer = createWeaveServer({ projects, port: 0 });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    const port = (httpServer.address() as { port: number }).port;
+    try {
+      for (const tool of SESSIONS_TOOLS) {
+        const req = sessionsToolRequest(tool.name, SESSION_SAMPLE_ARGS[tool.name] ?? {});
+        const res = await fetch(`http://127.0.0.1:${port}/api${req.path}`, {
+          method: req.method,
+          headers: req.body === undefined ? {} : { 'content-type': 'application/json' },
+          body: req.body === undefined ? undefined : JSON.stringify(req.body),
+        });
+        // 404 = 路由表里没有这条 path；其余（200/201/400/409/503…）= 命中了路由
+        expect(res.status, `tool "${tool.name}" -> ${req.method} ${req.path} is a dead route`)
+          .not.toBe(404);
+      }
+    } finally {
+      httpServer.close();
+      db.close();
+      rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 
   it('既有 /mcp 调用回归：tools/list 出 10 工具、tools/call 走通编排转发', { timeout: 30_000 }, async () => {

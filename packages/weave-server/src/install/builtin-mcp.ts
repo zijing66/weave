@@ -22,4 +22,10 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
       '编排的读写/校验/触发/运行日志（daemon 托管的 Streamable HTTP MCP；仅本机）',
     path: '/mcp',
   },
+  {
+    name: 'weave-sessions',
+    description:
+      '活会话的观察/投递/问答/中断/订阅/改动汇总（daemon 托管的 Streamable HTTP MCP；仅本机）',
+    path: '/mcp/sessions',
+  },
 ];

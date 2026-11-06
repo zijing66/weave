@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { readBody, sendJson } from '../http.js';
 import { TOOLS, callTool } from './orchestration.js';
+import * as sessionsNs from './sessions.js';
 
 /**
  * 内置 MCP 注册表（Streamable HTTP，daemon 托管）：`serverName → 服务定义`。
@@ -58,9 +59,14 @@ export const MCP_SERVERS: readonly McpServerDef[] = [
     tools: TOOLS,
     callTool,
   },
+  {
+    name: 'weave-sessions',
+    version: '0.1.0',
+    path: '/mcp/sessions',
+    tools: sessionsNs.SESSIONS_TOOLS,
+    callTool: sessionsNs.callTool,
+  },
 ];
-
-/** 按 URL 路径取服务（`/mcp` 裸路径回落到编排，存量配置不断）。 */
 export function mcpServerForPath(pathname: string): McpServerDef | null {
   for (const def of MCP_SERVERS) {
     if (def.path === pathname) return def;
