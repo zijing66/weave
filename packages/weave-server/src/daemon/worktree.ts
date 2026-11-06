@@ -64,7 +64,11 @@ export function sessionWorktreeDir(projectPath: string, sessionId: string): stri
 }
 
 export function sessionWorktreeBranch(sessionId: string): string {
-  return `weave/session-${sessionId.slice(0, 8)}`;
+  // 占位键剥前缀再截（不然所有 pending 都截成同一个 "pending-"，分支名互撞）
+  const slug = sessionId.startsWith(PENDING_WT_PREFIX)
+    ? sessionId.slice(PENDING_WT_PREFIX.length, PENDING_WT_PREFIX.length + 8)
+    : sessionId.slice(0, 8);
+  return `weave/session-${slug}`;
 }
 
 /**
