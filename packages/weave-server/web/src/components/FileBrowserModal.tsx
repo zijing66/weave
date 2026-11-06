@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Resizer } from '@/components/Resizer';
 import { useToast } from '@/components/Toast';
 import { copyText } from '@/lib/clipboard';
 import { useT } from '@/i18n/I18nProvider';
@@ -337,6 +338,7 @@ export function FileBrowserModal({
    *  什么也不读（<img>/<iframe>/<a download> 自己取字节）。
    *  防抖 + 缓存：hover 换行与箭头连滑是高频动作，逐行打请求既慢又白烧。 */
   const current = entries[selected];
+
   useEffect(() => {
     const cur = current;
     // 一律先清：上一份的东西不能挂在新选中的头上（同一拍里再填，不会闪）
@@ -745,10 +747,55 @@ export function FileBrowserModal({
   /** 搜索是当前目录子树的（带 q 时 `dir` 照传）：行与预览头都按这个口径换展示。 */
   const searching = query.trim() !== '';
 
-  /** 全项目模式第一屏：中栏列项目（顺序与左栏项目列表一致）。搜索框走全局
-   *  检索的文件路（`/search`，跨项目窥视就绪索引，冷项目跳过）——命中行带
-   *  项目名，点击/Enter 直接落进该项目并定位到文件；命中前照旧列项目。 */
+  /** 全项目模式第一屏（中栏 = 项目列表）。搜索框走全局检索的文件路
+   *  （`/search`，跨项目窥视就绪索引，冷项目跳过）——命中行带项目名，
+   *  点击/Enter 直接落进该项目并定位到文件；命中前照旧列项目。 */
   const projectListShown = picked === null && !!projects;
+
+  /** 首屏（项目列表）聚焦项目的子目录只读预览：悬停/键盘聚焦哪条项目就列
+   *  哪个项目根下的直接子项；未聚焦（无选中）不加载。防抖避免扫过一串项目
+   *  时连打请求；进项目后这份账整个让位给真正的第三栏。 */
+  const focusedProject = projectListShown ? (projects ?? [])[projSelected] : undefined;
+  const [focusedSub, setFocusedSub] = useState<{ project: ProjectRow; entries: ProjectFileEntry[]; total: number } | null>(null);
+  useEffect(() => {
+    if (!projectListShown || !focusedProject || query.trim()) {
+      setFocusedSub(null);
+      return;
+    }
+    setFocusedSub(null);
+    const cached = dirCache.current.get(focusedProject.path);
+    if (cached) {
+      setFocusedSub({ project: focusedProject, ...cached });
+      return;
+    }
+    const timer = setTimeout(() => {
+      void api
+        .listProjectFiles(focusedProject.id, { dir: '', limit: 100 })
+        .then((listing) => {
+          const value = cacheSet(
+            dirCache.current,
+            focusedProject.path,
+            { entries: listing.entries, total: listing.total },
+            DIR_CACHE_MAX,
+          );
+          setFocusedSub({ project: focusedProject, ...value });
+        })
+        .catch(() => {});
+    }, SELECT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [projectListShown, focusedProject, query]);
+  const focusedSubPane = focusedSub ? (
+    <FinderColumnList
+      entries={focusedSub.entries}
+      loading={false}
+      activePath={null}
+    />
+  ) : (
+    <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
+      {t('tasks.filePreviewEmpty' as never)}
+    </div>
+  );
+
   const [fileHits, setFileHits] = useState<SearchFileHit[] | null>(null);
   const [hitsTruncated, setHitsTruncated] = useState(false);
   /** 键盘 handler（挂一次转闭包）读的命中快照。 */
@@ -1373,27 +1420,34 @@ export function FileBrowserModal({
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
             {projectList ? (
-              // 全项目模式第一屏：桌面三栏照摆（键盘第一拍就能用），中栏 = 项目
-              // 列表，左/预览栏空占位；窄屏一屏一栏（固定宽的三栏会互相挤没）。
+              // 全项目模式第一屏：桌面 2 栏 = 项目列表 | 聚焦项目的子目录
+              // （只读预览——鼠标只许看，进项目才可操作；未聚焦不加载）；窄屏
+              // 一屏一栏（固定宽的两栏会互相挤没）。
               isDesktop ? (
-                <FileColumnsBrowser
-                  parentCol={null}
-                  parentRootLabel={activeProjectName}
-                  middleCol={projectList}
-                  previewCol={null}
-                  leftW={leftW}
-                  onLeftResize={(d) => setLeftW(leftW + d)}
-                  previewW={previewW}
-                  onPreviewResize={(d) => setPreviewW(previewW - d)}
-                  showPreview={false}
-                />
+                <>
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
+                  {focusedSub ? (
+                    <>
+                      <Resizer
+                        onResize={(d) => setPreviewW(previewW - d)}
+                        title={t('app.resizePreview')}
+                      />
+                      <div
+                        className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06] bg-neutral-950/40"
+                        style={{ width: previewW }}
+                      >
+                        {focusedSubPane}
+                      </div>
+                    </>
+                  ) : null}
+                </>
               ) : (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
               )
             ) : isDesktop ? (
-              /* 恒 3 栏：左=父级列（根态空占位）| 中=当前操作列 | 右=下层预览。
-                  左列数据复用层级递进的账（不为此单独发请求）；列里点目录 =
-                  跳过去，下层区域即右侧预览栏。 */
+              /* 恒 3 栏：左=父级列（根态空占位）| 中=当前操作列 | 右=下层预览
+                  （选中条目才出现，未选中不占宽）。左列数据复用层级递进的账
+                  （不为此单独发请求）；列里点目录 = 跳过去，下层区域即右侧预览栏。 */
               <FileColumnsBrowser
                 parentCol={
                   finderCols.length > 0 ? (
@@ -1413,7 +1467,7 @@ export function FileBrowserModal({
                 previewCol={previewPane}
                 leftW={leftW}
                 onLeftResize={(d) => setLeftW(leftW + d)}
-                previewW={previewW}
+                previewW={current ? previewW : undefined}
                 onPreviewResize={(d) => setPreviewW(previewW - d)}
               />
             ) : (

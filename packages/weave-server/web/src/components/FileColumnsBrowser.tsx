@@ -45,7 +45,8 @@ export function useColumnWidths(key: string): {
 }
 
 /** 父级列的默认条目清单：目录行点击 = 进入（onOpen），文件行只给上下文
- *  （点文件没有去处）。`activePath` = 当前操作列正在展示的目录（高亮）。
+ *  （点文件没有去处）。`onOpen` 缺省 = 整列只读预览（首屏聚焦项目的子目录
+ *  视图——只许看，点了没去处）。`activePath` = 当前操作列正在展示的目录（高亮）。
  *  想换行渲染（勾选框、菜单…）就在引用方自己写一列，不经过这里。 */
 export function FinderColumnList({
   entries,
@@ -56,7 +57,7 @@ export function FinderColumnList({
   entries: ProjectFileEntry[];
   loading: boolean;
   activePath: string | null;
-  onOpen: (path: string) => void;
+  onOpen?: (path: string) => void;
 }) {
   const t = useT();
   return (
@@ -76,7 +77,7 @@ export function FinderColumnList({
             <button
               type="button"
               title={entry.path}
-              onClick={() => onOpen(entry.path)}
+              onClick={() => onOpen?.(entry.path)}
               className={cn(
                 'flex w-full items-center gap-2 px-2.5 py-1 text-left text-11',
                 entry.path === activePath
