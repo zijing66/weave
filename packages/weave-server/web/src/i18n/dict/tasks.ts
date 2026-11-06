@@ -432,6 +432,9 @@ export const tasksZh = {
   // 总览（默认不选编排：所有编排合并成一张图，只读；编辑入口在首节点卡片上）
   'orch.overviewAll': '全部编排',
   'orch.filterOrch': '筛选编排',
+  'orch.lrMode': 'LR 布局',
+  'orch.lrOn': '按拓扑分层从左往右展开（边带条件标注）',
+  'orch.lrOff': '回到自由布局（按项目分组）',
   'orch.overviewHint':
     '总览：所有编排合并成一张图（同一会话只摆一个节点）；点首节点卡片编辑该编排或新建；运行中待回节点带呼吸辉光、触发连线有流光',
   'orch.newFromEntry': '以此会话为入口新建编排',
@@ -1040,6 +1043,9 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   // Overview (nothing selected by default: all orchestrations merged into one read-only graph)
   'orch.overviewAll': 'All orchestrations',
   'orch.filterOrch': 'Filter orchestrations',
+  'orch.lrMode': 'LR layout',
+  'orch.lrOn': 'Layered left-to-right by topology (edges annotated with conditions)',
+  'orch.lrOff': 'Back to free layout (grouped by project)',
   'orch.overviewHint':
     'Overview — every orchestration merged into one graph (a session appears once); click an entry node’s card to edit its orchestration or create a new one; while a run is active, nodes with pending deliveries glow and triggered edges carry a travelling light',
   'orch.newFromEntry': 'New orchestration starting here',

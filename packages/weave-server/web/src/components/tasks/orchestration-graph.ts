@@ -163,7 +163,15 @@ export function ranksOf(
 export interface MergedOrchEdge {
   from: string;
   to: string;
-  pairs: { orchId: number; edgeId: string; text: string }[];
+  pairs: {
+    orchId: number;
+    edgeId: string;
+    text: string;
+    /** 文本预筛（LR 视图的边条件标注用）。 */
+    when?: string;
+    /** 放行条件（LR 视图的边条件标注用）。 */
+    condition?: string;
+  }[];
 }
 
 /**
@@ -195,7 +203,13 @@ export function mergeOrchestrations(
       if (!nodeById.has(edge.from) || !nodeById.has(edge.to)) continue;
       const key = `${edge.from}->${edge.to}`;
       const found = edgeByPair.get(key);
-      const pair = { orchId: block.orchId, edgeId: edge.id, text: edge.text };
+      const pair = {
+        orchId: block.orchId,
+        edgeId: edge.id,
+        text: edge.text,
+        when: edge.when,
+        condition: edge.condition,
+      };
       if (found) found.pairs.push(pair);
       else edgeByPair.set(key, { from: edge.from, to: edge.to, pairs: [pair] });
     }

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import type { OrchCanvasLayout, OrchLaidEdge } from './orchestration-canvas-layout';
+import { layoutOrchestrationLR } from './orchestration-lr-layout';
 import { sessionLabel } from '@/lib/hook-payload';
 import type { MergedOrchEdge } from './orchestration-graph';
 import { graphDirections, mergeOrchestrations } from './orchestration-graph';
@@ -45,12 +46,14 @@ export function useOrchOverview(deps: {
   liveRuns: ReadonlyMap<number, LiveRun>;
   /** 会话状态总线。 */
   statuses: ReadonlyMap<string, SessionStatus>;
+  /** LR 自动布局模式（卡片内视图态，不进 URL）。 */
+  lrMode: boolean;
   t: TFunc;
 }) {
   const {
     overview, laidOverview, flash, list, setEditing, setEdgeInfo, setEntryPick,
     openMessages, expandedGroups, setGroupTouched, liveRuns, statuses,
-    sessionById, projectName, t,
+    sessionById, projectName, lrMode, t,
   } = deps;
 
   // ---- 总览画布（未选编排）：合并图只读 + 实时动效；编辑入口在首节点卡片上 ----
@@ -77,6 +80,13 @@ export function useOrchOverview(deps: {
   const overviewFlowNodes: Node[] = useMemo(() => {
     if (!overview || !laidOverview) return [];
     const now = Date.now();
+    // LR 模式：拓扑分层铺平（不按项目分组、不收起）——x = 第几波，y = 层内位次。
+    const lr = lrMode ? layoutOrchestrationLR(overview.nodes, overview.edges) : null;
+    const lrPosOf = (nodeId: string): { x: number; y: number } | null => {
+      if (!lr) return null;
+      const p = lr.positions.get(nodeId);
+      return p ? { x: p.x, y: p.y } : null;
+    };
     const hasIn = new Set(overview.edges.map((e) => e.to));
     const labelOf = (id: string): string =>
       id.startsWith('w:')
@@ -96,7 +106,9 @@ export function useOrchOverview(deps: {
           neighbor: edge.to,
           hint: `hook${i + 1} → ${labelOf(edge.to)}`,
         }));
-    return laidOverview.laid.nodes.map((n) => {
+    const built = laidOverview.laid.nodes.map((n) => {
+      const lrPos = lrPosOf(n.nodeId ?? '');
+      if (lrMode && lrPos == null) return null;
       if (n.kind === 'group') {
         const pid = n.projectId ?? 0;
         return {
@@ -197,6 +209,13 @@ export function useOrchOverview(deps: {
         },
       } satisfies Node;
     });
+    return built
+      .filter((n): n is NonNullable<(typeof built)[number]> => n != null)
+      .map((n) => {
+        const lrPos = lrPosOf(orchIdOfRenderKey(n.id) ?? '');
+        if (!lrPos) return n;
+          return lrPos ? { ...n, position: lrPos } : n;
+      });
   }, [
     overview,
     laidOverview,
@@ -208,6 +227,7 @@ export function useOrchOverview(deps: {
     openMessages,
     entryOrchestrations,
     expandedGroups,
+    lrMode,
     t,
   ]);
 
@@ -217,29 +237,44 @@ export function useOrchOverview(deps: {
     // 合并边按端点对回查（laid 的 edgeIds 就是合成的 `${from}->${to}`）。
     const pairByKey = new Map<string, MergedOrchEdge>();
     for (const e of overview.edges) pairByKey.set(`${e.from}->${e.to}`, e);
-    return laidOverview.laid.edges.map((e: OrchLaidEdge): Edge => {
-      const merged = pairByKey.get(e.edgeIds[0] ?? '');
-      const hot =
-        merged?.pairs.some((p) => (flash[`o${p.orchId}:e:${p.edgeId}`] ?? 0) > now) ?? false;
-      const text = merged?.pairs.find((p) => p.text.trim())?.text ?? '';
-      const fromId = orchIdOfRenderKey(e.from);
-      const toId = orchIdOfRenderKey(e.to);
-      return {
-        id: e.key,
-        source: e.from,
-        target: e.to,
-        ...(fromId != null && toId != null
-          ? { sourceHandle: `out:${toId}`, targetHandle: `in:${fromId}` }
-          : {}),
-        type: 'orchFlow',
-        animated: hot,
-        interactionWidth: 24,
-        data: { hot, ...(text ? { label: text } : {}) },
-        style: hot ? { stroke: '#2dd4bf', strokeWidth: 2 } : { strokeWidth: 1.5 },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-      };
-    });
-  }, [overview, laidOverview, flash]);
+    // LR 模式下节点集合变了（分组框退场），端点不在面上的边跟着退。
+    const lrNodeIds = lrMode
+      ? new Set(laidOverview.laid.nodes.filter((n) => n.kind !== 'group').map((n) => n.key))
+      : null;
+    return laidOverview.laid.edges
+      .filter((e) => lrNodeIds == null || (lrNodeIds.has(e.from) && lrNodeIds.has(e.to)))
+      .map((e: OrchLaidEdge): Edge => {
+        const merged = pairByKey.get(e.edgeIds[0] ?? '');
+        const hot =
+          merged?.pairs.some((p) => (flash[`o${p.orchId}:e:${p.edgeId}`] ?? 0) > now) ?? false;
+        const text = merged?.pairs.find((p) => p.text.trim())?.text ?? '';
+        const fromId = orchIdOfRenderKey(e.from);
+        const toId = orchIdOfRenderKey(e.to);
+        // LR 视图的边条件标注：when 预筛 / condition 放行一眼可见（⌕ = 预筛、⚖ = 判断）。
+        const gated = lrMode
+          ? merged?.pairs.filter((p) => p.when?.trim() || p.condition?.trim()) ?? []
+          : [];
+        const gateLabel = gated
+          .map((p) => [p.when?.trim() ? `⌕ ${p.when.trim()}` : '', p.condition?.trim() ? `⚖ ${p.condition.trim()}` : ''].filter(Boolean).join(' '))
+          .filter(Boolean)
+          .join(' / ');
+        const label = [text, gateLabel].filter(Boolean).join('\n');
+        return {
+          id: e.key,
+          source: e.from,
+          target: e.to,
+          ...(fromId != null && toId != null
+            ? { sourceHandle: `out:${toId}`, targetHandle: `in:${fromId}` }
+            : {}),
+          type: 'orchFlow',
+          animated: hot,
+          interactionWidth: 24,
+          data: { hot, ...(label ? { label } : {}) },
+          style: hot ? { stroke: '#2dd4bf', strokeWidth: 2 } : { strokeWidth: 1.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+        };
+      });
+  }, [overview, laidOverview, flash, lrMode]);
 
   return { enterOrchestration, entryOrchestrations, pickEntry, overviewFlowNodes, overviewFlowEdges };
 }
