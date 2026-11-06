@@ -2023,11 +2023,11 @@ export function SessionMessages({
                   {t('tasks.msgNewline')}
                 </button>
               </Tooltip>
-              {/* 停止 / 发送（+ 通道下拉）：靠右。窄屏输入框独占一行、这三枚钮折到
-                  第二行靠右（`ml-auto`，与左边那枚换行分开拇指够得到的两头）；
-                  桌面并排一行。停止与事件链组头同一判据与 fb 键。通道下拉贴着
-                  发送键——它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
-              <div ref={sendGroupRef} className="flex shrink-0 items-center gap-1 max-lg:ml-auto">
+              {/* 停止 / 发送（+ 通道下拉）：靠右、纵向一列（少占横向，输入框多吃宽度）。
+                  窄屏输入框独占一行、这列折到下一行靠右（`ml-auto`，与左边那枚换行
+                  分开拇指够得到的两头）。停止与事件链组头同一判据与 fb 键。通道下拉
+                  贴着发送键——它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
+              <div ref={sendGroupRef} className="flex shrink-0 flex-col items-center gap-1 max-lg:ml-auto">
                 {/* 停止 = 一枚 ESC 键帽：位置恒在（进出会拉动旁边的发送键），尺寸恒方
                     （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；**恒可点**
                     （宿主里 ESC 后面还要接 rewind，这一枚就是那记键），只在点完之后
