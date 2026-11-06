@@ -15,7 +15,7 @@ import {
   type GlobalSkillSource,
   type InstallCapabilities,
 } from '@/lib/api';
-import { registerInvalidator, subscribeFrame, subscribeHook } from '@/lib/sse';
+import { registerInvalidator, subscribeFrame, subscribeHook, sseConnected, subscribeSseConnection } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { notifyBrowser } from '@/lib/browser-notify';
 import { useProjects } from '@/hooks/use-projects';
@@ -60,6 +60,42 @@ const LEFT_MIN = 176;
 const LEFT_MAX = 320;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
+/** 启动页各路信号的兜底窗：某一路挂住也不能把启动页焊在屏上。 */
+const BOOT_STAGE_FALLBACK_MS = 8_000;
+
+/**
+ * 启动四阶段汇聚：认证探测 → 项目 → 会话 → 实时通道。只答「完成几步、走到
+ * 哪一步」，文案是功能描述、不透接口细节；任一路 8s 内没回音按就位算（启动页
+ * 不许焊死）。
+ */
+function useBootProgress(): { progress: number; stage: 'link' | 'projects' | 'sessions' | 'live' } {
+  const auth = useAuthState();
+  const [live, setLive] = useState(sseConnected());
+  useEffect(() => subscribeSseConnection(() => setLive(sseConnected())), []);
+  const { sessions } = useSessionStatus();
+  const [sessionsFallback, setSessionsFallback] = useState(false);
+  const [liveFallback, setLiveFallback] = useState(false);
+  // 兜底计时从「认证有结果」起算：登录页路径根本不看后两步
+  useEffect(() => {
+    if (auth !== 'authenticated') return;
+    const timer = setTimeout(() => {
+      setSessionsFallback(true);
+      setLiveFallback(true);
+    }, BOOT_STAGE_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [auth]);
+  const stages = [auth !== 'unknown', sessions !== null || sessionsFallback, live || liveFallback] as const;
+  const done = (auth !== 'unknown' ? 1 : 0) + stages.slice(1).filter(Boolean).length;
+  const stage = !stages[0]
+    ? 'link'
+    : !stages[1]
+      ? 'projects'
+      : !stages[2]
+        ? 'sessions'
+        : 'live';
+  return { progress: done / 4, stage };
+}
+
 /** 「n 个更新」展开面的一行。 */
 interface UpdateRow {
   kind: MessageKey;
@@ -76,6 +112,7 @@ const UPDATE_SCOPE_KEY = { project: 'skillGrid.scopeProject', user: 'skillGrid.s
  */
 export default function App() {
   const auth = useAuthState();
+  const t = useT();
   useEffect(() => {
     void refreshAuth();
   }, []);
@@ -83,11 +120,16 @@ export default function App() {
   // 或「dashboard 首份数据就位」——换挂载点会让那段生长动画重头再来一遍。
   const [bootReady, setBootReady] = useState(false);
   const handleBootReady = useCallback(() => setBootReady(true), []);
+  // useBootProgress 里 useSessionStatus 要 Provider 在——App 本就包在 SessionStatusProvider 内，直接调
+  const { progress, stage } = useBootProgress();
+  const anonymous = auth === 'anonymous';
+  const dataReady = auth === 'authenticated' && bootReady && progress >= 1;
+  const stageLabel = t(`app.bootStage.${anonymous || auth === 'unknown' ? 'link' : stage}` as MessageKey);
   return (
     <>
-      {auth === 'anonymous' && <LoginPage />}
+      {anonymous && <LoginPage />}
       {auth === 'authenticated' && <Dashboard onBootReady={handleBootReady} />}
-      <BootSplash ready={auth === 'anonymous' || (auth === 'authenticated' && bootReady)} />
+      <BootSplash ready={anonymous || dataReady} progress={anonymous ? 1 : progress} stageLabel={stageLabel} />
     </>
   );
 }

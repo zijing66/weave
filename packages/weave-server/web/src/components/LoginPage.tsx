@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { HelpCircle } from 'lucide-react';
 import { AuthError, login } from '@/lib/auth';
 import { useT } from '@/i18n/I18nProvider';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { Tooltip } from '@/components/ui/tooltip';
 import { WeaveMark } from '@/components/WeaveLogo';
 
 /**
@@ -45,19 +47,31 @@ export function LoginPage() {
         </div>
         {/* 登录凭据的**唯一**归属框：current-password 让浏览器把保存的密码稳定填这里；
             设置里的 API key 输入已标为非凭据（见 SettingsModal），两者不再互抢。 */}
-        <input
-          type="password"
-          value={password}
-          autoFocus
-          autoComplete="current-password"
-          name="weaveDashboardPassword"
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder={t('auth.passwordPlaceholder')}
-          className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
-        />
+        <div className="relative">
+          <input
+            type="password"
+            value={password}
+            autoFocus
+            autoComplete="current-password"
+            name="weaveDashboardPassword"
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={t('auth.passwordPlaceholder')}
+            className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-3 pr-9 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
+          />
+          {/* chpass 提示收进「?」：图标与输入框行同高（py-2 行内垂直居中） */}
+          <Tooltip label={t('auth.hint')} side="bottom" className="absolute right-2 top-1/2 -translate-y-1/2">
+            <span
+              role="img"
+              aria-label={t('auth.hint')}
+              className="flex h-5 w-5 cursor-help items-center justify-center text-neutral-600 transition-colors hover:text-neutral-400"
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+            </span>
+          </Tooltip>
+        </div>
         <button
           type="submit"
           disabled={state === 'loading' || password === ''}
@@ -66,7 +80,6 @@ export function LoginPage() {
           <FeedbackIcon state={state} />
           {t('auth.login')}
         </button>
-        <p className="mt-4 text-11 leading-relaxed text-neutral-600">{t('auth.hint')}</p>
       </form>
     </div>
   );
