@@ -202,7 +202,13 @@ export async function createSessionWorktree(
   sessionId: string,
   exec: WorktreeGitExec = defaultWorktreeGitExec,
 ): Promise<CreateWorktreeResult> {
-  const check = await exec('git', ['rev-parse', '--show-toplevel'], { cwd: projectPath });
+  let check: GitResult;
+  try {
+    check = await exec('git', ['rev-parse', '--show-toplevel'], { cwd: projectPath });
+  } catch (e) {
+    // git 缺席（ENOENT 由 exec 抛）：环境不支持——与「非 git 仓」同一面（409/置灰），不炸
+    return { ok: false, unsupported: true, error: e instanceof Error ? e.message : 'git unavailable' };
+  }
   if (check.code !== 0) {
     return { ok: false, unsupported: true, error: 'not inside a git repository' };
   }
