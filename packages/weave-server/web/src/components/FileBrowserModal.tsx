@@ -796,7 +796,9 @@ export function FileBrowserModal({
     };
   }, [query, projectListShown]);
 
-  const projectList = projectListShown ? (
+  /** 项目列表（虚拟根目录层）：桌面左栏与窄屏左屏共用，恒可用——进项目后
+   *  它退居左栏（只换高亮），不是消失。 */
+  const projectList = projectRows.length > 0 ? (
     <ul
       ref={projScrollRef}
       role="listbox"
@@ -813,7 +815,7 @@ export function FileBrowserModal({
             <li className="px-3 py-6 text-11 text-neutral-500">{t('search.empty')}</li>
           )}
           {fileHits.map((hit, i) => {
-            const proj = projects.find((p) => p.id === hit.projectId);
+            const proj = projectRows.find((p) => p.id === hit.projectId);
             return (
               <li key={`${hit.projectId}:${hit.path}`}>
                 <button
@@ -1393,33 +1395,21 @@ export function FileBrowserModal({
             键盘操作（↑↓/Enter）从第一拍起就是主路径。 */}
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
-            {projectListShown && isDesktop ? (
-              // 桌面恒 3 栏（项目列表=虚拟根，见下）：未点项目时中栏摆提示。
+            {isDesktop ? (
+              // 桌面恒 3 栏（项目列表=虚拟根，恒驻左栏）：未点项目时中栏摆提示，
+              // 点了项目中栏切进该项目的文件树。
               <FileColumnsBrowser
                 parentCol={projectList}
                 parentRootLabel={t('app.openFileBrowser')}
                 middleCol={
-                  <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
-                    {t('tasks.filePreviewEmpty')}
-                  </div>
+                  picked ? (
+                    list
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
+                      {t('tasks.filePreviewEmpty')}
+                    </div>
+                  )
                 }
-                previewCol={null}
-                leftW={leftW}
-                onLeftResize={(d) => setLeftW(leftW + d)}
-                onPreviewResize={(d) => setPreviewW(previewW - d)}
-              />
-            ) : projectList ? (
-              // 窄屏一屏一栏。
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-            ) : isDesktop ? (
-              /* 恒 3 栏：左=项目列表（虚拟根目录，恒驻）| 中=当前项目文件树
-                  | 右=下层预览（选中条目才出现，未选中不占宽）。项目列表就是
-                  第一层：点项目 = 中栏切进该项目的树；列里点目录 = 跳过去，
-                  下层区域即右侧预览栏。 */
-              <FileColumnsBrowser
-                parentCol={projectList}
-                parentRootLabel={t('app.openFileBrowser')}
-                middleCol={list}
                 previewCol={previewPane}
                 leftW={leftW}
                 onLeftResize={(d) => setLeftW(leftW + d)}
@@ -1434,12 +1424,10 @@ export function FileBrowserModal({
                 leftLabel={t('app.openFileBrowser')}
                 listLabel={activeProjectName}
                 previewLabel={current?.name ?? activeProjectName}
+                onLeftResize={(d) => setLeftW(leftW + d)}
+                onPreviewResize={(d) => setPreviewW(previewW - d)}
               >
-                {projectListShown ? (
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-                ) : (
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
-                )}
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 {previewPane}
               </MobileFadePanels>

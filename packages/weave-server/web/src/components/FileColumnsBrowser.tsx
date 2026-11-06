@@ -6,6 +6,9 @@ import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { HeadBadge, iconFor } from './tasks/FilePicker';
 
+/** 分界线强度：半透 edge 色随主题翻白/翻黑，深浅色下视觉强度一致。 */
+const COL_DIVIDER = 'border-edge/[0.18]';
+
 // ---- 恒 3 栏文件浏览骨架（macOS Finder column view 的几何层）----
 // 左 = 父级列（根态空占位）| 中 = 当前操作列 | 右 = 预览列。
 // 列内容与行交互全部由引用方自定义渲染（FileItem / filePreview 各页面自理），
@@ -150,7 +153,7 @@ export function FileColumnsBrowser({
   return (
     <>
       <div
-        className="flex h-full min-w-0 shrink-0 flex-col border-r border-edge/[0.06]"
+        className="flex h-full min-w-0 shrink-0 flex-col border-r border-edge/[0.18]"
         style={{ width: leftW }}
       >
         {parentCol ?? <RootPlaceholderCol label={parentRootLabel} />}
@@ -158,12 +161,12 @@ export function FileColumnsBrowser({
       <Resizer onResize={onLeftResize} title={t('app.resizeLeft')} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">{middleCol}</div>
       {previewW === undefined ? (
-        <div className="flex w-2/5 shrink-0 flex-col border-l border-edge/[0.06]">{previewCol}</div>
+        <div className="flex w-2/5 shrink-0 flex-col border-l border-edge/[0.18]">{previewCol}</div>
       ) : (
         <>
           <Resizer onResize={onPreviewResize ?? (() => {})} title={t('app.resizePreview')} />
           <div
-            className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]"
+            className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.18]"
             style={{ width: previewW }}
           >
             {showPreview ? previewCol : <RootPlaceholderCol label="" />}
@@ -179,12 +182,16 @@ export function FileColumnsBrowser({
 /** 窄屏的渐入渐出多面板：各屏常驻（保持滚动位置与状态），活动屏全宽不透明、
  *  非活动屏收成侧边一条标签（点它切换，透明度过渡，不硬切）。
  *  三栏语义：活动屏就是当前可操作栏；左右栏的标签点击 = 把那一栏切过来变成
- *  可操作栏（与 macOS Finder 移动端一致），标签自身恒在屏幕边缘可回切。 */
+ *  可操作栏（与 macOS Finder 移动端一致），标签自身恒在屏幕边缘可回切。
+ *  景深：非活动屏半透明 + 轻微缩小 + 模糊（远处的层），活动屏实色 + 阴影
+ *  （浮起的层）——切换时 opacity/scale 过渡，层次感由此而来。 */
 export function MobileFadePanels({
   active,
   leftLabel,
   listLabel,
   previewLabel,
+  onLeftResize,
+  onPreviewResize,
   children,
 }: {
   /** 当前活动屏：'list'（中栏）/ 'left'（左栏）/ 'preview'（右栏）。 */
@@ -192,79 +199,93 @@ export function MobileFadePanels({
   leftLabel: string;
   listLabel: string;
   previewLabel: string;
+  /** 拖动分界 = 调左/右栏记忆宽度（触屏也有拖动调区）。 */
+  onLeftResize?: (delta: number) => void;
+  onPreviewResize?: (delta: number) => void;
   /** 恰好三个面板：[左栏, 中栏, 右栏]。 */
   children: [ReactNode, ReactNode, ReactNode];
 }) {
   const [left, list, preview] = children;
+  const t = useT();
   const row = 'flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-11';
   const switchTo = (pane: string): void => {
     window.dispatchEvent(new CustomEvent('weave:mobile-pane', { detail: pane }));
   };
-  const hidden = 'w-0 overflow-hidden opacity-0';
-  const shown = 'flex-1 opacity-100';
+  /** 远处的层：半透明可见 + 缩小 + 模糊（景深），不可交互（pointer-events 关）。 */
+  const back =
+    'w-0 min-w-0 overflow-hidden opacity-30 scale-[0.97] blur-[1px] pointer-events-none';
+  /** 眼前的层：全宽实色 + 投影浮起。 */
+  const front = 'flex-1 opacity-100 scale-100 z-10 shadow-mac-lg';
+  const paneCls = (isActive: boolean): string =>
+    cn(
+      'flex min-h-0 min-w-0 flex-col transition-all duration-300 ease-mac',
+      COL_DIVIDER,
+      isActive ? front : back,
+      'border-r',
+    );
+  const tabCls = cn(row, 'shrink-0 text-neutral-400 hover:text-neutral-100 max-[380px]:px-1.5');
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      {/* 左栏屏：活动 = 全宽可见；非活动 = 收成左侧一条（仍挂载着，状态不丢） */}
-      <div
-        className={cn(
-          'flex min-h-0 min-w-0 flex-col border-r border-edge/[0.06] transition-opacity duration-200',
-          active === 'left' ? shown : hidden,
-        )}
-      >
-        {left}
-      </div>
+      {/* 左栏屏 */}
+      <div className={paneCls(active === 'left')}>{left}</div>
       {active !== 'left' && (
-        <button
-          type="button"
-          onClick={() => switchTo('left')}
-          className={cn(row, 'shrink-0 text-neutral-300 hover:text-neutral-100')}
-        >
-          <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
-          <span className="max-w-24 truncate">{leftLabel}</span>
-          <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
-        </button>
+        <>
+          {onLeftResize && (
+            <Resizer
+              onResize={onLeftResize}
+              orientation="horizontal"
+              className="w-2 max-lg:w-2.5"
+              title={t('app.resizeLeft')}
+            />
+          )}
+          <button type="button" onClick={() => switchTo('left')} className={tabCls}>
+            <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
+            <span className="max-w-20 truncate">{leftLabel}</span>
+            <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
+          </button>
+        </>
       )}
       {/* 中栏屏 */}
-      <div
-        className={cn(
-          'flex min-h-0 min-w-0 flex-col border-r border-edge/[0.06] transition-opacity duration-200',
-          active === 'list' ? shown : hidden,
-        )}
-      >
+      <div className={cn(paneCls(active === 'list'), active !== 'preview' && 'border-r')}>
         {list}
       </div>
       {active !== 'list' && (
-        <button
-          type="button"
-          onClick={() => switchTo('list')}
-          className={cn(row, 'shrink-0 text-neutral-300 hover:text-neutral-100')}
-        >
-          <span className="max-w-24 truncate">{listLabel}</span>
-          {active === 'left' ? (
-            <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
-          ) : (
-            <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
+        <>
+          {onLeftResize && (
+            <Resizer
+              onResize={onLeftResize}
+              orientation="horizontal"
+              className="w-2 max-lg:w-2.5"
+              title={t('app.resizeLeft')}
+            />
           )}
-        </button>
+          <button type="button" onClick={() => switchTo('list')} className={tabCls}>
+            <span className="max-w-20 truncate">{listLabel}</span>
+            {active === 'left' ? (
+              <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
+            ) : (
+              <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
+            )}
+          </button>
+        </>
       )}
-      {/* 右栏屏（预览）：同构反向 */}
-      <div
-        className={cn(
-          'flex min-h-0 min-w-0 flex-col transition-opacity duration-200',
-          active === 'preview' ? shown : hidden,
-        )}
-      >
-        {preview}
-      </div>
+      {/* 右栏屏（预览）：最外侧无边 */}
+      <div className={cn(paneCls(active === 'preview'), 'border-r-0')}>{preview}</div>
       {active !== 'preview' && (
-        <button
-          type="button"
-          onClick={() => switchTo('preview')}
-          className={cn(row, 'shrink-0 text-neutral-300 hover:text-neutral-100')}
-        >
-          <span className="max-w-24 truncate">{previewLabel}</span>
-          <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
-        </button>
+        <>
+          {onPreviewResize && (
+            <Resizer
+              onResize={onPreviewResize}
+              orientation="horizontal"
+              className="w-2 max-lg:w-2.5"
+              title={t('app.resizePreview')}
+            />
+          )}
+          <button type="button" onClick={() => switchTo('preview')} className={tabCls}>
+            <span className="max-w-20 truncate">{previewLabel}</span>
+            <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
+          </button>
+        </>
       )}
     </div>
   );
