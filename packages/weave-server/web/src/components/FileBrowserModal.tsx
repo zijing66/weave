@@ -1392,11 +1392,11 @@ export function FileBrowserModal({
                     title={t('app.resizeLeft')}
                   />
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-                  <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }} />
                   <Resizer
                     onResize={(d) => setPreviewW((w) => Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, w - d)))}
                     title={t('app.resizePreview')}
                   />
+                  <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }} />
                 </>
               ) : (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
@@ -1456,13 +1456,13 @@ export function FileBrowserModal({
                   title={t('app.resizeLeft')}
                 />
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
-                <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }}>
-                  {previewPane}
-                </div>
                 <Resizer
                   onResize={(d) => setPreviewW((w) => Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, w - d)))}
                   title={t('app.resizePreview')}
                 />
+                <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }}>
+                  {previewPane}
+                </div>
               </>
             ) : screen === 'list' ? (
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
