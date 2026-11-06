@@ -8,6 +8,7 @@ import {
   type HookRule,
   type MessagingCapability,
   type ProjectHarness,
+  type PromptLimits,
   type SessionWatchRow,
   type TerminalTarget,
   type WatchOn,
@@ -350,8 +351,16 @@ export function TasksPanel({
   // 唯一真源——web 只渲染不判定，不写死 harness 白名单。完整表不过滤（不支持
   // 的面也在），行内各按钮按字段自取。
   const [messagingCaps, setMessagingCaps] = useState<MessagingCapability[] | null>(null);
+  // prompt 长度策略（core 常量的服务端投影）：输入框预检与「将整块粘贴」提示都用它
+  const [promptLimits, setPromptLimits] = useState<PromptLimits | null>(null);
   const refreshMessagingCaps = useCallback(() => {
-    api.messagingCapabilities().then(setMessagingCaps).catch(() => {});
+    api
+      .messagingCapabilities()
+      .then((r) => {
+        setMessagingCaps(r.capabilities);
+        setPromptLimits(r.promptLimits);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => {
     refreshMessagingCaps();
@@ -1311,6 +1320,7 @@ export function TasksPanel({
           label={c.label}
           projectLabel={projectLabel}
           capability={c.capability}
+          promptLimits={promptLimits}
           minimized={c.sessionId !== selectedId}
           answerPending={!!questionOf(c.sessionId)}
           onOpenAnswer={() => setAnswerFor(c.sessionId)}

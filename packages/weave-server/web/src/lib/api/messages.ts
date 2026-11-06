@@ -78,6 +78,13 @@ export interface MessagingCapability {
   > | null;
 }
 
+/** prompt 长度策略（core 常量的服务端投影）：≤ pasteThreshold 走直投层序，超过
+ *  一律层② 整块粘贴；超过 maxChars 本就发不出去。web 只照这里给的数判定。 */
+export interface PromptLimits {
+  maxChars: number;
+  pasteThreshold: number;
+}
+
 /** mirror of `WatchOn` in packages/weave-server/src/repositories/session-watches.ts。 */
 export type WatchOn = 'idle' | 'turnEnd' | 'messageFailed';
 
@@ -191,11 +198,13 @@ export const messageApi = {
     apiFetch(`/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/dismiss`, {
       method: 'POST',
     }),
-  /** 消息能力矩阵（服务端 MessagingSurface 纯派生，无第二事实源）。 */
-  messagingCapabilities: (): Promise<MessagingCapability[]> =>
-    apiFetch<{ capabilities: MessagingCapability[] }>('/messaging/capabilities').then(
-      (r) => r.capabilities,
-    ),
+  /** 消息能力矩阵（服务端 MessagingSurface 纯派生，无第二事实源）+ prompt 长度策略。 */
+  messagingCapabilities: (): Promise<{
+    capabilities: MessagingCapability[];
+    promptLimits: PromptLimits;
+  }> => apiFetch<{ capabilities: MessagingCapability[]; promptLimits: PromptLimits }>(
+    '/messaging/capabilities',
+  ),
   /** 阻塞问答待答面（AskUserQuestion / 计划确认 / 权限确认的实时状态）。 */
   listQuestions: (): Promise<PendingQuestionEntry[]> =>
     apiFetch<{ questions: PendingQuestionEntry[] }>('/messaging/questions').then(

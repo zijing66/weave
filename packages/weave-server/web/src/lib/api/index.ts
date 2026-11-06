@@ -93,6 +93,7 @@ export type {
 export type {
   SessionMessageRow,
   MessagingCapability,
+  PromptLimits,
   WatchOn,
   SessionWatchRow,
   PendingQuestionOption,

@@ -8,6 +8,7 @@ import {
   type CommandInputModeRow,
   type HarnessCommandRow,
   type MessagingCapability,
+  type PromptLimits,
   type UploadFile,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
@@ -131,6 +132,7 @@ export function SessionMessages({
   label,
   projectLabel,
   capability,
+  promptLimits,
   answerPending,
   onOpenAnswer,
   onInterrupt,
@@ -150,6 +152,8 @@ export function SessionMessages({
   projectLabel: string;
   /** 该会话 harness 的能力行（TasksPanel 从能力矩阵按 harness 取）。 */
   capability: MessagingCapability;
+  /** prompt 长度策略（服务端下发；未就绪 null = 不预检、不提示）。 */
+  promptLimits: PromptLimits | null;
   /** 本会话被阻塞问答挂起（弹窗状态归 TasksPanel，与会话行图标/组头 tag 同一份）。 */
   answerPending?: boolean;
   /** 开作答弹窗：尾部那枚「回答」按钮（关掉不丢入口，答完待答面没了按钮随之消失）。 */
@@ -415,6 +419,7 @@ export function SessionMessages({
   const { stageFiles, unstage, send, queueActions } = useConvQueue({
     sessionId,
     attachKinds,
+    promptLimits,
     staged,
     setStaged,
     draftRef,
@@ -2185,6 +2190,11 @@ export function SessionMessages({
                 </div>
               </div>
             </div>
+            {/* 超阈值不拦，但如实说一声：正文会整块粘贴投递（宿主折叠成 paste 块），
+                不是一串逐字击键。按镜像 draft 判，与发送时服务端的判据同为按字数。 */}
+            {promptLimits && !asking && draft.length > promptLimits.pasteThreshold && (
+              <p className="px-1 text-11 text-neutral-500">{t('tasks.msgWillPaste')}</p>
+            )}
           </div>
         )}
 

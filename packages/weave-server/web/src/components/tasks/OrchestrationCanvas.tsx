@@ -23,6 +23,7 @@ import type { Harness } from '@weavecode/core/harness';
 import {
   api,
   type MessagingCapability,
+  type PromptLimits,
   type NotifyChannelRow,
   type OrchestrationNode,
   type OrchestrationRow,
@@ -126,10 +127,15 @@ export function OrchestrationCanvas({
   // 消息能力矩阵（服务端 MessagingSurface 纯派生）：可编排的会话 = 有 prompt
   // 通道的那些（引擎只用 prompt 通道），web 不写死 harness 白名单。
   const [messagingCaps, setMessagingCaps] = useState<MessagingCapability[] | null>(null);
+  // prompt 长度策略（画布弹出的对话面板与任务面板同一份口径）
+  const [promptLimits, setPromptLimits] = useState<PromptLimits | null>(null);
   useEffect(() => {
     api
       .messagingCapabilities()
-      .then(setMessagingCaps)
+      .then((r) => {
+        setMessagingCaps(r.capabilities);
+        setPromptLimits(r.promptLimits);
+      })
       .catch(() => {});
   }, []);
   const capabilityMap = useMemo(() => {
@@ -1865,6 +1871,7 @@ export function OrchestrationCanvas({
           label={messagesTarget.label}
           projectLabel={messagesTarget.projectLabel}
           capability={messagesTarget.capability}
+          promptLimits={promptLimits}
           minimized={messagesTarget.minimized}
           onInterrupt={onInterrupt}
           interruptStateOf={interruptStateOf}

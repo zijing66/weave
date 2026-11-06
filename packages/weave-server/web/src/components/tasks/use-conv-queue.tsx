@@ -27,6 +27,8 @@ export function useConvQueue(deps: {
   sessionId: string;
   /** 附件面收哪些类型（能力面；daemon 未升级缺席 = 不收）。 */
   attachKinds: string[];
+  /** prompt 长度策略（服务端下发；未就绪 null = 不预检）。 */
+  promptLimits: { maxChars: number; pasteThreshold: number } | null;
   /** 附件暂存（主组件持有：草稿快照与 queue 两域共用）。 */
   staged: StagedFile[];
   setStaged: Dispatch<SetStateAction<StagedFile[]>>;
@@ -47,7 +49,7 @@ export function useConvQueue(deps: {
   /** 队尾那条还没送出去的（出队按钮只给它）。 */
   newestQueuedId: string | undefined;
 }) {
-  const { sessionId, attachKinds, staged, setStaged, draftRef, setDraft, setDraftText, insertAttach, stick, fb, t, show, refreshMessages, setMessages, newestQueuedId } = deps;
+  const { sessionId, attachKinds, promptLimits, staged, setStaged, draftRef, setDraft, setDraftText, insertAttach, stick, fb, t, show, refreshMessages, setMessages, newestQueuedId } = deps;
 
   // 引用拉起：服务端真判死才发这一帧（拉最长 15s），把本会话最后一条本地乐观行
   // 改显「拉起会话中」——不必干等 POST 返回，也不会在目标活着时误报。
@@ -176,6 +178,11 @@ const send = (): void => {
   const doneStaged = staged.filter((s) => s.state === 'done' && s.upload);
   const files = doneStaged.map((s) => s.upload!);
   if (!text && files.length === 0) return;
+  // 硬顶预检：不发请求、不建乐观行，草稿与附件原样留着（拆小或改引用文件再发）
+  if (promptLimits && text.length > promptLimits.maxChars) {
+    show('error', t('tasks.msgTooLong', { max: String(promptLimits.maxChars) }));
+    return;
+  }
   setDraftText('');
   setStaged((s) => s.filter((x) => x.state !== 'done' || !x.upload));
   stick.current = true; // 自己发的必然要看一眼，不因正翻历史而沉在底下
