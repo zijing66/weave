@@ -1420,26 +1420,22 @@ export function FileBrowserModal({
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
             {projectList ? (
-              // 全项目模式第一屏：桌面 2 栏 = 项目列表 | 聚焦项目的子目录
-              // （只读预览——鼠标只许看，进项目才可操作；未聚焦不加载）；窄屏
-              // 一屏一栏（固定宽的两栏会互相挤没）。
+              // 全项目模式第一屏：桌面 2 栏常显 = 项目列表 | 聚焦项目的子目录
+              // （只读预览——鼠标只许看，进项目才可操作）；第二栏只在点了/聚焦
+              // 了项目才加载数据，空着摆提示。窄屏一屏一栏。
               isDesktop ? (
                 <>
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-                  {focusedSub ? (
-                    <>
-                      <Resizer
-                        onResize={(d) => setPreviewW(previewW - d)}
-                        title={t('app.resizePreview')}
-                      />
-                      <div
-                        className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06] bg-neutral-950/40"
-                        style={{ width: previewW }}
-                      >
-                        {focusedSubPane}
-                      </div>
-                    </>
-                  ) : null}
+                  <Resizer
+                    onResize={(d) => setPreviewW(previewW - d)}
+                    title={t('app.resizePreview')}
+                  />
+                  <div
+                    className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06] bg-neutral-950/40"
+                    style={{ width: previewW }}
+                  >
+                    {focusedSubPane}
+                  </div>
                 </>
               ) : (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
