@@ -91,7 +91,15 @@ const deliverer = (
   const setLastOutput = (value: { output: string; at: string } | null): void => {
     lastOutput = value;
   };
-  return { send, awaitInboxReady, lastTurnOutput, setLastOutput };
+  // 诱导登记的假实现：行为对齐 MessageDeliverer（登记 → 一次性核销）。
+  const inductions = new Set<string>();
+  const registerInduction = vi.fn((sessionId: string) => inductions.add(sessionId));
+  const consumeInduction = vi.fn((sessionId: string) => {
+    const had = inductions.has(sessionId);
+    inductions.delete(sessionId);
+    return had;
+  });
+  return { send, awaitInboxReady, lastTurnOutput, setLastOutput, registerInduction, consumeInduction };
 };
 
 const setup = (
@@ -602,6 +610,40 @@ describe('自然回合自动触发', () => {
     expect(runs.listRunning().some((r) => r.orchestrationName === 'y')).toBe(false);
     expect(d.send.mock.calls.length).toBe(sendsBefore + 1);
     expect(d.send.mock.calls.at(-1)![0].toSessionId).toBe('c');
+  });
+
+  it('编排拉起的会话：登记一次性核销，消费完 pending 后的首个独立收尾不算自然回合（超 60s 也不误判）', async () => {
+    const { d, engine } = setup({ deliverer: { lastOutput: { output: 'x', at: AT } }, liveness: new Map([['a', false]]) });
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    orchestrations.insert({
+      name: 'y',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    });
+    // 编排投递（目标判死 → 拉起 → 登记 + send origin=orchestration）
+    await engine.start(orchestrations.list()[0]!.id, 'manual');
+    expect(d.registerInduction).toHaveBeenCalledWith('a');
+    idleOf(engine, 'a'); // 消费 start 的 pending → fan-out 到 b（这一轮本来就是编排驱动的）
+    await flush();
+    idleOf(engine, 'b'); // 消费 b 的 pending → run 收尾
+    await flush();
+    expect(runs.listRunning()).toHaveLength(0);
+    // pending 已空、登记还在（一次性核销未消费）：哪怕离拉起已超旧 60s 守卫，
+    // 首个非 pending 驱动的收尾仍被登记闸豁免——不起跑新 run、不投递
+    const sendsBefore = d.send.mock.calls.length;
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.consumeInduction).toHaveLastReturnedWith(true);
+    expect(d.send.mock.calls.length).toBe(sendsBefore);
+    expect(runs.listRunning()).toHaveLength(0);
+    // 核销完成：下一个收尾回到自然回合判定 → 起跑（fan-out 投 b）
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.consumeInduction).toHaveLastReturnedWith(false);
+    expect(d.send.mock.calls.length).toBe(sendsBefore + 1);
+    expect(runs.listRunning().some((r) => r.orchestrationName === 'y')).toBe(true);
   });
 
   it('enabled=false / 孤立入口 / 冷却期内连拍都不触发', async () => {
