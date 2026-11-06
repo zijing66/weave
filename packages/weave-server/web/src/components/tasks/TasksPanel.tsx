@@ -615,6 +615,9 @@ export function TasksPanel({
     [fb, t, refreshStatus, waitTerminalAlive],
   );
 
+  /** worktree 隔离（B5 最小切片）：弹层里的开关态，面板重开不丢；下一次起会话生效。 */
+  const [worktreeNewSession, setWorktreeNewSession] = useState(false);
+
   /** 新建会话：在项目**已打开的终端**里起一个新会话（服务端把 harness 裸 bin
       打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
       fb 键按项目隔离：loading 在途吞连点，防重复 spawn。
@@ -627,14 +630,14 @@ export function TasksPanel({
         `newSession:${projectId}`,
         async () => {
           const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
-          await api.startProjectSession(projectId, harness);
+          await api.startProjectSession(projectId, harness, worktreeNewSession);
           if (harness && HARNESS_LIFECYCLE[harness].sessionMarkers.length === 0) return;
           await waitNewSession(known);
         },
         { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
       );
     },
-    [fb, projectId, t, waitNewSession],
+    [fb, projectId, t, waitNewSession, worktreeNewSession],
   );
 
   /** 起会话的 harness 弹层（锚在按钮下方，同项目列表的终端弹层口径）：项目选中的
@@ -1549,6 +1552,8 @@ export function TasksPanel({
           x={harnessPicker.x}
           y={harnessPicker.y}
           anchor={harnessPicker.anchor}
+          worktree={worktreeNewSession}
+          onWorktreeChange={setWorktreeNewSession}
           onPick={(harness) => {
             setHarnessPicker(null);
             runNewSession(harness);

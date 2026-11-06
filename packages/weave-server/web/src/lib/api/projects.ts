@@ -175,14 +175,16 @@ export const projectApi = {
     apiFetch<{ panes: TerminalPane[] }>(`/projects/${projectId}/panes`).then((r) => r.panes),
   /** 在项目**已打开的终端**里起一个新会话（服务端复用该项目目录的既有 pane；
    *  没有已开终端时 409——前置条件由服务端把关，前端置灰只是同一事实的镜像）。
-   *  `harness` = 起哪个（须为该项目的已接入 harness）；缺省取已接入里第一个能起的。 */
+   *  `harness` = 起哪个（须为该项目的已接入 harness）；缺省取已接入里第一个能起的。
+   *  `worktree` = git worktree 隔离起手（B5 最小切片；非 git 仓 / git 缺席 409）。 */
   startProjectSession: (
     projectId: number,
     harness?: Harness,
+    worktree?: boolean,
   ): Promise<{ ok: boolean; command: string }> =>
     apiFetch<{ ok: boolean; command: string }>(`/projects/${projectId}/new-session`, {
       method: 'POST',
-      body: JSON.stringify(harness ? { harness } : {}),
+      body: JSON.stringify({ ...(harness ? { harness } : {}), ...(worktree ? { worktree: true } : {}) }),
     }),
   /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。 */
   listProjectTerminals: (projectId: number): Promise<TerminalTarget[]> =>

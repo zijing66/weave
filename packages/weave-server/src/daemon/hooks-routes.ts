@@ -19,6 +19,8 @@ import { readJson, sendJson } from './http.js';
 import { purgeSession } from '../hooks/session-purge.js';
 import { referencedSessionIds } from '../hooks/session-refs.js';
 import { readDaemonSettingsSync, readHooksEnabled } from './settings.js';
+import { readWorktreeRegistry } from './worktree.js';
+import { hooksRoot } from '../hooks/mirror.js';
 import { handleOrchestrationRoutes } from './routes/orchestration.js';
 import { handleHookAdminRoutes } from './routes/hooks-admin.js';
 import { handleUploadRoutes } from './routes/uploads.js';
@@ -188,6 +190,9 @@ export async function handleHooksRoutes(
       sessions: sessions.map((s) => {
         const model = deps.sessionProbe?.currentModel(s.sessionId) ?? null;
         const present = deps.sessionProbe?.transcriptPresent(s.sessionId) ?? null;
+        // 会话 worktree 状态（B5 最小切片）：登记在 cache 档（只解 daemon 重启）。
+        // 无登记 = null（大多数会话不隔离，字段缺席即普通会话）。
+        const worktree = readWorktreeRegistry(deps.hooksDir ?? hooksRoot())[s.sessionId] ?? null;
         // 「在终端打开」的能力位：harness 的 resume 槽声明了交互式 openArgs 才有。
         // web 只渲染这个字段，不自带 harness 白名单（路由侧仍做同样的 501 校验）。
         const resume = isHarness(s.harness) ? deps.harnesses?.get(s.harness)?.resume : undefined;
@@ -196,6 +201,13 @@ export async function handleHooksRoutes(
           pidAlive: pidAliveOf(s, liveness),
           canOpenTerminal: !!(resume?.supported && resume.openArgs),
           terminal: screens[s.sessionId] ?? null,
+          // 会话 worktree（隔离域 + 并回状态）：见上方 worktree 取值。
+          worktree: worktree && {
+            path: worktree.path,
+            branch: worktree.branch,
+            status: worktree.status,
+            ...(worktree.message ? { message: worktree.message } : {}),
+          },
           // 已中断（转录最后一条标记晚于最后一条主回合事件）：只有「看着还在跑」的会话才现算
           interruptedAt:
             s.turnOpen === true

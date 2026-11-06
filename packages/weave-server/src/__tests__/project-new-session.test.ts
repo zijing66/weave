@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CLAUDE_DRIVER, HarnessRegistry, createRuntimeRegistry } from '@weavecode/harness';
@@ -12,6 +13,7 @@ import { setDaemonSettingsDb, writeDaemonSettings, type TerminalSettings } from 
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
+import { readWorktreeRegistry } from '../daemon/worktree.js';
 import type { ProjectOpener } from '../daemon/opener.js';
 
 describe('POST /projects/:id/new-session', () => {
@@ -81,6 +83,7 @@ describe('POST /projects/:id/new-session', () => {
       port: 0,
       harnesses: createRuntimeRegistry(),
       opener,
+      hooksDir: hooksTmp, // worktree 登记落盘的断言面（同起点候选口径）
       messageDeliverer: new MessageDeliverer({
         sessions: new SessionRepository(db),
         projects,
@@ -309,5 +312,84 @@ describe('POST /projects/:id/new-session', () => {
     } finally {
       alt.close();
     }
+  });
+
+  // ---- B5：会话级 worktree 绑定（真临时 git 仓；sessionEnd 并回见 worktree.test.ts）----
+  describe('worktree 隔离选项', () => {
+    const hasGit = (() => {
+      try {
+        execFileSync('git', ['--version'], { stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
+    const git = (args: string[], cwd: string): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8', env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'weave-test',
+        GIT_AUTHOR_EMAIL: 'test@example.invalid',
+        GIT_COMMITTER_NAME: 'weave-test',
+        GIT_COMMITTER_EMAIL: 'test@example.invalid',
+      } });
+
+    it.skipIf(!hasGit)('worktree: true → 会话起在 worktree 路径（cwd 指向 worktree），登记落盘', async () => {
+      // 真 git 仓项目（init 选择结果照旧）
+      const dir = await mkdtemp(path.join(tmpdir(), 'weave-wt-e2e-'));
+      tmpDirs.push(dir);
+      execFileSync('git', ['init', '-b', 'main'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['config', 'user.name', 'weave-test'], { cwd: dir, stdio: 'ignore' });
+      await writeFile(path.join(dir, 'seed.txt'), 'seed\n', 'utf-8');
+      execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir, stdio: 'ignore' });
+      await mkdir(path.join(dir, '.weave'), { recursive: true });
+      await writeFile(
+        path.join(dir, '.weave', 'config.yaml'),
+        'initVersion: 0.1.0\nharnesses: ["claude"]\n',
+        'utf-8',
+      );
+      const id = projects.register({ path: dir, name: 'wt-e2e', token: 'wt-e2e-token', source: 'init' }).id;
+
+      runCalls = [];
+      const res = await post(`/projects/${id}/new-session`, { worktree: true });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { cwd: string; worktree?: string };
+      expect(body.cwd).not.toBe(dir);
+      expect(body.cwd.startsWith(path.join(dir, '.weave', 'worktrees', 'pending-'))).toBe(true);
+      // spawn 落点 = worktree 目录
+      expect(runCalls.map((c) => c.dir)).toEqual([body.cwd]);
+      // 登记落盘（占位键，等首个会话事件按 cwd 认领改绑）
+      const entries = readWorktreeRegistry(hooksTmp);
+      const pending = Object.values(entries).find((e) => e.projectId === id);
+      expect(pending).toBeDefined();
+      expect(pending!.path).toBe(body.cwd);
+      expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], body.cwd).trim()).toBe(pending!.branch);
+      // worktree 目录不进 git status（嵌套 gitignore 生效——.weave/ 本身未跟踪
+      // 是测试项目的既有形状，worktrees/ 子树不再单独冒出来）
+      expect(git(['status', '--porcelain'], dir)).not.toContain('worktrees');
+      // 再起一个会话 = 另一个 worktree（每会话一隔离域；同会话幂等在 worktree.test.ts）
+      runCalls = [];
+      const again = await post(`/projects/${id}/new-session`, { worktree: true });
+      expect((await again.json()) as { cwd: string }).toMatchObject({
+        ok: true,
+      });
+      expect(runCalls[0]!.dir).not.toBe(body.cwd);
+    });
+
+    it.skipIf(!hasGit)('非 git 项目 + worktree: true → 409（如实报因，不炸不回落）', async () => {
+      const id = await makeProject('wt-plain', ['claude']);
+      const before = runCalls.length;
+      const res = await post(`/projects/${id}/new-session`, { worktree: true });
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toContain('git');
+      expect(runCalls).toHaveLength(before); // 没 spawn（不静默回落到非隔离起法）
+    });
+
+    it('worktree 非布尔值 → 400', async () => {
+      const id = await makeProject('wt-bad', ['claude']);
+      expect((await post(`/projects/${id}/new-session`, { worktree: 'yes' })).status).toBe(400);
+    });
   });
 });

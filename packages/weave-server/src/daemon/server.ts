@@ -62,6 +62,7 @@ import { handleSearchRoutes } from './routes/search.js';
 import { handleProjectFileRoutes } from './routes/project-files.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
 import type { ProjectOpener } from './opener.js';
+import type { WorktreeGitExec } from './worktree.js';
 import { DAEMON_HOST } from './port.js';
 import { handleAuthRoutes } from './auth-routes.js';
 import { handleAiRoutes } from './ai-routes.js';
@@ -182,6 +183,8 @@ export interface WeaveServerDeps {
   hookMirror?: Pick<MirrorWriter, 'syncProject' | 'syncAll'>;
   /** hook 文件管道根（归档路由焚毁 inbox/mirror/outbox 用；缺省 hooksRoot()，测试注入临时根）。 */
   hooksDir?: string;
+  /** 会话 worktree 的 git 调用缝（测试注入）；缺省 defaultWorktreeGitExec（真 git）。 */
+  worktreeGitExec?: WorktreeGitExec;
   /** 批 10 工具包服务；/projects/:id/toolkit 依赖它。 */
   toolkit?: ToolkitService;
   /** 插件安装面（plugins/uninstall 依赖它）；缺省经 registry 取 Claude 面，测试注入 fake exec。 */

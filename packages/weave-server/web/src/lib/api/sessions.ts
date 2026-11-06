@@ -51,6 +51,10 @@ export interface SessionRow {
   transcriptPresent?: boolean | null;
   /** 「在终端打开」是否可用（服务端按 harness 的 resume 槽派生，web 不自带白名单）。 */
   canOpenTerminal?: boolean;
+  /** 会话 worktree（B5 最小切片；服务端登记派生）：undefined/null = 不隔离。 */
+  worktree?:
+    | { path: string; branch: string; status: 'active' | 'merged' | 'conflict' | 'error'; message?: string }
+    | null;
   /** 还没等到用户 prompt（1 小时快速过期档）：编排的会话选择器按它排除。 */
   promptless?: boolean;
 }
