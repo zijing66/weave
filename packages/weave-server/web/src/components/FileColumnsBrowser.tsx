@@ -176,64 +176,93 @@ export function FileColumnsBrowser({
 
 // ---- 窄屏（<lg）渐入渐出双面板 ----
 
-/** 窄屏的渐入渐出双面板：两屏常驻（保持滚动位置与状态），活动屏全宽不透明、
- *  非活动屏收成顶部一条标签（点它切换，透明度过渡，不硬切）。 */
+/** 窄屏的渐入渐出多面板：各屏常驻（保持滚动位置与状态），活动屏全宽不透明、
+ *  非活动屏收成侧边一条标签（点它切换，透明度过渡，不硬切）。
+ *  三栏语义：活动屏就是当前可操作栏；左右栏的标签点击 = 把那一栏切过来变成
+ *  可操作栏（与 macOS Finder 移动端一致），标签自身恒在屏幕边缘可回切。 */
 export function MobileFadePanels({
-  listActive,
+  active,
+  leftLabel,
   listLabel,
   previewLabel,
   children,
 }: {
-  /** 列表屏是否为活动屏（false = 预览屏活动）。 */
-  listActive: boolean;
+  /** 当前活动屏：'list'（中栏）/ 'left'（左栏）/ 'preview'（右栏）。 */
+  active: 'list' | 'left' | 'preview';
+  leftLabel: string;
   listLabel: string;
   previewLabel: string;
-  /** 恰好两个面板：[列表屏, 预览屏]。 */
-  children: [ReactNode, ReactNode];
+  /** 恰好三个面板：[左栏, 中栏, 右栏]。 */
+  children: [ReactNode, ReactNode, ReactNode];
 }) {
-  const [list, preview] = children;
+  const [left, list, preview] = children;
   const row = 'flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-11';
-  const switchTo = (pane: 'list' | 'preview'): void => {
+  const switchTo = (pane: string): void => {
     window.dispatchEvent(new CustomEvent('weave:mobile-pane', { detail: pane }));
   };
+  const hidden = 'w-0 overflow-hidden opacity-0';
+  const shown = 'flex-1 opacity-100';
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      {/* 列表屏：活动 = 全宽可见；非活动 = 收成顶部一条（仍挂载着，状态不丢） */}
+      {/* 左栏屏：活动 = 全宽可见；非活动 = 收成左侧一条（仍挂载着，状态不丢） */}
       <div
         className={cn(
           'flex min-h-0 min-w-0 flex-col border-r border-edge/[0.06] transition-opacity duration-200',
-          listActive ? 'flex-1 opacity-100' : 'w-0 overflow-hidden opacity-0',
+          active === 'left' ? shown : hidden,
+        )}
+      >
+        {left}
+      </div>
+      {active !== 'left' && (
+        <button
+          type="button"
+          onClick={() => switchTo('left')}
+          className={cn(row, 'shrink-0 text-neutral-300 hover:text-neutral-100')}
+        >
+          <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
+          <span className="max-w-24 truncate">{leftLabel}</span>
+          <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
+        </button>
+      )}
+      {/* 中栏屏 */}
+      <div
+        className={cn(
+          'flex min-h-0 min-w-0 flex-col border-r border-edge/[0.06] transition-opacity duration-200',
+          active === 'list' ? shown : hidden,
         )}
       >
         {list}
       </div>
-      {!listActive && (
+      {active !== 'list' && (
         <button
           type="button"
           onClick={() => switchTo('list')}
           className={cn(row, 'shrink-0 text-neutral-300 hover:text-neutral-100')}
         >
-          <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
-          <span className="max-w-40 truncate">{listLabel}</span>
-          <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
+          <span className="max-w-24 truncate">{listLabel}</span>
+          {active === 'left' ? (
+            <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
+          ) : (
+            <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
+          )}
         </button>
       )}
-      {/* 预览屏：同构反向 */}
+      {/* 右栏屏（预览）：同构反向 */}
       <div
         className={cn(
           'flex min-h-0 min-w-0 flex-col transition-opacity duration-200',
-          listActive ? 'w-0 overflow-hidden opacity-0' : 'flex-1 opacity-100',
+          active === 'preview' ? shown : hidden,
         )}
       >
         {preview}
       </div>
-      {listActive && (
+      {active !== 'preview' && (
         <button
           type="button"
           onClick={() => switchTo('preview')}
           className={cn(row, 'shrink-0 text-neutral-300 hover:text-neutral-100')}
         >
-          <span className="max-w-40 truncate">{previewLabel}</span>
+          <span className="max-w-24 truncate">{previewLabel}</span>
           <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
         </button>
       )}
@@ -244,11 +273,13 @@ export function MobileFadePanels({
 /** 窄屏面板切换事件：MobileFadePanels 的标签点击经它上报，引用方监听并
  *  把自己的 screen state 切过去（组件不持有跨页面状态）。 */
 export function useMobilePaneSwitch(
-  setScreen: (s: 'list' | 'preview') => void,
+  setScreen: (s: 'list' | 'left' | 'preview') => void,
 ): void {
   useEffect(() => {
-    const onPane = (e: Event): void =>
-      setScreen((e as CustomEvent<string>).detail === 'list' ? 'list' : 'preview');
+    const onPane = (e: Event): void => {
+      const d = (e as CustomEvent<string>).detail;
+      setScreen(d === 'left' || d === 'preview' ? d : 'list');
+    };
     window.addEventListener('weave:mobile-pane', onPane);
     return () => window.removeEventListener('weave:mobile-pane', onPane);
   }, [setScreen]);

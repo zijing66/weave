@@ -447,9 +447,9 @@ export function FilePicker({
   const [anchor, setAnchor] = useState<number | null>(null);
   const [lines, setLines] = useState<{ start: number; end: number } | null>(null);
   const [busy, setBusy] = useState(false);
-  /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切。 */
+  /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切（无左栏，恒中栏语义）。 */
   const [screen, setScreen] = useState<'list' | 'preview'>(initial?.kind === 'file' ? 'preview' : 'list');
-  useMobilePaneSwitch(setScreen);
+  useMobilePaneSwitch((s) => setScreen(s === 'left' ? 'list' : s));
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
@@ -1404,10 +1404,13 @@ export function FilePicker({
               />
             ) : (
               <MobileFadePanels
-                listActive={screen === 'list'}
+                active={screen}
+                leftLabel={rootLabel}
                 listLabel={rootLabel}
                 previewLabel={current?.name ?? rootLabel}
               >
+                {/* 无左栏的选择器：左屏复用列表（标签点着也不出错，实际两屏轮换） */}
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 {previewPane}
               </MobileFadePanels>

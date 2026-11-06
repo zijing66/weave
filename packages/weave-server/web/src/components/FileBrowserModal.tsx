@@ -173,8 +173,9 @@ export function FileBrowserModal({
   const [preview, setPreview] = useState<{ path: string; text: string | null; truncated: boolean } | null>(null);
   /** 第三栏的子目录预览（选中一条目录时列它的直接子项；只读，不下钻）。 */
   const [sub, setSub] = useState<{ dir: string; entries: ProjectFileEntry[]; total: number } | null>(null);
-  /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切。 */
-  const [screen, setScreen] = useState<'list' | 'preview'>('list');
+  /** 窄屏一屏只放得下一栏：左（项目列表）/ 中（文件树）/ 右（预览）三屏，
+   *  活动屏即当前可操作栏（渐入渐出标签切换；初始屏 = 项目列表）。 */
+  const [screen, setScreen] = useState<'list' | 'left' | 'preview'>('list');
   // 窄屏渐入渐出面板的标签点击（MobileFadePanels 经 window 事件上报，组件共用）
   useMobilePaneSwitch(setScreen);
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
@@ -445,7 +446,8 @@ export function FileBrowserModal({
       setFullscreen(false);
       return true;
     }
-    if (!isDesktop && screen === 'preview') {
+    if (!isDesktop && screen !== 'list') {
+      // 窄屏：先从左/右栏退回中栏（可操作栏），再逐层往下退
       setScreen('list');
       return true;
     }
@@ -638,7 +640,8 @@ export function FileBrowserModal({
     }
     setSelected(0);
     setEntries([]);
-    setScreen('list');
+    // 窄屏：点项目 = 中栏（该项目的文件树）成为当前可操作栏
+    if (!isDesktop) setScreen('list');
     firstLoad.current = true;
   };
 
@@ -1289,9 +1292,8 @@ export function FileBrowserModal({
               aria-label={t('tasks.fileUp')}
               disabled={crumb.length === 0 && !picked}
               onClick={() => {
-                // 窄屏预览态：这枚键先「回列表」（唯一返回键，不与预览头的
-                // 旧返回键叠两层）；列表态才是目录上一级。
-                if (!isDesktop && screen === 'preview') {
+                // 窄屏在左/右栏：先退回中栏（可操作栏）；中栏才是目录上一级。
+                if (!isDesktop && screen !== 'list') {
                   setScreen('list');
                   return;
                 }
@@ -1425,11 +1427,19 @@ export function FileBrowserModal({
                 onPreviewResize={(d) => setPreviewW(previewW - d)}
               />
             ) : (
+              /* 窄屏三屏渐入渐出：左=项目列表 / 中=文件树（可操作）/ 右=预览。
+                  活动屏即当前可操作栏；标签点击把那一栏切过来。初始屏 = 项目列表。 */
               <MobileFadePanels
-                listActive={screen === 'list'}
+                active={screen}
+                leftLabel={t('app.openFileBrowser')}
                 listLabel={activeProjectName}
                 previewLabel={current?.name ?? activeProjectName}
               >
+                {projectListShown ? (
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
+                ) : (
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+                )}
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 {previewPane}
               </MobileFadePanels>
