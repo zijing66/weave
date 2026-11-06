@@ -16,11 +16,13 @@ import { CODEX_LOG_SOURCE } from './rollout.js';
 import { CODEX_COMMANDS } from './commands.js';
 import { CODEX_LIVENESS } from './liveness.js';
 import { CODEX_TITLES } from './titles.js';
+import { CODEX_USAGE } from './usage.js';
 
 export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
 export { CODEX_IMAGES } from './images.js';
 export { CODEX_NARRATION } from './narration.js';
+export { CODEX_USAGE } from './usage.js';
 export { CODEX_MESSAGING } from './messaging.js';
 export { CODEX_QUESTIONS } from './questions.js';
 export { CODEX_RESUME } from './resume.js';
@@ -77,6 +79,7 @@ export const CODEX_DRIVER: HarnessDriver = {
     'images',
     'narration',
     'questions',
+    'usage',
   ],
   assets: CODEX_ASSETS,
   detect: CODEX_DETECTOR,
@@ -94,5 +97,6 @@ export const CODEX_DRIVER: HarnessDriver = {
   images: CODEX_IMAGES,
   narration: CODEX_NARRATION,
   questions: CODEX_QUESTIONS,
+  usage: CODEX_USAGE,
   titles: CODEX_TITLES,
 };
