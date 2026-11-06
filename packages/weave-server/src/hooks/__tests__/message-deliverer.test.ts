@@ -4079,6 +4079,122 @@ describe('MessageDeliverer 裁决表', () => {
   });
 });
 
+describe('诱导回合登记（outbox 写入单点 + 一次性核销）', () => {
+  let db: ReturnType<typeof openDatabase>;
+  let sessions: SessionRepository;
+  let events: HookEventRepository;
+  let projectId: number;
+  let hooksDir: string;
+
+  const pushEvent = (sessionId: string, eventType: string, source: 'claude' | 'codex' = 'claude') =>
+    events.insert({ projectId, source, eventType, sessionId, payload: '{}' });
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    projectId = new ProjectRepository(db).register({
+      path: PROJECT_PATH,
+      name: 'msg',
+      token: TOKEN,
+      source: 'init',
+    }).id;
+    sessions = new SessionRepository(db);
+    events = new HookEventRepository(db);
+    sessions.touch(SESSION_ID, projectId);
+    hooksDir = mkdtempSync(join(tmpdir(), 'weave-ind-'));
+  });
+
+  afterEach(async () => {
+    await new Promise((r) => setTimeout(r, 60));
+    db.close();
+    rmSync(hooksDir, { recursive: true, force: true });
+  });
+
+  it('manual（缺省）来源不登记；非 manual 来源成功投递即登记（inject 通道实证）', async () => {
+    pushEvent(SESSION_ID, 'UserPromptSubmit');
+    const deliverer = new MessageDeliverer({
+      sessions,
+      projects: new ProjectRepository(db),
+      hookEvents: events,
+      hooksDir,
+    });
+    await deliverer.send({ toSessionId: SESSION_ID, text: 'hello body', mode: 'inject', fromKind: 'dashboard' });
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(false);
+
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'hello body',
+      mode: 'inject',
+      fromKind: 'dashboard',
+      origin: 'orchestration',
+    });
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(true);
+  });
+
+  it('一次性核销：首个 Stop 消费即摘除，第二次 Stop 就是自然回合', () => {
+    const deliverer = new MessageDeliverer({
+      sessions,
+      projects: new ProjectRepository(db),
+      hookEvents: events,
+      hooksDir,
+    });
+    deliverer.registerInduction(SESSION_ID);
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(true);
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(false);
+  });
+
+  it('不依赖 60s 时间窗：登记挂在盘上（内存）直到被消费，超窗首轮仍不算自然回合', async () => {
+    pushEvent(SESSION_ID, 'UserPromptSubmit');
+    const deliverer = new MessageDeliverer({
+      sessions,
+      projects: new ProjectRepository(db),
+      hookEvents: events,
+      hooksDir,
+    });
+    // 模拟「编排投出去后目标陈滞超窗（远超旧 60s 守卫）才收尾」：
+    await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'hello body',
+      mode: 'inject',
+      fromKind: 'dashboard',
+      origin: 'orchestration',
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    // 旧实现此刻 startedByOrchestration 已超 60s 守卫、会误判；新登记仍在 → 首轮豁免
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(true);
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(false);
+  });
+
+  it('幂等：重复登记只算一次核销', () => {
+    const deliverer = new MessageDeliverer({
+      sessions,
+      projects: new ProjectRepository(db),
+      hookEvents: events,
+      hooksDir,
+    });
+    deliverer.registerInduction(SESSION_ID);
+    deliverer.registerInduction(SESSION_ID);
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(true);
+    expect(deliverer.consumeInduction(SESSION_ID)).toBe(false);
+  });
+
+  it('投递失败（404/409）不登记', async () => {
+    const deliverer = new MessageDeliverer({
+      sessions,
+      projects: new ProjectRepository(db),
+      hookEvents: events,
+      hooksDir,
+    });
+    await deliverer.send({
+      toSessionId: 'sess-unknown',
+      text: 'x',
+      mode: 'inject',
+      fromKind: 'dashboard',
+      origin: 'orchestration',
+    });
+    expect(deliverer.consumeInduction('sess-unknown')).toBe(false);
+  });
+});
+
 describe('MessageDeliverer.askSideQuestion 读屏通道（codex = /side）', () => {
   let db: ReturnType<typeof openDatabase>;
   let sessions: SessionRepository;

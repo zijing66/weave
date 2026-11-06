@@ -52,6 +52,8 @@ const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
 const SendMessageBody = z.object({
   text: z.string().max(20_000),
   fromKind: z.enum(['dashboard', 'session']).optional(),
+  /** 投递来源（诱导回合登记的依据；缺省 manual）。扩展端点/插件 outbox 两源批 2b 接入。 */
+  origin: z.enum(['manual', 'orchestration', 'extension', 'plugin']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
   /** 随附文件（上传件 id）；带文件且目标 harness 的 `attach` 面不收该类型即 409。 */
   attachments: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(8).optional(),
@@ -428,6 +430,7 @@ export async function handleHooksRoutes(
         ...(body.forceTerminal === true ? { forceTerminal: true } : {}),
         mode: 'prompt',
         fromKind: body.fromKind ?? 'dashboard',
+        ...(body.origin ? { origin: body.origin } : {}),
         fromSessionId: body.fromSessionId ?? null,
         // 手动面 = 单向注入：没有接收方会话，中继载荷带「无需回复」注记
         // （编排域不置 = 双向对话保留）。

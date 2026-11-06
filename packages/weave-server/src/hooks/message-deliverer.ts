@@ -112,6 +112,13 @@ export type MessageMode = 'prompt' | 'inject' | 'headless' | 'auto';
 /** 发起方（仅信封渲染用，管道不记录来源）。 */
 export type MessageFromKind = 'dashboard' | 'session';
 
+/**
+ * 投递来源（与 fromKind 正交的第二个维度；fromKind 只答信封抬头，答不出
+ * 「编排投的」和「人投的」）。manual（缺省）= 人投（自然回合）；其余三源
+ * 投出的消息会**诱导目标会话的下一回合**——登记见 `takeInduction`。
+ */
+export type MessageOrigin = 'manual' | 'orchestration' | 'extension' | 'plugin';
+
 /** 管道消息状态：pending 只活在 promptbox 文件，其余在内存注册表。 */
 export type PipeStatus =
   | 'pending' // promptbox 文件里（仅 prompt 通道）
@@ -265,6 +272,8 @@ export interface SendInput {
   text: string;
   mode: MessageMode;
   fromKind: MessageFromKind;
+  /** 投递来源（诱导回合登记的依据；缺省 manual = 人投）。 */
+  origin?: MessageOrigin;
   fromSessionId?: string | null;
   /** 单向注入（手动面置 true：无接收方会话）；编排域省略 = 双向对话保留。 */
   oneWay?: boolean;
@@ -487,6 +496,14 @@ export class MessageDeliverer {
   /** 已排自续冲洗的会话（防重复排拍）。 */
   private readonly flushScheduled = new Set<string>();
   /**
+   * 诱导回合登记（sessionId → 登记时刻）：非 manual 来源的投递经 `send` 的
+   * **outbox 写入单点**登记——这是全仓唯一的登记咽喉（四源穷举：编排投递 /
+   * 编排拉起 / 扩展端点 / 插件 outbox；后两源批 2b 接入，本批只留位）。
+   * **一次性核销**：被诱导会话首次 Stop（`consumeInduction`）即摘除，不依赖
+   * 时间窗——超窗（编排陈滞 2h 那类）首轮也不再误判自然回合。
+   */
+  private readonly inductions = new Map<string, number>();
+  /**
    * 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。值是这一拍
    * 的令牌——强制移除卡住的那一行要就地解除泵闸，旧拍醒来时不能顺手把新拍的闸也
    * 删掉（两拍并行 = 同一行被投两次）。
@@ -621,6 +638,11 @@ export class MessageDeliverer {
         : channel === 'headless'
           ? this.deliverHeadless(entry, project.path, meta, surface)
           : await this.deliverPrompt(entry, session, project, surface);
+    // 诱导登记（outbox 写入单点，唯一咽喉）：非 manual 来源的成功投递都会让
+    // 目标会话出一个回合——登记它，天然回合判定据此豁免（一次性核销）。
+    if (result.ok && (input.origin ?? 'manual') !== 'manual') {
+      this.registerInduction(input.toSessionId);
+    }
     // created 广播放在**在途状态建立之后**：它同时是派生面（在途角标推送）的重算
     // 依据，早发会让刚进在途的消息漏一拍（投递中的消息不上角标）。
     this.bus({
@@ -636,6 +658,25 @@ export class MessageDeliverer {
   /** 管道消息现查（内存态；sequence 引擎 / 路由回显用）。 */
   getMessage(id: string): PipeMessage | null {
     return this.memory.get(id) ?? null;
+  }
+
+  /**
+   * 诱导登记（`send` 内部调用；供拉起路径与批 2b 的扩展/插件两源复用）。
+   * 幂等：重复登记只刷新时刻（仍是一次核销）。
+   */
+  registerInduction(sessionId: string): void {
+    this.inductions.set(sessionId, Date.now());
+  }
+
+  /**
+   * 消费一次诱导登记（一次性核销）：有登记即 true 并当场摘除——被诱导会话的
+   * 首个 Stop 不再是自然回合；之后（哪怕超窗很久）的 Stop 照常按自然回合判。
+   * 无登记 = false（自然回合）。
+   */
+  consumeInduction(sessionId: string): boolean {
+    const had = this.inductions.has(sessionId);
+    this.inductions.delete(sessionId);
+    return had;
   }
 
   /**
@@ -862,6 +903,7 @@ export class MessageDeliverer {
     this.revokedPaneEnvs.add(sessionId);
     this.persistPaneEnvs();
     this.awaitingAck.delete(sessionId); // 进程没了，这一条的回执再也不会到
+    this.inductions.delete(sessionId); // 被诱导的回合不会再来了
     const session = this.deps.sessions.getBySessionId(sessionId);
     const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
     if (!project) return;
@@ -1694,6 +1736,7 @@ export class MessageDeliverer {
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
     this.paneEnvConflicts.delete(sessionId);
+    this.inductions.delete(sessionId);
     this.revokedPaneEnvs.add(sessionId); // 同退出：显式报 null 摘出终端分组
     this.persistPaneEnvs();
     return removed;
