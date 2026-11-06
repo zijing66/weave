@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import {
   HARNESS_SESSION_CONTROL,
+  PROMPT_MAX_CHARS,
+  PROMPT_PASTE_THRESHOLD_CHARS,
   isHarness,
   type Harness,
 } from '@weavecode/core';
@@ -52,7 +54,9 @@ const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
  * （默认 = 原生 SendMessage 中继 + 未开会话积压队列；降级 = 终端 send-text，
  * 全自动）。inject/headless/auto 只活在编排域（序列步显式选项）。 */
 const SendMessageBody = z.object({
-  text: z.string().max(20_000),
+  // 硬顶只防内存爆炸：阈值以内的直投、以上的整块粘贴都由投递侧分流（用户裁决
+  // 2026-11-06，原 20k 一刀切会把 paste 通道装得下的长文也拦掉）
+  text: z.string().max(PROMPT_MAX_CHARS),
   fromKind: z.enum(['dashboard', 'session']).optional(),
   /** 投递来源（诱导回合登记的依据；缺省 manual）。扩展端点/插件 outbox 两源批 2b 接入。 */
   origin: z.enum(['manual', 'orchestration', 'extension', 'plugin']).optional(),
@@ -524,6 +528,11 @@ export async function handleHooksRoutes(
     // prompt 列 = 层① 原生中继 || 层② 终端 send-text 兜底（随 settings/机器变）。
     const terminalChannel = deps.messageDeliverer?.hasTerminalChannel() ?? false;
     sendJson(res, 200, {
+      // prompt 长度策略（数值只在 core 一份，web 据此提前提示、不自带第二份）
+      promptLimits: {
+        maxChars: PROMPT_MAX_CHARS,
+        pasteThreshold: PROMPT_PASTE_THRESHOLD_CHARS,
+      },
       capabilities: messagingSurfaces().map(({ harness, surface }) => ({
         harness,
         discovery: surface.discovery,

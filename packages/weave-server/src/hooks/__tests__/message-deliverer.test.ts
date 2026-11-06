@@ -27,6 +27,8 @@ import { CLAUDE_REG_GRACE_MS } from '../../daemon/claude-liveness.js';
 import { hookShardId } from '../mirror.js';
 import { INBOX_TARGETS_FILE } from '../inbox-socket.js';
 import { readPromptbox } from '../promptbox.js';
+import { isLongPrompt } from '../delivery/channels.js';
+import { PROMPT_PASTE_THRESHOLD_CHARS } from '@weavecode/core';
 
 const PROJECT_PATH = resolve('/msg-proj');
 const TOKEN = 'mtoken';
@@ -3954,6 +3956,123 @@ describe('MessageDeliverer 裁决表', () => {
     inbox.close();
   });
 
+  it('超长 prompt 层② 优先：socket 在场也走终端整块粘贴（宿主折叠成 paste 块）', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-1' });
+
+    const long = '长'.repeat(PROMPT_PASTE_THRESHOLD_CHARS + 1);
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: long,
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(sendText).toHaveBeenCalledWith('pane-1', long);
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({
+      via: 'terminal',
+    });
+    expect(got).toBe(''); // socket 一枪都没发（宿主端 inbound 上限未知，不去撞）
+    inbox.close();
+  });
+
+  it('阈值以内照旧走原层序：2000 字整直投 socket，不逼终端', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-1' });
+
+    const text = 'a'.repeat(PROMPT_PASTE_THRESHOLD_CHARS);
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text,
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(sendText).not.toHaveBeenCalled();
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({ via: 'socket' });
+    expect(got).toContain(text);
+    inbox.close();
+  });
+
+  it('超长但 pane 定位不到 → 回落原层序，消息不丢', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const path = uniqueInboxPath();
+    let got = '';
+    const inbox = await fakeInboxAt(path, (t) => {
+      got = t;
+    });
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const { surface } = relaySurface();
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        surfaceFor: () => surface,
+        terminal: {
+          available: () => true,
+          listPanes: async () => [], // 终端开着但认不出是哪个 pane
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+    deliverer.noteInboxSocket(SESSION_ID, { socket: path, token: 'tok-1' });
+
+    const long = 'b'.repeat(PROMPT_PASTE_THRESHOLD_CHARS + 1);
+    const result = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: long,
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(sendText).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, status: 'delivered' });
+    expect(deliverer.getMessage((result as { messageId: string }).messageId)).toMatchObject({ via: 'socket' });
+    expect(got).toContain(long);
+    inbox.close();
+  });
+
   it('队列行随附图落盘：重启后冲洗仍按现 harness 面重合成', async () => {
     const { surface } = surfaceWithImages(() => null); // 无终端、无 peer → 只能入队
     const deliverer = new MessageDeliverer(makeDeps({ surfaceFor: () => surface }));
@@ -4377,4 +4496,14 @@ describe('MessageDeliverer.askSideQuestion 读屏通道（codex = /side）', () 
     expect(answered).toEqual([[CODEX_SESSION, 'q?', '42']]); // 回答照取
     expect(keys).toEqual(['/side', '\r', '\r']); // 无 closeKey
   }, 15_000);
+});
+
+describe('isLongPrompt（按码点计长）', () => {
+  it('阈值整不触发、多一字触发；emoji 按一个字算', () => {
+    expect(isLongPrompt('a'.repeat(PROMPT_PASTE_THRESHOLD_CHARS))).toBe(false);
+    expect(isLongPrompt('a'.repeat(PROMPT_PASTE_THRESHOLD_CHARS + 1))).toBe(true);
+    // 2000 个 emoji = 4000 个 UTF-16 单元，但只有 2000 个码点 → 不过线
+    expect(isLongPrompt('😀'.repeat(PROMPT_PASTE_THRESHOLD_CHARS))).toBe(false);
+    expect(isLongPrompt('😀'.repeat(PROMPT_PASTE_THRESHOLD_CHARS + 1))).toBe(true);
+  });
 });

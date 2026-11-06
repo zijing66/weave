@@ -82,7 +82,7 @@ export const SESSIONS_TOOLS = [
       required: ['sessionId', 'text'],
       properties: {
         sessionId: { type: 'string' },
-        text: { type: 'string', description: 'max 20000 chars' },
+        text: { type: 'string', description: 'max 200000 chars; long text is pasted as one block' },
       },
     },
     outputSchema: {

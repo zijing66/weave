@@ -42,7 +42,7 @@ import {
   modelCommand,
   sessionKeysTarget,
 } from './delivery/keys.js';
-import { hasImages, settleDelivered, spawnOnce, wireTextOf } from './delivery/channels.js';
+import { hasImages, isLongPrompt, settleDelivered, spawnOnce, wireTextOf } from './delivery/channels.js';
 import {
   deliverHeadless as deliverHeadlessIn,
   deliverInject as deliverInjectIn,
@@ -1433,6 +1433,15 @@ export class MessageDeliverer {
     return hasImages(entry);
   }
 
+  /**
+   * 必须先走层② 的两种消息：带图（bracketed paste 才能把路径翻成 image block）
+   * 与超长（宿主会把它折叠成 paste 块；socket 直投的宿主端 inbound 上限未知，
+   * 不让长文去撞）。
+   */
+  private pasteFirstEntry(entry: PipeMessage): boolean {
+    return this.hasImagesEntry(entry) || isLongPrompt(this.wireTextOfEntry(entry));
+  }
+
   /** 键序域的依赖切片（delivery/keys.ts 的入参形状）。 */
   private keysDeps() {
     return {
@@ -1636,8 +1645,9 @@ export class MessageDeliverer {
         status: 'pending',
         at: entry.at,
       };
-      // 带图同即时路径：层② 优先（只有 bracketed paste 能真贴图）。
-      if (!blocked && this.hasImagesEntry(msg) && this.terminalChannel()) {
+      // 带图 / 超长同即时路径：层② 优先（bracketed paste 才能真贴图、才会被宿主
+      // 折叠成 paste 块）。pane 定位不到就往下走 = 回落直投，消息不丢。
+      if (!blocked && this.pasteFirstEntry(msg) && this.terminalChannel()) {
         const imgPane = await this.terminalPaneFor(session, project);
         if (imgPane) {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
@@ -1851,11 +1861,13 @@ export class MessageDeliverer {
     // 目标地址由 hook 旁路上报。两域都排第一；手动面由 `forceTerminal` 排除在外
     // （直投在宿主眼里是「另一个会话发的」，人工对话要的是用户权威）。
     // 拿不到目标（会话没装 weave hooks / messaging 关闭）或投递失败 → 原路回落。
-    // 带图消息层② 优先：只有 bracketed paste 能把绝对路径转成 `[Image #N]` + 真 image
-    // block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己 Read）。
+    // 带图 / 超长层② 优先。带图：只有 bracketed paste 能把绝对路径转成 `[Image #N]`
+    // + 真 image block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己
+    // Read）。超长：宿主会折叠成 paste 块，socket 的宿主端 inbound 上限未知不去撞。
+    // pane 定位不到就往下走 = 回落原层序，消息不丢。
     // 模态框挂着时层② 整段让位（见 modalBlocked）：图只能走终端，就留队列等作答。
     const blocked = this.modalBlocked(entry.sessionId);
-    if (!blocked && this.hasImagesEntry(entry) && this.terminalChannel()) {
+    if (!blocked && this.pasteFirstEntry(entry) && this.terminalChannel()) {
       const imgPane = await this.terminalPaneFor(session, project);
       if (imgPane) {
         this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });

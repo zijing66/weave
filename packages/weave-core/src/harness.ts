@@ -410,3 +410,13 @@ export const INSTRUCTION_FILES: readonly InstructionFile[] = [
 export const LOCAL_INSTRUCTION_FILES: readonly string[] = HARNESS_KEYS.map(
   (h) => HARNESS_LOCAL_INSTRUCTION_FILES[h].file,
 );
+
+/**
+ * prompt 长度策略（不分 harness——paste 通道归终端，四个后端都有）：
+ * 阈值以内走直投层序；超过阈值一律层② **整块粘贴**（宿主折叠成 paste 块），
+ * 因为 socket 直投的宿主端 inbound 尺寸上限未知，不让长文去撞它。
+ * 硬顶之外拒收：前端据此提前提示，不必等一条英文 400。
+ * 数值随 `/messaging/capabilities` 下发，web 不自带第二份。
+ */
+export const PROMPT_PASTE_THRESHOLD_CHARS = 2_000;
+export const PROMPT_MAX_CHARS = 200_000;
