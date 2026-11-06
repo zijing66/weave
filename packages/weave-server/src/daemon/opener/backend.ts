@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { TerminalPreset, TerminalSettings } from '../settings.js';
 import type { AttachTarget, SessionTerminal } from './wezterm-mux.js';
-import { joinCmd, quotePath, throughCmd } from './shared.js';
+import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, joinCmd, quotePath, throughCmd } from './shared.js';
 import { wtWindowSlug } from './wt.js';
 
 /**
@@ -48,6 +48,51 @@ export interface PromptPaneTarget {
  */
 export interface LaunchOrigin {
   readonly env: Record<string, string>;
+}
+
+/**
+ * 按 UTF-8 字节数切块（超长 prompt 分段注入用）：只在**码点边界**切——切进
+ * 代理对中间会产出两个孤立代理项，编码后变 U+FFFD。上限按字节不按 `length`
+ * 算：`length` 是 UTF-16 单元，中文一字三字节、emoji 一个四字节，按它切会溢出
+ * 通道（argv / env 都是字节说话）。
+ */
+export function chunkByUtf8Bytes(text: string, maxBytes: number): string[] {
+  const chunks: string[] = [];
+  let cur = '';
+  let bytes = 0;
+  for (const ch of text) {
+    const n = Buffer.byteLength(ch, 'utf8');
+    if (bytes + n > maxBytes && cur) {
+      chunks.push(cur);
+      cur = '';
+      bytes = 0;
+    }
+    cur += ch;
+    bytes += n;
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+/**
+ * 正文里出现 paste 起止标记时不能手工分段粘贴（标记会把 paste 提前闭合、后半截
+ * 在框外被当命令解释）——退回整段单发，让通道自己失败报错，不悄悄截断。
+ */
+export function hasPasteMarkers(text: string): boolean {
+  return text.includes(BRACKETED_PASTE_START) || text.includes(BRACKETED_PASTE_END);
+}
+
+/**
+ * 分段粘贴的键串序列：首段前补起标记、末段后补止标记 + CR——同一 paste 会话内
+ * 多枪写入就是续排，宿主看到的仍是一次粘贴（折叠成一个 paste 块）。
+ */
+export function pasteKeyChunks(chunks: readonly string[]): string[] {
+  return chunks.map(
+    (c, i) =>
+      (i === 0 ? BRACKETED_PASTE_START : '') +
+      c +
+      (i === chunks.length - 1 ? `${BRACKETED_PASTE_END}\r` : ''),
+  );
 }
 
 /** 终端后端基类。模板方法定义骨架，子类只填候选与真正不同的流程。 */
@@ -132,7 +177,11 @@ export abstract class TerminalBackend {
     return {};
   }
 
-  /** prompt 层② 兜底：向枚举所得 pane 注入 prompt 原文并提交；无通道的后端明确拒绝。 */
+  /**
+   * prompt 层② 兜底：向枚举所得 pane 注入 prompt 原文并提交；无通道的后端明确拒绝。
+   * 超长由后端自己分段（argv / env 各有上限），**分段对宿主仍是一次粘贴**——
+   * 宿主折叠成的 paste 块与一次贴完无差。
+   */
   async sendPromptText(_paneId: string, _text: string): Promise<void> {
     throw new Error(
       `Terminal preset "${this.preset}" cannot send text into an open pane — pick a preset with text injection in settings`,

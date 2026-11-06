@@ -2,8 +2,6 @@ import { basename } from 'node:path';
 import { pidAlive } from '../claude-liveness.js';
 import { countWindowsByDir, normalizeDirKey } from './wezterm-mux.js';
 import {
-  BRACKETED_PASTE_END,
-  BRACKETED_PASTE_START,
   parseWtPaneId,
   parseWtTargetId,
   wtInjectKeys,
@@ -13,8 +11,19 @@ import {
   wtWindowSlug,
 } from './wt.js';
 import { winRaiseTerminalWindow } from './win-raise.js';
-import { throughCmd } from './shared.js';
-import { PRESET_CANDIDATES, TerminalBackend, type LaunchOrigin, type TerminalLaunch } from './backend.js';
+import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, throughCmd } from './shared.js';
+import {
+  PRESET_CANDIDATES,
+  TerminalBackend,
+  chunkByUtf8Bytes,
+  hasPasteMarkers,
+  pasteKeyChunks,
+  type LaunchOrigin,
+  type TerminalLaunch,
+} from './backend.js';
+
+/** 单枪原文上限（原文 → base64 进环境块，整块 ~32k 字符，留出继承 env 的余量）。 */
+const WT_PROMPT_CHUNK_BYTES = 12_288;
 import type { AttachTarget } from './wezterm-mux.js';
 
 /**
@@ -126,11 +135,23 @@ export class WtBackend extends TerminalBackend {
   /**
    * prompt 层② 注入：bracketed paste 打原文（内含 CR 是字面内容、不提交）→
    * 补一记 CR 提交。与 wezterm 那条通道同语义，只是键记录直写 console。
+   * 键串走 env（base64 进环境块，整块上限 ~32k 字符）⇒ 超长按字节分块：
+   * 首块带起标记、末块带止标记 + CR，同一 paste 会话内多枪就是续排。
    */
   override async sendPromptText(paneId: string, text: string): Promise<void> {
     const pid = parseWtPaneId(paneId);
     if (pid == null) throw new Error(`Invalid prompt pane "${paneId}"`);
-    await wtInjectKeys(pid, `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}\r`);
+    if (hasPasteMarkers(text)) {
+      // 分段会提前闭合（见 hasPasteMarkers）：整段一枪，装不下就让通道如实失败
+      await wtInjectKeys(pid, `${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}\r`);
+      return;
+    }
+    const chunks = chunkByUtf8Bytes(text, WT_PROMPT_CHUNK_BYTES);
+    if (chunks.length === 0) {
+      await wtInjectKeys(pid, `${BRACKETED_PASTE_START}${BRACKETED_PASTE_END}\r`);
+      return;
+    }
+    for (const keys of pasteKeyChunks(chunks)) await wtInjectKeys(pid, keys);
   }
 
   /** 裸键序（阻塞问答作答 / 中断 ESC）：控制字符按真键记录下发（见 wtInjectKeys）。 */

@@ -202,9 +202,6 @@ export function wtPanePidFromEnv(env: Record<string, string>): number | null {
   return pid > 0 ? pid : null;
 }
 
-export const BRACKETED_PASTE_START = '\x1b[200~';
-export const BRACKETED_PASTE_END = '\x1b[201~';
-
 /**
  * wt 的击键通道：**附着到会话进程的 console 写输入记录**（AttachConsole +
  * WriteConsoleInput）——WT 不给 per-pane 写入口，而它的每个 pane 都是一个
