@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
-import { Resizer } from '@/components/Resizer';
 import { useToast } from '@/components/Toast';
 import { copyText } from '@/lib/clipboard';
 import { useT } from '@/i18n/I18nProvider';
@@ -43,10 +42,8 @@ import {
   setFindRanges,
   sizeText,
 } from './tasks/FilePicker';
-import { useFinderColumns } from './tasks/FilePicker';
 import {
   FileColumnsBrowser,
-  FinderColumnList,
   MobileFadePanels,
   useColumnWidths,
   useMobilePaneSwitch,
@@ -271,9 +268,6 @@ export function FileBrowserModal({
     },
     [activeProjectId, visited],
   );
-
-  /** Finder 父级列（桌面分栏）：进项目后才取数。 */
-  const finderCols = useFinderColumns(activeProjectId, dir, isDesktop && !!picked, visited);
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
@@ -752,50 +746,6 @@ export function FileBrowserModal({
    *  点击/Enter 直接落进该项目并定位到文件；命中前照旧列项目。 */
   const projectListShown = picked === null && !!projects;
 
-  /** 首屏（项目列表）聚焦项目的子目录只读预览：悬停/键盘聚焦哪条项目就列
-   *  哪个项目根下的直接子项；未聚焦（无选中）不加载。防抖避免扫过一串项目
-   *  时连打请求；进项目后这份账整个让位给真正的第三栏。 */
-  const focusedProject = projectListShown ? (projects ?? [])[projSelected] : undefined;
-  const [focusedSub, setFocusedSub] = useState<{ project: ProjectRow; entries: ProjectFileEntry[]; total: number } | null>(null);
-  useEffect(() => {
-    if (!projectListShown || !focusedProject || query.trim()) {
-      setFocusedSub(null);
-      return;
-    }
-    setFocusedSub(null);
-    const cached = dirCache.current.get(focusedProject.path);
-    if (cached) {
-      setFocusedSub({ project: focusedProject, ...cached });
-      return;
-    }
-    const timer = setTimeout(() => {
-      void api
-        .listProjectFiles(focusedProject.id, { dir: '', limit: 100 })
-        .then((listing) => {
-          const value = cacheSet(
-            dirCache.current,
-            focusedProject.path,
-            { entries: listing.entries, total: listing.total },
-            DIR_CACHE_MAX,
-          );
-          setFocusedSub({ project: focusedProject, ...value });
-        })
-        .catch(() => {});
-    }, SELECT_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [projectListShown, focusedProject, query]);
-  const focusedSubPane = focusedSub ? (
-    <FinderColumnList
-      entries={focusedSub.entries}
-      loading={false}
-      activePath={null}
-    />
-  ) : (
-    <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
-      {t('tasks.filePreviewEmpty' as never)}
-    </div>
-  );
-
   const [fileHits, setFileHits] = useState<SearchFileHit[] | null>(null);
   const [hitsTruncated, setHitsTruncated] = useState(false);
   /** 键盘 handler（挂一次转闭包）读的命中快照。 */
@@ -858,6 +808,7 @@ export function FileBrowserModal({
                   onClick={() => {
                     if (!proj) return;
                     userTouched.current = true;
+                    setProjSelected(i);
                     pickProject(proj, hit.path);
                   }}
                   className={cn(
@@ -1290,7 +1241,11 @@ export function FileBrowserModal({
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0"
-      onClick={onClose}
+      onClick={(e) => {
+        // 只认遮罩本体：双击项目行时第二击的 click 目标可能是行内 DIV（重渲染
+        // 换了节点），冒泡上来不带行按钮的证据——不能拿「没落在按钮上」当关。
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       {/* h-[70%] 不用 70dvh：根 zoom 下视口单位被二次放大（见 index.css #root 注）。
           全屏 = 面板类切 fixed inset-0（SessionMessages 先例）：z-[55] 在右栏之上、
@@ -1306,51 +1261,50 @@ export function FileBrowserModal({
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 头：面包屑 + 搜索 + 全屏 + 关闭。全项目第一屏没有面包屑（还没进项目），
-            搜索框照摆——打字即可按名过滤项目。 */}
+        {/* 头：返回 + 路径 + 搜索 + 全屏 + 关闭。头部元素不随分栏切换——
+            没进项目时返回键置灰、路径只摆「浏览文件」标题；进了项目路径
+            变成面包屑（点项目名 = 回项目列表第一屏）。 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2">
+          <Tooltip label={t('tasks.fileUp')}>
+            <button
+              type="button"
+              aria-label={t('tasks.fileUp')}
+              disabled={crumb.length === 0 && !picked}
+              onClick={() => {
+                // 窄屏预览态：这枚键先「回列表」（唯一返回键，不与预览头的
+                // 旧返回键叠两层）；列表态才是目录上一级。
+                if (!isDesktop && screen === 'preview') {
+                  setScreen('list');
+                  return;
+                }
+                goUp();
+              }}
+              className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           {projectList ? (
             <span className="min-w-0 flex-1 truncate text-xs text-neutral-300">{t('app.openFileBrowser')}</span>
           ) : (
-            <>
-              <Tooltip label={t('tasks.fileUp')}>
-                <button
-                  type="button"
-                  aria-label={t('tasks.fileUp')}
-                  disabled={crumb.length === 0 && !picked}
-                  onClick={() => {
-                    // 窄屏预览态：这枚键先「回列表」（唯一返回键，不与预览头的
-                    // 旧返回键叠两层）；列表态才是目录上一级。
-                    if (!isDesktop && screen === 'preview') {
-                      setScreen('list');
-                      return;
-                    }
-                    goUp();
-                  }}
-                  className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-              </Tooltip>
-              <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
-                {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
-                <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
-                  {activeProjectName}
-                </button>
-                {crumb.map((seg, i) => (
-                  <span key={`${seg}-${i}`}>
-                    {'/'}
-                    <button
-                      type="button"
-                      onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
-                      className="text-neutral-300 hover:text-neutral-100"
-                    >
-                      {seg}
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </>
+            <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
+              {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
+              <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
+                {activeProjectName}
+              </button>
+              {crumb.map((seg, i) => (
+                <span key={`${seg}-${i}`}>
+                  {'/'}
+                  <button
+                    type="button"
+                    onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
+                    className="text-neutral-300 hover:text-neutral-100"
+                  >
+                    {seg}
+                  </button>
+                </span>
+              ))}
+            </div>
           )}
           <div className="relative w-56 shrink-0 max-lg:w-40">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
@@ -1419,46 +1373,32 @@ export function FileBrowserModal({
             键盘操作（↑↓/Enter）从第一拍起就是主路径。 */}
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
-            {projectList ? (
-              // 全项目模式第一屏：桌面 2 栏常显 = 项目列表 | 聚焦项目的子目录
-              // （只读预览——鼠标只许看，进项目才可操作）；第二栏只在点了/聚焦
-              // 了项目才加载数据，空着摆提示。窄屏一屏一栏。
-              isDesktop ? (
-                <>
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-                  <Resizer
-                    onResize={(d) => setPreviewW(previewW - d)}
-                    title={t('app.resizePreview')}
-                  />
-                  <div
-                    className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06] bg-neutral-950/40"
-                    style={{ width: previewW }}
-                  >
-                    {focusedSubPane}
-                  </div>
-                </>
-              ) : (
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-              )
-            ) : isDesktop ? (
-              /* 恒 3 栏：左=父级列（根态空占位）| 中=当前操作列 | 右=下层预览
-                  （选中条目才出现，未选中不占宽）。左列数据复用层级递进的账
-                  （不为此单独发请求）；列里点目录 = 跳过去，下层区域即右侧预览栏。 */
+            {projectListShown && isDesktop ? (
+              // 桌面恒 3 栏（项目列表=虚拟根，见下）：未点项目时中栏摆提示。
               <FileColumnsBrowser
-                parentCol={
-                  finderCols.length > 0 ? (
-                    <FinderColumnList
-                      entries={finderCols[0]!.entries}
-                      loading={finderCols[0]!.loading}
-                      activePath={dir}
-                      onOpen={(p) => {
-                        setQuery('');
-                        setDir(p);
-                      }}
-                    />
-                  ) : null
+                parentCol={projectList}
+                parentRootLabel={t('app.openFileBrowser')}
+                middleCol={
+                  <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
+                    {t('tasks.filePreviewEmpty')}
+                  </div>
                 }
-                parentRootLabel={activeProjectName}
+                previewCol={null}
+                leftW={leftW}
+                onLeftResize={(d) => setLeftW(leftW + d)}
+                onPreviewResize={(d) => setPreviewW(previewW - d)}
+              />
+            ) : projectList ? (
+              // 窄屏一屏一栏。
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
+            ) : isDesktop ? (
+              /* 恒 3 栏：左=项目列表（虚拟根目录，恒驻）| 中=当前项目文件树
+                  | 右=下层预览（选中条目才出现，未选中不占宽）。项目列表就是
+                  第一层：点项目 = 中栏切进该项目的树；列里点目录 = 跳过去，
+                  下层区域即右侧预览栏。 */
+              <FileColumnsBrowser
+                parentCol={projectList}
+                parentRootLabel={t('app.openFileBrowser')}
                 middleCol={list}
                 previewCol={previewPane}
                 leftW={leftW}
