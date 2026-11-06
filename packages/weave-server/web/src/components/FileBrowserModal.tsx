@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
-import { Resizer } from '@/components/Resizer';
 import { useToast } from '@/components/Toast';
 import { copyText } from '@/lib/clipboard';
 import { useT } from '@/i18n/I18nProvider';
@@ -43,6 +42,14 @@ import {
   setFindRanges,
   sizeText,
 } from './tasks/FilePicker';
+import { useFinderColumns } from './tasks/FilePicker';
+import {
+  FileColumnsBrowser,
+  FinderColumnList,
+  MobileFadePanels,
+  useColumnWidths,
+  useMobilePaneSwitch,
+} from '@/components/FileColumnsBrowser';
 
 /**
  * 项目文件资源浏览器（只读 modal）：FilePicker 的项目级全量版——同样的三栏
@@ -61,11 +68,7 @@ import {
 /** 搜索输入的防抖窗（FilePicker 同款）。 */
 const SEARCH_DEBOUNCE_MS = 120;
 
-/** 三栏宽度的可调范围（px）与 sessionStorage 键（会话级记忆：重开弹窗还在，重开浏览器归位）。 */
-const LEFT_W_MIN = 120;
-const LEFT_W_MAX = 360;
-const PREVIEW_W_MIN = 200;
-const PREVIEW_W_MAX = 720;
+/** 三栏宽度的 sessionStorage 键（会话级记忆：重开弹窗还在，重开浏览器归位）。 */
 const SPLIT_KEY = 'weave:file-browser-split';
 
 /** 触屏长按 = 右键的等价动作（ProjectList 同款参数）。 */
@@ -162,8 +165,6 @@ export function FileBrowserModal({
     return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
   });
   const [entries, setEntries] = useState<ProjectFileEntry[]>([]);
-  /** 父目录条目：只有桌面三栏的左栏用得上（窄屏不取）。 */
-  const [siblings, setSiblings] = useState<ProjectFileEntry[]>([]);
   const [total, setTotal] = useState(0);
   /** 搜索满档即停：命中的先后只是扫描序，条数是下限（文案得如实说「前 N 条」）。 */
   const [capped, setCapped] = useState(false);
@@ -176,6 +177,8 @@ export function FileBrowserModal({
   const [sub, setSub] = useState<{ dir: string; entries: ProjectFileEntry[]; total: number } | null>(null);
   /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切。 */
   const [screen, setScreen] = useState<'list' | 'preview'>('list');
+  // 窄屏渐入渐出面板的标签点击（MobileFadePanels 经 window 事件上报，组件共用）
+  useMobilePaneSwitch(setScreen);
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
@@ -184,18 +187,7 @@ export function FileBrowserModal({
   /** 全屏（SessionMessages 先例）：面板类切换，ESC 链里优先于关闭。 */
   const [fullscreen, setFullscreen] = useState(false);
   /** 三栏拖宽（只桌面）：sessionStorage 会话级记忆，重开弹窗还在。 */
-  const [leftW, setLeftW] = useState<number>(() => {
-    const v = Number(sessionStorage.getItem(`${SPLIT_KEY}:left`));
-    return Number.isFinite(v) && v > 0 ? Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, v)) : 160;
-  });
-  const [previewW, setPreviewW] = useState<number>(() => {
-    const v = Number(sessionStorage.getItem(`${SPLIT_KEY}:preview`));
-    return Number.isFinite(v) && v > 0 ? Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, v)) : 384;
-  });
-  useEffect(() => {
-    sessionStorage.setItem(`${SPLIT_KEY}:left`, String(leftW));
-    sessionStorage.setItem(`${SPLIT_KEY}:preview`, String(previewW));
-  }, [leftW, previewW]);
+  const { leftW, setLeftW, previewW, setPreviewW } = useColumnWidths(SPLIT_KEY);
 
   const searchRef = useRef<HTMLInputElement>(null);
   /** 弹窗自己收焦点：不让按键漏到背后的页面。 */
@@ -235,31 +227,26 @@ export function FileBrowserModal({
   /** 全项目模式真正生效的 projectId/projectName：跟随 picked 漂移。 */
   const activeProjectId = picked?.id ?? projectId;
   const activeProjectName = picked?.name ?? projectName;
+  /** 路过每一层的账（层级递进本身）：父级列的数据源，键 = `projectId:path`。
+   *  切项目清账——上一个项目的层对下一个项目没有意义。 */
+  const visited = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
 
   const load = useCallback(
     (q: string, target: string, signal: AbortSignal, fresh = false): Promise<void> => {
       const mine = ++seq.current;
       setLoading(true);
       setError(null);
-      // 没有斜杠但非空（`src`）= 父目录是项目根 `''`；根自身没有父
-      const slash = target.lastIndexOf('/');
-      const parent = target === '' ? null : slash >= 0 ? target.slice(0, slash) : '';
-      return Promise.all([
-        api.listProjectFiles(activeProjectId, { q, dir: target, signal, fresh }),
-        // 左栏 = 父目录的条目（根没有父，摆一行项目名占位）
-        !q && isDesktop && parent !== null
-          ? api.listProjectFiles(activeProjectId, { dir: parent, signal }).catch(() => null)
-          : Promise.resolve(null),
-      ])
-        .then(([listing, parentListing]) => {
+      return api
+        .listProjectFiles(activeProjectId, { q, dir: target, signal, fresh })
+        .then((listing) => {
           if (mine !== seq.current) return;
           setRoot(listing.root);
           setEntries(listing.entries);
           setTotal(listing.total);
           setCapped(listing.capped ?? false);
           setTruncated(listing.truncated);
-          // 搜索不打父目录请求；这时留住上一次那份，左栏不闪成空栏
-          if (!q) setSiblings(parentListing?.entries ?? []);
+          // 层级递进的账留给父级列：你来时的每一层都在这儿（不为此单独发请求）
+          visited.current.set(`${activeProjectId}:${target}`, { entries: listing.entries, total: listing.total });
           const want = focusPath.current;
           const at = want ? listing.entries.findIndex((e) => e.path === want) : -1;
           focusPath.current = null;
@@ -281,8 +268,11 @@ export function FileBrowserModal({
           if (mine === seq.current) setLoading(false);
         });
     },
-    [activeProjectId, isDesktop],
+    [activeProjectId, visited],
   );
+
+  /** Finder 父级列（桌面分栏）：进项目后才取数。 */
+  const finderCols = useFinderColumns(activeProjectId, dir, isDesktop && !!picked, visited);
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
@@ -641,6 +631,7 @@ export function FileBrowserModal({
   const pickProject = (p: ProjectRow, targetPath?: string): void => {
     setPicked(p);
     userTouched.current = false;
+    visited.current.clear();
     setQuery('');
     if (targetPath) {
       const slash = targetPath.lastIndexOf('/');
@@ -1385,89 +1376,55 @@ export function FileBrowserModal({
               // 全项目模式第一屏：桌面三栏照摆（键盘第一拍就能用），中栏 = 项目
               // 列表，左/预览栏空占位；窄屏一屏一栏（固定宽的三栏会互相挤没）。
               isDesktop ? (
-                <>
-                  <div className="flex shrink-0 flex-col border-r border-edge/[0.06]" style={{ width: leftW }} />
-                  <Resizer
-                    onResize={(d) => setLeftW((w) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, w + d)))}
-                    title={t('app.resizeLeft')}
-                  />
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-                  <Resizer
-                    onResize={(d) => setPreviewW((w) => Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, w - d)))}
-                    title={t('app.resizePreview')}
-                  />
-                  <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }} />
-                </>
+                <FileColumnsBrowser
+                  parentCol={null}
+                  parentRootLabel={activeProjectName}
+                  middleCol={projectList}
+                  previewCol={null}
+                  leftW={leftW}
+                  onLeftResize={(d) => setLeftW(leftW + d)}
+                  previewW={previewW}
+                  onPreviewResize={(d) => setPreviewW(previewW - d)}
+                  showPreview={false}
+                />
               ) : (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
               )
             ) : isDesktop ? (
-              <>
-                {/* 左栏 = 父目录（superfile 那套）：横向跳同级目录用。文件只是给个
-                    上下文、只有目录可点（点文件没有去处）；站在项目根时父就是自己，
-                    那一格是项目名，三栏恒在、不塌成两栏。 */}
-                <div className="flex shrink-0 flex-col border-r border-edge/[0.06]" style={{ width: leftW }}>
-                  <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
-                    {dir === '' ? (
-                      <li className="flex items-center gap-2 bg-blue-500/15 px-2.5 py-1 text-11 text-neutral-100">
-                        <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
-                        <span className="truncate">{activeProjectName}</span>
-                      </li>
-                    ) : (
-                      siblings.map((sib) =>
-                        sib.kind === 'dir' ? (
-                          <li key={sib.path}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setQuery('');
-                                setDir(sib.path);
-                              }}
-                              className={cn(
-                                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-11',
-                                sib.path === dir
-                                  ? 'bg-blue-500/15 text-neutral-100'
-                                  : 'text-neutral-400 hover:bg-edge/[0.04] hover:text-neutral-200',
-                              )}
-                            >
-                              {iconFor(sib)}
-                              <span className="min-w-0 flex-1 truncate font-mono">
-                                {sib.name}
-                                {sib.path === dir ? '/' : ''}
-                              </span>
-                              {sib.head && <HeadBadge head={sib.head} />}
-                            </button>
-                          </li>
-                        ) : (
-                          <li
-                            key={sib.path}
-                            className="flex items-center gap-2 px-2.5 py-1 text-11 text-neutral-600"
-                          >
-                            {iconFor(sib)}
-                            <span className="truncate font-mono">{sib.name}</span>
-                          </li>
-                        ),
-                      )
-                    )}
-                  </ul>
-                </div>
-                <Resizer
-                  onResize={(d) => setLeftW((w) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, w + d)))}
-                  title={t('app.resizeLeft')}
-                />
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
-                <Resizer
-                  onResize={(d) => setPreviewW((w) => Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, w - d)))}
-                  title={t('app.resizePreview')}
-                />
-                <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }}>
-                  {previewPane}
-                </div>
-              </>
-            ) : screen === 'list' ? (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+              /* 恒 3 栏：左=父级列（根态空占位）| 中=当前操作列 | 右=下层预览。
+                  左列数据复用层级递进的账（不为此单独发请求）；列里点目录 =
+                  跳过去，下层区域即右侧预览栏。 */
+              <FileColumnsBrowser
+                parentCol={
+                  finderCols.length > 0 ? (
+                    <FinderColumnList
+                      entries={finderCols[0]!.entries}
+                      loading={finderCols[0]!.loading}
+                      activePath={dir}
+                      onOpen={(p) => {
+                        setQuery('');
+                        setDir(p);
+                      }}
+                    />
+                  ) : null
+                }
+                parentRootLabel={activeProjectName}
+                middleCol={list}
+                previewCol={previewPane}
+                leftW={leftW}
+                onLeftResize={(d) => setLeftW(leftW + d)}
+                previewW={previewW}
+                onPreviewResize={(d) => setPreviewW(previewW - d)}
+              />
             ) : (
-              previewPane
+              <MobileFadePanels
+                listActive={screen === 'list'}
+                listLabel={activeProjectName}
+                previewLabel={current?.name ?? activeProjectName}
+              >
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+                {previewPane}
+              </MobileFadePanels>
             )}
           </div>
           {/* 底条：条数 / 截断提示（全项目第一屏不摆——还没有「条数」可数） */}
