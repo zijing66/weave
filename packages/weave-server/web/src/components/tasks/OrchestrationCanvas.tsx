@@ -11,6 +11,7 @@ import {
   Link2,
   Maximize2,
   Minimize2,
+  MoveRight,
   Plus,
   Save,
   Trash2,
@@ -214,6 +215,8 @@ export function OrchestrationCanvas({
   const [orchQuery, setOrchQuery] = useState('');
   /** 用户亲手翻过的分组；null = 还没动过（编辑画布只展开起点所在的项目，总览全展开）。 */
   const [groupTouched, setGroupTouched] = useState<Set<number> | null>(null);
+  /** 总览 LR 自动布局模式（卡片内视图态，不进 URL）：拓扑分列从左往右 + 边条件标注。 */
+  const [lrMode, setLrMode] = useState(false);
 
   /** 换一份编排：分组的「翻动」记录回到未动过。 */
   useEffect(() => setGroupTouched(null), [order]);
@@ -448,6 +451,7 @@ export function OrchestrationCanvas({
     statuses,
     sessionById,
     projectName,
+    lrMode,
     t,
   });
 
@@ -745,6 +749,22 @@ export function OrchestrationCanvas({
                 placeholder={t('orch.filterSession')}
                 className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
               />
+              <Tooltip label={t(lrMode ? 'orch.lrOff' : 'orch.lrOn')}>
+                <button
+                  type="button"
+                  aria-pressed={lrMode}
+                  onClick={() => setLrMode((v) => !v)}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-11 transition-colors',
+                    lrMode
+                      ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
+                      : 'border-edge/[0.1] text-neutral-300 hover:bg-edge/[0.06]',
+                  )}
+                >
+                  <MoveRight className="h-3 w-3" />
+                  {t('orch.lrMode')}
+                </button>
+              </Tooltip>
               <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-11 text-neutral-500">
                 {t('orch.summary', {
                   nodes: overview!.nodes.length,
