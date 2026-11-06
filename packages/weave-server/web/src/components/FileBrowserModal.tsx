@@ -41,9 +41,11 @@ import {
   segmentsOf,
   setFindRanges,
   sizeText,
+  useFinderColumns,
 } from './tasks/FilePicker';
 import {
   FileColumnsBrowser,
+  FinderColumnList,
   MobileFadePanels,
   useColumnWidths,
   useMobilePaneSwitch,
@@ -229,6 +231,13 @@ export function FileBrowserModal({
   /** 路过每一层的账（层级递进本身）：父级列的数据源，键 = `projectId:path`。
    *  切项目清账——上一个项目的层对下一个项目没有意义。 */
   const visited = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
+  // 父级列数据（桌面左栏与窄屏左栏共用）：未进项目（dir=''）时为空——左栏摆项目列表
+  const finderCols = useFinderColumns(
+    activeProjectId,
+    picked ? dir : '',
+    picked !== null,
+    visited,
+  );
 
   const load = useCallback(
     (q: string, target: string, signal: AbortSignal, fresh = false): Promise<void> => {
@@ -1396,11 +1405,26 @@ export function FileBrowserModal({
             键盘操作（↑↓/Enter）从第一拍起就是主路径。 */}
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
+            {/* 左栏语义：未进项目 = 项目列表（虚拟根）；进了项目 = 该项目的上级目录。
+                窄屏与桌面共用同一份 parentCol，层级表达一致。 */}
             {isDesktop ? (
-              // 桌面恒 3 栏（项目列表=虚拟根，恒驻左栏）：未点项目时中栏摆提示，
-              // 点了项目中栏切进该项目的文件树。
+              // 桌面恒 3 栏：未点项目时中栏摆提示，点了项目中栏切进该项目的文件树。
               <FileColumnsBrowser
-                parentCol={projectList}
+                parentCol={
+                  picked && finderCols.length > 0 ? (
+                    <FinderColumnList
+                      entries={finderCols[0]!.entries}
+                      loading={finderCols[0]!.loading}
+                      activePath={dir}
+                      onOpen={(p) => {
+                        setQuery('');
+                        setDir(p);
+                      }}
+                    />
+                  ) : (
+                    projectList
+                  )
+                }
                 parentRootLabel={t('app.openFileBrowser')}
                 middleCol={
                   picked ? (
@@ -1418,10 +1442,24 @@ export function FileBrowserModal({
                 onPreviewResize={(d) => setPreviewW(previewW - d)}
               />
             ) : (
-              // 窄屏三栏同屏窄排：左=项目列表（虚拟根=父目录层）/ 中=文件树 /
+              // 窄屏三栏同屏窄排：左=上级目录（未进项目=项目列表）/ 中=当前目录 /
               // 右=预览，语义与桌面一致；活动栏可操作，窄条点按切换。
               <MobileFadePanels active={screen}>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  {picked && finderCols.length > 0 ? (
+                    <FinderColumnList
+                      entries={finderCols[0]!.entries}
+                      loading={finderCols[0]!.loading}
+                      activePath={dir}
+                      onOpen={(p) => {
+                        setQuery('');
+                        setDir(p);
+                      }}
+                    />
+                  ) : (
+                    projectList
+                  )}
+                </div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   {picked ? (
                     list
