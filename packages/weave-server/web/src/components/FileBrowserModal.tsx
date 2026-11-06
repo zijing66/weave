@@ -1387,11 +1387,11 @@ export function FileBrowserModal({
               isDesktop ? (
                 <>
                   <div className="flex shrink-0 flex-col border-r border-edge/[0.06]" style={{ width: leftW }} />
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
                   <Resizer
                     onResize={(d) => setLeftW((w) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, w + d)))}
                     title={t('app.resizeLeft')}
                   />
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
                   <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }} />
                   <Resizer
                     onResize={(d) => setPreviewW((w) => Math.min(PREVIEW_W_MAX, Math.max(PREVIEW_W_MIN, w - d)))}
@@ -1451,11 +1451,11 @@ export function FileBrowserModal({
                     )}
                   </ul>
                 </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 <Resizer
                   onResize={(d) => setLeftW((w) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, w + d)))}
                   title={t('app.resizeLeft')}
                 />
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 <div className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.06]" style={{ width: previewW }}>
                   {previewPane}
                 </div>
