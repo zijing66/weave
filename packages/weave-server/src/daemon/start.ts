@@ -14,6 +14,8 @@ import { syntheticSessionIds } from '../hooks/synthetic-sessions.js';
 import { createEdgeExtract } from '../hooks/edge-extract.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
+import { startWorktreeMergeSweeper } from './worktree.js';
+import { hooksRoot } from '../hooks/mirror.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
@@ -524,6 +526,18 @@ export function startDaemon(): void {
   // statusline 渲染缓存（<dataDir>/statusline/）：由短命 helper 进程写，没有常驻
   // 进程知道它们何时作废 → 与空会话同处定期回收（含旧版散在系统临时目录的存量）。
   startStatuslineCacheSweeper();
+  // 会话 worktree 并回扫描（B5 最小切片）：退出事件落库后 15s 内把分支并回主干；
+  // 重启恢复同一条路（登记在 cache，第一拍接上）。状态变化发 sessions 失效帧。
+  startWorktreeMergeSweeper({
+    sessions: () => hookSessions.listWithCounts(),
+    projectPathOf: (projectId) => projects.getById(projectId)?.path,
+    recentEventsOf: (projectId) =>
+      hookEvents
+        .listByProject(projectId, 50)
+        .map((e) => ({ sessionId: e.sessionId, payload: e.payload })),
+    hooksDir: hooksRoot(),
+    onChange: () => dataBus.emit({ key: 'sessions' }),
+  });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,

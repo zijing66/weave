@@ -52,6 +52,8 @@ import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
+import { startWorktreeMergeSweeper } from './worktree.js';
+import { hooksRoot } from '../hooks/mirror.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
 import { WatchService } from '../watch/watch-service.js';
 import { weaveRequestHandler } from './server.js';
@@ -494,6 +496,18 @@ async function main(): Promise<void> {
   // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
   // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。
   startStatuslineCacheSweeper();
+  // 会话 worktree 并回扫描（B5 最小切片，与生产入口同一装配）：退出事件落库后
+  // 15s 内把分支并回主干；重启恢复同一条路（登记在 cache，第一拍接上）。
+  startWorktreeMergeSweeper({
+    sessions: () => hookSessions.listWithCounts(),
+    projectPathOf: (projectId) => projects.getById(projectId)?.path,
+    recentEventsOf: (projectId) =>
+      hookEvents
+        .listByProject(projectId, 50)
+        .map((e) => ({ sessionId: e.sessionId, payload: e.payload })),
+    hooksDir: hooksRoot(),
+    onChange: () => dataBus.emit({ key: 'sessions' }),
+  });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
   const hookPipeline = wireHookFilePipeline({
     projects,
