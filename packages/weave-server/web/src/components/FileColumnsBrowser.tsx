@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, Folder, Loader2 } from 'lucide-react';
+import { Folder, Loader2 } from 'lucide-react';
 import type { ProjectFileEntry } from '@/lib/api';
 import { Resizer } from '@/components/Resizer';
 import { useT } from '@/i18n/I18nProvider';
@@ -177,116 +177,61 @@ export function FileColumnsBrowser({
   );
 }
 
-// ---- 窄屏（<lg）渐入渐出双面板 ----
+// ---- 窄屏（<lg）三栏同屏窄排 ----
 
-/** 窄屏的渐入渐出多面板：各屏常驻（保持滚动位置与状态），活动屏全宽不透明、
- *  非活动屏收成侧边一条标签（点它切换，透明度过渡，不硬切）。
- *  三栏语义：活动屏就是当前可操作栏；左右栏的标签点击 = 把那一栏切过来变成
- *  可操作栏（与 macOS Finder 移动端一致），标签自身恒在屏幕边缘可回切。
- *  景深：非活动屏半透明 + 轻微缩小 + 模糊（远处的层），活动屏实色 + 阴影
- *  （浮起的层）——切换时 opacity/scale 过渡，层次感由此而来。 */
+/** 窄屏的缩小版 Finder：三栏同屏，语义与桌面一致（左=父目录 / 中=当前目录 /
+ *  右=预览），一眼看清层级。活动栏占大部分宽度、实色可操作；非活动栏收成
+ *  窄条（内容压暗可见——是父目录还是预览一眼即知），点按即切换为活动栏。
+ *  景深：非活动栏半透明压暗，活动栏实色 + 阴影浮起。 */
 export function MobileFadePanels({
   active,
-  leftLabel,
-  listLabel,
-  previewLabel,
-  onLeftResize,
-  onPreviewResize,
   children,
 }: {
-  /** 当前活动屏：'list'（中栏）/ 'left'（左栏）/ 'preview'（右栏）。 */
+  /** 当前活动栏：'list'（中栏=当前目录）/ 'left'（左栏=父目录）/ 'preview'（右栏=预览）。 */
   active: 'list' | 'left' | 'preview';
-  leftLabel: string;
-  listLabel: string;
-  previewLabel: string;
-  /** 拖动分界 = 调左/右栏记忆宽度（触屏也有拖动调区）。 */
-  onLeftResize?: (delta: number) => void;
-  onPreviewResize?: (delta: number) => void;
   /** 恰好三个面板：[左栏, 中栏, 右栏]。 */
   children: [ReactNode, ReactNode, ReactNode];
 }) {
   const [left, list, preview] = children;
-  const t = useT();
-  const row = 'flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-11';
   const switchTo = (pane: string): void => {
     window.dispatchEvent(new CustomEvent('weave:mobile-pane', { detail: pane }));
   };
-  /** 远处的层：半透明可见 + 缩小 + 模糊（景深），不可交互（pointer-events 关）。 */
-  const back =
-    'w-0 min-w-0 overflow-hidden opacity-30 scale-[0.97] blur-[1px] pointer-events-none';
-  /** 眼前的层：全宽实色 + 投影浮起。 */
-  const front = 'flex-1 opacity-100 scale-100 z-10 shadow-mac-lg';
+  /** 远处的层：收成窄条，内容压暗仍可见（一眼认出是父目录还是预览）。
+   *  拦交互的是子 tap 层（z-20 盖住整栏），内容本层的命中都被它接走。 */
+  const back = 'w-9 min-w-0 overflow-hidden opacity-40';
+  /** 眼前的层：占满剩余宽度，实色 + 投影浮起。 */
+  const front = 'flex-1 min-w-0 opacity-100 z-10 shadow-mac-lg';
   const paneCls = (isActive: boolean): string =>
     cn(
-      'flex min-h-0 min-w-0 flex-col transition-all duration-300 ease-mac',
+      'relative flex min-h-0 flex-col transition-all duration-300 ease-mac',
       COL_DIVIDER,
       isActive ? front : back,
       'border-r',
     );
-  const tabCls = cn(row, 'shrink-0 text-neutral-400 hover:text-neutral-100 max-[380px]:px-1.5');
+  /** 非活动栏的点击层：盖在整栏上，点按 = 把这一栏切过来变活动。 */
+  const tap = (pane: 'left' | 'list' | 'preview') =>
+    pane === active ? undefined : (
+      <button
+        type="button"
+        aria-label={pane}
+        onClick={() => switchTo(pane)}
+        className="absolute inset-0 z-20"
+      />
+    );
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      {/* 左栏屏 */}
-      <div className={paneCls(active === 'left')}>{left}</div>
-      {active !== 'left' && (
-        <>
-          {onLeftResize && (
-            <Resizer
-              onResize={onLeftResize}
-              orientation="horizontal"
-              className="w-2 max-lg:w-2.5"
-              title={t('app.resizeLeft')}
-            />
-          )}
-          <button type="button" onClick={() => switchTo('left')} className={tabCls}>
-            <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
-            <span className="max-w-20 truncate">{leftLabel}</span>
-            <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
-          </button>
-        </>
-      )}
-      {/* 中栏屏 */}
-      <div className={cn(paneCls(active === 'list'), active !== 'preview' && 'border-r')}>
-        {list}
+      <div className={paneCls(active === 'left')}>
+        {left}
+        {tap('left')}
       </div>
-      {active !== 'list' && (
-        <>
-          {onLeftResize && (
-            <Resizer
-              onResize={onLeftResize}
-              orientation="horizontal"
-              className="w-2 max-lg:w-2.5"
-              title={t('app.resizeLeft')}
-            />
-          )}
-          <button type="button" onClick={() => switchTo('list')} className={tabCls}>
-            <span className="max-w-20 truncate">{listLabel}</span>
-            {active === 'left' ? (
-              <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
-            ) : (
-              <ChevronLeft className="h-3 w-3 shrink-0 text-neutral-600" />
-            )}
-          </button>
-        </>
-      )}
-      {/* 右栏屏（预览）：最外侧无边 */}
-      <div className={cn(paneCls(active === 'preview'), 'border-r-0')}>{preview}</div>
-      {active !== 'preview' && (
-        <>
-          {onPreviewResize && (
-            <Resizer
-              onResize={onPreviewResize}
-              orientation="horizontal"
-              className="w-2 max-lg:w-2.5"
-              title={t('app.resizePreview')}
-            />
-          )}
-          <button type="button" onClick={() => switchTo('preview')} className={tabCls}>
-            <span className="max-w-20 truncate">{previewLabel}</span>
-            <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
-          </button>
-        </>
-      )}
+      <div className={paneCls(active === 'list')}>
+        {list}
+        {tap('list')}
+      </div>
+      <div className={cn(paneCls(active === 'preview'), 'border-r-0')}>
+        {preview}
+        {tap('preview')}
+      </div>
     </div>
   );
 }

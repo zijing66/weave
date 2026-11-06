@@ -875,8 +875,9 @@ export function FileBrowserModal({
                   onMouseEnter={() => {
                     if (kbdNav.current) return;
                     setProjSelected(i);
-                    // 项目 = 普通目录行：悬停即在中栏展开（同构选中目录的预览跟随）
-                    if (picked !== p) pickProject(p);
+                    // 项目 = 普通目录行：悬停即在中栏展开（同构选中目录的预览跟随）。
+                    // 窄屏不悬停展开——tap 切栏那一拍指针扫过行会把活动屏抢回去
+                    if (isDesktop && picked !== p) pickProject(p);
                   }}
                   onClick={() => {
                     // 长按刚开的菜单：这一击是抬手补的，不当点选
@@ -1417,18 +1418,19 @@ export function FileBrowserModal({
                 onPreviewResize={(d) => setPreviewW(previewW - d)}
               />
             ) : (
-              /* 窄屏三屏渐入渐出：左=项目列表 / 中=文件树（可操作）/ 右=预览。
-                  活动屏即当前可操作栏；标签点击把那一栏切过来。初始屏 = 项目列表。 */
-              <MobileFadePanels
-                active={screen}
-                leftLabel={t('app.openFileBrowser')}
-                listLabel={activeProjectName}
-                previewLabel={current?.name ?? activeProjectName}
-                onLeftResize={(d) => setLeftW(leftW + d)}
-                onPreviewResize={(d) => setPreviewW(previewW - d)}
-              >
+              // 窄屏三栏同屏窄排：左=项目列表（虚拟根=父目录层）/ 中=文件树 /
+              // 右=预览，语义与桌面一致；活动栏可操作，窄条点按切换。
+              <MobileFadePanels active={screen}>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{projectList}</div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  {picked ? (
+                    list
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
+                      {t('tasks.filePreviewEmpty')}
+                    </div>
+                  )}
+                </div>
                 {previewPane}
               </MobileFadePanels>
             )}

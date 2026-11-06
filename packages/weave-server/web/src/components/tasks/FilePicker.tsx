@@ -1403,12 +1403,7 @@ export function FilePicker({
                 onLeftResize={() => {}}
               />
             ) : (
-              <MobileFadePanels
-                active={screen}
-                leftLabel={rootLabel}
-                listLabel={rootLabel}
-                previewLabel={current?.name ?? rootLabel}
-              >
+              <MobileFadePanels active={screen}>
                 {/* 无左栏的选择器：左屏复用列表（标签点着也不出错，实际两屏轮换） */}
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
