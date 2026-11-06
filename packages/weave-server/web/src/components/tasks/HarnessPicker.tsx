@@ -5,6 +5,7 @@ import { useBackPop } from '@/lib/back-pop';
 import { cssPx } from '@/lib/font-scale';
 import { harnessUiOf } from '@/lib/harness-meta';
 import type { ProjectHarness } from '@/lib/api';
+import { Switch } from '@/components/ui/switch';
 import { HarnessIcon } from './HarnessIcon';
 
 /**
@@ -12,12 +13,16 @@ import { HarnessIcon } from './HarnessIcon';
  * 终端弹层那套——锚在按钮上、点外面/滚动/Esc 收）。**项目选中的 harness 全列**，
  * 起不了的（无 resume 裸 bin / 宿主版本低于闸）置灰并在行内说明原因——只有一个
  * 也照样展开，选哪个恒由用户点。
+ * 底部一枚「worktree 隔离」开关（B5 最小切片）：开着的会话起在独立 git worktree，
+ * SessionEnd 后并回主干；开关态由父层持有（面板收起再开不丢）。
  */
 export function HarnessPicker({
   harnesses,
   x,
   y,
   anchor,
+  worktree,
+  onWorktreeChange,
   onPick,
   onClose,
 }: {
@@ -26,6 +31,9 @@ export function HarnessPicker({
   y: number;
   /** 打开它的那枚按钮：它自己那一击归它的 onClick 做开合切换，这里不抢。 */
   anchor: HTMLElement;
+  /** worktree 隔离开关的当前态（父层持有）。 */
+  worktree: boolean;
+  onWorktreeChange: (v: boolean) => void;
   onPick: (harness: ProjectHarness['id']) => void;
   onClose: () => void;
 }) {
@@ -103,6 +111,13 @@ export function HarnessPicker({
           );
         })}
       </ul>
+      {/* worktree 隔离（B5 最小切片）：开关态由父层持有，面板重开不丢 */}
+      <div className="flex items-center justify-between gap-2 border-t border-edge/[0.06] px-2 py-1.5">
+        <span className="min-w-0 truncate text-10 text-neutral-500">
+          {t('tasks.worktreeToggle')}
+        </span>
+        <Switch checked={worktree} onChange={onWorktreeChange} title={t('tasks.worktreeToggleTip')} />
+      </div>
     </div>,
     document.body,
   );

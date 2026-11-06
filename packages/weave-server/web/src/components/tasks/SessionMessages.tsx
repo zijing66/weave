@@ -713,7 +713,29 @@ export function SessionMessages({
               <p className="truncate text-xs font-medium text-neutral-200">
                 {t('tasks.messagesTitle')} · {label}
               </p>
-              <p className="truncate text-10 text-neutral-500">{projectLabel}</p>
+              <p className="truncate text-10 text-neutral-500">
+                {projectLabel}
+                {sessionRow?.worktree && (
+                  <span
+                    className={cn(
+                      'ml-1.5 inline-block rounded px-1 align-[1px] text-10 leading-tight',
+                      sessionRow.worktree.status === 'active' && 'bg-sky-500/15 text-sky-300',
+                      sessionRow.worktree.status === 'merged' && 'bg-emerald-500/15 text-emerald-300',
+                      sessionRow.worktree.status === 'conflict' && 'bg-amber-500/15 text-amber-300',
+                      sessionRow.worktree.status === 'error' && 'bg-red-500/15 text-red-300',
+                    )}
+                    title={
+                      sessionRow.worktree.status === 'conflict' || sessionRow.worktree.status === 'error'
+                        ? sessionRow.worktree.message ?? undefined
+                        : sessionRow.worktree.branch
+                    }
+                  >
+                    {t(
+                      `tasks.worktreeStatus.${sessionRow.worktree.status}` as Parameters<typeof t>[0],
+                    )}
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">

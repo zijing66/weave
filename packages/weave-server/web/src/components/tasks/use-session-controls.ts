@@ -30,6 +30,13 @@ interface SessionRowLike {
   effort?: string | null;
   contextTokens?: number | null;
   title?: string | null;
+  /** 会话 worktree（B5 最小切片）：隔离域 + 并回状态；不隔离 = null/undefined。 */
+  worktree?: {
+    path: string;
+    branch: string;
+    status: 'active' | 'merged' | 'conflict' | 'error';
+    message?: string;
+  } | null;
 }
 
 /**
