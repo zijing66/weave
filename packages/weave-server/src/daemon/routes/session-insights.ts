@@ -5,7 +5,7 @@ import { isHarness, type Harness } from '@weavecode/core';
 import type { FileEdit } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
-import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor, rewindSurfaceFor, activitySurfaceFor } from '../../surfaces.js';
+import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor, rewindSurfaceFor, activitySurfaceFor, usageSurfaceFor } from '../../surfaces.js';
 import type { HookEventRow } from '../../repositories/hook-events.js';
 import type { ProjectRow } from '../../repositories/projects.js';
 
@@ -299,6 +299,25 @@ export async function handleSessionInsightRoutes(
       transcriptPath: deps.sessionProbe?.transcriptPathOf(sessionId) ?? null,
     });
     sendJson(res, 200, { supported: rewinds !== null, rewinds });
+    return true;
+  }
+
+  // ---- 会话用量：各轮 token 计量（只活在转录/rollout，读取恒被动、不落库）----
+  const usageMatch = pathname.match(/^\/sessions\/([^/]+)\/usage$/);
+  if (usageMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(usageMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const src = latestHarnessOf(deps, sessionId);
+    const surface = src ? usageSurfaceFor(src) : null;
+    if (!surface) {
+      sendJson(res, 200, { supported: false, usage: null });
+      return true;
+    }
+    const usage = await surface.sessionUsage({
+      sessionId,
+      transcriptPath: deps.sessionProbe?.transcriptPathOf(sessionId) ?? null,
+    });
+    sendJson(res, 200, { supported: usage !== null, usage });
     return true;
   }
 

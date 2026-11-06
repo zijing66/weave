@@ -30,7 +30,8 @@ export type HarnessCapability =
   | 'provision'
   | 'liveness'
   | 'rewind'
-  | 'activity';
+  | 'activity'
+  | 'usage';
 
 /**
  * 采集集成的 user 档状态（tool-object-model §2.6 基石）。
@@ -1017,6 +1018,37 @@ export interface EditsSurface {
   }): Promise<FileEdit[] | null>;
 }
 
+/**
+ * 一轮的 token 用量（宿主计量条目里现成的数字，weave 不折算成本）。
+ * 输入侧各分项原样带出——cache 命中与否价差悬殊，聚合丢了就没法后补。
+ */
+export interface UsageTurn {
+  /** 该轮完成时刻（转录条目 timestamp）；宿主没带 → null。 */
+  at: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  /** 推理侧 token（codex 的 reasoning_output_tokens；claude 恒 0）。 */
+  reasoningTokens: number;
+  /** 该轮完成后模型上下文窗口的占用（input + cache + output 之和；无据 → null）。 */
+  contextTokens: number | null;
+}
+
+/**
+ * 会话用量面：token 计量只活在转录/rollout（hook 域不记 usage），读取恒被动
+ * （打开会话详情时按需全量读一遍），不落库、不在 ingest 里扫。缺这个槽 =
+ * 该 harness 的转录里没有可认的计量条目（前端如实置灰）。
+ */
+export interface UsageSurface {
+  /** 各轮用量（时间序）；读不到（无转录 / 路径未知 / 半路出错）→ null（不猜）。 */
+  sessionUsage(req: {
+    sessionId: string;
+    /** 转录路径（server 的探针答，宿主不自己拼目录）；null = 不知道在哪。 */
+    transcriptPath: string | null;
+  }): Promise<UsageTurn[] | null>;
+}
+
 /** 一张粘贴进宿主输入框的图（转录里的 image block 解出来的原始字节）。 */
 export interface PromptImage {
   /** MIME（`image/png` 这类）；认不出的类型上游就该丢掉。 */
@@ -1426,6 +1458,7 @@ export interface HarnessDriver {
   liveness?: LivenessSurface;
   rewind?: RewindSurface;
   activity?: ActivitySurface;
+  usage?: UsageSurface;
   /** 不入 capabilities 清单——无 web 面，消费点仅 server 两处（dispatcher diff 采纳 / PATCH rename RPC）。 */
   titles?: SessionTitleSurface;
 }

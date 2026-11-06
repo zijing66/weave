@@ -18,6 +18,7 @@ import { CLAUDE_LIVENESS } from './liveness.js';
 import { CLAUDE_TITLES } from './titles.js';
 import { CLAUDE_REWIND } from './rewind.js';
 import { CLAUDE_ACTIVITY } from './activity.js';
+import { CLAUDE_USAGE } from './usage.js';
 
 export { ClaudeEventSource, CLAUDE_EVENT_SOURCE, frameFacts, expandPayloadRefs } from './event-source.js';
 export type { ClaudeFrameFacts, FramePayloadLike, BackgroundTaskFact } from './event-source.js';
@@ -43,6 +44,7 @@ export {
 export { CLAUDE_EDITS } from './edits.js';
 export { CLAUDE_IMAGES } from './images.js';
 export { CLAUDE_NARRATION } from './narration.js';
+export { CLAUDE_USAGE } from './usage.js';
 export { CLAUDE_REWIND, stepRewind, type RewindState } from './rewind.js';
 export {
   CLAUDE_REWIND_PICKER,
@@ -125,6 +127,7 @@ export const CLAUDE_DRIVER: HarnessDriver = {
     'liveness',
     'rewind',
     'activity',
+    'usage',
   ],
   assets: CLAUDE_ASSETS,
   events: CLAUDE_EVENT_SOURCE,
@@ -144,5 +147,6 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   liveness: CLAUDE_LIVENESS,
   rewind: CLAUDE_REWIND,
   activity: CLAUDE_ACTIVITY,
+  usage: CLAUDE_USAGE,
   titles: CLAUDE_TITLES,
 };

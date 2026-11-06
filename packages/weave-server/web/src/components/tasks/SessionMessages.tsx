@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -29,6 +29,7 @@ import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickTarget } from './FilePicker';
 import { SessionShuttlePicker } from './SessionShuttlePicker';
 import { SessionEditsDialog } from './SessionEditsDialog';
+import { SessionUsageDialog } from './SessionUsageDialog';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { RewindPicker } from './RewindPicker';
 import { StatuslineBar } from './StatuslineBar';
@@ -245,6 +246,7 @@ export function SessionMessages({
   const [expanded, setExpanded] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   /** 改动汇总弹窗（默认按轮：右键哪条气泡就看那一轮的改动；「全部对话」是逃生门）。 */
   const [editsOpen, setEditsOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [editsRange, setEditsRange] = useState<{ since: string | null; until: string | null }>({
     since: null,
     until: null,
@@ -2240,6 +2242,17 @@ export function SessionMessages({
                       {t('tasks.editsTitle')}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenu(null);
+                      setUsageOpen(true);
+                    }}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <Gauge className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.usageTitle')}
+                  </button>
                 </>
               ) : (
                 <>
@@ -2367,6 +2380,9 @@ export function SessionMessages({
           open={editsOpen}
           onClose={() => setEditsOpen(false)}
         />
+
+        {/* 会话用量：各轮 token 计量（取数归 harness 能力面，纯只读） */}
+        <SessionUsageDialog sessionId={sessionId} open={usageOpen} onClose={() => setUsageOpen(false)} />
 
         {/* 回退选择器（`/rewind`）：列表与范围都在这里选，服务端读屏驱动宿主面板 */}
         {rewindOpen && (
