@@ -287,6 +287,8 @@ export const cmTheme = (dark: boolean): Extension =>
 
 /** 主题翻的时候只重配这一格，不重建视图（重建会丢滚动位置与选区）。 */
 export const themeConf = new Compartment();
+/** 自动换行开关的 compartment：预览工具条上那枚切换按钮改它。 */
+const wrapConf = new Compartment();
 
 /** 自绘查找高亮：`@codemirror/search` 的高亮**只在它自己的面板打开时才画**
  *  （源码 `highlight({query, panel})` 开头 `if (!panel …) return Decoration.none`），
@@ -316,11 +318,14 @@ export function CodePreview({
   lines,
   viewRef,
   onGutterClick,
+  wrap = true,
 }: {
   text: string;
   lines: { start: number; end: number } | null;
   viewRef: React.MutableRefObject<EditorView | null>;
   onGutterClick: (line: number) => void;
+  /** 自动换行开关：预览工具条上那枚切换按钮改它。 */
+  wrap?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const theme = useTheme();
@@ -349,7 +354,7 @@ export function CodePreview({
           drawSelection(),
           // 查找高亮走上面的自绘层（search() 扩展的高亮只在它面板打开时才画）。
           findHighlighter,
-          EditorView.lineWrapping,
+          wrapConf.of([]),
           EditorView.editable.of(false),
           themeConf.of(cmTheme(theme === 'dark')),
         ],
@@ -367,6 +372,11 @@ export function CodePreview({
   useEffect(() => {
     viewRef.current?.dispatch({ effects: themeConf.reconfigure(cmTheme(theme === 'dark')) });
   }, [theme]);
+
+  // 自动换行开关：reconfigure 到 wrapCompartment
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: wrapConf.reconfigure(wrap ? EditorView.lineWrapping : []) });
+  }, [wrap, viewRef]);
 
   // 换文件：整篇换掉并回到顶部，上一份的查找高亮随之作废
   useEffect(() => {

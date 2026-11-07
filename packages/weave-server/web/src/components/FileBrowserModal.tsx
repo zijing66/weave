@@ -18,8 +18,10 @@ import {
   Maximize,
   Minimize,
   RefreshCw,
+  RemoveFormatting,
   Search,
   TextSearch,
+  WrapText,
   X,
 } from 'lucide-react';
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
@@ -126,7 +128,7 @@ function MarkdownPreview({ text }: { text: string }) {
   return (
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4">
       {parsed.frontmatter && <FrontmatterCard data={parsed.frontmatter} />}
-      <div className="prose prose-invert prose-sm max-w-none">
+      <div className="prose prose-invert prose-sm max-w-none [&_pre]:whitespace-pre-wrap [&_pre]:overflow-x-hidden [&_a]:break-all [&_code]:break-words [&_table]:block [&_table]:overflow-x-auto">
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{ pre: markdownPre }}>
           {parsed.body}
         </ReactMarkdown>
@@ -220,6 +222,8 @@ export function FileBrowserModal({
   /** markdown 原始视图开关（默认渲染视图）：查找/跳行只认原始视图——渲染成
    *  prose 之后 CodeMirror 不在了，高亮与跳转没有落点。换文件重置回预览。 */
   const [rawView, setRawView] = useState(false);
+  /** 原始格式预览的自动换行开关（CodeMirror lineWrapping；默认开）。 */
+  const [wrapText, setWrapText] = useState(true);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
   /** 全项目模式：null = 还没进任何项目（首屏两栏，主区列项目）；非 null = 已进入。
    *  面包屑点根（goTo('')）只停在该项目根，出项目走返回链的 exitOneLevel。 */
@@ -415,6 +419,8 @@ export function FileBrowserModal({
   fullscreenRef.current = fullscreen;
   const viewingRef = useRef<ProjectFileEntry | null>(viewing);
   viewingRef.current = viewing;
+  const rawViewRef = useRef(rawView);
+  rawViewRef.current = rawView;
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   /** 全项目模式退回项目列表第一屏（ESC 链与移动端返回共用）：退到根先是这层，
@@ -438,6 +444,33 @@ export function FileBrowserModal({
       else if (fullscreenRef.current) setFullscreen(false);
       else if (exitOneLevel()) return;
       else closeRef.current();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  // 原始格式预览的快捷键：Ctrl+F 查找 / Ctrl+G 跳到行（bar 已开则切到另一格）。
+  // 只认文本文件预览在场上（current 是文件且 text 类）——目录/图片里按了没意义。
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const cur = currentRef.current;
+      if (!cur || cur.kind !== 'file') return;
+      const kind = previewKindOf(cur.name);
+      if (kind !== 'text') return;
+      if (MARKDOWN_EXT.test(cur.name) && !rawViewRef.current) return;
+      const k = e.key.toLowerCase();
+      if (k === 'f') {
+        e.preventDefault();
+        e.stopPropagation();
+        setBar((b) => (b === 'find' ? null : 'find'));
+      } else if (k === 'g') {
+        e.preventDefault();
+        e.stopPropagation();
+        setBar((b) => (b === 'line' ? null : 'line'));
+      }
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
@@ -1076,6 +1109,19 @@ export function FileBrowserModal({
             {/* 查找/跳行只在原始视图可用：渲染态点了等于无处高亮，不如不摆 */}
             {(!MARKDOWN_EXT.test(current.name) || rawView) && (
               <>
+                <Tooltip label={t('tasks.fileWrapToggle')}>
+                  <button
+                    type="button"
+                    aria-label={t('tasks.fileWrapToggle')}
+                    onClick={() => setWrapText((v) => !v)}
+                    className={cn(
+                      'rounded p-0.5 hover:text-neutral-100',
+                      wrapText ? 'text-blue-300' : 'text-neutral-400',
+                    )}
+                  >
+                    {wrapText ? <WrapText className="h-3.5 w-3.5" /> : <RemoveFormatting className="h-3.5 w-3.5" />}
+                  </button>
+                </Tooltip>
                 <Tooltip label={t('tasks.fileFind')}>
                   <button
                     type="button"
@@ -1089,10 +1135,10 @@ export function FileBrowserModal({
                     <TextSearch className="h-3.5 w-3.5" />
                   </button>
                 </Tooltip>
-                <Tooltip label={t('tasks.fileGoToLine')}>
+                <Tooltip label={t('tasks.fileGoToLineShortcut')}>
                   <button
                     type="button"
-                    aria-label={t('tasks.fileGoToLine')}
+                    aria-label={t('tasks.fileGoToLineShortcut')}
                     onClick={() => setBar(bar === 'line' ? null : 'line')}
                     className={cn(
                       'rounded p-0.5 hover:text-neutral-100',
@@ -1251,7 +1297,7 @@ export function FileBrowserModal({
           // 原始视图（rawView）才走 CodeMirror——查找/跳行只在那里有落点。
           <MarkdownPreview text={preview.text} />
         ) : preview?.path === current.path && preview.text != null ? (
-          <CodePreview text={preview.text} lines={null} viewRef={viewRef} onGutterClick={() => {}} />
+          <CodePreview text={preview.text} lines={null} viewRef={viewRef} onGutterClick={() => {}} wrap={wrapText} />
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center p-3 text-11 text-neutral-500">
             {preview?.path === current.path ? t('tasks.fileNoPreview') : t('tasks.fileLoading')}
