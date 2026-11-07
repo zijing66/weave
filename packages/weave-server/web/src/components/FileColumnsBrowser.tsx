@@ -182,14 +182,18 @@ export function FileColumnsBrowser({
 /** 窄屏的缩小版 Finder：三栏同屏，语义与桌面一致（左=父目录 / 中=当前目录 /
  *  右=预览），一眼看清层级。活动栏占大部分宽度、实色可操作；非活动栏收成
  *  窄条（内容压暗可见——是父目录还是预览一眼即知），点按即切换为活动栏。
- *  景深：非活动栏半透明压暗，活动栏实色 + 阴影浮起。 */
+ *  景深：非活动栏半透明压暗，活动栏实色 + 阴影浮起。
+ *  首屏（还没有上一层级）左栏传 null——两栏形态，主展示区直接是操作对象。 */
 export function MobileFadePanels({
   active,
+  hasLeft,
   children,
 }: {
   /** 当前活动栏：'list'（中栏=当前目录）/ 'left'（左栏=父目录）/ 'preview'（右栏=预览）。 */
   active: 'list' | 'left' | 'preview';
-  /** 恰好三个面板：[左栏, 中栏, 右栏]。 */
+  /** false = 两栏形态（首屏无上一层级，左栏整个不摆）。 */
+  hasLeft: boolean;
+  /** [左栏, 中栏, 右栏]。 */
   children: [ReactNode, ReactNode, ReactNode];
 }) {
   const [left, list, preview] = children;
@@ -220,10 +224,12 @@ export function MobileFadePanels({
     );
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <div className={paneCls(active === 'left')}>
-        {left}
-        {tap('left')}
-      </div>
+      {hasLeft && (
+        <div className={paneCls(active === 'left')}>
+          {left}
+          {tap('left')}
+        </div>
+      )}
       <div className={paneCls(active === 'list')}>
         {list}
         {tap('list')}

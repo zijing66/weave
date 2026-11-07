@@ -222,8 +222,8 @@ export function FileBrowserModal({
    *  prose 之后 CodeMirror 不在了，高亮与跳转没有落点。换文件重置回预览。 */
   const [rawView, setRawView] = useState(false);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
-  /** 全项目模式：null = 还没进任何项目（中栏第一屏列项目）；非 null = 已进入。
-   *  面包屑退回根（goTo('')）时回到项目列表。 */
+  /** 全项目模式：null = 还没进任何项目（首屏两栏，主区列项目）；非 null = 已进入。
+   *  面包屑点根（goTo('')）只停在该项目根，出项目走返回链的 exitOneLevel。 */
   const [picked, setPicked] = useState<ProjectRow | null>(null);
   /** 全项目模式真正生效的 projectId/projectName：跟随 picked 漂移。 */
   const activeProjectId = picked?.id ?? projectId;
@@ -484,9 +484,8 @@ export function FileBrowserModal({
         focusPath.current = target ? `${target}/${seg}` : seg;
       }
     }
-    // 全项目模式退回根 = 回到项目列表第一屏（picked 置空后 activeProjectId
-    // 回落 props 的占位，列表请求停发——中栏改列项目）
-    if (projects && target === '') setPicked(null);
+    // 全项目模式退回根 = 停在该项目的文件树根（picked 不动：返回上一级的终点
+    // 是项目根，再退一次才轮到 exitOneLevel 出项目回项目列表第一屏）
     userTouched.current = false;
     setQuery('');
     setDir(target);
@@ -1442,9 +1441,12 @@ export function FileBrowserModal({
                 onPreviewResize={(d) => setPreviewW(previewW - d)}
               />
             ) : (
-              // 窄屏三栏同屏窄排：左=上级目录（未进项目=项目列表）/ 中=当前目录 /
-              // 右=预览，语义与桌面一致；活动栏可操作，窄条点按切换。
-              <MobileFadePanels active={screen}>
+              /* 窄屏（状态机）：level = picked 有无。
+                 root 首屏 = 两栏，主展示区就是项目列表（中栏位、恒活动）；
+                 inside = 三栏：左=上一层级（项目根时=项目列表，深处=父目录列）/
+                 中=当前目录（恒显示当前所在路径，导航只改内容不切屏）/ 右=预览。
+                 screen 只被「点窄条」和「选中文件看预览」改变。 */
+              <MobileFadePanels active={screen} hasLeft={picked !== null}>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   {picked && finderCols.length > 0 ? (
                     <FinderColumnList
@@ -1464,9 +1466,7 @@ export function FileBrowserModal({
                   {picked ? (
                     list
                   ) : (
-                    <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
-                      {t('tasks.filePreviewEmpty')}
-                    </div>
+                    projectList
                   )}
                 </div>
                 {previewPane}

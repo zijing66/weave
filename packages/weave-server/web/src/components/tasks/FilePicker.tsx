@@ -1403,8 +1403,8 @@ export function FilePicker({
                 onLeftResize={() => {}}
               />
             ) : (
-              <MobileFadePanels active={screen}>
-                {/* 无左栏的选择器：左屏复用列表（标签点着也不出错，实际两屏轮换） */}
+              // 两栏形态（无左栏选择器）：中栏=文件列表 / 右=预览
+              <MobileFadePanels active={screen === 'left' ? 'list' : screen} hasLeft={false}>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 {previewPane}
