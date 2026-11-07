@@ -509,6 +509,8 @@ export function FilePicker({
   const visited = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
   /** 项目绝对根（列表回包自带）：头部完整路径与复制按钮都用它。 */
   const [rootPath, setRootPath] = useState('');
+  /** 上一波 load 的 (project, dir, q)：同参重复 load 不重置选中（见 load 内）。 */
+  const lastLoadKeyRef = useRef<string | null>(null);
 
   const load = useCallback(
     (q: string, target: string, signal: AbortSignal, fresh = false): Promise<void> => {
@@ -529,8 +531,15 @@ export function FilePicker({
           const want = focusPath.current;
           const at = want ? listing.entries.findIndex((e) => e.path === want) : -1;
           focusPath.current = null;
-          setSelected(at >= 0 ? at : 0);
-          if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
+          // 父组件重渲会换引用 → 防抖 effect 同参重跑：重复 load 不重置选中、
+          // 不再自动跳预览屏（否则返回聚焦被第一行覆盖，预览屏被误拉起）
+          const key = `${projectId}:${target}:${q}`;
+          const sameAsLast = lastLoadKeyRef.current === key;
+          lastLoadKeyRef.current = key;
+          if (!sameAsLast) {
+            setSelected(at >= 0 ? at : 0);
+            if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
+          }
         })
         .catch((e: unknown) => {
           if (mine !== seq.current || signal.aborted) return;

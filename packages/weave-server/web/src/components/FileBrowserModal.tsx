@@ -268,10 +268,16 @@ export function FileBrowserModal({
           const want = focusPath.current;
           const at = want ? listing.entries.findIndex((e) => e.path === want) : -1;
           focusPath.current = null;
-          // 用户已经用鼠标/键盘选过行就不覆盖（否则列表回来自动跳回第一行，
-          // 正盯着的选项被顶掉）；重置只发生在初始定位与换目录
+          // 父组件重渲会换 projects 引用 → 防抖 effect 同参重跑：这种重复 load
+          // 不许重置选中（focusPath 已被首次消费，else 分支会把「返回聚焦」打回
+          // 第一行）。只有参数真的变了（换目录/换词/换项目）才落 0 或定位。
+          const key = `${activeProjectId}:${target}:${q}`;
+          const sameAsLast = lastLoadKeyRef.current === key;
+          lastLoadKeyRef.current = key;
           if (userTouched.current) {
             setSelected((i) => Math.min(i, listing.entries.length - 1));
+          } else if (sameAsLast) {
+            // 同参重跑：选中保持现状（不跳 0、不覆盖）
           } else {
             setSelected(at >= 0 ? at : 0);
           }
@@ -290,15 +296,10 @@ export function FileBrowserModal({
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
-  /** 已加载的 (project, dir)：父组件重渲会换 projects 数组引用（filter 现算），
-   *  effect 随之重跑——同参重跑会把 focusPath 消费后的重复 load 以 selected=0
-   *  覆盖「返回聚焦」（先对后跳的根因）。同参直接跳过。 */
-  const loadedKeyRef = useRef<string | null>(null);
+  /** 上一波 load 的 (project, dir, q)：同参重复 load 不重置选中（见 load 内）。 */
+  const lastLoadKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!picked && projects) return; // 全项目模式第一屏：还没进项目，不打文件请求
-    const key = `${activeProjectId}:${dir}:${query.trim()}`;
-    if (loadedKeyRef.current === key && focusPath.current === null) return;
-    loadedKeyRef.current = key;
     const timer = setTimeout(() => {
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
