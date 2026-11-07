@@ -14,6 +14,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { cssPx, fontScale } from '@/lib/font-scale';
 import { formatStamp } from '@/lib/hook-payload';
+import { MarqueeText } from './conv-widgets';
 
 /**
  * 会话活动（第 21 能力槽 activity）：TUI statusline 下方那组子 agent 行的
@@ -279,7 +280,7 @@ export function ActivityButton({ sessionId, busy }: { sessionId: string; busy: b
         )}
       />
       <span className="shrink-0 text-neutral-500">{a.agentType ?? 'agent'}</span>
-      <span className="min-w-0 flex-1 truncate text-neutral-300">{a.description ?? a.agentId}</span>
+      <MarqueeText text={a.description ?? a.agentId} className="text-neutral-300" />
       {stampOf(a) && <span className="shrink-0 text-10 tabular-nums text-neutral-600">{stampOf(a)}</span>}
     </button>
   );
@@ -298,9 +299,10 @@ export function ActivityButton({ sessionId, busy }: { sessionId: string; busy: b
         )}
       />
       <Terminal className="h-3 w-3 shrink-0 text-neutral-500" />
-      <span className="min-w-0 flex-1 truncate font-mono text-neutral-300">
-        {s.command ?? s.description ?? s.taskId}
-      </span>
+      <MarqueeText
+        text={s.command ?? s.description ?? s.taskId}
+        className="font-mono text-neutral-300"
+      />
       {stampOf(s) && <span className="shrink-0 text-10 tabular-nums text-neutral-600">{stampOf(s)}</span>}
     </button>
   );
@@ -466,7 +468,7 @@ export function ActivityButton({ sessionId, busy }: { sessionId: string; busy: b
                                 : 'bg-neutral-600',
                           )}
                         />
-                        <span className="min-w-0 truncate text-neutral-300">{row.activeForm ?? row.subject}</span>
+                        <MarqueeText text={row.activeForm ?? row.subject} className="text-neutral-300" />
                       </div>
                     ))}
                   {section === 'shells' && (

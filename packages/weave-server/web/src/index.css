@@ -301,6 +301,20 @@
   animation: weave-ticker-in 220ms ease-out;
 }
 
+/* 活动行跑马灯：文字超宽时横向来回滚动（像子弹条），只滚超出那截的量。 */
+@keyframes weave-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--marquee-dist, 0px)));
+  }
+}
+.weave-marquee-run {
+  animation: weave-marquee 6s linear infinite alternate;
+  animation-delay: 1s;
+}
+
 /* 过程输出叠层：新段到达时顶卡从右侧滑入（牌堆翻页的方向感）。 */
 @keyframes weave-card-in {
   from {
