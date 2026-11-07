@@ -175,7 +175,10 @@ export function FileBrowserModal({
   /** 第三栏的子目录预览（选中一条目录时列它的直接子项；只读，不下钻）。 */
   const [sub, setSub] = useState<{ dir: string; entries: ProjectFileEntry[]; total: number } | null>(null);
   /** 窄屏可操作栏恒为中栏（MobileFadePanels 的窄条只是提示层不可点），
-   *  screen 已随该裁决退役——导航动作只改中栏内容。 */
+   *  screen 已随该裁决退役——导航动作只改中栏内容。
+   *  窄屏「到底」态：点了文件，中栏整个切进文件预览（路径/渲染⇄原始/查找/
+   *  跳行/正文满宽可用）；进目录或返回列表即清。桌面不用（右栏本就满宽）。 */
+  const [viewing, setViewing] = useState<ProjectFileEntry | null>(null);
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
@@ -410,6 +413,8 @@ export function FileBrowserModal({
   barRef.current = bar;
   const fullscreenRef = useRef(fullscreen);
   fullscreenRef.current = fullscreen;
+  const viewingRef = useRef<ProjectFileEntry | null>(viewing);
+  viewingRef.current = viewing;
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   /** 全项目模式退回项目列表第一屏（ESC 链与移动端返回共用）：退到根先是这层，
@@ -450,6 +455,11 @@ export function FileBrowserModal({
       setFullscreen(false);
       return true;
     }
+    // 窄屏「到底」态：先退回目录列表，再逐层往下退
+    if (!isDesktop && viewingRef.current) {
+      setViewing(null);
+      return true;
+    }
     if (query !== '') {
       setQuery('');
       return true;
@@ -478,6 +488,7 @@ export function FileBrowserModal({
     // 是项目根，再退一次才轮到 exitOneLevel 出项目回项目列表第一屏）
     userTouched.current = false;
     setQuery('');
+    setViewing(null);
     setDir(target);
   };
 
@@ -611,12 +622,16 @@ export function FileBrowserModal({
     });
   };
 
-  /** 进一条：目录就下钻，文件就选中（预览跟着选中走）。 */
+  /** 进一条：目录就下钻，文件就选中（预览跟着选中走）；
+   *  窄屏点文件 = 到底，中栏切进文件预览。 */
   const enter = (entry: ProjectFileEntry): void => {
     if (entry.kind === 'dir') {
       setQuery('');
       setDir(entry.path);
+      setViewing(null);
+      return;
     }
+    if (!isDesktop) setViewing(entry);
   };
 
   /** 全项目模式点一条项目：就地切进该项目（从根开始浏览）。
@@ -626,6 +641,7 @@ export function FileBrowserModal({
     userTouched.current = false;
     visited.current.clear();
     setQuery('');
+    setViewing(null);
     if (targetPath) {
       const slash = targetPath.lastIndexOf('/');
       setDir(slash >= 0 ? targetPath.slice(0, slash) : '');
@@ -1255,6 +1271,25 @@ export function FileBrowserModal({
     </div>
   );
 
+  /** 窄屏「到底」态的右窄条：文件元信息（大小 / 修改时间）——正文已满宽在中栏，
+   *  窄条给点有内容的账，没有就空白。 */
+  const mobileMetaPane = viewing ? (
+    <ul className="min-h-0 flex-1 overflow-y-auto py-1">
+      {[
+        viewing.size != null ? sizeText(viewing.size) : null,
+        viewing.mtime ? new Date(viewing.mtime).toLocaleString() : null,
+      ]
+        .filter(Boolean)
+        .map((line) => (
+          <li key={line} className="px-2.5 py-1 text-10 text-neutral-500">
+            {line}
+          </li>
+        ))}
+    </ul>
+  ) : (
+    <div className="min-h-0 flex-1" />
+  );
+
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0"
@@ -1442,13 +1477,16 @@ export function FileBrowserModal({
                   )}
                 </div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                  {picked ? (
+                  {/* 「到底」态：中栏整个切进文件预览（路径/渲染⇄原始/查找/正文满宽） */}
+                  {viewing ? (
+                    previewPane
+                  ) : picked ? (
                     list
                   ) : (
                     projectList
                   )}
                 </div>
-                {previewPane}
+                {viewing ? mobileMetaPane : previewPane}
               </MobileFadePanels>
             )}
           </div>
