@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   api,
   skillSourceRuntime,
@@ -16,6 +16,7 @@ import {
   type InstallCapabilities,
 } from '@/lib/api';
 import { registerInvalidator, subscribeFrame, subscribeHook, sseConnected, subscribeSseConnection } from '@/lib/sse';
+import { bootRequests } from '@/lib/boot-requests';
 import { sessionLabel } from '@/lib/hook-payload';
 import { notifyBrowser } from '@/lib/browser-notify';
 import { useProjects } from '@/hooks/use-projects';
@@ -62,38 +63,48 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
 
 /** 启动页各路信号的兜底窗：某一路挂住也不能把启动页焊在屏上。 */
 const BOOT_STAGE_FALLBACK_MS = 8_000;
+/** 进度分母 = HTTP 计数器总额 + 实时通道一路（SSE 是流，单独当一格）。 */
+const BOOT_LIVE_WEIGHT = 1;
 
 /**
- * 启动四阶段汇聚：认证探测 → 项目 → 会话 → 实时通道。只答「完成几步、走到
- * 哪一步」，文案是功能描述、不透接口细节；任一路 8s 内没回音按就位算（启动页
- * 不许焊死）。
+ * 启动进度 = bootRequests 计数器（每个真实 HTTP 请求发出即计、响应即清一格）
+ * + 实时通道一路。兜底 8s：超时即封账（启动页不许焊死），阶段文案取第一个
+ * 未就位组的功能描述。用 useSyncExternalStore 订阅计数器（请求一发出分母就动）。
  */
-function useBootProgress(): { progress: number; stage: 'link' | 'projects' | 'sessions' | 'live' } {
+function useBootProgress(): { progress: number; done: number; total: number; stage: 'link' | 'projects' | 'sessions' | 'live' } {
   const auth = useAuthState();
   const [live, setLive] = useState(sseConnected());
   useEffect(() => subscribeSseConnection(() => setLive(sseConnected())), []);
-  const { sessions } = useSessionStatus();
-  const [sessionsFallback, setSessionsFallback] = useState(false);
-  const [liveFallback, setLiveFallback] = useState(false);
-  // 兜底计时从「认证有结果」起算：登录页路径根本不看后两步
+  const { sessions, projectStats } = useSessionStatus();
+  const req = useSyncExternalStore(bootRequests.subscribe, bootRequests.snapshot);
+  const [fallback, setFallback] = useState(false);
+  // 兜底计时从「认证有结果」起算：登录页路径根本不看后面几路
   useEffect(() => {
     if (auth !== 'authenticated') return;
     const timer = setTimeout(() => {
-      setSessionsFallback(true);
-      setLiveFallback(true);
+      setFallback(true);
+      bootRequests.seal();
     }, BOOT_STAGE_FALLBACK_MS);
     return () => clearTimeout(timer);
   }, [auth]);
-  const stages = [auth !== 'unknown', sessions !== null || sessionsFallback, live || liveFallback] as const;
-  const done = (auth !== 'unknown' ? 1 : 0) + stages.slice(1).filter(Boolean).length;
-  const stage = !stages[0]
+  const total = req.total + BOOT_LIVE_WEIGHT;
+  const done = req.done + (live || fallback ? 1 : 0);
+  // 正常就位即封账：把本次实际请求数写回存量（下次启动的分母），此后请求不进进度
+  useEffect(() => {
+    if (auth === 'authenticated' && done >= total) bootRequests.seal();
+  }, [auth, done, total]);
+  // 就位判据与「数据门」解耦：核心数据（shellReady 会调 onBootReady）+ 实时通道
+  // 就位即算满——分母固化自上次启动，本次请求若比上次少，进度条到不了 1 是
+  // 正常的（少的那格本就没发），不能反过来卡住进 dashboard。
+  const stage = auth === 'unknown'
     ? 'link'
-    : !stages[1]
-      ? 'projects'
-      : !stages[2]
-        ? 'sessions'
+    : !fallback && sessions === null
+      ? 'sessions'
+      : (projectStats.size === 0 && !fallback)
+        ? 'projects'
         : 'live';
-  return { progress: done / 4, stage };
+  // min(1, …)：分母是上次固化值，本次请求数可少可多，进度夹在 [0,1]
+  return { progress: Math.min(1, total === 0 ? 0 : done / total), done, total, stage };
 }
 
 /** 「n 个更新」展开面的一行。 */
@@ -121,15 +132,24 @@ export default function App() {
   const [bootReady, setBootReady] = useState(false);
   const handleBootReady = useCallback(() => setBootReady(true), []);
   // useBootProgress 里 useSessionStatus 要 Provider 在——App 本就包在 SessionStatusProvider 内，直接调
-  const { progress, stage } = useBootProgress();
+  const { progress, done, total, stage } = useBootProgress();
   const anonymous = auth === 'anonymous';
-  const dataReady = auth === 'authenticated' && bootReady && progress >= 1;
+  // 进 dashboard 的门 = 数据门（shellReady → onBootReady）一个，与进度条完全
+  // 解耦——进度只是展示效果，绝不能反过来阻塞功能加载（2026-11-06 实测
+  // 57/65 卡死：分母固化自上次启动，本次少发几个进度就到不了 1）。
+  const dataReady = auth === 'authenticated' && bootReady;
   const stageLabel = t(`app.bootStage.${anonymous || auth === 'unknown' ? 'link' : stage}` as MessageKey);
   return (
     <>
       {anonymous && <LoginPage />}
       {auth === 'authenticated' && <Dashboard onBootReady={handleBootReady} />}
-      <BootSplash ready={anonymous || dataReady} progress={anonymous ? 1 : progress} stageLabel={stageLabel} />
+      <BootSplash
+        ready={anonymous || dataReady}
+        progress={anonymous ? 1 : progress}
+        stageLabel={stageLabel}
+        done={anonymous ? total : done}
+        total={total}
+      />
     </>
   );
 }

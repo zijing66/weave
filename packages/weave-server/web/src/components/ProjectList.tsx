@@ -474,7 +474,7 @@ export function ProjectList({
                   <span className="min-w-0 truncate text-11 text-neutral-500" title={p.path}>
                     {p.path}
                   </span>
-                  <CopyPathButton path={p.path} />
+                  <CopyPathButton path={p.path} asSpan />
                 </span>
                 {/* 已接入 harness（init 选择结果，服务端派生）：起会话的 harness
                     选项同一份事实。 */}
