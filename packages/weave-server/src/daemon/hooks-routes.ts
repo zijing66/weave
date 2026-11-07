@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import {
   HARNESS_SESSION_CONTROL,
+  PROMPT_MAX_CHARS,
+  PROMPT_PASTE_THRESHOLD_CHARS,
   isHarness,
   type Harness,
 } from '@weavecode/core';
@@ -19,6 +21,8 @@ import { readJson, sendJson } from './http.js';
 import { purgeSession } from '../hooks/session-purge.js';
 import { referencedSessionIds } from '../hooks/session-refs.js';
 import { readDaemonSettingsSync, readHooksEnabled } from './settings.js';
+import { readWorktreeRegistry } from './worktree.js';
+import { hooksRoot } from '../hooks/mirror.js';
 import { handleOrchestrationRoutes } from './routes/orchestration.js';
 import { handleHookAdminRoutes } from './routes/hooks-admin.js';
 import { handleUploadRoutes } from './routes/uploads.js';
@@ -50,8 +54,12 @@ const RenameSessionBody = z.object({ title: z.string().min(1).max(200) });
  * （默认 = 原生 SendMessage 中继 + 未开会话积压队列；降级 = 终端 send-text，
  * 全自动）。inject/headless/auto 只活在编排域（序列步显式选项）。 */
 const SendMessageBody = z.object({
-  text: z.string().max(20_000),
+  // 硬顶只防内存爆炸：阈值以内的直投、以上的整块粘贴都由投递侧分流（用户裁决
+  // 2026-11-06，原 20k 一刀切会把 paste 通道装得下的长文也拦掉）
+  text: z.string().max(PROMPT_MAX_CHARS),
   fromKind: z.enum(['dashboard', 'session']).optional(),
+  /** 投递来源（诱导回合登记的依据；缺省 manual）。扩展端点/插件 outbox 两源批 2b 接入。 */
+  origin: z.enum(['manual', 'orchestration', 'extension', 'plugin']).optional(),
   fromSessionId: z.string().min(1).nullable().optional(),
   /** 随附文件（上传件 id）；带文件且目标 harness 的 `attach` 面不收该类型即 409。 */
   attachments: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(8).optional(),
@@ -186,6 +194,9 @@ export async function handleHooksRoutes(
       sessions: sessions.map((s) => {
         const model = deps.sessionProbe?.currentModel(s.sessionId) ?? null;
         const present = deps.sessionProbe?.transcriptPresent(s.sessionId) ?? null;
+        // 会话 worktree 状态（B5 最小切片）：登记在 cache 档（只解 daemon 重启）。
+        // 无登记 = null（大多数会话不隔离，字段缺席即普通会话）。
+        const worktree = readWorktreeRegistry(deps.hooksDir ?? hooksRoot())[s.sessionId] ?? null;
         // 「在终端打开」的能力位：harness 的 resume 槽声明了交互式 openArgs 才有。
         // web 只渲染这个字段，不自带 harness 白名单（路由侧仍做同样的 501 校验）。
         const resume = isHarness(s.harness) ? deps.harnesses?.get(s.harness)?.resume : undefined;
@@ -194,6 +205,13 @@ export async function handleHooksRoutes(
           pidAlive: pidAliveOf(s, liveness),
           canOpenTerminal: !!(resume?.supported && resume.openArgs),
           terminal: screens[s.sessionId] ?? null,
+          // 会话 worktree（隔离域 + 并回状态）：见上方 worktree 取值。
+          worktree: worktree && {
+            path: worktree.path,
+            branch: worktree.branch,
+            status: worktree.status,
+            ...(worktree.message ? { message: worktree.message } : {}),
+          },
           // 已中断（转录最后一条标记晚于最后一条主回合事件）：只有「看着还在跑」的会话才现算
           interruptedAt:
             s.turnOpen === true
@@ -428,6 +446,7 @@ export async function handleHooksRoutes(
         ...(body.forceTerminal === true ? { forceTerminal: true } : {}),
         mode: 'prompt',
         fromKind: body.fromKind ?? 'dashboard',
+        ...(body.origin ? { origin: body.origin } : {}),
         fromSessionId: body.fromSessionId ?? null,
         // 手动面 = 单向注入：没有接收方会话，中继载荷带「无需回复」注记
         // （编排域不置 = 双向对话保留）。
@@ -509,6 +528,11 @@ export async function handleHooksRoutes(
     // prompt 列 = 层① 原生中继 || 层② 终端 send-text 兜底（随 settings/机器变）。
     const terminalChannel = deps.messageDeliverer?.hasTerminalChannel() ?? false;
     sendJson(res, 200, {
+      // prompt 长度策略（数值只在 core 一份，web 据此提前提示、不自带第二份）
+      promptLimits: {
+        maxChars: PROMPT_MAX_CHARS,
+        pasteThreshold: PROMPT_PASTE_THRESHOLD_CHARS,
+      },
       capabilities: messagingSurfaces().map(({ harness, surface }) => ({
         harness,
         discovery: surface.discovery,

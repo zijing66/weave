@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   applescriptString,
+  chunkByUtf8Bytes,
+  hasPasteMarkers,
   itermPaneFromEnv,
   konsolePaneFromEnv,
   parseItermPaneId,
@@ -17,6 +19,7 @@ import {
   parseWtProcDump,
   parseWtTargetId,
   panesAtDir,
+  pasteKeyChunks,
   pickTerminalAppWindow,
   locatorPresetOf,
   promptTerminalChannel,
@@ -664,6 +667,28 @@ describe('wt 击键通道 — env→pid 定位与 pane id 表示法', () => {
     expect(decoded).toContain('WriteConsoleInputW(h, buf,');
     expect(decoded).not.toContain('INPUT_RECORD[] recs');
     expect(decoded).not.toContain('REC = 24');
+  });
+});
+
+describe('分段粘贴 — 超长 prompt 按字节切块（argv / env 各有上限）', () => {
+  it('按 UTF-8 字节切（中文一字三字节），且只在码点边界切——不切进代理对', () => {
+    expect(chunkByUtf8Bytes('a'.repeat(3000), 2048).map((c) => c.length)).toEqual([2048, 952]);
+    // 中文字 3 字节：2048 只装得下 682 字（2046 字节），第 683 字进下一块
+    expect(chunkByUtf8Bytes('中'.repeat(1000), 2048)).toEqual(['中'.repeat(682), '中'.repeat(318)]);
+    // emoji 4 字节、两个 UTF-16 单元：切开就会变成两个孤立代理项
+    expect(chunkByUtf8Bytes('😀'.repeat(3), 6)).toEqual(['😀', '😀', '😀']);
+    expect(chunkByUtf8Bytes('', 2048)).toEqual([]);
+  });
+
+  it('标记只加在首末段：首段前补起标记、末段后补止标记 + CR', () => {
+    expect(pasteKeyChunks(['ab', 'cd', 'ef'])).toEqual(['\x1b[200~ab', 'cd', 'ef\x1b[201~\r']);
+    expect(pasteKeyChunks(['all'])).toEqual(['\x1b[200~all\x1b[201~\r']);
+  });
+
+  it('正文自己就含 paste 标记 → 不手工分段（退回整段单发，让通道如实报错）', () => {
+    expect(hasPasteMarkers('a\x1b[200~b')).toBe(true);
+    expect(hasPasteMarkers('a\x1b[201~b')).toBe(true);
+    expect(hasPasteMarkers('普通正文')).toBe(false);
   });
 });
 

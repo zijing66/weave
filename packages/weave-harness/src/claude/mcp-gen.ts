@@ -1,28 +1,5 @@
-import type { PlatformInfo } from '@weavecode/core';
-
-export interface McpGeneratorInput {
-  platform: PlatformInfo;
-  /** Whether to include the weave MCP server entry */
-  includeWeaveServer: boolean;
-}
-
-export function generateMcpJson(input: McpGeneratorInput): Record<string, unknown> {
-  const mcpServers: Record<string, unknown> = {};
-
-  if (input.includeWeaveServer) {
-    const command = input.platform.os === 'windows' ? 'cmd' : 'npx';
-    const args = input.platform.os === 'windows'
-      ? ['/c', 'npx', 'weave', 'mcp', 'start']
-      : ['weave', 'mcp', 'start'];
-
-    mcpServers['weave'] = {
-      command,
-      args,
-      env: { WEAVE_MCP: 'true' },
-    };
-  }
-
-  return { mcpServers };
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -30,9 +7,7 @@ export function generateMcpJson(input: McpGeneratorInput): Record<string, unknow
  *
  * Policy (weave init never overwrites user files):
  * - user-authored server entries and unknown top-level keys are preserved
- * - missing weave entries are appended
- * - the `weave` server entry is weave's own config key: when present it is
- *   refreshed to the current generated value
+ * - missing generated servers are appended
  */
 export function mergeMcpJson(
   existing: Record<string, unknown>,
@@ -44,21 +19,18 @@ export function mergeMcpJson(
   const servers = isPlainObject(merged['mcpServers']) ? { ...merged['mcpServers'] } : {};
 
   for (const [name, config] of Object.entries(generatedServers)) {
-    if (name === 'weave' || servers[name] === undefined) {
-      servers[name] = config;
-    }
+    if (servers[name] === undefined) servers[name] = config;
   }
   merged['mcpServers'] = servers;
   return merged;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /**
  * uninstall 用的剥除：删 `weave` 服务键（weave 自己的配置键）；mcpServers 清空
  * 删键；顶层清空返回空对象，调用方据此删文件。用户自己的服务键不动。
+ *
+ * 生成器（generateMcpJson / mergeMcpJson）已退役——init 不再写 `.mcp.json` 的
+ * weave stdio 条目（daemon 托管 MCP 取代）；本函数只清存量。
  */
 export function stripWeaveMcp(existing: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...existing };

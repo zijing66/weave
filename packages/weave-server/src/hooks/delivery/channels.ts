@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { defaultKill } from '../headless-runner.js';
 import { tmpdir } from 'node:os';
 import type { MessagingSurface } from '@weavecode/harness';
+import { PROMPT_PASTE_THRESHOLD_CHARS } from '@weavecode/core';
 import { isImageMediaType } from '../../repositories/uploads.js';
 import type { SpawnLike } from '../headless-runner.js';
 import type { PipeMessage } from '../message-deliverer.js';
@@ -46,6 +47,17 @@ export function wireTextOf(
 /** 有没有图（**不是**有没有附件）：宿主队列拒收图，只有图才逼着走终端。 */
 export function hasImages(entry: PipeMessage): boolean {
   return (entry.attachments ?? []).some((a) => isImageMediaType(a.mediaType));
+}
+
+/**
+ * 超长 prompt：超过阈值一律层② 整块粘贴（宿主折叠成 paste 块）。按**码点**计长——
+ * `length` 数的是 UTF-16 单元，emoji 会一个算俩、把 1999 字的正文推过线。
+ */
+export function isLongPrompt(text: string): boolean {
+  if (text.length <= PROMPT_PASTE_THRESHOLD_CHARS) return false;
+  let n = 0;
+  for (const _ of text) if (++n > PROMPT_PASTE_THRESHOLD_CHARS) return true;
+  return false;
 }
 
 /** 一次性子进程：收集输出、超时强杀；非零退出 / spawn 失败都算拒绝。 */

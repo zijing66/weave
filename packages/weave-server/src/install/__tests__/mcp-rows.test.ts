@@ -56,10 +56,10 @@ describe('readMcpRows — 工具行装配（模型协议 ToolStateRow）', () =>
     expect(alpha?.installScopes).toEqual(['project', 'user']);
     expect(alpha?.detail).toEqual({ command: 'npx' });
 
-    // claude user 面：~/.claude.json 不存在 → 只剩内置目录那一行
+    // claude user 面：~/.claude.json 不存在 → 只剩内置目录（两枚内置服务）
     expect(
       rows.filter((r) => r.harness === 'claude' && r.scope === 'user').map((r) => r.key),
-    ).toEqual(['weave-orchestration']);
+    ).toEqual(['weave-orchestration', 'weave-sessions']);
 
     // codex user 面：config.toml
     const zeta = pick('codex', 'zeta');

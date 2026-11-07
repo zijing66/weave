@@ -132,6 +132,7 @@ function ensureSource(): EventSource | null {
   lastFrameAt = Date.now();
   source.onopen = () => {
     lastFrameAt = Date.now();
+    setConnected(true);
   };
   source.onmessage = (ev) => {
     lastFrameAt = Date.now();
@@ -188,6 +189,29 @@ function ensureSource(): EventSource | null {
 function closeSource(): void {
   source?.close();
   source = null;
+  setConnected(false);
+}
+
+// 连接态（启动页进度条的第四阶段信号）：open 即连上，关流/换身份即断开。
+let connected = false;
+const connectionListeners = new Set<() => void>();
+function setConnected(next: boolean): void {
+  if (connected === next) return;
+  connected = next;
+  for (const listener of connectionListeners) listener();
+}
+
+/** SSE 流当前是否已建连（只答「此刻」，不做重连判定）。 */
+export function sseConnected(): boolean {
+  return connected;
+}
+
+/** 订阅连接态变化（React 走 useSyncExternalStore；退订函数照订阅口惯例）。 */
+export function subscribeSseConnection(listener: () => void): () => void {
+  connectionListeners.add(listener);
+  return () => {
+    connectionListeners.delete(listener);
+  };
 }
 
 // 认证态驱动连接：登录 → 补连（既有订阅者已在表里，不会漏帧）；登出/被拒 → 断开。

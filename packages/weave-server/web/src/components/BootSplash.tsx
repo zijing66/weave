@@ -15,11 +15,26 @@ const EXIT_MS = 320;
  * 首屏启动页：认证探测 + 首份数据就位之前铺满整屏，只演化那个四段动效标
  * （连接 → 交织 → 形成 → 展现，字标底下的流光就是等待后端的不确定进度）。
  *
- * 时序与数据解耦：自己吃掉「最短曝光」与淡出，调用方只回答 `ready` 与否——
+ * `progress`（0~1）与 `stageLabel` 是调用方给的确定性进度：logo 下方一条细
+ * 进度条按阶段推进，阶段文案只作功能描述、不透接口细节。时序与数据解耦：
+ * 自己吃掉「最短曝光」与淡出，调用方只回答 `ready` 与否——
  * 所以它可以在认证还没探测出来时就挂上，一路不断档地活到 Dashboard 首帧。
  * `reduced` 只关动画、不改变「就位后消失」的语义。
  */
-export function BootSplash({ ready }: { ready: boolean }) {
+export function BootSplash({
+  ready,
+  progress,
+  stageLabel,
+  done,
+  total,
+}: {
+  ready: boolean;
+  progress: number;
+  stageLabel: string;
+  /** 已响应接口数 / 首屏接口总数：跟在阶段文字后面的真实计数。 */
+  done: number;
+  total: number;
+}) {
   const t = useT();
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [phase, setPhase] = useState<'show' | 'exit' | 'gone'>('show');
@@ -51,6 +66,17 @@ export function BootSplash({ ready }: { ready: boolean }) {
       )}
     >
       <WeaveLogo animated={!reduced} className="h-10 w-auto" />
+      {/* 进度条总长与「logo+字标」同宽（h-10 的 logo 宽约 160px）；轨道双主题可见：深色白雾、浅色墨色雾 */}
+      <div className="mt-3 h-1 w-[160px] overflow-hidden rounded-full bg-neutral-500/25 ring-1 ring-inset ring-neutral-500/15">
+        <div
+          className="boot-bar-fill h-full rounded-full transition-[width] duration-500 ease-mac"
+          style={{ width: `${Math.round(Math.min(1, Math.max(0, progress)) * 100)}%` }}
+        />
+      </div>
+      {/* key = 文案：阶段切换时重挂载，淡入动效重放一拍；右侧 = 已响应接口数 / 总数 */}
+      <p key={stageLabel} className="boot-stage-label mt-2 text-11 text-neutral-500">
+        {stageLabel} · {done}/{total}
+      </p>
     </div>
   );
 }

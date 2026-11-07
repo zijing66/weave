@@ -276,7 +276,7 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - **iTerm2**：`ITERM_SESSION_ID` 定位、AppleScript `write text`——**只有文本通道，中断/作答诚实不支持**。
 - Terminal.app / ghostty / gnome 按通道现实实现、没有就诚实不支持（前三者的通道就是「没有」：无 raw key 注入、无文本写入，`keystroke` 要前台故不用）。
 
-投递配方 = bracketed paste 打原文 + no-paste CR 提交。
+投递配方 = bracketed paste 打原文 + no-paste CR 提交。**超长由后端自己分段**（argv ~32k / env 块各是上限，按 UTF-8 字节在码点边界切；首段前补 paste 起标记、末段后补止标记 + CR）——同一 paste 会话内多枪续排，宿主看到的仍是一次粘贴。正文自带 paste 起止标记时退回整段单发（手工分段的标记会被正文提前闭合），装不下就让通道如实失败，不悄悄截断。
 
 ### 4.7 层③ promptbox 队列与判死
 
@@ -292,6 +292,7 @@ claude SendMessage：`claude -p --no-session-persistence --tools SendMessage,Lis
 - **附件随附**：`MessagingSurface.attach`（`AttachSpec { kinds, composePrompt }`）答两件事——`kinds` 收哪些类型（`image` / `file`），`composePrompt` 一个已落盘文件怎么被认出来。这是 harness 知识，server 只传语义参数（原文 + 路径/媒体类型/原名）。claude = `['image','file']`：裸绝对路径放原文后独立一行（与它自己的粘贴文法同源），图会被粘贴处理器转成 `[Image #N]` + 真 image block，**普通文件没有附件形态**、路径原样留在 prompt 里由模型自己 `Read`；codex = `['file','image']`：同为路径进正文，普通文件模型自己读，**图片靠默认开启的 `view_image` 工具**（features 表 Stable + default_enabled，0.164 实测本机 rollout 有真实调用）拿路径自己看图——终端里用户粘贴图片路径时宿主也会当场转图附件（`handle_paste_image_path`），但那是「粘贴事件」才认，weave 投递的路径就是一段正文，两种形态模型都接得住（queue 通道硬拒 `--images` 形参，路径文本不受影响）。**原文已含某附件路径（web 占位胶囊的原地展开）时该附件不再追加**——删掉胶囊路径即从原文消失，追加自动恢复。null = 不收附件，按钮按位置灰。`GET /messaging/capabilities` 下发 `attachKinds`，web 据此出按钮与 `accept`。
 - **附件占位胶囊（web composer）**：暂存格一键「摆入正文」——文件胶囊序列化成落盘绝对路径（真·原地引用，回执比对原样含它）、图片胶囊序列化成空串（粘贴处理器只认独立成行的图片路径，图片仍由投递层追加在末尾，占位只标「这张图属于这句话」）。胶囊 = `contenteditable=false` 的 span（`data-attach` 五属性），草稿快照带 `{a,p,n,m}` 四元组；撤格同步摘胶囊（悬空胶囊会发幽灵路径）。上传 DTO 带 `path` 字段（前端不拼路径、只透传）。
 - **投递文本在投递时经 `wireTextOf` 现合成**（唯一落点；`msg.text` 恒留用户原文——回执比对与气泡文案都靠它，队列只存附件引用、重启后按现 harness 面重合成）。
+- **prompt 长度策略**（不分 harness——paste 通道归终端，四后端都有；常量在 core `harness.ts`）：≤ `PROMPT_PASTE_THRESHOLD_CHARS`（2,000 **码点**）走原层序；**超过一律层② 整块粘贴**（宿主折叠成 paste 块；socket 直投的宿主端 inbound 尺寸上限未知，不让长文去撞），pane 定位不到**回落原层序**、消息不丢；`PROMPT_MAX_CHARS`（200,000）之外 400 拒收。两值随 `GET /messaging/capabilities` 的 `promptLimits` 下发（web 不自带第二份）：web 在超硬顶时不发请求、草稿原样保留，超阈值时灰字提示「长文本将整块粘贴投递」。
 - **只有图才逼层② 终端**（`hasImages` 按媒体类型判，不看有没有附件）：普通文件的路径走 socket / 中继 / codex queue 与走终端是同一个结果。
 - **带图消息层② 优先**：只有 bracketed paste 能把路径转成 `[Image #N]` + 真 image block，socket/中继拿到的是裸文本路径；打不进照常回落层①-a / 层①（降级为路径文本）。
 - **上传件内容寻址**：`<dataDir>/data/uploads/<净化原名>-<sha256 前 16 位><ext>`（图按媒体类型定扩展名，非图沿用原文件后缀）——原名进路径是为了让会话 TUI / 转录 / 模型上下文直接看得见用户传的是哪个文件（此前纯哈希名，会话里认不出附件）。净化 = 去扩展名、Windows 非法字符换 `-`、**空白折成 `-`**（claude 的粘贴处理器按空白切路径边界，带空格的路径会破坏图片识别）、截 48 码点。存量旧行保持 `<sha256><ext>`，`pathOf` 读时回落、**不迁移**；重复内容（同 id 不同名）只留首名那份文件。`GET /images/:id` 长缓存；**上传 ≠ 投递**。

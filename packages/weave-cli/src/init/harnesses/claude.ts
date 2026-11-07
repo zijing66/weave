@@ -26,7 +26,7 @@ import { generateStatuslineScript, readStatuslineConfig, WEAVE_VERSION } from '@
 import { InitPipeline, generateHookHandler, readUserCapture, type InitContext } from '@weavecode/harness';
 import type { SurfaceRecords, SurfacePipeline } from '../types.js';
 import { generateSettingsJson, mergeSettingsJson } from '../settings-gen.js';
-import { generateMcpJson, mergeMcpJson } from '../mcp-gen.js';
+import { mergeMcpJson } from '../mcp-gen.js';
 import { generateAutoMemoryHook } from '../helpers-gen.js';
 import { registerPluginTemplates, collectPluginMcpServers } from '../plugin-templates.js';
 import { t } from '../../i18n/index.js';
@@ -222,19 +222,15 @@ async function writeSettings(st: InitStepState): Promise<void> {
 async function writeMcp(st: InitStepState): Promise<void> {
   // ---- Step 3: Generate .mcp.json ----
   if (st.components.mcp) {
-    const mcpJson = generateMcpJson({ platform: st.platform, includeWeaveServer: st.mcp.weave });
-    // 扩展点④：插件 manifest.mcpServers 合并（与核心/插件间同名 → namespace 化）
-    const coreServers = Object.keys((mcpJson as { mcpServers: Record<string, unknown> }).mcpServers);
-    const pluginMcp = await collectPluginMcpServers(st.targetDir, undefined, coreServers);
-    const servers = (mcpJson as { mcpServers: Record<string, unknown> }).mcpServers;
-    for (const [name, config] of Object.entries(pluginMcp.servers)) servers[name] = config;
+    // weave 自己的 stdio 条目已退役（daemon 托管 MCP 取代）；.mcp.json 只装插件
+    // 带来的 server（扩展点④），weave 的内置 MCP 走 `install/builtin-mcp.ts`。
+    const mcpJson: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
+    const pluginMcp = await collectPluginMcpServers(st.targetDir, undefined, []);
+    for (const [name, config] of Object.entries(pluginMcp.servers)) mcpJson.mcpServers[name] = config;
     for (const r of pluginMcp.renamed) logger.warn(t('init.pluginMcpRenamed', { renamed: r }));
-    const serverCount = Object.keys(servers).length;
+    const serverCount = Object.keys(mcpJson.mcpServers).length;
 
     // Only write .mcp.json when there's at least one server configured.
-    // P0-1: the CLI has no `weave mcp start` command yet, so `mcp.weave` defaults
-    // to false — emitting a file that points at a non-existent command would break
-    // Claude Code's MCP loader.
     if (serverCount > 0) {
       const mcpPath = path.join(st.targetDir, '.mcp.json');
 

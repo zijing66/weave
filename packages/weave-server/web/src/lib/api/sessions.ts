@@ -51,6 +51,10 @@ export interface SessionRow {
   transcriptPresent?: boolean | null;
   /** 「在终端打开」是否可用（服务端按 harness 的 resume 槽派生，web 不自带白名单）。 */
   canOpenTerminal?: boolean;
+  /** 会话 worktree（B5 最小切片；服务端登记派生）：undefined/null = 不隔离。 */
+  worktree?:
+    | { path: string; branch: string; status: 'active' | 'merged' | 'conflict' | 'error'; message?: string }
+    | null;
   /** 还没等到用户 prompt（1 小时快速过期档）：编排的会话选择器按它排除。 */
   promptless?: boolean;
 }
@@ -118,6 +122,25 @@ export interface SessionEdits {
   hunks: number;
   truncated: boolean;
   reason?: 'unsupported' | 'unreadable';
+}
+
+/** 一轮的 token 用量（GET /sessions/:id/usage）。纯只读，成本折算不做。 */
+export interface SessionUsageTurn {
+  at: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  reasoningTokens: number;
+  /** 该轮完成后模型上下文窗口的占用；无据 → null。 */
+  contextTokens: number | null;
+}
+
+/** 会话各轮用量。`usage` 为 null = 该 harness 转录里没有可认的计量条目 / 读不到
+ *  转录（supported:false），前端据此置灰、不摆空壳。 */
+export interface SessionUsage {
+  supported: boolean;
+  usage: SessionUsageTurn[] | null;
 }
 
 /** mirror of `RecognizedRef` in packages/weave-harness/src/driver.ts：一段现成文本里
@@ -282,6 +305,10 @@ export const sessionApi = {
       .join('&');
     return apiFetch<SessionEdits>(`/sessions/${encodeURIComponent(sessionId)}/edits${qs ? `?${qs}` : ''}`);
   },
+  /** 会话各轮 token 用量（转录里现成的数字，纯只读）。supported:false / usage:null
+   *  = 该 harness 没有可认的计量条目，前端置灰。 */
+  sessionUsage: (sessionId: string): Promise<SessionUsage> =>
+    apiFetch<SessionUsage>(`/sessions/${encodeURIComponent(sessionId)}/usage`),
   /** 反向认引用：一段现成文本（粘贴 / 取回队列）里哪些片段是引用、换成什么胶囊。
    *  文法归 harness、存在性归索引，前端拿到的已经是「区间 + 表达式」。 */
   recognizeRefs: (sessionId: string, text: string): Promise<RecognizedRef[]> =>

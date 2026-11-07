@@ -301,6 +301,20 @@
   animation: weave-ticker-in 220ms ease-out;
 }
 
+/* 活动行跑马灯：文字超宽时横向来回滚动（像子弹条），只滚超出那截的量。 */
+@keyframes weave-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--marquee-dist, 0px)));
+  }
+}
+.weave-marquee-run {
+  animation: weave-marquee 6s linear infinite alternate;
+  animation-delay: 1s;
+}
+
 /* 过程输出叠层：新段到达时顶卡从右侧滑入（牌堆翻页的方向感）。 */
 @keyframes weave-card-in {
   from {
@@ -382,6 +396,42 @@
 }
 .boot-splash-exit {
   animation: boot-fade-out 320ms ease-in forwards;
+}
+/* 启动页阶段文字：随阶段切换轻淡入（文字本身换内容，动效只给一拍呼吸感） */
+.boot-stage-label {
+  animation: boot-stage-in 600ms ease-out;
+}
+@keyframes boot-stage-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 启动页进度条填充：品牌渐变（紫→蓝→青，同 WeaveMark 光带）+ 一道往返流光 */
+.boot-bar-fill {
+  background: linear-gradient(90deg, #b8a0ff, #237dff 48%, #00d7ff);
+  position: relative;
+  overflow: hidden;
+}
+.boot-bar-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: boot-bar-sheen 1.6s ease-in-out infinite;
+}
+@keyframes boot-bar-sheen {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
 }
 
 /* 全部动效由 `.wv-anim` 挂上——静态 logo（顶栏、登录页）不带这个类，

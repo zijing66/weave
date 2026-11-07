@@ -21,8 +21,18 @@ import {
   type WeztermMux,
 } from './wezterm-mux.js';
 import { winRaiseTerminalWindow } from './win-raise.js';
-import { throughCmd } from './shared.js';
-import { TerminalBackend, type LaunchOrigin, type PromptPaneTarget, type TerminalLaunch } from './backend.js';
+import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, throughCmd } from './shared.js';
+import {
+  TerminalBackend,
+  chunkByUtf8Bytes,
+  hasPasteMarkers,
+  type LaunchOrigin,
+  type PromptPaneTarget,
+  type TerminalLaunch,
+} from './backend.js';
+
+/** 单枪原文上限（走 argv，命令行上限 ~32k）；按字节切，中文一字三字节。 */
+const WEZTERM_PROMPT_CHUNK_BYTES = 16_384;
 
 /**
  * 探活结果短缓存（10s）：角标的周期探测 + 开窗后对账 + GET 后台对账会在
@@ -193,6 +203,11 @@ export class WeztermBackend extends TerminalBackend {
    * prompt 层② 注入（spike 字节级实测配方）：bracketed paste 打原文（内含
    * CR 是字面内容、不会被终端解释提交）→ `--no-paste` 补一记 CR 提交。mux
    * 实时重枚举定位，目标没了 throw（消息转可见失败，不静默丢）。
+   *
+   * 原文走 argv（命令行上限 ~32k），超长自己分段：手工补 paste 起止标记、
+   * 8 段一枪逐段 `--no-paste` 发（直写 pty 不经 paste 包装、序列天然保序）。
+   * 宿主看到的仍是一次粘贴（折叠成 paste 块）。任何一枪失败立即抛——半截
+   * 正文进输入框比失败更糟。
    */
   override async sendPromptText(paneId: string, text: string): Promise<void> {
     const parsed = parsePromptPaneId(paneId);
@@ -200,20 +215,27 @@ export class WeztermBackend extends TerminalBackend {
     const mux = await weztermMuxForId(parsed.muxKey);
     if (!mux) throw new Error('wezterm instance is gone — cannot deliver prompt');
     const pane = String(parsed.paneId);
+    const send = async (payload: string, noPaste: boolean) => {
+      const args = ['cli', 'send-text', '--pane-id', pane, ...(noPaste ? ['--no-paste'] : []), payload];
+      const r = await weztermCli(args, mux.socket);
+      if (!r?.ok) {
+        const shown = ['cli', 'send-text', '--pane-id', pane, ...(noPaste ? ['--no-paste'] : []), '<prompt text>'];
+        throw new Error(weztermStepError(shown, mux.socket, r));
+      }
+    };
     if (text) {
-      const pasted = await weztermCli(['cli', 'send-text', '--pane-id', pane, text], mux.socket);
-      if (!pasted?.ok) {
-        throw new Error(
-          weztermStepError(['cli', 'send-text', '--pane-id', pane, '<prompt text>'], mux.socket, pasted),
-        );
+      if (!hasPasteMarkers(text) && Buffer.byteLength(text, 'utf8') > WEZTERM_PROMPT_CHUNK_BYTES) {
+        await send(BRACKETED_PASTE_START, true);
+        for (const chunk of chunkByUtf8Bytes(text, WEZTERM_PROMPT_CHUNK_BYTES)) {
+          await send(chunk, true);
+        }
+        await send(BRACKETED_PASTE_END, true);
+      } else {
+        // 整段交给 wezterm 自己包 paste（标记落在正文里时也只有这一条路，见 hasPasteMarkers）
+        await send(text, false);
       }
     }
-    const submit = await weztermCli(['cli', 'send-text', '--pane-id', pane, '--no-paste', '\r'], mux.socket);
-    if (!submit?.ok) {
-      throw new Error(
-        weztermStepError(['cli', 'send-text', '--pane-id', pane, '--no-paste', '<CR>'], mux.socket, submit),
-      );
-    }
+    await send('\r', true);
   }
 
   /**

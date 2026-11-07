@@ -80,6 +80,8 @@ export type {
   SessionPlan,
   SessionEditHunk,
   SessionEdits,
+  SessionUsageTurn,
+  SessionUsage,
   RecognizedRef,
   SideQuestionRow,
   ActivityAgentRow,
@@ -91,6 +93,7 @@ export type {
 export type {
   SessionMessageRow,
   MessagingCapability,
+  PromptLimits,
   WatchOn,
   SessionWatchRow,
   PendingQuestionOption,

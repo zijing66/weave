@@ -31,6 +31,23 @@ const REDACT_KEYS = new Set([
   'x-weave-local',
 ]);
 
+/**
+ * 调用来源（RPG 稿§七的 origin 词表）：`user`（web/CLI 认证会话手动）/
+ * `mcp`（MCP 工具调用）/ `webhook` / `peer`（联邦转发，P5）/ `cli`。
+ * 识别 = `x-weave-origin` 头优先，缺省按路径派生（webhook 入口），否则 `user`。
+ */
+export type ApiLogOrigin = 'user' | 'mcp' | 'webhook' | 'peer' | 'cli';
+
+const ORIGIN_VALUES = new Set(['user', 'mcp', 'webhook', 'peer', 'cli']);
+
+/** 单点派生（挂点 = weaveRequestHandler 一处，不在各 handler 手改）。 */
+export function originOf(req: IncomingMessage): ApiLogOrigin {
+  const header = req.headers['x-weave-origin'];
+  if (typeof header === 'string' && ORIGIN_VALUES.has(header)) return header as ApiLogOrigin;
+  if ((req.url ?? '').startsWith('/webhooks/orchestrate/')) return 'webhook';
+  return 'user';
+}
+
 export interface ApiLogEntry {
   ts: string;
   method: string;
@@ -38,6 +55,7 @@ export interface ApiLogEntry {
   status: number;
   durationMs: number;
   ip: string;
+  origin?: ApiLogOrigin;
   ua?: string;
   req?: unknown;
   res?: unknown;
@@ -52,6 +70,7 @@ export interface ApiLogQuery {
   path?: string;
   method?: string;
   status?: number;
+  origin?: ApiLogOrigin;
   limit?: number;
 }
 
@@ -179,6 +198,7 @@ export class ApiLogger {
         status: res.statusCode,
         durationMs: Date.now() - start,
         ip: (req.socket?.remoteAddress ?? '').replace(/^::ffff:/, ''),
+        origin: originOf(req),
         resBytes,
       };
       const ua = req.headers['user-agent'];
@@ -247,6 +267,7 @@ export class ApiLogger {
         if (Number.isFinite(to) && at > to) continue;
         if (q.status != null && entry.status !== q.status) continue;
         if (q.method && entry.method.toUpperCase() !== q.method.toUpperCase()) continue;
+        if (q.origin && entry.origin !== q.origin) continue;
         if (q.path && !entry.path.includes(q.path)) continue;
         entries.push(entry);
         if (entries.length >= limit) break;

@@ -28,6 +28,10 @@ export function joinCmd(argv: string[], platform: NodeJS.Platform): string {
   return argv.map((a) => quoteArg(a, platform)).join(' ');
 }
 
+/** bracketed paste 的起止标记（终端通用协议；层的分段粘贴要自己写这两串）。 */
+export const BRACKETED_PASTE_START = '\x1b[200~';
+export const BRACKETED_PASTE_END = '\x1b[201~';
+
 /**
  * win32：`wt.exe` / `wezterm` 是直接 CreateProcess 派发，**不做 PATHEXT 解析** ——
  * 裸 `claude`（Windows 上只有 .cmd/.ps1 shim，没有同名 .exe）会报

@@ -32,6 +32,10 @@ export const appZh = {
   'app.mobileProjects': '项目列表',
   'app.mobileDrawerClose': '收起',
   'app.booting': '正在载入工作台',
+  'app.bootStage.link': '正在连接服务',
+  'app.bootStage.projects': '正在读取项目',
+  'app.bootStage.sessions': '正在同步会话',
+  'app.bootStage.live': '正在建立实时通道',
 
   // —— 仪表盘（首页） ——
   'dashboard.sessions': '接管会话',
@@ -175,6 +179,10 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.mobileProjects': 'Projects',
   'app.mobileDrawerClose': 'Dismiss',
   'app.booting': 'Loading workspace',
+  'app.bootStage.link': 'Connecting to service',
+  'app.bootStage.projects': 'Loading projects',
+  'app.bootStage.sessions': 'Syncing sessions',
+  'app.bootStage.live': 'Establishing live updates',
 
   // —— Dashboard (home) ——
   'dashboard.sessions': 'Sessions',

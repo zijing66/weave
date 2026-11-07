@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -8,6 +8,7 @@ import {
   type CommandInputModeRow,
   type HarnessCommandRow,
   type MessagingCapability,
+  type PromptLimits,
   type UploadFile,
 } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
@@ -29,6 +30,7 @@ import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickTarget } from './FilePicker';
 import { SessionShuttlePicker } from './SessionShuttlePicker';
 import { SessionEditsDialog } from './SessionEditsDialog';
+import { SessionUsageDialog } from './SessionUsageDialog';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { RewindPicker } from './RewindPicker';
 import { StatuslineBar } from './StatuslineBar';
@@ -130,6 +132,7 @@ export function SessionMessages({
   label,
   projectLabel,
   capability,
+  promptLimits,
   answerPending,
   onOpenAnswer,
   onInterrupt,
@@ -149,6 +152,8 @@ export function SessionMessages({
   projectLabel: string;
   /** 该会话 harness 的能力行（TasksPanel 从能力矩阵按 harness 取）。 */
   capability: MessagingCapability;
+  /** prompt 长度策略（服务端下发；未就绪 null = 不预检、不提示）。 */
+  promptLimits: PromptLimits | null;
   /** 本会话被阻塞问答挂起（弹窗状态归 TasksPanel，与会话行图标/组头 tag 同一份）。 */
   answerPending?: boolean;
   /** 开作答弹窗：尾部那枚「回答」按钮（关掉不丢入口，答完待答面没了按钮随之消失）。 */
@@ -245,6 +250,7 @@ export function SessionMessages({
   const [expanded, setExpanded] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   /** 改动汇总弹窗（默认按轮：右键哪条气泡就看那一轮的改动；「全部对话」是逃生门）。 */
   const [editsOpen, setEditsOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [editsRange, setEditsRange] = useState<{ since: string | null; until: string | null }>({
     since: null,
     until: null,
@@ -413,6 +419,7 @@ export function SessionMessages({
   const { stageFiles, unstage, send, queueActions } = useConvQueue({
     sessionId,
     attachKinds,
+    promptLimits,
     staged,
     setStaged,
     draftRef,
@@ -713,7 +720,29 @@ export function SessionMessages({
               <p className="truncate text-xs font-medium text-neutral-200">
                 {t('tasks.messagesTitle')} · {label}
               </p>
-              <p className="truncate text-10 text-neutral-500">{projectLabel}</p>
+              <p className="truncate text-10 text-neutral-500">
+                {projectLabel}
+                {sessionRow?.worktree && (
+                  <span
+                    className={cn(
+                      'ml-1.5 inline-block rounded px-1 align-[1px] text-10 leading-tight',
+                      sessionRow.worktree.status === 'active' && 'bg-sky-500/15 text-sky-300',
+                      sessionRow.worktree.status === 'merged' && 'bg-emerald-500/15 text-emerald-300',
+                      sessionRow.worktree.status === 'conflict' && 'bg-amber-500/15 text-amber-300',
+                      sessionRow.worktree.status === 'error' && 'bg-red-500/15 text-red-300',
+                    )}
+                    title={
+                      sessionRow.worktree.status === 'conflict' || sessionRow.worktree.status === 'error'
+                        ? sessionRow.worktree.message ?? undefined
+                        : sessionRow.worktree.branch
+                    }
+                  >
+                    {t(
+                      `tasks.worktreeStatus.${sessionRow.worktree.status}` as Parameters<typeof t>[0],
+                    )}
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -1994,11 +2023,15 @@ export function SessionMessages({
                   {t('tasks.msgNewline')}
                 </button>
               </Tooltip>
-              {/* 停止 / 发送（+ 通道下拉）：靠右。窄屏输入框独占一行、这三枚钮折到
-                  第二行靠右（`ml-auto`，与左边那枚换行分开拇指够得到的两头）；
-                  桌面并排一行。停止与事件链组头同一判据与 fb 键。通道下拉贴着
+              {/* 停止 / 发送（+ 通道下拉）：靠右；桌面纵向一列（输入框多吃宽度），
+                  移动端横排一行（纵排在触屏上占高、拇指行程长）。窄屏输入框独占
+                  一行、这组折到下一行靠右（`ml-auto`，与左边那枚换行分开拇指够
+                  得到的两头）。停止与事件链组头同一判据与 fb 键。通道下拉贴着
                   发送键——它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
-              <div ref={sendGroupRef} className="flex shrink-0 items-center gap-1 max-lg:ml-auto">
+              <div
+                ref={sendGroupRef}
+                className="flex shrink-0 flex-col items-center gap-1 max-lg:flex-row max-lg:items-center max-lg:ml-auto"
+              >
                 {/* 停止 = 一枚 ESC 键帽：位置恒在（进出会拉动旁边的发送键），尺寸恒方
                     （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；**恒可点**
                     （宿主里 ESC 后面还要接 rewind，这一枚就是那记键），只在点完之后
@@ -2161,6 +2194,11 @@ export function SessionMessages({
                 </div>
               </div>
             </div>
+            {/* 超阈值不拦，但如实说一声：正文会整块粘贴投递（宿主折叠成 paste 块），
+                不是一串逐字击键。按镜像 draft 判，与发送时服务端的判据同为按字数。 */}
+            {promptLimits && !asking && draft.length > promptLimits.pasteThreshold && (
+              <p className="px-1 text-11 text-neutral-500">{t('tasks.msgWillPaste')}</p>
+            )}
           </div>
         )}
 
@@ -2240,6 +2278,17 @@ export function SessionMessages({
                       {t('tasks.editsTitle')}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenu(null);
+                      setUsageOpen(true);
+                    }}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <Gauge className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.usageTitle')}
+                  </button>
                 </>
               ) : (
                 <>
@@ -2367,6 +2416,9 @@ export function SessionMessages({
           open={editsOpen}
           onClose={() => setEditsOpen(false)}
         />
+
+        {/* 会话用量：各轮 token 计量（取数归 harness 能力面，纯只读） */}
+        <SessionUsageDialog sessionId={sessionId} open={usageOpen} onClose={() => setUsageOpen(false)} />
 
         {/* 回退选择器（`/rewind`）：列表与范围都在这里选，服务端读屏驱动宿主面板 */}
         {rewindOpen && (

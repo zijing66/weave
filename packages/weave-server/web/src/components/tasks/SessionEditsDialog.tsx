@@ -7,6 +7,10 @@ import { collapseDiff, countChanges, diffLines } from '@/lib/text-diff';
 import { useT } from '@/i18n/I18nProvider';
 import { useBackPop } from '@/lib/back-pop';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Input } from '@/components/ui/input';
+import { useToast } from '@/components/Toast';
+import { errorText } from '@/lib/action-feedback';
+import { reviewPrompt } from './review-prompt';
 
 /** 一处改动算出来的东西：逐行 diff（折叠未变区）+ 增删行数。 */
 interface EditBlock {
@@ -40,6 +44,32 @@ export function SessionEditsDialog({
   /** 取数范围：默认这一轮；「全部对话」不带参（整段会话的逃生门）。 */
   const [scope, setScope] = useState<'turn' | 'all'>('turn');
   const hasTurn = range.since !== null || range.until !== null;
+  const { show } = useToast();
+  /** 批阅动作态：idle / sending / sent（2s 回 idle）；驳回走同一条投递通道。 */
+  const [reviewState, setReviewState] = useState<'idle' | 'approve' | 'reject' | 'sent'>('idle');
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewOpen, setReviewOpen] = useState(false);
+
+  const sendReview = (kind: 'approve' | 'reject'): void => {
+    if (reviewState === 'approve' || reviewState === 'reject') return;
+    setReviewState(kind);
+    api
+      .sendSessionMessage(sessionId, {
+        text: reviewPrompt(kind, (data?.files ?? []).map((f) => f.path), reviewNote.trim()),
+        forceTerminal: true,
+      })
+      .then(() => {
+        setReviewState('sent');
+        setReviewNote('');
+        setReviewOpen(false);
+        show('success', t('tasks.editsReviewSent'));
+        window.setTimeout(() => setReviewState('idle'), 2000);
+      })
+      .catch((err: unknown) => {
+        setReviewState('idle');
+        show('error', t('tasks.editsReviewFailed', { error: errorText(err) }));
+      });
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -222,6 +252,58 @@ export function SessionEditsDialog({
           <footer className="shrink-0 border-t border-edge/[0.06] px-4 py-2 text-10 text-neutral-600 frosted">
             {data?.truncated ? t('tasks.editsTruncated') : t('tasks.editsSummary', { n: data?.hunks ?? 0 })}
           </footer>
+        )}
+
+        {files.length > 0 && (
+          <div className="shrink-0 border-t border-edge/[0.06] px-4 py-2.5 frosted">
+            {reviewOpen && (
+              <div className="mb-2">
+                <Input
+                  autoFocus
+                  value={reviewNote}
+                  onChange={(e) => setReviewNote(e.target.value)}
+                  placeholder={t('tasks.editsReviewPlaceholder')}
+                />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Tooltip label={t('tasks.editsReviewHint')}>
+                <span className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={reviewState === 'approve' || reviewState === 'reject'}
+                    onClick={() => sendReview('approve')}
+                    className="rounded-md px-3 py-1 text-12 font-medium bg-emerald-600/80 text-white hover:bg-emerald-600 disabled:opacity-50"
+                  >
+                    {reviewState === 'approve' ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      t('tasks.editsApprove')
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reviewState === 'approve' || reviewState === 'reject'}
+                    onClick={() => sendReview('reject')}
+                    className="rounded-md px-3 py-1 text-12 font-medium bg-red-600/80 text-white hover:bg-red-600 disabled:opacity-50"
+                  >
+                    {reviewState === 'reject' ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      t('tasks.editsReject')
+                    )}
+                  </button>
+                </span>
+              </Tooltip>
+              <button
+                type="button"
+                onClick={() => setReviewOpen((v) => !v)}
+                className="text-11 text-neutral-500 hover:text-neutral-200"
+              >
+                {reviewOpen ? t('common.close') : t('tasks.editsReviewPlaceholder')}
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>,

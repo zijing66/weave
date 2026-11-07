@@ -42,7 +42,7 @@ import {
   modelCommand,
   sessionKeysTarget,
 } from './delivery/keys.js';
-import { hasImages, settleDelivered, spawnOnce, wireTextOf } from './delivery/channels.js';
+import { hasImages, isLongPrompt, settleDelivered, spawnOnce, wireTextOf } from './delivery/channels.js';
 import {
   deliverHeadless as deliverHeadlessIn,
   deliverInject as deliverInjectIn,
@@ -111,6 +111,13 @@ export type MessageMode = 'prompt' | 'inject' | 'headless' | 'auto';
 
 /** 发起方（仅信封渲染用，管道不记录来源）。 */
 export type MessageFromKind = 'dashboard' | 'session';
+
+/**
+ * 投递来源（与 fromKind 正交的第二个维度；fromKind 只答信封抬头，答不出
+ * 「编排投的」和「人投的」）。manual（缺省）= 人投（自然回合）；其余三源
+ * 投出的消息会**诱导目标会话的下一回合**——登记见 `takeInduction`。
+ */
+export type MessageOrigin = 'manual' | 'orchestration' | 'extension' | 'plugin';
 
 /** 管道消息状态：pending 只活在 promptbox 文件，其余在内存注册表。 */
 export type PipeStatus =
@@ -265,6 +272,8 @@ export interface SendInput {
   text: string;
   mode: MessageMode;
   fromKind: MessageFromKind;
+  /** 投递来源（诱导回合登记的依据；缺省 manual = 人投）。 */
+  origin?: MessageOrigin;
   fromSessionId?: string | null;
   /** 单向注入（手动面置 true：无接收方会话）；编排域省略 = 双向对话保留。 */
   oneWay?: boolean;
@@ -487,6 +496,14 @@ export class MessageDeliverer {
   /** 已排自续冲洗的会话（防重复排拍）。 */
   private readonly flushScheduled = new Set<string>();
   /**
+   * 诱导回合登记（sessionId → 登记时刻）：非 manual 来源的投递经 `send` 的
+   * **outbox 写入单点**登记——这是全仓唯一的登记咽喉（四源穷举：编排投递 /
+   * 编排拉起 / 扩展端点 / 插件 outbox；后两源批 2b 接入，本批只留位）。
+   * **一次性核销**：被诱导会话首次 Stop（`consumeInduction`）即摘除，不依赖
+   * 时间窗——超窗（编排陈滞 2h 那类）首轮也不再误判自然回合。
+   */
+  private readonly inductions = new Map<string, number>();
+  /**
    * 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。值是这一拍
    * 的令牌——强制移除卡住的那一行要就地解除泵闸，旧拍醒来时不能顺手把新拍的闸也
    * 删掉（两拍并行 = 同一行被投两次）。
@@ -621,6 +638,11 @@ export class MessageDeliverer {
         : channel === 'headless'
           ? this.deliverHeadless(entry, project.path, meta, surface)
           : await this.deliverPrompt(entry, session, project, surface);
+    // 诱导登记（outbox 写入单点，唯一咽喉）：非 manual 来源的成功投递都会让
+    // 目标会话出一个回合——登记它，天然回合判定据此豁免（一次性核销）。
+    if (result.ok && (input.origin ?? 'manual') !== 'manual') {
+      this.registerInduction(input.toSessionId);
+    }
     // created 广播放在**在途状态建立之后**：它同时是派生面（在途角标推送）的重算
     // 依据，早发会让刚进在途的消息漏一拍（投递中的消息不上角标）。
     this.bus({
@@ -636,6 +658,25 @@ export class MessageDeliverer {
   /** 管道消息现查（内存态；sequence 引擎 / 路由回显用）。 */
   getMessage(id: string): PipeMessage | null {
     return this.memory.get(id) ?? null;
+  }
+
+  /**
+   * 诱导登记（`send` 内部调用；供拉起路径与批 2b 的扩展/插件两源复用）。
+   * 幂等：重复登记只刷新时刻（仍是一次核销）。
+   */
+  registerInduction(sessionId: string): void {
+    this.inductions.set(sessionId, Date.now());
+  }
+
+  /**
+   * 消费一次诱导登记（一次性核销）：有登记即 true 并当场摘除——被诱导会话的
+   * 首个 Stop 不再是自然回合；之后（哪怕超窗很久）的 Stop 照常按自然回合判。
+   * 无登记 = false（自然回合）。
+   */
+  consumeInduction(sessionId: string): boolean {
+    const had = this.inductions.has(sessionId);
+    this.inductions.delete(sessionId);
+    return had;
   }
 
   /**
@@ -862,6 +903,7 @@ export class MessageDeliverer {
     this.revokedPaneEnvs.add(sessionId);
     this.persistPaneEnvs();
     this.awaitingAck.delete(sessionId); // 进程没了，这一条的回执再也不会到
+    this.inductions.delete(sessionId); // 被诱导的回合不会再来了
     const session = this.deps.sessions.getBySessionId(sessionId);
     const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
     if (!project) return;
@@ -1391,6 +1433,15 @@ export class MessageDeliverer {
     return hasImages(entry);
   }
 
+  /**
+   * 必须先走层② 的两种消息：带图（bracketed paste 才能把路径翻成 image block）
+   * 与超长（宿主会把它折叠成 paste 块；socket 直投的宿主端 inbound 上限未知，
+   * 不让长文去撞）。
+   */
+  private pasteFirstEntry(entry: PipeMessage): boolean {
+    return this.hasImagesEntry(entry) || isLongPrompt(this.wireTextOfEntry(entry));
+  }
+
   /** 键序域的依赖切片（delivery/keys.ts 的入参形状）。 */
   private keysDeps() {
     return {
@@ -1594,8 +1645,9 @@ export class MessageDeliverer {
         status: 'pending',
         at: entry.at,
       };
-      // 带图同即时路径：层② 优先（只有 bracketed paste 能真贴图）。
-      if (!blocked && this.hasImagesEntry(msg) && this.terminalChannel()) {
+      // 带图 / 超长同即时路径：层② 优先（bracketed paste 才能真贴图、才会被宿主
+      // 折叠成 paste 块）。pane 定位不到就往下走 = 回落直投，消息不丢。
+      if (!blocked && this.pasteFirstEntry(msg) && this.terminalChannel()) {
         const imgPane = await this.terminalPaneFor(session, project);
         if (imgPane) {
           removePromptboxEntries(this.hooksDir, project.token, new Set([entry.id]));
@@ -1694,6 +1746,7 @@ export class MessageDeliverer {
     this.inboxSockets.forget(sessionId); // 凭据随会话走（旧 socket 早已无效）
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
     this.paneEnvConflicts.delete(sessionId);
+    this.inductions.delete(sessionId);
     this.revokedPaneEnvs.add(sessionId); // 同退出：显式报 null 摘出终端分组
     this.persistPaneEnvs();
     return removed;
@@ -1808,11 +1861,13 @@ export class MessageDeliverer {
     // 目标地址由 hook 旁路上报。两域都排第一；手动面由 `forceTerminal` 排除在外
     // （直投在宿主眼里是「另一个会话发的」，人工对话要的是用户权威）。
     // 拿不到目标（会话没装 weave hooks / messaging 关闭）或投递失败 → 原路回落。
-    // 带图消息层② 优先：只有 bracketed paste 能把绝对路径转成 `[Image #N]` + 真 image
-    // block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己 Read）。
+    // 带图 / 超长层② 优先。带图：只有 bracketed paste 能把绝对路径转成 `[Image #N]`
+    // + 真 image block（socket / 中继拿到的是裸文本路径，图不进上下文，只能模型自己
+    // Read）。超长：宿主会折叠成 paste 块，socket 的宿主端 inbound 上限未知不去撞。
+    // pane 定位不到就往下走 = 回落原层序，消息不丢。
     // 模态框挂着时层② 整段让位（见 modalBlocked）：图只能走终端，就留队列等作答。
     const blocked = this.modalBlocked(entry.sessionId);
-    if (!blocked && this.hasImagesEntry(entry) && this.terminalChannel()) {
+    if (!blocked && this.pasteFirstEntry(entry) && this.terminalChannel()) {
       const imgPane = await this.terminalPaneFor(session, project);
       if (imgPane) {
         this.memory.set(entry.id, { ...entry, status: 'delivering', via: 'terminal' });

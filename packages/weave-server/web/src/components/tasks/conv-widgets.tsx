@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
+import type React from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
@@ -154,6 +155,45 @@ export function EventTicker({ text }: { text: string }) {
   return (
     <span className="relative min-w-0 flex-1 overflow-hidden">
       <span key={text} className="weave-ticker-in block truncate whitespace-nowrap">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * 活动行跑马灯：文字超宽时横向来回滚动（像子弹条）、放得下就静止。
+ * 量一次 `scrollWidth` 得出超出量，塞进 `--marquee-dist`——动画只滚超出那截，
+ * 不做整屏空滚；超宽与否随文本与容器宽变（活动名是活文本），ResizeObserver 跟重算。
+ */
+export function MarqueeText({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  const boxRef = useRef<HTMLSpanElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [dist, setDist] = useState(0);
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    const inner = textRef.current;
+    if (!box || !inner || typeof ResizeObserver === 'undefined') return;
+    const sync = () => setDist(Math.max(0, inner.scrollWidth - box.clientWidth));
+    const ro = new ResizeObserver(sync);
+    ro.observe(box);
+    ro.observe(inner);
+    sync();
+    return () => ro.disconnect();
+  }, [text]);
+  return (
+    <span ref={boxRef} className={cn('relative min-w-0 flex-1 overflow-hidden', className)}>
+      <span
+        ref={textRef}
+        className={cn('block whitespace-nowrap', dist > 0 && 'weave-marquee-run')}
+        style={dist > 0 ? ({ '--marquee-dist': `${dist + 8}px` } as React.CSSProperties) : undefined}
+      >
         {text}
       </span>
     </span>

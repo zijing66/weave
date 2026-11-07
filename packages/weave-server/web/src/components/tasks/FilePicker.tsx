@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
+  Copy,
   File as FileIcon,
   FileCode,
   FileImage,
@@ -34,10 +35,18 @@ import { api, type ProjectFileEntry } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
 import { FieldHint } from '@/components/ui/field-hint';
+import { useToast } from '@/components/Toast';
+import { copyText } from '@/lib/clipboard';
+import { MarqueeText } from './conv-widgets';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useTheme } from '@/lib/theme';
+import {
+  FileColumnsBrowser,
+  FinderColumnList,
+  MobileFadePanels,
+} from '@/components/FileColumnsBrowser';
 
 /**
  * 项目文件引用选择器（superfile 式三栏）：父目录 | 当前目录 | 预览。
@@ -67,12 +76,27 @@ import { useTheme } from '@/lib/theme';
 /** 搜索输入的防抖窗：服务端一次模糊匹配 ~10ms，剩下全是省往返。 */
 const SEARCH_DEBOUNCE_MS = 120;
 
+/** Finder 父级列的定宽（px）：与 DirectoryPickerModal 的 COL_WIDTH_DEFAULT 同档。 */
+const FINDER_COL_W = 208;
+
 /** 换一条选中之后的防抖窗：箭头连滑过十行不该打十次预览 / 十次子目录。 */
 const SELECT_DEBOUNCE_MS = 150;
 
 /** 本地缓存条数（目录列表 / 预览正文各一份，纯省往返）：来回看同一批文件不重取。 */
 const DIR_CACHE_MAX = 30;
 const TEXT_CACHE_MAX = 12;
+
+/** 根 + 服务端相对路径拼绝对路径：分隔符跟 root 走（本机原生形态），根空时只剩
+ *  相对路径。含空格的路径按 OS「复制文件地址」惯例包双引号（`quoted` 缺省开，
+ *  展示传 false 免引号）。与 FileBrowserModal 的同名函数同义——三行相似好过
+ *  一处过早抽象（两边组件互相引用会成环）。 */
+const joinAbsPath = (root: string, rel: string, quoted = true): string => {
+  if (!root) return rel;
+  const sep = root.includes('\\') ? '\\' : '/';
+  const base = root.replace(/[\\/]+$/, '');
+  const full = `${base}${sep}${rel.replaceAll('/', sep)}`;
+  return quoted && full.includes(' ') ? `"${full}"` : full;
+};
 
 /** 一条被选中的引用：`ref` 是服务端算好的表达式，其余是胶囊自己留的账。 */
 export interface PickItem {
@@ -120,6 +144,61 @@ function cacheSet<T>(cache: Map<string, T>, key: string, value: T, max: number):
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+
+// ---- Finder 分栏（macOS column view）：父级列与单列清单，浏览器与选择器共用 ----
+
+/** 一条分栏列的数据：父级目录的条目清单（下层区域提前预览）。 */
+export interface FinderCol {
+  path: string;
+  entries: ProjectFileEntry[];
+  total: number;
+  loading: boolean;
+}
+
+/** 父级列数据：`dir` 变化即取其父目录的条目。**数据优先来自层级递进本身**
+ *  （`visited`——你路过每一层时主列表已经取过那份账），不为此单独发请求；
+ *  只有深跳（搜索命中/面包屑直接落到深层）拿不到时才补一拍。
+ *  缓存键带 projectId——全项目浏览器切项目时 `''` 这个键会撞。 */
+export function useFinderColumns(
+  projectId: number,
+  dir: string,
+  enabled: boolean,
+  visited: React.MutableRefObject<Map<string, { entries: ProjectFileEntry[]; total: number }>>,
+): FinderCol[] {
+  const [tick, setTick] = useState(0);
+  const loadingRef = useRef(new Set<string>());
+  const seq = useRef(0);
+
+  useEffect(() => {
+    if (!enabled || dir === '') return;
+    const slash = dir.lastIndexOf('/');
+    const parent = slash >= 0 ? dir.slice(0, slash) : '';
+    const key = `${projectId}:${parent}`;
+    if (visited.current.has(key) || loadingRef.current.has(key)) return;
+    loadingRef.current.add(key);
+    setTick((t) => t + 1); // 立刻反映出 loading 态，不等第一拍回来
+    const mine = ++seq.current;
+    void api
+      .listProjectFiles(projectId, { dir: parent })
+      .then((listing) => {
+        visited.current.set(key, { entries: listing.entries, total: listing.total });
+      })
+      .catch(() => {
+        visited.current.set(key, { entries: [], total: 0 });
+      })
+      .finally(() => {
+        loadingRef.current.delete(key);
+        if (mine === seq.current) setTick((t) => t + 1);
+      });
+  }, [projectId, dir, enabled, visited]);
+
+  if (!enabled || dir === '') return [];
+  void tick;
+  const slash = dir.lastIndexOf('/');
+  const parent = slash >= 0 ? dir.slice(0, slash) : '';
+  const hit = visited.current.get(`${projectId}:${parent}`);
+  return [{ path: parent, entries: hit?.entries ?? [], total: hit?.total ?? 0, loading: !hit }];
+}
 
 /** 图标按扩展名分组：没必要为图标拉一张语法表。 */
 const CODE_EXT =
@@ -224,6 +303,8 @@ export const cmTheme = (dark: boolean): Extension =>
 
 /** 主题翻的时候只重配这一格，不重建视图（重建会丢滚动位置与选区）。 */
 export const themeConf = new Compartment();
+/** 自动换行开关的 compartment：预览工具条上那枚切换按钮改它。 */
+const wrapConf = new Compartment();
 
 /** 自绘查找高亮：`@codemirror/search` 的高亮**只在它自己的面板打开时才画**
  *  （源码 `highlight({query, panel})` 开头 `if (!panel …) return Decoration.none`），
@@ -253,11 +334,14 @@ export function CodePreview({
   lines,
   viewRef,
   onGutterClick,
+  wrap = true,
 }: {
   text: string;
   lines: { start: number; end: number } | null;
   viewRef: React.MutableRefObject<EditorView | null>;
   onGutterClick: (line: number) => void;
+  /** 自动换行开关：预览工具条上那枚切换按钮改它。 */
+  wrap?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const theme = useTheme();
@@ -286,7 +370,7 @@ export function CodePreview({
           drawSelection(),
           // 查找高亮走上面的自绘层（search() 扩展的高亮只在它面板打开时才画）。
           findHighlighter,
-          EditorView.lineWrapping,
+          wrapConf.of(wrap ? EditorView.lineWrapping : []),
           EditorView.editable.of(false),
           themeConf.of(cmTheme(theme === 'dark')),
         ],
@@ -304,6 +388,11 @@ export function CodePreview({
   useEffect(() => {
     viewRef.current?.dispatch({ effects: themeConf.reconfigure(cmTheme(theme === 'dark')) });
   }, [theme]);
+
+  // 自动换行开关：reconfigure 到 wrapCompartment
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: wrapConf.reconfigure(wrap ? EditorView.lineWrapping : []) });
+  }, [wrap, viewRef]);
 
   // 换文件：整篇换掉并回到顶部，上一份的查找高亮随之作废
   useEffect(() => {
@@ -356,6 +445,7 @@ export function FilePicker({
   onClose: () => void;
 }) {
   const t = useT();
+  const { show } = useToast();
   const isDesktop = useMediaQuery('(min-width: 1024px)');
 
   const [query, setQuery] = useState('');
@@ -365,8 +455,6 @@ export function FilePicker({
     return initial.path.includes('/') ? initial.path.slice(0, initial.path.lastIndexOf('/')) : '';
   });
   const [entries, setEntries] = useState<ProjectFileEntry[]>([]);
-  /** 父目录条目：只有桌面三栏的左栏用得上（窄屏不取）。 */
-  const [siblings, setSiblings] = useState<ProjectFileEntry[]>([]);
   const [total, setTotal] = useState(0);
   /** 搜索满档即停：命中的先后只是扫描序，条数是下限（文案得如实说「前 N 条」）。 */
   const [capped, setCapped] = useState(false);
@@ -385,7 +473,8 @@ export function FilePicker({
   const [anchor, setAnchor] = useState<number | null>(null);
   const [lines, setLines] = useState<{ start: number; end: number } | null>(null);
   const [busy, setBusy] = useState(false);
-  /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切。 */
+  /** 窄屏：根态两栏（中=列表 / 右=预览窄条提示层），进目录后三栏（左=父目录列提示层）。
+   *  可操作屏 = 列表 / 预览两态轮换（选中文件进预览屏操作），窄条本身不可点。 */
   const [screen, setScreen] = useState<'list' | 'preview'>(initial?.kind === 'file' ? 'preview' : 'list');
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
@@ -416,35 +505,41 @@ export function FilePicker({
   const kbdNav = useRef(false);
   /** 当前因「选了行」而被自动勾上的那条（离开或取消行选区时按它退勾）。 */
   const rangePicked = useRef<string | null>(null);
+  /** 路过每一层的账（层级递进本身）：父级列的数据源，键 = `projectId:path`。 */
+  const visited = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
+  /** 项目绝对根（列表回包自带）：头部完整路径与复制按钮都用它。 */
+  const [rootPath, setRootPath] = useState('');
+  /** 上一波 load 的 (project, dir, q)：同参重复 load 不重置选中（见 load 内）。 */
+  const lastLoadKeyRef = useRef<string | null>(null);
 
   const load = useCallback(
     (q: string, target: string, signal: AbortSignal, fresh = false): Promise<void> => {
       const mine = ++seq.current;
       setLoading(true);
       setError(null);
-      // 没有斜杠但非空（`src`）= 父目录是项目根 `''`；根自身没有父
-      const slash = target.lastIndexOf('/');
-      const parent = target === '' ? null : slash >= 0 ? target.slice(0, slash) : '';
-      return Promise.all([
-        api.listProjectFiles(projectId, { q, dir: target, signal, fresh }),
-        // 左栏 = 父目录的条目（根没有父，摆一行 `/` 占位）
-        !q && isDesktop && parent !== null
-          ? api.listProjectFiles(projectId, { dir: parent, signal }).catch(() => null)
-          : Promise.resolve(null),
-      ])
-        .then(([listing, parentListing]) => {
+      return api
+        .listProjectFiles(projectId, { q, dir: target, signal, fresh })
+        .then((listing) => {
           if (mine !== seq.current) return;
+          setRootPath(listing.root);
           setEntries(listing.entries);
           setTotal(listing.total);
           setCapped(listing.capped ?? false);
           setTruncated(listing.truncated);
-          // 搜索不打父目录请求；这时留住上一次那份，左栏不闪成空栏
-          if (!q) setSiblings(parentListing?.entries ?? []);
+          // 层级递进的账留给父级列：你来时的每一层都在这儿（不为此单独发请求）
+          visited.current.set(`${projectId}:${target}`, { entries: listing.entries, total: listing.total });
           const want = focusPath.current;
           const at = want ? listing.entries.findIndex((e) => e.path === want) : -1;
           focusPath.current = null;
-          setSelected(at >= 0 ? at : 0);
-          if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
+          // 父组件重渲会换引用 → 防抖 effect 同参重跑：重复 load 不重置选中、
+          // 不再自动跳预览屏（否则返回聚焦被第一行覆盖，预览屏被误拉起）
+          const key = `${projectId}:${target}:${q}`;
+          const sameAsLast = lastLoadKeyRef.current === key;
+          lastLoadKeyRef.current = key;
+          if (!sameAsLast) {
+            setSelected(at >= 0 ? at : 0);
+            if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
+          }
         })
         .catch((e: unknown) => {
           if (mine !== seq.current || signal.aborted) return;
@@ -455,8 +550,11 @@ export function FilePicker({
           if (mine === seq.current) setLoading(false);
         });
     },
-    [projectId, isDesktop],
+    [projectId, visited],
   );
+
+  /** Finder 父级列（桌面分栏 + 窄屏左栏，进入子目录后才有内容）。 */
+  const finderCols = useFinderColumns(projectId, dir, true, visited);
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
@@ -779,6 +877,8 @@ export function FilePicker({
   const enter = (entry: ProjectFileEntry): void => {
     if (entry.kind === 'dir') {
       setQuery('');
+      // 返回时聚焦到进来的那个目录（goTo 侧同款账）
+      focusPath.current = entry.path;
       setDir(entry.path);
       setScreen('list');
       return;
@@ -1266,23 +1366,27 @@ export function FilePicker({
               </button>
             </Tooltip>
           )}
-          <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
-            {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
-            <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
-              {rootLabel}
-            </button>
-            {crumb.map((seg, i) => (
-              <span key={`${seg}-${i}`}>
-                {'/'}
-                <button
-                  type="button"
-                  onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
-                  className="text-neutral-300 hover:text-neutral-100"
-                >
-                  {seg}
-                </button>
-              </span>
-            ))}
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {/* 完整绝对路径：超宽跑马灯来回滚（MarqueeText 放得下就静止） */}
+            <MarqueeText
+              text={joinAbsPath(rootPath, dir, false) || rootLabel}
+              className="font-mono text-11 text-neutral-400"
+            />
+            {/* 复制绝对路径：含空格按 OS 惯例包引号（同右键菜单口径） */}
+            <Tooltip label={t('tasks.fileCopyAbsPath')} side="top">
+              <button
+                type="button"
+                aria-label={t('tasks.fileCopyAbsPath')}
+                onClick={() => {
+                  void copyText(joinAbsPath(rootPath, dir)).then((ok) => {
+                    if (!ok) show('error', t('common.copyFailed'));
+                  });
+                }}
+                className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+              >
+                <Copy className="h-3 w-3" />
+              </button>
+            </Tooltip>
           </div>
           <FieldHint>{t('tasks.fileVisibilityHint')}</FieldHint>
           <div className="relative w-56 shrink-0 max-lg:w-40">
@@ -1317,67 +1421,56 @@ export function FilePicker({
           </Tooltip>
         </div>
 
-        {/* 体：父目录 | 当前目录 | 预览。窄屏一屏一栏（列表 ⇄ 预览）。
+        {/* 体：恒 3 栏（父级列 | 当前操作列 | 预览）。窄屏渐入渐出双面板。
             键盘处理只挂在列表这一侧——预览里是编辑器，方向键归它。 */}
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
             {isDesktop ? (
-              <>
-                {/* 左栏 = 父目录（superfile 那套）：横向跳同级目录用。文件只是给个
-                    上下文、只有目录可点（点文件没有去处）；站在项目根时父就是自己，
-                    那一格是项目名，三栏恒在、不塌成两栏。 */}
-                <div className="flex w-40 shrink-0 flex-col border-r border-edge/[0.06]">
-                  <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
-                    {dir === '' ? (
-                      <li className="flex items-center gap-2 bg-blue-500/15 px-2.5 py-1 text-11 text-neutral-100">
-                        <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
-                        <span className="truncate">{rootLabel}</span>
-                      </li>
-                    ) : (
-                      siblings.map((sib) =>
-                        sib.kind === 'dir' ? (
-                          <li key={sib.path}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setQuery('');
-                                setDir(sib.path);
-                              }}
-                              className={cn(
-                                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-11',
-                                sib.path === dir
-                                  ? 'bg-blue-500/15 text-neutral-100'
-                                  : 'text-neutral-400 hover:bg-edge/[0.04] hover:text-neutral-200',
-                              )}
-                            >
-                              {iconFor(sib)}
-                              <span className="min-w-0 flex-1 truncate font-mono">
-                                {sib.name}
-                                {sib.path === dir ? '/' : ''}
-                              </span>
-                              {sib.head && <HeadBadge head={sib.head} />}
-                            </button>
-                          </li>
-                        ) : (
-                          <li
-                            key={sib.path}
-                            className="flex items-center gap-2 px-2.5 py-1 text-11 text-neutral-600"
-                          >
-                            {iconFor(sib)}
-                            <span className="truncate font-mono">{sib.name}</span>
-                          </li>
-                        ),
-                      )
-                    )}
-                  </ul>
+              <FileColumnsBrowser
+                parentCol={
+                  finderCols.length > 0 ? (
+                    <FinderColumnList
+                      entries={finderCols[0]!.entries}
+                      loading={finderCols[0]!.loading}
+                      activePath={dir}
+                      onOpen={(p) => {
+                        setQuery('');
+                        setDir(p);
+                      }}
+                    />
+                  ) : null
+                }
+                parentRootLabel={rootLabel}
+                middleCol={list}
+                previewCol={previewPane}
+                leftW={FINDER_COL_W}
+                onLeftResize={() => {}}
+              />
+            ) : (
+              /* 窄屏：可操作屏 = 列表 / 预览两态轮换（选中文件进预览屏操作），
+                 左栏（父目录列）是提示层不可点；进子目录后才有左栏。 */
+              <MobileFadePanels
+                active={screen === 'preview' ? 'preview' : 'list'}
+                hasLeft={dir !== '' && finderCols.length > 0}
+              >
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  {dir !== '' && finderCols.length > 0 ? (
+                    <FinderColumnList
+                      entries={finderCols[0]!.entries}
+                      loading={finderCols[0]!.loading}
+                      activePath={dir}
+                      onOpen={(p) => {
+                        setQuery('');
+                        setDir(p);
+                      }}
+                    />
+                  ) : (
+                    list
+                  )}
                 </div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
-                <div className="flex w-2/5 shrink-0 flex-col border-l border-edge/[0.06]">{previewPane}</div>
-              </>
-            ) : screen === 'list' ? (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
-            ) : (
-              previewPane
+                {previewPane}
+              </MobileFadePanels>
             )}
           </div>
           {/* 已选条：有勾选就整批落定（顺序 = 点选顺序）。窄屏也摆——触屏只能靠它 */}

@@ -8,6 +8,7 @@ import {
   type HookRule,
   type MessagingCapability,
   type ProjectHarness,
+  type PromptLimits,
   type SessionWatchRow,
   type TerminalTarget,
   type WatchOn,
@@ -350,8 +351,16 @@ export function TasksPanel({
   // 唯一真源——web 只渲染不判定，不写死 harness 白名单。完整表不过滤（不支持
   // 的面也在），行内各按钮按字段自取。
   const [messagingCaps, setMessagingCaps] = useState<MessagingCapability[] | null>(null);
+  // prompt 长度策略（core 常量的服务端投影）：输入框预检与「将整块粘贴」提示都用它
+  const [promptLimits, setPromptLimits] = useState<PromptLimits | null>(null);
   const refreshMessagingCaps = useCallback(() => {
-    api.messagingCapabilities().then(setMessagingCaps).catch(() => {});
+    api
+      .messagingCapabilities()
+      .then((r) => {
+        setMessagingCaps(r.capabilities);
+        setPromptLimits(r.promptLimits);
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => {
     refreshMessagingCaps();
@@ -615,6 +624,9 @@ export function TasksPanel({
     [fb, t, refreshStatus, waitTerminalAlive],
   );
 
+  /** worktree 隔离（B5 最小切片）：弹层里的开关态，面板重开不丢；下一次起会话生效。 */
+  const [worktreeNewSession, setWorktreeNewSession] = useState(false);
+
   /** 新建会话：在项目**已打开的终端**里起一个新会话（服务端把 harness 裸 bin
       打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
       fb 键按项目隔离：loading 在途吞连点，防重复 spawn。
@@ -627,14 +639,14 @@ export function TasksPanel({
         `newSession:${projectId}`,
         async () => {
           const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
-          await api.startProjectSession(projectId, harness);
+          await api.startProjectSession(projectId, harness, worktreeNewSession);
           if (harness && HARNESS_LIFECYCLE[harness].sessionMarkers.length === 0) return;
           await waitNewSession(known);
         },
         { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
       );
     },
-    [fb, projectId, t, waitNewSession],
+    [fb, projectId, t, waitNewSession, worktreeNewSession],
   );
 
   /** 起会话的 harness 弹层（锚在按钮下方，同项目列表的终端弹层口径）：项目选中的
@@ -1308,6 +1320,7 @@ export function TasksPanel({
           label={c.label}
           projectLabel={projectLabel}
           capability={c.capability}
+          promptLimits={promptLimits}
           minimized={c.sessionId !== selectedId}
           answerPending={!!questionOf(c.sessionId)}
           onOpenAnswer={() => setAnswerFor(c.sessionId)}
@@ -1549,6 +1562,8 @@ export function TasksPanel({
           x={harnessPicker.x}
           y={harnessPicker.y}
           anchor={harnessPicker.anchor}
+          worktree={worktreeNewSession}
+          onWorktreeChange={setWorktreeNewSession}
           onPick={(harness) => {
             setHarnessPicker(null);
             runNewSession(harness);

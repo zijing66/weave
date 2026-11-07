@@ -96,13 +96,12 @@ describe('generateInitFiles（daemon 与 init 同一期望态）', () => {
     expect(settings.merge!(settings.content, '{ not json')).toBeNull();
   });
 
-  it('.mcp.json 只在 weave server 开启时入清单（init 同口径：没得写就不写）', async () => {
+  it('.mcp.json 已退役（daemon 托管 MCP 取代）——任何开关下都不入清单', async () => {
     const off = await generateInitFiles('claude', ctx());
     expect(off.some((f) => f.relPath === '.mcp.json')).toBe(false);
 
     const on = await generateInitFiles('claude', ctx({ mcp: { weave: true } }));
-    const mcp = entry(on, '.mcp.json');
-    expect(mcp.content).toContain('"weave"');
+    expect(on.some((f) => f.relPath === '.mcp.json')).toBe(false);
   });
 
   it('components 关掉的面不入清单', async () => {

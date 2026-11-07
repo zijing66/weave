@@ -94,6 +94,9 @@ export {
   CustomBackend,
   PRESET_CANDIDATES,
   TerminalBackend,
+  chunkByUtf8Bytes,
+  hasPasteMarkers,
+  pasteKeyChunks,
   trySpawn,
 } from './opener/backend.js';
 export type {

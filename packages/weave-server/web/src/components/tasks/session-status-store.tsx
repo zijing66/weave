@@ -44,6 +44,8 @@ interface SessionStatusValue {
   questions: Map<string, PendingQuestionEntry>;
   /** harness → 模型别名表（别名 → 真名）：模型下拉两个都摆，真名也认回别名那档。 */
   modelCatalog: Record<string, ModelAliasTarget[]>;
+  /** 首屏三路（sessions/dispatches/questions）各自是否已响应过至少一拍（含失败）。 */
+  settled: { sessions: boolean; dispatches: boolean; questions: boolean };
   /** 手动重拉（刷新按钮；SSE 之外兜底）。resolve = 会话列表拉取失败的原因，成功为 null。 */
   refresh: () => Promise<string | null>;
 }
@@ -155,6 +157,9 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /** 首屏三路各自「已响应过至少一拍」（含失败——失败也是响应，启动页据此放行）。 */
+  const [settled, setSettled] = useState({ sessions: false, dispatches: false, questions: false });
+
   const refresh = useCallback(async (): Promise<string | null> => {
     const [s, d, q] = await Promise.allSettled([
       api.listSessions(),
@@ -171,10 +176,17 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       setSessions(() => applyRowPush(s.value.sessions, rowPush.current));
       setModelCatalog(s.value.modelCatalog ?? {});
       lastFullAt.current = Date.now();
-      return null;
     }
-    const message = s.reason instanceof Error ? s.reason.message : String(s.reason);
-    return message;
+    setSettled({
+      sessions: true,
+      dispatches: d.status === 'fulfilled',
+      questions: q.status === 'fulfilled',
+    });
+    if (s.status !== 'fulfilled') {
+      const message = s.reason instanceof Error ? s.reason.message : String(s.reason);
+      return message;
+    }
+    return null;
   }, []);
 
   /** 拉取失败 = 瞬时故障，走全局 toast（自动消失），不再常驻页面。
@@ -430,9 +442,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       inflight,
       questions,
       modelCatalog,
+      settled,
       refresh: refreshWithToast,
     }),
-    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, refreshWithToast],
+    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, settled, refreshWithToast],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

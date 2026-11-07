@@ -17,6 +17,7 @@ import { hooksRoot } from '../../hooks/mirror.js';
 import { projectHarnesses, withProjectHarnesses } from '../project-harnesses.js';
 import { scheduleBootstrapInjection } from '../session-open.js';
 import { getUploadsDir } from '../../db/paths.js';
+import { PENDING_WT_PREFIX, createSessionWorktree, upsertWorktreeEntry } from '../worktree.js';
 
 /** 项目存储配置（projects.meta.storage）：图片/文件各自的落盘目录，空 = 全局默认。 */
 export interface ProjectStorage {
@@ -158,11 +159,15 @@ export async function handleProjectRoutes(
       sendJson(res, 404, { error: 'Project not found' });
       return true;
     }
-    let body: { harness?: unknown };
+    let body: { harness?: unknown; worktree?: unknown };
     try {
       body = JSON.parse((await readBody(req)) || '{}') as { harness?: unknown };
     } catch {
       sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (body.worktree !== undefined && typeof body.worktree !== 'boolean') {
+      sendJson(res, 400, { error: 'Invalid "worktree" (boolean)' });
       return true;
     }
     // 起哪个 harness = 项目 init 选择结果里的；请求体指定则用它。未接入的不许起
@@ -191,9 +196,43 @@ export async function handleProjectRoutes(
     try {
       const stat = await fs.promises.stat(project.path);
       if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
+      // worktree 隔离（B5 最小切片）：起手建 worktree，会话 cwd 落进它（与会话级
+      // 生命周期两端绑死：SessionEnd 后由 sweepWorktreeMerges 并回主干）。环境
+      // 不支持（非 git 仓 / git 缺席）→ 409 如实报因，前端据此置灰——不炸、不回落。
+      let cwd = project.path;
+      let worktreePath: string | undefined;
+      if (body.worktree === true) {
+        // sessionId 此刻未知（宿主自己生成）：先用占位键建目录与分支，登记按
+        // 占位键记；首个会话事件到达时按 cwd 前缀认领改绑（claimPendingSessionWorktree，
+        // 与起点候选 pending-origins 同一哲学）。
+        const key = PENDING_WT_PREFIX + crypto.randomUUID();
+        const created = await createSessionWorktree(
+          project.path,
+          key,
+          deps.worktreeGitExec,
+        );
+        if (!created.ok) {
+          sendJson(res, created.unsupported ? 409 : 400, {
+            error: created.error ?? 'worktree unavailable',
+          });
+          return true;
+        }
+        cwd = created.path!;
+        worktreePath = created.path;
+        if (deps.hooksDir) {
+          upsertWorktreeEntry(deps.hooksDir, {
+            sessionId: key,
+            projectId: project.id,
+            path: created.path!,
+            branch: created.branch!,
+            status: 'active',
+            at: new Date().toISOString(),
+          });
+        }
+      }
       const settings = await readDaemonSettings();
       const argv = [spec.bin, ...(spec.launchArgs ?? [])];
-      const origin = await opener.runInTerminal(project.path, argv, settings.terminal);
+      const origin = await opener.runInTerminal(cwd, argv, settings.terminal);
       // 起点候选：sessionId 事后才知道（宿主自己生成）——spawn 回执先按
       // (harness, projectId) 排队，ingest 侧（hook 事件 / rollout session_meta）
       // 认领。只为 paneEnvSource='launch' 的 harness 记（'hook' 的 env 精确，
@@ -212,7 +251,7 @@ export async function handleProjectRoutes(
       }
       // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
       setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
-      sendJson(res, 200, { ok: true, command: argv.join(' '), cwd: project.path });
+      sendJson(res, 200, { ok: true, command: argv.join(' '), cwd, ...(worktreePath ? { worktree: worktreePath } : {}) });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
     }

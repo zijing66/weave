@@ -4,25 +4,34 @@
  */
 
 import { markUnauthorized } from '../auth';
+import { bootRequests } from '../boot-requests';
 
 /** daemon API 前缀：dev 由 vite 代理剥离，prod 由 daemon 自剥（web 侧只此一处）。 */
 export const API_BASE = '/api';
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...init?.headers,
-    },
-  });
-  if (res.status === 401) {
-    // 会话失效/未登录：置匿名 → App 随即渲染登录页；错误照抛（调用方仍可读文案）。
-    markUnauthorized();
-    throw new Error(await errorText(res));
+  bootRequests.start();
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        ...init?.headers,
+      },
+    });
+    bootRequests.settle();
+    if (res.status === 401) {
+      // 会话失效/未登录：置匿名 → App 随即渲染登录页；错误照抛（调用方仍可读文案）。
+      markUnauthorized();
+      throw new Error(await errorText(res));
+    }
+    if (!res.ok) throw new Error(await errorText(res));
+    return (await res.json()) as T;
+  } catch (e) {
+    // 网络层炸掉（fetch reject）也是一格响应，不计会永远差一格
+    bootRequests.settle();
+    throw e;
   }
-  if (!res.ok) throw new Error(await errorText(res));
-  return (await res.json()) as T;
 }
 
 /** 错误信息取 daemon 的 {error|message} 字段；非 JSON / 无字段回落状态码+原文。 */

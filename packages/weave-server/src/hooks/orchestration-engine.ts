@@ -96,132 +96,11 @@ function renderEdgeText(
 
 const UNRESOLVED_VAR = /\{(upstream|summary|session)\}/;
 
-/** 条件边回答的认法：子 Agent 回答的首个词（中英都认），其余一律判不出。 */
-const CONDITION_YES = new Set(['yes', 'y', 'true', '是', '对的', '对', '需要', '发']);
-const CONDITION_NO = new Set(['no', 'n', 'false', '否', '不对', '不需要', '不发']);
-
-export function parseConditionAnswer(answer: string | null | undefined): boolean | null {
-  const first = (answer ?? '').trim().toLowerCase().split(/\s+/)[0] ?? '';
-  const word = first.replace(/[.。!！?？]/g, '');
-  if (CONDITION_YES.has(word)) return true;
-  if (CONDITION_NO.has(word)) return false;
-  return null;
-}
-
-/** 条件边的判断结果：ok = 放行投递；拦下时 reason 记进 RunEvent。source/detail 落日志（谁判的、依据）。 */
-export interface ConditionDecision {
-  ok: boolean;
-  reason?: string;
-  /** 谁做的判断：决策模型（Jev）/ fork 子 Agent。缺省 = 未知（旧引擎/测试）。 */
-  source?: 'decision-model' | 'fork';
-  /** 判断依据（如 `P(yes)=0.85`）；放行与拦下都带，日志可见。 */
-  detail?: string;
-}
-
-/**
- * 条件边判断引擎：输入上游会话与放行条件，答放行还是拦下。引擎只认这个
- * 接口、不关心判断怎么做出来——缺省 = fork 子 Agent（createForkConditionJudge），
- * 装配侧注入 `conditionJudge` 即整体替换（决策模型等其他方案走这里）。
- */
-export interface ConditionJudge {
-  judge(input: {
-    sessionId: string;
-    condition: string;
-    /** 上游这一轮最终输出（`{upstream}` 同源）；无会话上下文的判断方案用它。 */
-    upstream: string | null;
-  }): Promise<ConditionDecision>;
-  /**
-   * 批量判定（可选实现）：同一节点同一轮的多条条件边一次判定——fork 型引擎
-   * 用它把 N 次 fork 合成 1 次（token 成本 ÷N）。缺省回落逐条 judge；返回
-   * 数组与输入同序。抛错 = 整批按逐条回落。
-   */
-  judgeBatch?(input: {
-    sessionId: string;
-    /** 每条的判定键（引擎用它对回答案），condition 原文随行。 */
-    items: { key: string; condition: string }[];
-    upstream: string | null;
-  }): Promise<ConditionDecision[]>;
-}
-
-/** 缺省判断引擎：对上游会话 fork 一次上下文子 Agent，只认 yes/no 回答。 */
-export function createForkConditionJudge(deps: {
-  supports(sessionId: string): boolean;
-  extract(input: { sessionId: string; prompt: string }): Promise<string | null>;
-}): ConditionJudge {
-  const single = (verdict: boolean | null): ConditionDecision =>
-    verdict === null
-      ? {
-          ok: false,
-          source: 'fork',
-          reason: 'condition could not be evaluated (no clear yes/no answer) — delivery blocked',
-        }
-      : verdict
-        ? { ok: true, source: 'fork' }
-        : { ok: false, source: 'fork', reason: 'condition answered no — delivery skipped' };
-  return {
-    async judge({ sessionId, condition }) {
-      if (!deps.supports(sessionId)) {
-        return {
-          ok: false,
-          source: 'fork',
-          reason: 'condition not evaluable — harness has no context sub-agent face',
-        };
-      }
-      const answer = await deps.extract({
-        sessionId,
-        prompt: `${condition}\n\nBased on the conversation context above, answer with exactly one word: yes or no.`,
-      });
-      return single(parseConditionAnswer(answer));
-    },
-    // 批量：一次 fork 问全部（JSON 逐键答 yes/no）——N 条条件边的 token 成本 ÷N。
-    // fork 自带会话上下文，upstream 只是兜底信号，这里不单独拼进 prompt。
-    async judgeBatch({ sessionId, items }) {
-      if (!deps.supports(sessionId)) {
-        return items.map(() => ({
-          ok: false,
-          source: 'fork' as const,
-          reason: 'condition not evaluable — harness has no context sub-agent face',
-        }));
-      }
-      const lines = items
-        .map((item, i) => `${i + 1}. key=${item.key}: ${item.condition}`)
-        .join('\n');
-      const answer = await deps.extract({
-        sessionId,
-        prompt: `For EACH item below, decide yes/no based on the conversation context.\n${lines}\n\nRespond with ONLY a JSON object mapping each key to true or false, e.g. {"k1":true,"k2":false}. No other text.`,
-      });
-      const parsed = parseBatchAnswer(answer, items.map((i) => i.key));
-      if (!parsed) return items.map(() => single(null));
-      return items.map((item) => {
-        const verdict = parsed.get(item.key);
-        if (verdict === undefined) return single(null);
-        return single(verdict);
-      });
-    },
-  };
-}
-
-/** 批量回答解析：首个 JSON 对象里逐键取布尔；缺键/解析失败 = null（整批判不出）。 */
-function parseBatchAnswer(
-  answer: string | null | undefined,
-  keys: readonly string[],
-): Map<string, boolean> | null {
-  if (!answer) return null;
-  const json = answer.match(/\{[\s\S]*\}/);
-  if (!json) return null;
-  try {
-    const value = JSON.parse(json[0]) as Record<string, unknown>;
-    const out = new Map<string, boolean>();
-    for (const key of keys) {
-      const v = value[key];
-      if (typeof v !== 'boolean') return null;
-      out.set(key, v);
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
+// 判断域已收敛进决策内核（decision-kernel.ts）：引擎与装配侧只从这里取类型与
+// 缺省 fork 判断；编排的 when 预筛、judgeBatch 闸与 ORCH_MAX_FORKS 预算仍在本域。
+export type { ConditionDecision, ConditionJudge } from './decision-kernel.js';
+export { parseConditionAnswer, createForkConditionJudge, createDecisionKernel } from './decision-kernel.js';
+import { createDecisionKernel, type ConditionDecision, type ConditionJudge } from './decision-kernel.js';
 
 /** when 预筛：关键词（逗号/换行/分号分隔）任一为文本的子串即命中（不区分大小写）。 */
 export function matchWhen(when: string, text: string | null): boolean {
@@ -251,9 +130,6 @@ const ENTRY_INDEX_TTL_MS = 10_000;
  * 状态：定义在 DB，运行态在内存（重启 → interrupted，不重发）；每次转场落一行日志。
  * 一切异常内部吞掉：编排失败永不影响采集与消息投递。
  */
-/** 编排拉起的会话在这么久内的回合不算「自然回合」（覆盖冷启动 + 首轮）。 */
-const STARTED_AUTO_FIRE_GUARD_MS = 60_000;
-
 /**
  * 待回陈滞时限：目标活着但最老一条 pending 超过它仍无回合 → run 落 failed
  * （释放「同编排单 run」闸——不然一个挂死的会话让编排永久静默失能）。
@@ -277,9 +153,7 @@ export class OrchestrationEngine {
     string,
     Promise<{ ok: true; ack?: 'session-start' | 'registry' } | { ok: false; error: string }>
   >();
-  /** 编排刚拉起的会话 → 时刻：首个回合结束不许被当成「自然回合」去触发别的编排。 */
-  private readonly startedByOrchestration = new Map<string, number>();
-  /** 缺省判断引擎（fork 子 Agent）；装配侧注入 conditionJudge 即整体替换。 */
+  /** 缺省判断内核（fork 子 Agent 判断档）；装配侧注入 conditionJudge 即整体替换。 */
   private readonly forkJudge: ConditionJudge;
 
   constructor(
@@ -289,7 +163,7 @@ export class OrchestrationEngine {
         OrchestrationRunRepository,
         'insert' | 'listRunning' | 'updateState' | 'finish' | 'prune'
       >;
-      deliverer: Pick<MessageDeliverer, 'send'> &
+      deliverer: Pick<MessageDeliverer, 'send' | 'registerInduction' | 'consumeInduction'> &
         Partial<Pick<MessageDeliverer, 'awaitInboxReady' | 'lastTurnOutput'>>;
       sessions: Pick<SessionRepository, 'listWithCounts' | 'getBySessionId' | 'turnOpenOf'>;
       bus: HookEventBus;
@@ -328,9 +202,13 @@ export class OrchestrationEngine {
       sendToChannelImpl?: typeof sendToChannel;
     },
   ) {
-    this.forkJudge = createForkConditionJudge({
-      supports: (sessionId) => deps.supportsExtract?.(sessionId) ?? false,
-      extract: (input) => deps.extract?.(input) ?? Promise.resolve(null),
+    // 缺省判断链走内核（档一纯判断；预算闸 takeFork 仍在本域）。装配侧注入
+    // conditionJudge（决策模型优先 + fork 回落）即整体替换。
+    this.forkJudge = createDecisionKernel({
+      fork: {
+        supports: (sessionId) => deps.supportsExtract?.(sessionId) ?? false,
+        extract: (input) => deps.extract?.(input) ?? Promise.resolve(null),
+      },
     });
   }
 
@@ -436,15 +314,11 @@ export class OrchestrationEngine {
         void this.fireEdges(rt, input.sessionId);
       }
       if (!orchestrationTurn) {
-        const now = Date.now();
-        const startedAt = this.startedByOrchestration.get(input.sessionId);
-        if (startedAt !== undefined && now - startedAt < STARTED_AUTO_FIRE_GUARD_MS) {
-          // 编排刚拉起来的会话：它的首个回合并不能算「自然回合」
-          this.startedByOrchestration.delete(input.sessionId);
-        } else {
-          this.startedByOrchestration.delete(input.sessionId);
-          this.maybeAutoFire(input.sessionId);
-        }
+        // 诱导回合闸（登记咽喉在投递器 outbox 单点，一次性核销）：被编排投递/
+        // 拉起诱导的会话，其首个收尾不是自然回合——无论隔多久（陈滞超窗的
+        // 首轮同样不算，不再误判）。登记由投递侧写入，这里只消费。
+        const induced = this.deps.deliverer.consumeInduction(input.sessionId);
+        if (!induced) this.maybeAutoFire(input.sessionId);
       }
     } catch {
       // 面缺席/库错误都不影响采集
@@ -464,7 +338,8 @@ export class OrchestrationEngine {
    * 判据与护栏：编排 enabled、节点有出边（孤立节点不空转跑）、同编排无在飞
    * run、同节点 5s 冷却（Stop 与 SessionEnd 连拍不重复触发）。残余风险如实记：
    * 投递走投递器队列还没入 pending 的窗口里到达的 idle 会被误判成自然回合
-   * （窗口毫秒级）。
+   * （窗口毫秒级）。诱导回合闸走投递器的登记单点（一次性核销、无时间窗）——
+   * 编排投递与拉起的会话首个收尾都不进这里。
    */
   private maybeAutoFire(sessionId: string): void {
     const now = Date.now();
@@ -1013,7 +888,9 @@ export class OrchestrationEngine {
           });
           return false;
         }
-        this.startedByOrchestration.set(input.to, Date.now());
+        // 编排拉起（第二源）：登记走投递器的诱导登记单点（后续 send 成功会再
+        // 登记一次，幂等——拉起成功但投递失败时这里兜底留下登记）。
+        this.deps.deliverer.registerInduction(input.to);
         // 刚从冷启动拉起来的会话：凭据随它的首个 hook 事件才上报，而层①-a 直投
         // 比中继快三个数量级（86ms vs 一个 headless 子进程）——值得等这一小会儿。
         // 等不到只是回落，不挡投递。
@@ -1025,6 +902,7 @@ export class OrchestrationEngine {
         text: input.text,
         mode: 'prompt',
         fromKind: 'dashboard',
+        origin: 'orchestration',
       });
       if (!rt.running) return false;
       if (!result.ok) {
