@@ -42,7 +42,6 @@ import {
   FileColumnsBrowser,
   FinderColumnList,
   MobileFadePanels,
-  useMobilePaneSwitch,
 } from '@/components/FileColumnsBrowser';
 
 /**
@@ -447,10 +446,9 @@ export function FilePicker({
   const [anchor, setAnchor] = useState<number | null>(null);
   const [lines, setLines] = useState<{ start: number; end: number } | null>(null);
   const [busy, setBusy] = useState(false);
-  /** 窄屏：根态两栏（中=列表 / 右=预览），进目录后三栏（左=父目录列）。
-   *  screen 只被「点窄条」和「选中文件看预览」改变，导航只改中栏内容。 */
+  /** 窄屏：根态两栏（中=列表 / 右=预览窄条提示层），进目录后三栏（左=父目录列提示层）。
+   *  可操作屏 = 列表 / 预览两态轮换（选中文件进预览屏操作），窄条本身不可点。 */
   const [screen, setScreen] = useState<'list' | 'preview'>(initial?.kind === 'file' ? 'preview' : 'list');
-  useMobilePaneSwitch((s) => setScreen(s === 'left' ? 'list' : s));
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
@@ -1404,10 +1402,10 @@ export function FilePicker({
                 onLeftResize={() => {}}
               />
             ) : (
-              /* 窄屏（状态机与全局浏览器同构）：根态两栏（中=列表 / 右=预览），
-                 进子目录后三栏（左=父目录列，点条目即回该层）。 */
+              /* 窄屏：可操作屏 = 列表 / 预览两态轮换（选中文件进预览屏操作），
+                 左栏（父目录列）是提示层不可点；进子目录后才有左栏。 */
               <MobileFadePanels
-                active={screen}
+                active={screen === 'preview' ? 'preview' : 'list'}
                 hasLeft={dir !== '' && finderCols.length > 0}
               >
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">

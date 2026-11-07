@@ -180,31 +180,27 @@ export function FileColumnsBrowser({
 // ---- 窄屏（<lg）三栏同屏窄排 ----
 
 /** 窄屏的缩小版 Finder：三栏同屏，语义与桌面一致（左=父目录 / 中=当前目录 /
- *  右=预览），一眼看清层级。活动栏占大部分宽度、实色可操作；非活动栏收成
- *  窄条（内容压暗可见——是父目录还是预览一眼即知），点按即切换为活动栏。
- *  景深：非活动栏半透明压暗，活动栏实色 + 阴影浮起。
- *  首屏（还没有上一层级）左栏传 null——两栏形态，主展示区直接是操作对象。 */
+ *  右=预览），一眼看清层级。左右窄条只是提示层（内容压暗露出条目名，不可点
+ *  不可滚）——可操作栏由 `active` 指定，缺省恒为中栏（只读浏览器：进目录 /
+ *  返回 / 点父目录条目都只改中栏内容）。首屏两栏形态左栏不摆。
+ *  景深：非活动栏半透明压暗，活动栏实色 + 阴影浮起。 */
 export function MobileFadePanels({
-  active,
+  active = 'list',
   hasLeft,
   children,
 }: {
-  /** 当前活动栏：'list'（中栏=当前目录）/ 'left'（左栏=父目录）/ 'preview'（右栏=预览）。 */
-  active: 'list' | 'left' | 'preview';
+  /** 可操作栏；缺省 'list'（中栏恒主展示区，左右窄条纯提示）。 */
+  active?: 'list' | 'preview';
   /** false = 两栏形态（首屏无上一层级，左栏整个不摆）。 */
   hasLeft: boolean;
   /** [左栏, 中栏, 右栏]。 */
   children: [ReactNode, ReactNode, ReactNode];
 }) {
   const [left, list, preview] = children;
-  const switchTo = (pane: string): void => {
-    window.dispatchEvent(new CustomEvent('weave:mobile-pane', { detail: pane }));
-  };
   /** 远处的层：收成窄条，内容压暗仍可见（一眼认出是父目录还是预览）。
-   *  内容整体左移越过行首图标——窄条里露出的是条目名称，不是一列图标。
-   *  拦交互的是子 tap 层（z-20 盖住整栏），内容本层的命中都被它接走。 */
+   *  内容整体左移越过行首图标——窄条里露出的是条目名称，不是一列图标。 */
   const back = 'w-12 min-w-0 overflow-hidden opacity-40';
-  /** 眼前的层：占满剩余宽度，实色 + 投影浮起。 */
+  /** 眼前的层：占满剩余宽度，实色 + 投影浮起，唯一可操作栏。 */
   const front = 'flex-1 min-w-0 opacity-100 z-10 shadow-mac-lg';
   const paneCls = (isActive: boolean): string =>
     cn(
@@ -215,44 +211,27 @@ export function MobileFadePanels({
     );
   /** 非活动态的内容包一层：负边距把图标推出可视区，名字顶到窄条左缘。 */
   const backInner = '-ml-7 flex min-h-0 flex-1 flex-col';
-  /** 非活动栏的点击层：盖在整栏上，点按 = 把这一栏切过来变活动。 */
-  const tap = (pane: 'left' | 'list' | 'preview') =>
-    pane === active ? undefined : (
-      <button
-        type="button"
-        aria-label={pane}
-        onClick={() => switchTo(pane)}
-        className="absolute inset-0 z-20"
-      />
-    );
+  const midActive = active === 'list';
+  const preActive = active === 'preview';
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       {hasLeft && (
-        <div className={paneCls(active === 'left')}>
-          <div className={active === 'left' ? 'flex min-h-0 flex-1 flex-col' : backInner}>
-            {left}
-          </div>
-          {tap('left')}
+        <div className={cn(paneCls(false), 'pointer-events-none')}>
+          <div className={backInner}>{left}</div>
         </div>
       )}
-      <div className={paneCls(active === 'list')}>
-        <div className={active === 'list' ? 'flex min-h-0 flex-1 flex-col' : backInner}>
-          {list}
-        </div>
-        {tap('list')}
+      <div className={paneCls(midActive)}>
+        <div className={midActive ? 'flex min-h-0 flex-1 flex-col' : backInner}>{list}</div>
       </div>
-      <div className={cn(paneCls(active === 'preview'), 'border-r-0')}>
-        <div className={active === 'preview' ? 'flex min-h-0 flex-1 flex-col' : backInner}>
-          {preview}
-        </div>
-        {tap('preview')}
+      <div className={cn(paneCls(preActive), 'border-r-0')}>
+        <div className={preActive ? 'flex min-h-0 flex-1 flex-col' : backInner}>{preview}</div>
       </div>
     </div>
   );
 }
 
-/** 窄屏面板切换事件：MobileFadePanels 的标签点击经它上报，引用方监听并
- *  把自己的 screen state 切过去（组件不持有跨页面状态）。 */
+/** 窄屏面板切换事件（weave:mobile-pane）：保留给需要外部切屏的场景，
+ *  组件内窄条不再上报——可操作栏由引用方 state 决定。 */
 export function useMobilePaneSwitch(
   setScreen: (s: 'list' | 'left' | 'preview') => void,
 ): void {

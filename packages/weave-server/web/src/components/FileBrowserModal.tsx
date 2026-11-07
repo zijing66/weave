@@ -48,7 +48,6 @@ import {
   FinderColumnList,
   MobileFadePanels,
   useColumnWidths,
-  useMobilePaneSwitch,
 } from '@/components/FileColumnsBrowser';
 
 /**
@@ -175,11 +174,8 @@ export function FileBrowserModal({
   const [preview, setPreview] = useState<{ path: string; text: string | null; truncated: boolean } | null>(null);
   /** 第三栏的子目录预览（选中一条目录时列它的直接子项；只读，不下钻）。 */
   const [sub, setSub] = useState<{ dir: string; entries: ProjectFileEntry[]; total: number } | null>(null);
-  /** 窄屏一屏只放得下一栏：左（项目列表）/ 中（文件树）/ 右（预览）三屏，
-   *  活动屏即当前可操作栏（渐入渐出标签切换；初始屏 = 项目列表）。 */
-  const [screen, setScreen] = useState<'list' | 'left' | 'preview'>('list');
-  // 窄屏渐入渐出面板的标签点击（MobileFadePanels 经 window 事件上报，组件共用）
-  useMobilePaneSwitch(setScreen);
+  /** 窄屏可操作栏恒为中栏（MobileFadePanels 的窄条只是提示层不可点），
+   *  screen 已随该裁决退役——导航动作只改中栏内容。 */
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
@@ -264,7 +260,6 @@ export function FileBrowserModal({
             setSelected((i) => Math.min(i, listing.entries.length - 1));
           } else {
             setSelected(at >= 0 ? at : 0);
-            if (at >= 0 && listing.entries[at]!.kind === 'file') setScreen('preview');
           }
         })
         .catch((e: unknown) => {
@@ -455,11 +450,6 @@ export function FileBrowserModal({
       setFullscreen(false);
       return true;
     }
-    if (!isDesktop && screen !== 'list') {
-      // 窄屏：先从左/右栏退回中栏（可操作栏），再逐层往下退
-      setScreen('list');
-      return true;
-    }
     if (query !== '') {
       setQuery('');
       return true;
@@ -626,10 +616,7 @@ export function FileBrowserModal({
     if (entry.kind === 'dir') {
       setQuery('');
       setDir(entry.path);
-      setScreen('list');
-      return;
     }
-    if (!isDesktop) setScreen('preview');
   };
 
   /** 全项目模式点一条项目：就地切进该项目（从根开始浏览）。
@@ -648,8 +635,6 @@ export function FileBrowserModal({
     }
     setSelected(0);
     setEntries([]);
-    // 窄屏：点项目 = 中栏（该项目的文件树）成为当前可操作栏
-    if (!isDesktop) setScreen('list');
     firstLoad.current = true;
   };
 
@@ -1303,11 +1288,6 @@ export function FileBrowserModal({
               aria-label={t('tasks.fileUp')}
               disabled={crumb.length === 0 && !picked}
               onClick={() => {
-                // 窄屏在左/右栏：先退回中栏（可操作栏）；中栏才是目录上一级。
-                if (!isDesktop && screen !== 'list') {
-                  setScreen('list');
-                  return;
-                }
                 goUp();
               }}
               className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"
@@ -1441,12 +1421,11 @@ export function FileBrowserModal({
                 onPreviewResize={(d) => setPreviewW(previewW - d)}
               />
             ) : (
-              /* 窄屏（状态机）：level = picked 有无。
-                 root 首屏 = 两栏，主展示区就是项目列表（中栏位、恒活动）；
+              /* 窄屏（状态机）：level = picked 有无。可操作栏恒为中栏。
+                 root 首屏 = 两栏，主展示区就是项目列表（中栏位）；
                  inside = 三栏：左=上一层级（项目根时=项目列表，深处=父目录列）/
-                 中=当前目录（恒显示当前所在路径，导航只改内容不切屏）/ 右=预览。
-                 screen 只被「点窄条」和「选中文件看预览」改变。 */
-              <MobileFadePanels active={screen} hasLeft={picked !== null}>
+                 中=当前目录（导航只改内容）/ 右=预览（提示层不可点）。 */
+              <MobileFadePanels hasLeft={picked !== null}>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   {picked && finderCols.length > 0 ? (
                     <FinderColumnList
