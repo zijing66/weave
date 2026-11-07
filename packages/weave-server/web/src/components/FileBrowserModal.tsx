@@ -290,8 +290,15 @@ export function FileBrowserModal({
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
+  /** 已加载的 (project, dir)：父组件重渲会换 projects 数组引用（filter 现算），
+   *  effect 随之重跑——同参重跑会把 focusPath 消费后的重复 load 以 selected=0
+   *  覆盖「返回聚焦」（先对后跳的根因）。同参直接跳过。 */
+  const loadedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!picked && projects) return; // 全项目模式第一屏：还没进项目，不打文件请求
+    const key = `${activeProjectId}:${dir}:${query.trim()}`;
+    if (loadedKeyRef.current === key && focusPath.current === null) return;
+    loadedKeyRef.current = key;
     const timer = setTimeout(() => {
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
