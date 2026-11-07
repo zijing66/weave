@@ -1343,7 +1343,7 @@ export function FileBrowserModal({
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('tasks.fileSearchPlaceholder')}
+              placeholder={t(picked ? 'tasks.fileSearchInDir' : 'tasks.fileSearchAllProjects')}
               className="w-full rounded border border-edge/[0.1] bg-neutral-950 py-1 pl-7 pr-6 text-11 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
             />
             {query && (
