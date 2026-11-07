@@ -839,6 +839,10 @@ export function FileBrowserModal({
   /** 键盘 handler（挂一次转闭包）读的命中快照。 */
   const fileHitsRef = useRef<SearchFileHit[] | null>(null);
   fileHitsRef.current = fileHits;
+  /** 上一拍搜索词有无：只在「有词 → 无词」（用户清词退出搜索）时才重置首屏
+   *  聚焦——effect 随 projectListShown 每次进出项目都重跑，无脑 setProjSelected(0)
+   *  会把返回首屏的聚焦打回第一行。 */
+  const hadQueryRef = useRef(false);
   useEffect(() => {
     if (!projectListShown) {
       setFileHits(null);
@@ -847,9 +851,13 @@ export function FileBrowserModal({
     const q = query.trim();
     if (!q) {
       setFileHits(null);
-      setProjSelected(0);
+      if (hadQueryRef.current) {
+        hadQueryRef.current = false;
+        setProjSelected(0);
+      }
       return;
     }
+    hadQueryRef.current = true;
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
       api
@@ -893,7 +901,11 @@ export function FileBrowserModal({
                   role="option"
                   aria-selected={i === projSelected}
                   onMouseEnter={() => {
-                    if (!kbdNav.current) setProjSelected(i);
+                    // 粗指针（触屏）的 tap 会顺带 fire mouseover：返回首屏那一下
+                    // 指针停在哪儿就把聚焦抢到哪行（实测总落在第一行）。hover
+                    // 选中只给精指针。
+                    if (!finePointer || kbdNav.current) return;
+                    setProjSelected(i);
                   }}
                   onClick={() => {
                     if (!proj) return;
