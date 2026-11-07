@@ -1369,6 +1369,12 @@ export function FileBrowserModal({
               aria-label={t('tasks.fileUp')}
               disabled={crumb.length === 0 && !picked}
               onClick={() => {
+                // 窄屏「到底」态：先退回目录列表（多退一级的修复——返回键也要
+                // 走 backPop 同一条链：到底 → 列表 → 上一级）
+                if (!isDesktop && viewingRef.current) {
+                  setViewing(null);
+                  return;
+                }
                 goUp();
               }}
               className="rounded p-1 text-neutral-400 transition-colors hover:text-neutral-100 disabled:opacity-30"

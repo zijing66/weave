@@ -18,11 +18,16 @@ async function mermaidFor(theme: Theme): Promise<typeof import('mermaid').defaul
     securityLevel: 'strict',
     theme: theme === 'light' ? 'default' : 'dark',
     fontFamily: 'inherit',
+    // 失败时不往 document.body 注入「Syntax error in text」炸弹大图弹层——
+    // 错误走 MermaidBlock 自己的回落展示（源码 + 标题上的原因）。
+    suppressErrorRendering: true,
   });
   return mermaid;
 }
 
-/** 图源 → SVG 字符串（渲染失败即抛，调用方自己决定回落成什么）。 */
+/** 图源 → SVG 字符串（渲染失败即抛，调用方自己决定回落成什么）。
+ *  `suppressErrorRendering`：失败时不往 document.body 注入那枚「Syntax error
+ *  in text」炸弹大图弹层——错误走 MermaidBlock 自己的回落展示。 */
 export async function renderMermaidSvg(code: string, theme: Theme): Promise<string> {
   const mermaid = await mermaidFor(theme);
   // id 每次渲染都换：失败时 mermaid 可能留下同 id 的临时节点，复用会串

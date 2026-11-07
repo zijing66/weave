@@ -354,7 +354,7 @@ export function CodePreview({
           drawSelection(),
           // 查找高亮走上面的自绘层（search() 扩展的高亮只在它面板打开时才画）。
           findHighlighter,
-          wrapConf.of([]),
+          wrapConf.of(wrap ? EditorView.lineWrapping : []),
           EditorView.editable.of(false),
           themeConf.of(cmTheme(theme === 'dark')),
         ],
