@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
+  Copy,
   Download,
   Eye,
   FileCode,
@@ -35,6 +36,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { splitFrontmatter } from '@/lib/markdown';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
 import { markdownPre } from '@/components/ui/mermaid-block';
+import { MarqueeText } from '@/components/tasks/conv-widgets';
 import {
   CodePreview,
   HeadBadge,
@@ -667,6 +669,10 @@ export function FileBrowserModal({
   const enter = (entry: ProjectFileEntry): void => {
     if (entry.kind === 'dir') {
       setQuery('');
+      // 返回时聚焦到进来的那个目录：重置「用户选过行」（否则返回后列表回来自动
+      // 不覆盖选中），focusPath 指着它让 load 定位
+      userTouched.current = false;
+      focusPath.current = entry.path;
       setDir(entry.path);
       setViewing(null);
       return;
@@ -807,6 +813,13 @@ export function FileBrowserModal({
   const crumb = dir ? dir.split('/') : [];
   /** 搜索是当前目录子树的（带 q 时 `dir` 照传）：行与预览头都按这个口径换展示。 */
   const searching = query.trim() !== '';
+  /** 头部完整路径：进项目 = 项目根 + 当前目录；首屏 = 键盘/hover 高亮那个项目的
+   *  绝对路径（列表高亮即头部所指，搜索范围说明跟着它走）。 */
+  const headerPath = picked
+    ? root
+      ? joinAbsPath(root, dir, false)
+      : activeProjectName
+    : (projectRows[projSelected]?.path ?? activeProjectName);
 
   /** 全项目模式第一屏（左栏 = 项目列表 = 虚拟根目录层）。搜索框走全局检索
    *  的文件路（`/search`，跨项目窥视就绪索引，冷项目跳过）——命中行带项目名，
@@ -1389,28 +1402,29 @@ export function FileBrowserModal({
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
-          {/* 面包屑恒显（首屏=项目名）：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
-          {projectList ? (
-            <span className="min-w-0 flex-1 truncate text-xs text-neutral-300">{activeProjectName}</span>
-          ) : (
-            <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
-              <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
-                {activeProjectName}
+          {/* 面包屑恒显（首屏=高亮项目的绝对路径）：搜索范围就是它指的这棵子树，
+              它本身就是范围说明。超宽跑马灯来回滚，右侧复制按钮同右键菜单口径
+              （含空格包引号）。 */}
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <MarqueeText
+              text={headerPath}
+              className="font-mono text-11 text-neutral-400"
+            />
+            <Tooltip label={t('tasks.fileCopyAbsPath')} side="top">
+              <button
+                type="button"
+                aria-label={t('tasks.fileCopyAbsPath')}
+                onClick={() => {
+                  void copyText(headerPath).then((ok) => {
+                    if (!ok) show('error', t('common.copyFailed'));
+                  });
+                }}
+                className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+              >
+                <Copy className="h-3 w-3" />
               </button>
-              {crumb.map((seg, i) => (
-                <span key={`${seg}-${i}`}>
-                  {'/'}
-                  <button
-                    type="button"
-                    onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
-                    className="text-neutral-300 hover:text-neutral-100"
-                  >
-                    {seg}
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
+            </Tooltip>
+          </div>
           {/* 搜索框：窄屏收成图标（点图标展开聚焦），桌面恒 224px 全宽。
               容器宽度随展开态切换——展开后 176px 收在头部 flex 里（标题 truncate 让位），
               不许溢出把头部撑宽。 */}

@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
+  Copy,
   File as FileIcon,
   FileCode,
   FileImage,
@@ -34,6 +35,9 @@ import { api, type ProjectFileEntry } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
 import { FieldHint } from '@/components/ui/field-hint';
+import { useToast } from '@/components/Toast';
+import { copyText } from '@/lib/clipboard';
+import { MarqueeText } from './conv-widgets';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { useMediaQuery } from '@/lib/use-media-query';
@@ -81,6 +85,18 @@ const SELECT_DEBOUNCE_MS = 150;
 /** 本地缓存条数（目录列表 / 预览正文各一份，纯省往返）：来回看同一批文件不重取。 */
 const DIR_CACHE_MAX = 30;
 const TEXT_CACHE_MAX = 12;
+
+/** 根 + 服务端相对路径拼绝对路径：分隔符跟 root 走（本机原生形态），根空时只剩
+ *  相对路径。含空格的路径按 OS「复制文件地址」惯例包双引号（`quoted` 缺省开，
+ *  展示传 false 免引号）。与 FileBrowserModal 的同名函数同义——三行相似好过
+ *  一处过早抽象（两边组件互相引用会成环）。 */
+const joinAbsPath = (root: string, rel: string, quoted = true): string => {
+  if (!root) return rel;
+  const sep = root.includes('\\') ? '\\' : '/';
+  const base = root.replace(/[\\/]+$/, '');
+  const full = `${base}${sep}${rel.replaceAll('/', sep)}`;
+  return quoted && full.includes(' ') ? `"${full}"` : full;
+};
 
 /** 一条被选中的引用：`ref` 是服务端算好的表达式，其余是胶囊自己留的账。 */
 export interface PickItem {
@@ -429,6 +445,7 @@ export function FilePicker({
   onClose: () => void;
 }) {
   const t = useT();
+  const { show } = useToast();
   const isDesktop = useMediaQuery('(min-width: 1024px)');
 
   const [query, setQuery] = useState('');
@@ -490,6 +507,8 @@ export function FilePicker({
   const rangePicked = useRef<string | null>(null);
   /** 路过每一层的账（层级递进本身）：父级列的数据源，键 = `projectId:path`。 */
   const visited = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
+  /** 项目绝对根（列表回包自带）：头部完整路径与复制按钮都用它。 */
+  const [rootPath, setRootPath] = useState('');
 
   const load = useCallback(
     (q: string, target: string, signal: AbortSignal, fresh = false): Promise<void> => {
@@ -500,6 +519,7 @@ export function FilePicker({
         .listProjectFiles(projectId, { q, dir: target, signal, fresh })
         .then((listing) => {
           if (mine !== seq.current) return;
+          setRootPath(listing.root);
           setEntries(listing.entries);
           setTotal(listing.total);
           setCapped(listing.capped ?? false);
@@ -848,6 +868,8 @@ export function FilePicker({
   const enter = (entry: ProjectFileEntry): void => {
     if (entry.kind === 'dir') {
       setQuery('');
+      // 返回时聚焦到进来的那个目录（goTo 侧同款账）
+      focusPath.current = entry.path;
       setDir(entry.path);
       setScreen('list');
       return;
@@ -1335,23 +1357,27 @@ export function FilePicker({
               </button>
             </Tooltip>
           )}
-          <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
-            {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
-            <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
-              {rootLabel}
-            </button>
-            {crumb.map((seg, i) => (
-              <span key={`${seg}-${i}`}>
-                {'/'}
-                <button
-                  type="button"
-                  onClick={() => goTo(crumb.slice(0, i + 1).join('/'))}
-                  className="text-neutral-300 hover:text-neutral-100"
-                >
-                  {seg}
-                </button>
-              </span>
-            ))}
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {/* 完整绝对路径：超宽跑马灯来回滚（MarqueeText 放得下就静止） */}
+            <MarqueeText
+              text={joinAbsPath(rootPath, dir, false) || rootLabel}
+              className="font-mono text-11 text-neutral-400"
+            />
+            {/* 复制绝对路径：含空格按 OS 惯例包引号（同右键菜单口径） */}
+            <Tooltip label={t('tasks.fileCopyAbsPath')} side="top">
+              <button
+                type="button"
+                aria-label={t('tasks.fileCopyAbsPath')}
+                onClick={() => {
+                  void copyText(joinAbsPath(rootPath, dir)).then((ok) => {
+                    if (!ok) show('error', t('common.copyFailed'));
+                  });
+                }}
+                className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+              >
+                <Copy className="h-3 w-3" />
+              </button>
+            </Tooltip>
           </div>
           <FieldHint>{t('tasks.fileVisibilityHint')}</FieldHint>
           <div className="relative w-56 shrink-0 max-lg:w-40">
