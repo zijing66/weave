@@ -79,12 +79,15 @@ const LONG_PRESS_SLOP = 8;
 /** 项目绝对根 + 条目相对路径：分隔符跟服务端给的 root 走（root 是本机原生
  *  形态，Windows 反斜杠 / POSIX 正斜杠），绝不自己定；根可能有尾斜杠，归一掉。
  *  根空时只剩相对路径。rel 内部已是正斜杠（服务端相对路径口径），整体替换成
- *  root 的分隔符——空格等特殊字符原样保留（剪贴板走纯文本，消费方按路径解析）。 */
-const joinAbsPath = (root: string, rel: string): string => {
+ *  root 的分隔符。含空格的路径按各 OS 的「复制文件地址」惯例包一层双引号
+ *  （Windows 资源管理器同款；POSIX shell 也认），无空格保持裸路径——
+ *  `quoted` 缺省开，展示用途（头部完整路径）传 false 免引号。 */
+const joinAbsPath = (root: string, rel: string, quoted = true): string => {
   if (!root) return rel;
   const sep = root.includes('\\') ? '\\' : '/';
   const base = root.replace(/[\\/]+$/, '');
-  return `${base}${sep}${rel.replaceAll('/', sep)}`;
+  const full = `${base}${sep}${rel.replaceAll('/', sep)}`;
+  return quoted && full.includes(' ') ? `"${full}"` : full;
 };
 
 /** 换一条选中之后的防抖窗：箭头连滑过十行不该打十次预览。 */
@@ -224,6 +227,8 @@ export function FileBrowserModal({
   const [rawView, setRawView] = useState(false);
   /** 原始格式预览的自动换行开关（CodeMirror lineWrapping；默认开）。 */
   const [wrapText, setWrapText] = useState(true);
+  /** 窄屏搜索框展开态：默认收成图标，点开聚焦，清词失焦收回。 */
+  const [searchOpen, setSearchOpen] = useState(false);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
   /** 全项目模式：null = 还没进任何项目（首屏两栏，主区列项目）；非 null = 已进入。
    *  面包屑点根（goTo('')）只停在该项目根，出项目走返回链的 exitOneLevel。 */
@@ -554,6 +559,8 @@ export function FileBrowserModal({
     const timer = window.setTimeout(() => {
       rowPress.current = null;
       suppressRowClick.current = true;
+      // 触屏长按浏览器会顺带起文字选区：菜单弹出前清掉，菜单里不留蓝影
+      window.getSelection()?.removeAllRanges();
       openRowMenu(entry, x, y);
     }, LONG_PRESS_MS);
     rowPress.current = { x, y, timer };
@@ -874,7 +881,7 @@ export function FileBrowserModal({
                     pickProject(proj, hit.path);
                   }}
                   className={cn(
-                    'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors',
+                    'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors select-none',
                     i === projSelected ? 'bg-blue-500/15' : 'hover:bg-edge/[0.04]',
                   )}
                 >
@@ -943,7 +950,7 @@ export function FileBrowserModal({
                     openRowMenu({ kind: 'dir', name: p.name, path: p.path }, e.clientX, e.clientY);
                   }}
                   className={cn(
-                    'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors',
+                    'flex w-full flex-col gap-0.5 px-2.5 py-1.5 text-left transition-colors select-none',
                     i === projSelected ? 'bg-blue-500/15' : 'hover:bg-edge/[0.04]',
                   )}
                 >
@@ -1027,7 +1034,7 @@ export function FileBrowserModal({
               }}
               onDoubleClick={() => isDesktop && enter(entry)}
               className={cn(
-                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors',
+                'flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors select-none',
                 i === selected ? 'bg-blue-500/15 text-neutral-100' : 'text-neutral-300 hover:bg-edge/[0.04]',
               )}
             >
@@ -1083,7 +1090,7 @@ export function FileBrowserModal({
           className="scrollbar-thin min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-11 text-neutral-300"
           title={current ? joinAbsPath(root, current.path) : root || undefined}
         >
-          {current ? joinAbsPath(root, current.path) : ''}
+          {current ? joinAbsPath(root, current.path, false) : ''}
         </span>
         {current?.kind === 'file' && previewKindOf(current.name) === 'text' && preview?.text != null && (
           <>
@@ -1382,11 +1389,11 @@ export function FileBrowserModal({
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
+          {/* 面包屑恒显（首屏=项目名）：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
           {projectList ? (
-            <span className="min-w-0 flex-1 truncate text-xs text-neutral-300">{t('app.openFileBrowser')}</span>
+            <span className="min-w-0 flex-1 truncate text-xs text-neutral-300">{activeProjectName}</span>
           ) : (
             <div className="min-w-0 flex-1 truncate font-mono text-11 text-neutral-400">
-              {/* 面包屑恒显：搜索范围就是它指的这棵子树，它本身就是范围说明 */}
               <button type="button" onClick={() => goTo('')} className="hover:text-neutral-200">
                 {activeProjectName}
               </button>
@@ -1404,24 +1411,56 @@ export function FileBrowserModal({
               ))}
             </div>
           )}
-          <div className="relative w-56 shrink-0 max-lg:w-40">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t(picked ? 'tasks.fileSearchInDir' : 'tasks.fileSearchAllProjects')}
-              className="w-full rounded border border-edge/[0.1] bg-neutral-950 py-1 pl-7 pr-6 text-11 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
-            />
-            {query && (
+          {/* 搜索框：窄屏收成图标（点图标展开聚焦），桌面恒 224px 全宽。
+              容器宽度随展开态切换——展开后 176px 收在头部 flex 里（标题 truncate 让位），
+              不许溢出把头部撑宽。 */}
+          <div
+            className={cn(
+              'relative shrink-0 lg:w-56',
+              !isDesktop && (searchOpen || query) ? 'max-lg:w-44' : 'max-lg:w-7',
+            )}
+          >
+            {!isDesktop && !searchOpen && !query ? (
               <button
                 type="button"
-                aria-label={t('tasks.fileClearSearch')}
-                onClick={() => setQuery('')}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-600 hover:text-neutral-300"
+                aria-label={t('tasks.fileOpenSearch')}
+                onClick={() => {
+                  setSearchOpen(true);
+                  searchRef.current?.focus();
+                }}
+                className="flex h-6 w-7 items-center justify-center rounded text-neutral-400 hover:text-neutral-200"
               >
-                <X className="h-3 w-3" />
+                <Search className="h-3.5 w-3.5" />
               </button>
+            ) : (
+              <>
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  autoFocus={!isDesktop && searchOpen}
+                  onBlur={(e) => {
+                    // 窄屏：没输入也没焦点就收回图标（有词时保留展开，清词即收）
+                    if (!isDesktop && !e.target.value) setSearchOpen(false);
+                  }}
+                  placeholder={t(picked ? 'tasks.fileSearchInDir' : 'tasks.fileSearchAllProjects')}
+                  className="w-full rounded border border-edge/[0.1] bg-neutral-950 py-1 pl-7 pr-6 text-11 text-neutral-100 focus:border-blue-500/40 focus:outline-none"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    aria-label={t('tasks.fileClearSearch')}
+                    onClick={() => {
+                      setQuery('');
+                      if (!isDesktop) setSearchOpen(false);
+                    }}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-600 hover:text-neutral-300"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </>
             )}
           </div>
           {/* 刷新索引：手动定向重建当前目录子树（懒语义——不自动扫，点了才扫） */}
