@@ -447,7 +447,8 @@ export function FilePicker({
   const [anchor, setAnchor] = useState<number | null>(null);
   const [lines, setLines] = useState<{ start: number; end: number } | null>(null);
   const [busy, setBusy] = useState(false);
-  /** 窄屏一屏只放得下一栏：列表与预览是两屏，靠它切（无左栏，恒中栏语义）。 */
+  /** 窄屏：根态两栏（中=列表 / 右=预览），进目录后三栏（左=父目录列）。
+   *  screen 只被「点窄条」和「选中文件看预览」改变，导航只改中栏内容。 */
   const [screen, setScreen] = useState<'list' | 'preview'>(initial?.kind === 'file' ? 'preview' : 'list');
   useMobilePaneSwitch((s) => setScreen(s === 'left' ? 'list' : s));
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
@@ -515,8 +516,8 @@ export function FilePicker({
     [projectId, visited],
   );
 
-  /** Finder 父级列（桌面分栏）。 */
-  const finderCols = useFinderColumns(projectId, dir, isDesktop, visited);
+  /** Finder 父级列（桌面分栏 + 窄屏左栏，进入子目录后才有内容）。 */
+  const finderCols = useFinderColumns(projectId, dir, true, visited);
 
   // 输入防抖：只有搜索框会连打，方向键与点击一律不打请求。搜索范围 = 当前目录
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
@@ -1403,9 +1404,27 @@ export function FilePicker({
                 onLeftResize={() => {}}
               />
             ) : (
-              // 两栏形态（无左栏选择器）：中栏=文件列表 / 右=预览
-              <MobileFadePanels active={screen === 'left' ? 'list' : screen} hasLeft={false}>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+              /* 窄屏（状态机与全局浏览器同构）：根态两栏（中=列表 / 右=预览），
+                 进子目录后三栏（左=父目录列，点条目即回该层）。 */
+              <MobileFadePanels
+                active={screen}
+                hasLeft={dir !== '' && finderCols.length > 0}
+              >
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  {dir !== '' && finderCols.length > 0 ? (
+                    <FinderColumnList
+                      entries={finderCols[0]!.entries}
+                      loading={finderCols[0]!.loading}
+                      activePath={dir}
+                      onOpen={(p) => {
+                        setQuery('');
+                        setDir(p);
+                      }}
+                    />
+                  ) : (
+                    list
+                  )}
+                </div>
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
                 {previewPane}
               </MobileFadePanels>
