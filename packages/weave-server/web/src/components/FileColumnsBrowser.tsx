@@ -201,8 +201,9 @@ export function MobileFadePanels({
     window.dispatchEvent(new CustomEvent('weave:mobile-pane', { detail: pane }));
   };
   /** 远处的层：收成窄条，内容压暗仍可见（一眼认出是父目录还是预览）。
+   *  内容整体左移越过行首图标——窄条里露出的是条目名称，不是一列图标。
    *  拦交互的是子 tap 层（z-20 盖住整栏），内容本层的命中都被它接走。 */
-  const back = 'w-9 min-w-0 overflow-hidden opacity-40';
+  const back = 'w-12 min-w-0 overflow-hidden opacity-40';
   /** 眼前的层：占满剩余宽度，实色 + 投影浮起。 */
   const front = 'flex-1 min-w-0 opacity-100 z-10 shadow-mac-lg';
   const paneCls = (isActive: boolean): string =>
@@ -212,6 +213,8 @@ export function MobileFadePanels({
       isActive ? front : back,
       'border-r',
     );
+  /** 非活动态的内容包一层：负边距把图标推出可视区，名字顶到窄条左缘。 */
+  const backInner = '-ml-7 flex min-h-0 flex-1 flex-col';
   /** 非活动栏的点击层：盖在整栏上，点按 = 把这一栏切过来变活动。 */
   const tap = (pane: 'left' | 'list' | 'preview') =>
     pane === active ? undefined : (
@@ -226,16 +229,22 @@ export function MobileFadePanels({
     <div className="flex min-h-0 min-w-0 flex-1">
       {hasLeft && (
         <div className={paneCls(active === 'left')}>
-          {left}
+          <div className={active === 'left' ? 'flex min-h-0 flex-1 flex-col' : backInner}>
+            {left}
+          </div>
           {tap('left')}
         </div>
       )}
       <div className={paneCls(active === 'list')}>
-        {list}
+        <div className={active === 'list' ? 'flex min-h-0 flex-1 flex-col' : backInner}>
+          {list}
+        </div>
         {tap('list')}
       </div>
       <div className={cn(paneCls(active === 'preview'), 'border-r-0')}>
-        {preview}
+        <div className={active === 'preview' ? 'flex min-h-0 flex-1 flex-col' : backInner}>
+          {preview}
+        </div>
         {tap('preview')}
       </div>
     </div>
