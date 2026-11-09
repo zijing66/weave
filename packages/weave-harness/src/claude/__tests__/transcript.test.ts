@@ -105,7 +105,7 @@ describe('currentEffortAt', () => {
       line({ type: 'assistant', effort: 'high' }),
       line({ type: 'user' }),
     ].join('\n');
-    expect(currentEffortAt(tail)).toBe('high');
+    expect(currentEffortAt(tail)?.level).toBe('high');
   });
 
   it('工具参数里的 effort 不是事实：只认顶层字符串', () => {
@@ -113,7 +113,46 @@ describe('currentEffortAt', () => {
       line({ type: 'assistant', effort: 'medium' }),
       line({ type: 'assistant', message: { content: [{ type: 'tool_use', input: { effort: 'max' } }] } }),
     ].join('\n');
-    expect(currentEffortAt(tail)).toBe('medium');
+    expect(currentEffortAt(tail)?.level).toBe('medium');
+  });
+
+  it('`/effort` 的 stdout 也是事实——切换那拍就落、位次在后即胜出', () => {
+    const cmd = (content: string): string => line({ type: 'user', message: { content } });
+    // 切换发生在上一轮照会之后：stdout 的档位胜
+    const switched = [
+      line({ type: 'assistant', effort: 'high' }),
+      cmd('<command-name>/effort</command-name>\n<command-args>max</command-args>'),
+      cmd('<local-command-stdout>Set effort level to max (this session only): Maximum capability.</local-command-stdout>'),
+    ].join('\n');
+    expect(currentEffortAt(switched)).toMatchObject({ level: 'max' });
+    // 切换后又跑了一轮：assistant 照会（位次更后）胜
+    const turned = [
+      cmd('<local-command-stdout>Set effort level to max (this session only).</local-command-stdout>'),
+      line({ type: 'assistant', effort: 'low' }),
+    ].join('\n');
+    expect(currentEffortAt(turned)).toMatchObject({ level: 'low' });
+  });
+
+  it('stdout 两种落点都认；api-request-blob 的复述行不认（没时刻也不猜档位）', () => {
+    const sys = line({
+      type: 'system',
+      subtype: 'local_command',
+      timestamp: '2026-11-09T14:07:55.298Z',
+      content: '<local-command-stdout>Set effort level to xhigh (this session only).</local-command-stdout>',
+    });
+    expect(currentEffortAt(sys)).toMatchObject({ level: 'xhigh', at: '2026-11-09T14:07:55.298Z' });
+    const blob = line({
+      type: 'api-request-blob',
+      content: 'text <local-command-stdout>Set effort level to low (this session only)</local-command-stdout>',
+    });
+    expect(currentEffortAt(blob)).toBeNull();
+  });
+
+  it('事实带行上的落笔时刻（供上层与事件路比新旧）', () => {
+    const tail = [
+      line({ type: 'assistant', effort: 'high', timestamp: '2026-11-09T13:00:00.000Z' }),
+    ].join('\n');
+    expect(currentEffortAt(tail)).toEqual({ level: 'high', at: '2026-11-09T13:00:00.000Z' });
   });
 
   it('没有该字段 / 坏行 / 非串一律 null（不猜）', () => {

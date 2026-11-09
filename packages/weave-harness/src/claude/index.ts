@@ -38,6 +38,7 @@ export {
   currentModelAt,
   currentModeAt,
   currentEffortAt,
+  type EffortFact,
   currentContextTokensAt,
   preQuestionTextAt,
 } from './transcript.js';

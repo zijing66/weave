@@ -42,6 +42,9 @@ export interface SessionMessageRow {
   ackedEventId?: number | null;
   /** 终态落定时刻（驻留窗口起点；在途态无值）。 */
   settledAt?: string | null;
+  /** 「已执行」时刻（observer 字段）：编排消费 idle 那拍回写——该消息驱动的回合
+   *  已收尾。手动/MCP 直发的消息没有回写方，恒缺省。 */
+  completedAt?: string;
   /** 本条 = 该会话队列暂停闸的成因（未回执超窗/投递失败）；重发或回执清除。 */
   stalled?: boolean | null;
   /** 判死而没投出去（会话进程不在、三层全无通路）= `failed` 的成因；web 据此出中文说明。 */
@@ -182,6 +185,16 @@ export const messageApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /** 单条状态现查（投递管道全事实）：acked = 目标宿主已受理（自己回了 UPS）；
+   *  executed = 该消息驱动的回合已收尾（编排消费 idle 那拍回写，手动发送恒 null）。
+   *  行被删除 / 过驻留窗 = 404（历史在转录）。 */
+  messageStatus: (
+    sessionId: string,
+    messageId: string,
+  ): Promise<SessionMessageRow & { executed: boolean }> =>
+    apiFetch<{ message: SessionMessageRow & { executed: boolean } }>(
+      `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/status`,
+    ).then((r) => r.message),
   /** 手动重发（队列暂停闸的解除动作）：只对 prompt 通道 failed / delivered-未回执
    *  开放（其余 409、未知 404 由 apiFetch 抛 Error 原文）。 */
   resendSessionMessage: (

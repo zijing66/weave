@@ -461,17 +461,17 @@ describe('终端后端 — Windows Terminal 通道（进程表反查 + 命名窗
     expect(parseWtTargetId('terminal:1:2')).toBeNull();
   });
 
-  it('落子候选：wt 命名窗口（-w slug），开窗即进 tab、带命令经 cmd.exe 转发', () => {
+  it('落子候选：wt 命名窗口（-M 最大化 + -w slug），开窗即进 tab、带命令经 cmd.exe 转发', () => {
     const DIR = 'D:\\proj';
     const [open] = resolveTerminalLaunch(DIR, settings('wt'), 'win32');
     expect(open).toEqual({
       command: 'wt.exe',
-      args: ['-w', wtWindowSlug(DIR), '-d', DIR],
+      args: ['-M', '-w', wtWindowSlug(DIR), '-d', DIR],
     });
     const [run] = resolveTerminalLaunch(DIR, settings('wt'), 'win32', RUN);
     expect(run).toEqual({
       command: 'wt.exe',
-      args: ['-w', wtWindowSlug(DIR), '-d', DIR, 'cmd.exe', '/k', 'claude --resume abc'],
+      args: ['-M', '-w', wtWindowSlug(DIR), '-d', DIR, 'cmd.exe', '/k', 'claude --resume abc'],
     });
     expect(commands('wt', 'darwin')).toEqual([]);
   });

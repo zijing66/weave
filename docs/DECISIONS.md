@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-11-09
+
+- **`/effort` 切换后对话窗口零反馈的根因与定案（跨会话转达的用户问题）**：现象 = 会话里切了思考强度，weave 对话窗口既不出现命令回显、slider 的「最后已知」也不动。拆开是**两层根因**（实测取证于 note 仓一条真会话转录）：① `/effort` 是内建命令——hook 域**零事件**（无 UPS、无 Stop、不跑回合），conversation 面板的 `command-executions` 只在「挂载 + 开闭轮帧」触发重拉，事件路全断 ⇒ 命令行 + stdout（转录里明明有，`commandExecutions` 也认得出）永远显示不出来；② probe 的档位事实源（事件 `effort.level` ∪ 转录 assistant 顶层 `effort`）都要**等下一轮**才更新——切换本身只有 stdout 那一拍是可见的，两个源都不认它。定案（对齐既有 interruptRefresher 先例）：转录 `/effort` stdout 也是档位事实（`currentEffortAt` 按**文件位次**取最后一条，返回 `{level, at}` 带行上时刻），`currentEffort` 两路事实**按时刻比新旧**（不比的话上一轮旧事件值会压过新切换）；新增 `sessionEffort` 快照帧（`SnapshotRefresher`，15s 一拍、值变才推 `{efforts}`），`/effort` 路由切完补 1.5s/10s 两拍；web 两处消费 = 会话行级补丁第四路（`RowPushPatch.effort`）+ 对话面板在本会话档位变化那拍重拉 `command-executions`。活体验证（scratch 会话 a-rules-e9 真切 xhigh→high→xhigh→high）：SSE 帧流出、GET /sessions 即时跟上、开着对话页不刷新即出现第三条 `/effort` stdout 回显、slider 同拍显「思考xhigh」。
+
 ## 2026-11-06
 
 - **prompt 的 20,000 字符一刀切被推翻，改阈值分流（用户原话：「长文本，是否可以走 claude 的 粘贴文本通道？ 会显示成 paste xxx lines；然后前后端设置一个阈值，少量直投，超量走paste。不再拦截」，并拍板硬顶 20 万、阈值 2,000、pane 缺失回落直投）**：旧上限的毛病是「没有预检 + 事后一条英文 400 + paste 通道明明装得下」。新口径 = ≤2,000 **码点**走原层序（直投/队列/中继 → 终端）；>2,000 一律层② bracketed paste（宿主折叠成 paste 块，这正是「粘贴文本通道」，无需新机制）；pane 定位不到回落原层序而非拒发。硬顶 200,000 只是防内存爆炸，值经 `/messaging/capabilities` 的 `promptLimits` 下发、web 预检。顺带补上层② 的分段粘贴：wezterm 走 argv（上限 ~32k，按 16KB 切）、wt 走 env base64（环境块 ~32k 字符，按 12KB 切），首末段补 paste 起止标记——200k 硬顶因此在四个后端上都送得出去；正文自带 paste 标记时退回整段单发（分段会被正文提前闭合），失败如实报。AI 助手、编排 `startText`/边正文、`watches.notify` 的 20k 不动（那些不是投给宿主会话的 prompt，没有 paste 通道可分流）。

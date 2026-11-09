@@ -52,21 +52,22 @@ interface SessionStatusValue {
 
 const Ctx = createContext<SessionStatusValue | null>(null);
 
-/** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt）。 */
+/** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt / effort）。 */
 export interface RowPushPatch {
   terminal?: Record<string, SessionTerminal | null>;
   alive?: Record<string, boolean>;
   interrupted?: Record<string, number>;
+  effort?: Record<string, string>;
 }
 
 /**
- * 把 push 补丁并上一批行（GET 回来的或已有的）。三字段各自口径，别互相抄：
- * terminal/pidAlive **缺键 = 不动**（那会话这帧没报），interrupted **缺键 = 已恢复**
- * （不在快照里即被新事件盖过）。terminal 按 id 比（每次推都是新对象）。
+ * 把 push 补丁并上一批行（GET 回来的或已有的）。四字段各自口径，别互相抄：
+ * terminal/pidAlive/effort **缺键 = 不动**（那会话这帧没报），interrupted
+ * **缺键 = 已恢复**（不在快照里即被新事件盖过）。terminal 按 id 比（每次推都是新对象）。
  */
 export function applyRowPush(rows: SessionRow[], patch: RowPushPatch): SessionRow[] {
-  const { terminal, alive, interrupted } = patch;
-  if (!terminal && !alive && !interrupted) return rows;
+  const { terminal, alive, interrupted, effort } = patch;
+  if (!terminal && !alive && !interrupted && !effort) return rows;
   let changed = false;
   const next = rows.map((s) => {
     let row = s;
@@ -74,6 +75,8 @@ export function applyRowPush(rows: SessionRow[], patch: RowPushPatch): SessionRo
     if (t !== undefined && row.terminal?.id !== t?.id) row = { ...row, terminal: t };
     const a = alive?.[s.sessionId];
     if (a !== undefined && row.pidAlive !== a) row = { ...row, pidAlive: a };
+    const e = effort?.[s.sessionId];
+    if (e !== undefined && row.effort !== e) row = { ...row, effort: e };
     if (interrupted) {
       const i = interrupted[s.sessionId] ?? null;
       if ((row.interruptedAt ?? null) !== i) row = { ...row, interruptedAt: i };
@@ -113,12 +116,13 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
    *  帧到即变——重拉既覆盖问题出现也覆盖作答/解除，自愈无独立 SSE 通道）。 */
   const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
   const [modelCatalog, setModelCatalog] = useState<Record<string, ModelAliasTarget[]>>({});
-  /** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt）。push 只在
+  /** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt / effort）。push 只在
    *  值变时发，**落地前丢掉的那帧不会再来**——首屏列表还没到时先存着，一到立刻并上。 */
   const rowPush = useRef<{
     terminal?: Record<string, SessionTerminal | null>;
     alive?: Record<string, boolean>;
     interrupted?: Record<string, number>;
+    effort?: Record<string, string>;
   }>({});
 
   /** 行级补丁：只重算这几行的判据并就地换行（其余行保持原引用，不重渲染）。
@@ -221,13 +225,15 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // 会话行的三路隐藏刷新（全无 hook 事件，只能靠后端反查推）：
+  // 会话行的四路隐藏刷新（全无 hook 事件，只能靠后端反查推）：
   // - pidAlive = 终端按钮图标——claude 进程被杀（关终端窗）没有 hook 事件，GET
   //   的值会卡死常绿；只补丁命中行，null 态（codex/新鲜会话）不进快照、不猜。
   // - interruptedAt = 已中断——ESC 打断后多数连 Stop 都不发，真相在转录里，不在
   //   快照里即已恢复（被新事件盖过）。
   // - terminal = 所在可见屏幕（列表分块）——pane 关了/换了屏幕同样没有 hook 事件。
-  //   三路共用一条落地路径：**先存后并**（见 rowPush），首屏列表没到时不丢帧。
+  // - effort = 推理档位（对话面板 slider 的「最后已知」）——`/effort` 是内建命令，
+  //   hook 域零事件、也不跑回合，事实只在转录里，靠后端 15s 快照帧补进来。
+  //   四路共用一条落地路径：**先存后并**（见 rowPush），首屏列表没到时不丢帧。
   useEffect(() => {
     const land = (): void => setSessions((prev) => (prev ? applyRowPush(prev, rowPush.current) : prev));
     const offs = [
@@ -244,6 +250,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       }),
       subscribePush<{ terminals?: Record<string, SessionTerminal | null> }>('terminalTopology', (p) => {
         if (p.terminals) rowPush.current.terminal = p.terminals;
+        land();
+      }),
+      subscribePush<{ efforts?: Record<string, string> }>('sessionEffort', (p) => {
+        if (p.efforts) rowPush.current.effort = p.efforts;
         land();
       }),
     ];

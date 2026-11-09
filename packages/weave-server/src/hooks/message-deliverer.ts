@@ -164,6 +164,11 @@ export interface PipeMessage {
   ackedEventId?: number | null;
   /** 终态落定时刻（在途视图驻留窗口的起点；在途态无值）。 */
   settledAt?: string | null;
+  /** 「已执行」时刻（observer 字段，投递器自己不写）：消息触发的回合被宿主收尾
+   *  的正面确认——编排/扩展引擎在 idle 消费 pending 的那一拍回写（`markCompleted`）。
+   *  与 `acked`（已受理）是两个粒度：acked = 宿主收到 prompt，completed = 回合跑完。
+   *  非编排投递（手动面 / MCP 直发）没有消费者回写它——只能等 2h 陈滞否证。 */
+  completedAt?: string;
   /** 本条 = 该会话暂停闸的成因（未回执 / 投递失败）；重发或回执清除。 */
   stalled?: boolean;
   /** 闸自动清除本行的时刻（只给「已发出却没回执」那种成因行）：到点行消失、队列续排。
@@ -681,6 +686,55 @@ export class MessageDeliverer {
   /** 管道消息现查（内存态；sequence 引擎 / 路由回显用）。 */
   getMessage(id: string): PipeMessage | null {
     return this.memory.get(id) ?? null;
+  }
+
+  /**
+   * 「已执行」回写（observer；编排/扩展引擎在 idle 消费 pending 的那一拍调用）：
+   * 记下 completedAt 并把 settledAt 刷到当下——在途视图的驻留窗口从这一拍重新起算，
+   * 「已执行」这一落定值得多留一拍给人看。幂等（已回写不重写）、行不在内存即
+   * no-op（defer 占位等非管道发号查不到；行已被 dismiss/TTL 清掉也就无处可写）。
+   */
+  markCompleted(messageId: string): boolean {
+    const msg = this.memory.get(messageId);
+    if (!msg || msg.completedAt) return false;
+    this.memory.set(messageId, {
+      ...msg,
+      completedAt: new Date().toISOString(),
+      settledAt: new Date().toISOString(),
+    });
+    return true;
+  }
+
+  /**
+   * 状态现查（GET /sessions/:id/messages/:messageId/status 的数据面）：内存态优先，
+   * 其次队列行——pending 只活在 promptbox 文件里（内存 map 从未持有它），两处都
+   * 没有 = null（404）。历史在转录里，这条只答「投递管道上的事实」。
+   */
+  statusOf(sessionId: string, messageId: string): PipeMessage | null {
+    const msg = this.memory.get(messageId);
+    if (msg && msg.sessionId === sessionId) return msg;
+    const session = this.deps.sessions.getBySessionId(sessionId);
+    if (session?.projectId == null) return null;
+    const project = this.deps.projects.getById(session.projectId);
+    if (!project) return null;
+    const entry = readPromptbox(this.hooksDir, project.token).find(
+      (e) => e.id === messageId && e.sessionId === sessionId,
+    );
+    if (!entry) return null;
+    return {
+      id: entry.id,
+      sessionId,
+      text: entry.text,
+      ...(entry.attachments && entry.attachments.length > 0
+        ? { attachments: [...entry.attachments] }
+        : {}),
+      mode: 'prompt',
+      oneWay: entry.oneWay === true,
+      ...(entry.forceTerminal === true ? { forceTerminal: true } : {}),
+      channel: 'prompt',
+      status: 'pending',
+      at: entry.at,
+    };
   }
 
   /**

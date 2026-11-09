@@ -40,6 +40,7 @@ const SESSION_SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
   list_sessions: {},
   get_session: { sessionId: 's1' },
   send_message: { sessionId: 's1', text: 'hi' },
+  get_message_status: { sessionId: 's1', messageId: 'm-1' },
   list_questions: {},
   answer_question: { sessionId: 's1', answers: [{ questionKey: 'q', options: [0] }] },
   interrupt_session: { sessionId: 's1' },
@@ -60,7 +61,7 @@ describe('MCP 注册表', () => {
     expect(mcpServerForPath('/mcp/nope')).toBeNull();
   });
 
-  it('/mcp/sessions 指向 weave-sessions；工具面 = 9 个、各自带 outputSchema', () => {
+  it('/mcp/sessions 指向 weave-sessions；工具面 = 10 个、各自带 outputSchema', () => {
     const def = mcpServerForPath('/mcp/sessions');
     expect(def?.name).toBe('weave-sessions');
     expect(def?.tools).toHaveLength(SESSIONS_TOOLS.length);
@@ -68,6 +69,7 @@ describe('MCP 注册表', () => {
       'list_sessions',
       'get_session',
       'send_message',
+      'get_message_status',
       'list_questions',
       'answer_question',
       'interrupt_session',
@@ -80,7 +82,7 @@ describe('MCP 注册表', () => {
     }
   });
 
-  it('weave-sessions e2e：tools/list 出 9 工具、list_sessions/get_session 走通真返回', { timeout: 30_000 }, async () => {
+  it('weave-sessions e2e：tools/list 出 10 工具、list_sessions/get_session 走通真返回', { timeout: 30_000 }, async () => {
     const { openDatabase } = await import('../../../db/db.js');
     const { ProjectRepository } = await import('../../../repositories/projects.js');
     const { createWeaveServer } = await import('../../../daemon/server.js');
@@ -117,7 +119,7 @@ describe('MCP 注册表', () => {
       const listed = await call('tools/list');
       expect(listed.status).toBe(200);
       const names = (listed.body.result.tools as Array<{ name: string }>).map((t) => t.name);
-      expect(names).toHaveLength(9);
+      expect(names).toHaveLength(10);
       expect(names).toContain('send_message');
 
       const list = await call('tools/call', { name: 'list_sessions', arguments: {} });

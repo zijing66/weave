@@ -179,6 +179,11 @@ export async function handleSessionControlRoutes(
       sendJson(res, result.status, { error: result.error });
       return true;
     }
+    // `/effort` 是内建命令：hook 域零事件（无 UPS / 无 Stop），「已切换」的真相只在
+    // 转录里这一拍才落——补两拍档位快照，让 slider 的「最后已知」与对话面板的
+    // 命令回显（/effort 行 + stdout）尽快跟上（不补则要等 15s 周期拍）。
+    setTimeout(() => deps.effortRefresher?.tick(), 1_500);
+    setTimeout(() => deps.effortRefresher?.tick(), 10_000);
     sendJson(res, 200, { ok: true, sessionId });
     return true;
   }

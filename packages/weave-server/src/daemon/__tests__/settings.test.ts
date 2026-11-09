@@ -306,7 +306,7 @@ describe('resolveTerminalLaunch', () => {
     expect(launches).toHaveLength(3);
     expect(launches[0]).toEqual({
       command: 'wt.exe',
-      args: ['-w', wtWindowSlug('D:\\proj'), '-d', 'D:\\proj'],
+      args: ['-M', '-w', wtWindowSlug('D:\\proj'), '-d', 'D:\\proj'],
     });
     // cwd-based launches never interpolate the directory into a command string
     expect(launches[1]).toEqual({ command: 'powershell.exe', args: ['-NoExit'], cwd: 'D:\\proj' });
@@ -389,6 +389,7 @@ describe('resolveTerminalLaunch', () => {
       {
         command: 'wt.exe',
         args: [
+          '-M',
           '-w',
           wtWindowSlug('D:\\proj'),
           '-d',
@@ -458,6 +459,7 @@ describe('resolveTerminalLaunch', () => {
     );
     expect(launches.map((l) => l.command)).toEqual(['wt.exe', 'powershell.exe', 'cmd.exe']);
     expect(launches[0]!.args).toEqual([
+      '-M',
       '-w',
       wtWindowSlug('D:\\proj'),
       '-d',

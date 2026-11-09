@@ -76,26 +76,55 @@ export function currentModelAt(tail: string): string | null {
 }
 
 /**
- * 转录尾部最后一次上报的推理档位（assistant 条目顶层的 `effort`）。
+ * 转录尾部的推理档位事实（level + 那一行的落笔时刻）。
  *
- * 为什么绕到转录：hook 事件带的 `effort.level` 只出现在工具/回合类事件上
- * （Notification / SessionStart 这些不带），而 daemon 重启会清掉内存里的「最后
- * 已知」——不清的话，重启后这个会话会一直显「未知」，直到下一次工具调用。
- * 转录里这份与 `message.model` 同位，重启后立刻读得到。
+ * 两条证据并存，**按文件位次取最后一条**（转录 append-only，位次即时序）：
+ * - assistant 条目顶层的 `effort`——轮次跑动时照会当前档位；
+ * - 内建命令 `/effort` 的 stdout（`<local-command-stdout>Set effort level to
+ *   <档位>…`，user 行与 system/local_command 行两种落点）——**切换那一拍就落**，
+ *   这是唯一的立即可见事实（事件的 `effort.level` 与 assistant 照会都要等下一轮）。
+ *
+ * `api-request-blob` 行会整段复述命令正文，须跳过；时刻供上层与事件路的
+ * 事实比新旧（见 SessionProbe.currentEffort），缺了答 null（不猜）。
  */
-export function currentEffortAt(tail: string): string | null {
-  let newest: string | null = null;
+export interface EffortFact {
+  level: string;
+  at: string | null;
+}
+
+export function currentEffortAt(tail: string): EffortFact | null {
+  let newest: EffortFact | null = null;
   for (const line of tail.split('\n')) {
-    if (!line.includes('"effort"')) continue;
+    if (!line.includes('"effort"') && !line.includes('Set effort level to ')) continue;
     let raw: unknown;
     try {
       raw = JSON.parse(line);
     } catch {
       continue;
     }
-    const effort = (raw as { effort?: unknown })?.effort;
-    if (typeof effort !== 'string' || !effort) continue;
-    newest = effort; // 尾部按时间顺序，最后一条即最新
+    const entry = raw as {
+      effort?: unknown;
+      timestamp?: unknown;
+      type?: unknown;
+      subtype?: unknown;
+      content?: unknown;
+      message?: { content?: unknown };
+    };
+    const at = typeof entry.timestamp === 'string' && entry.timestamp ? entry.timestamp : null;
+    if (typeof entry.effort === 'string' && entry.effort) {
+      newest = { level: entry.effort, at };
+      continue;
+    }
+    if (entry.type === 'api-request-blob') continue;
+    // stdout 的两种落点（user 行的 message.content / system 行的顶层 content）
+    const content =
+      typeof entry.message?.content === 'string'
+        ? entry.message.content
+        : entry.type === 'system' && entry.subtype === 'local_command' && typeof entry.content === 'string'
+          ? entry.content
+          : null;
+    const level = content === null ? undefined : /Set effort level to ([a-z]+)/.exec(content)?.[1];
+    if (level !== undefined) newest = { level, at };
   }
   return newest;
 }

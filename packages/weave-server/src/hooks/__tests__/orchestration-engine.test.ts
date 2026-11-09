@@ -99,7 +99,8 @@ const deliverer = (
     inductions.delete(sessionId);
     return had;
   });
-  return { send, awaitInboxReady, lastTurnOutput, setLastOutput, registerInduction, consumeInduction };
+  const markCompleted = vi.fn(() => false);
+  return { send, awaitInboxReady, lastTurnOutput, setLastOutput, registerInduction, consumeInduction, markCompleted };
 };
 
 const setup = (
@@ -644,6 +645,26 @@ describe('自然回合自动触发', () => {
     expect(d.consumeInduction).toHaveLastReturnedWith(false);
     expect(d.send.mock.calls.length).toBe(sendsBefore + 1);
     expect(runs.listRunning().some((r) => r.orchestrationName === 'y')).toBe(true);
+  });
+
+  it('idle 消费 pending 那一拍回写「已执行」到投递行（markCompleted 拿到管道发号）', async () => {
+    const { d, engine } = setup();
+    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    orchestrations.insert({
+      name: 'cx',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), sNode('b')],
+      edges: [edge('a', 'b')],
+    });
+    const result = await engine.start(orchestrations.list()[0]!.id, 'manual');
+    expect(result).toMatchObject({ ok: true });
+    // 投递落定才进 pending；idle 到达 → shift 消费 + markCompleted 回写发号
+    expect(d.markCompleted).not.toHaveBeenCalled();
+    idleOf(engine, 'a');
+    await flush();
+    expect(d.markCompleted).toHaveBeenCalledTimes(1);
+    expect(d.markCompleted).toHaveBeenCalledWith('m-1');
   });
 
   it('enabled=false / 孤立入口 / 冷却期内连拍都不触发', async () => {

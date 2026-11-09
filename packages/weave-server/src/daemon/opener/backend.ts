@@ -253,7 +253,10 @@ export const PRESET_CANDIDATES: Record<
           {
             command: 'wt.exe',
             args: [
-              // 命名窗口：wt 原生「在则进 tab、不在则开窗」= 复用项目窗口的落点语义
+              // 命名窗口：wt 原生「在则进 tab、不在则开窗」= 复用项目窗口的落点语义。
+              // -M（最大化）只对新建窗口生效：命名窗不在则开窗即最大化，在则进 tab
+              // 窗口大小不动（2026-11-09 实测），不干扰用户手动调过的窗口。
+              '-M',
               '-w',
               wtWindowSlug(dir),
               '-d',

@@ -38,16 +38,27 @@ describe('applyRowPush — push 补丁并上会话行', () => {
     expect(next[1].interruptedAt).toBe(6);
   });
 
-  it('三路可以同一帧一起并；空补丁原样返回', () => {
+  it('effort 命中即换、缺键 = 不动；同值不换引用（slider 的「最后已知」靠它）', () => {
+    const rows = [row('a', { effort: 'high' }), row('b')];
+    const next = applyRowPush(rows, { effort: { a: 'max', b: 'low' } });
+    expect(next[0].effort).toBe('max');
+    expect(next[1].effort).toBe('low');
+    expect(applyRowPush(rows, { effort: { a: 'high' } })).toBe(rows);
+    expect(applyRowPush(rows, { effort: {} })[0].effort).toBe('high');
+  });
+
+  it('四路可以同一帧一起并；空补丁原样返回', () => {
     const rows = [row('a')];
     const next = applyRowPush(rows, {
       terminal: { a: screen('t1') },
       alive: { a: false },
       interrupted: {},
+      effort: { a: 'max' },
     });
     expect(next[0].terminal?.id).toBe('t1');
     expect(next[0].pidAlive).toBe(false);
     expect(next[0].interruptedAt ?? null).toBeNull();
+    expect(next[0].effort).toBe('max');
     expect(applyRowPush(rows, {})).toBe(rows);
   });
 });

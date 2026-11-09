@@ -4314,6 +4314,131 @@ describe('诱导回合登记（outbox 写入单点 + 一次性核销）', () => 
   });
 });
 
+describe('消息执行确认（markCompleted / statusOf）', () => {
+  let db: ReturnType<typeof openDatabase>;
+  let sessions: SessionRepository;
+  let events: HookEventRepository;
+  let projectId: number;
+  let hooksDir: string;
+
+  const delivererOf = (): MessageDeliverer =>
+    new MessageDeliverer({
+      sessions,
+      projects: new ProjectRepository(db),
+      hookEvents: events,
+      hooksDir,
+    });
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    projectId = new ProjectRepository(db).register({
+      path: PROJECT_PATH,
+      name: 'msg',
+      token: TOKEN,
+      source: 'init',
+    }).id;
+    sessions = new SessionRepository(db);
+    events = new HookEventRepository(db);
+    sessions.touch(SESSION_ID, projectId);
+    hooksDir = mkdtempSync(join(tmpdir(), 'weave-msg-cx-'));
+  });
+
+  afterEach(async () => {
+    await new Promise((r) => setTimeout(r, 60));
+    db.close();
+    rmSync(hooksDir, { recursive: true, force: true });
+  });
+
+  it('markCompleted：记 completedAt + settledAt 刷到当下（驻留窗口重起算），幂等', async () => {
+    events.insert({ projectId, source: 'claude', eventType: 'UserPromptSubmit', sessionId: SESSION_ID, payload: '{}' });
+    const deliverer = delivererOf();
+    const sent = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'hello body',
+      mode: 'inject',
+      fromKind: 'dashboard',
+    });
+    const id = (sent as { messageId: string }).messageId;
+    const before = deliverer.getMessage(id)!;
+    expect(before.completedAt).toBeUndefined();
+
+    expect(deliverer.markCompleted(id)).toBe(true);
+    const after = deliverer.getMessage(id)!;
+    expect(Date.parse(after.completedAt!)).toBeGreaterThan(0);
+    // settledAt 同拍刷新（驻留窗口重起算）：落成一个可解析的时刻
+    expect(Number.isFinite(Date.parse(after.settledAt ?? ''))).toBe(true);
+
+    // 幂等：已回写的行再记不重写（settledAt 不被第二拍刷走）
+    const firstDone = after.completedAt!;
+    expect(deliverer.markCompleted(id)).toBe(false);
+    expect(deliverer.getMessage(id)!.completedAt).toBe(firstDone);
+  });
+
+  it('markCompleted：行不在内存（defer 占位 / 已删）= no-op', () => {
+    const deliverer = delivererOf();
+    expect(deliverer.markCompleted('defer-00000000')).toBe(false);
+    expect(deliverer.markCompleted('never-sent')).toBe(false);
+  });
+
+  it('statusOf：内存态优先（completedAt/executed 随行）；pending 走队列文件；两处没有 = null', async () => {
+    events.insert({ projectId, source: 'claude', eventType: 'UserPromptSubmit', sessionId: SESSION_ID, payload: '{}' });
+    const deliverer = delivererOf();
+    // 内存态：inject 落定
+    const sent = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: 'hello body',
+      mode: 'inject',
+      fromKind: 'dashboard',
+    });
+    const id = (sent as { messageId: string }).messageId;
+    deliverer.markCompleted(id);
+    const st = deliverer.statusOf(SESSION_ID, id)!;
+    expect(st.status).toBe('injected');
+    expect(st.completedAt).toBeTruthy();
+    expect(st.sessionId).toBe(SESSION_ID);
+
+    // pending：入 promptbox 队列（无 peer 登记的 relay 面 → 层③ 入队）
+    const noPeer: MessagingSurface = {
+      harness: 'claude',
+      discovery: false,
+      prompt: {
+        bin: 'fake-relay',
+        args: [],
+        senderName: 'weave',
+        instruction: () => ' Send',
+        resolve: () => null,
+      },
+      promptInbox: null,
+      inject: { rideEvents: ['UserPromptSubmit'] },
+      headless: null,
+      idleSignals: ['Stop'],
+      sideQuestion: null,
+    };
+    const queued = new MessageDeliverer({
+      sessions,
+      projects: new ProjectRepository(db),
+      hookEvents: events,
+      bus: new HookEventBus(),
+      hooksDir,
+      surfaceFor: () => noPeer,
+    });
+    events.insert({ projectId, source: 'claude', eventType: 'Stop', sessionId: SESSION_ID, payload: '{}' });
+    const q = await queued.send({
+      toSessionId: SESSION_ID,
+      text: 'queued body',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    const qid = (q as { messageId: string }).messageId;
+    expect(q).toMatchObject({ ok: true, status: 'pending' });
+    expect(queued.statusOf(SESSION_ID, qid)).toMatchObject({ id: qid, status: 'pending', text: 'queued body' });
+    // 别的会话来查同一 id 不认（行带 sessionId 配对）
+    expect(queued.statusOf('other-session', qid)).toBeNull();
+    expect(queued.statusOf(SESSION_ID, 'unknown-id')).toBeNull();
+  });
+});
+
 describe('MessageDeliverer.askSideQuestion 读屏通道（codex = /side）', () => {
   let db: ReturnType<typeof openDatabase>;
   let sessions: SessionRepository;

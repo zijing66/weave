@@ -8,6 +8,7 @@ import {
   currentModeAt,
   interruptMarkerAt,
   switchedModelOf,
+  type EffortFact,
   type ModelSwitchFact,
 } from '@weavecode/harness';
 import { HARNESS_SESSION_CONTROL, isHarness } from '@weavecode/core';
@@ -108,7 +109,7 @@ interface TailFacts {
   markerAt: number | null;
   model: string | null;
   mode: string | null;
-  effort: string | null;
+  effort: EffortFact | null;
   contextTokens: number | null;
 }
 
@@ -143,7 +144,7 @@ export class SessionProbe {
   /** sessionId → 最后已知的模型/模式/上下文占用（读到就记；见 `latched`）。 */
   private readonly known = new Map<
     string,
-    { model: string | null; mode: string | null; effort: string | null; contextTokens: number | null }
+    { model: string | null; mode: string | null; effort: EffortFact | null; contextTokens: number | null }
   >();
   /**
    * sessionId → 宿主落定的换模型（`PostModelSwitch`）+ 记下的那一刻转录里还是哪个
@@ -153,8 +154,10 @@ export class SessionProbe {
   private readonly switched = new Map<string, { stale: string | null; model: string }>();
   /** sessionId → 已经向库要过换模型闩了（库里那条事件不会变，问一次就够）。 */
   private readonly probed = new Set<string>();
-  /** sessionId → 推理档位（每次带 `effort` 的事件覆盖）：状态栏 `thinking` 块的事实在 hook 里。 */
-  private readonly efforts = new Map<string, string>();
+  /** sessionId → 推理档位事件事实（每次带 `effort` 的事件覆盖，带事件时刻）：
+   *  与转录路的事实按时刻比新旧（见 `currentEffort`——`/effort` 切换那拍只有
+   *  转录 stdout，别让上一轮的旧事件值压过它）。 */
+  private readonly efforts = new Map<string, { level: string; at: string | null }>();
   /** sessionId → 事件自带的执行模式（每条事件覆盖）：比转录早一步，见 `noteMode`。 */
   private readonly modes = new Map<string, string>();
 
@@ -187,16 +190,25 @@ export class SessionProbe {
     this.modes.delete(sessionId);
   }
 
-  /** 推理档位（`effort.level`，事件自带）：逐条覆盖，与模型/模式同口径只放内存。 */
-  noteEffort(sessionId: string, level: string): void {
-    this.efforts.set(sessionId, level);
+  /** 推理档位（`effort.level`，事件自带，带事件时刻）：逐条覆盖，与模型/模式同口径只放内存。 */
+  noteEffort(sessionId: string, level: string, at: string | null = null): void {
+    this.efforts.set(sessionId, { level, at });
   }
 
-  /** 最后已知的推理档位：事件优先、转录兜底；两者都没有即 null（不猜）。
-   *  兜底是为了 daemon 重启那一拍——事件只有工具/回合类才带 effort，重启后
-   *  若一直只有通知类事件，没这层就会长期显「未知」。 */
+  /** 最后已知的推理档位：事件与转录**两路事实按时刻比新旧**，没有的缺哪路用哪路。
+   *  时刻缺了答不了新旧（api-request-blob 复述行之类），按旧口径事件优先——转录
+   *  路的兜底本就是为了 daemon 重启那一拍（事件只有工具/回合类才带 effort，
+   *  重启后若一直只有通知类事件，没这层就会长期显「未知」）。
+   *  时刻比较真正的意义：`/effort` 切换那拍只有转录 stdout 事实，事件还是上一轮
+   *  的旧档位——不比时刻，切换要等下一轮才显示得出。 */
   currentEffort(sessionId: string): string | null {
-    return this.efforts.get(sessionId) ?? this.latched(sessionId).effort;
+    const event = this.efforts.get(sessionId);
+    const fact = this.latched(sessionId).effort;
+    if (!event) return fact?.level ?? null;
+    if (!fact) return event.level;
+    if (fact.at === null) return event.level;
+    if (event.at === null) return fact.level;
+    return Date.parse(fact.at) >= Date.parse(event.at) ? fact.level : event.level;
   }
 
   /**
@@ -285,7 +297,7 @@ export class SessionProbe {
   private latched(sessionId: string): {
     model: string | null;
     mode: string | null;
-    effort: string | null;
+    effort: EffortFact | null;
     contextTokens: number | null;
   } {
     const path = this.pathOf(sessionId);

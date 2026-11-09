@@ -55,7 +55,7 @@ export interface HookPipelineDeps {
     noteTranscript(sessionId: string, path: string | null): void;
     noteModel(sessionId: string, model: string): void;
     sessionStarted(sessionId: string, model: string | null): void;
-    noteEffort(sessionId: string, level: string): void;
+    noteEffort(sessionId: string, level: string, at?: string | null): void;
     noteMode(sessionId: string, mode: string): void;
   };
   /** 上传件落库面：回执命中时把消息的随附图挂到开轮事件（对话气泡缩略图）。 */

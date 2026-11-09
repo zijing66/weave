@@ -442,6 +442,22 @@ export function startDaemon(): void {
     { key: 'sessionInterrupt', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
   );
   interruptRefresher.start();
+  // 推理档位（会话行 effort / 对话面板 slider 的「最后已知」）：`/effort` 是内建
+  // 命令，hook 域零事件、也不跑回合——事件源那两条路（ingest、开闭轮帧）全不通，
+  // 真相只在转录里（SessionProbe 尾读，statSync 守卫零子进程）。15s 一拍、值变才推。
+  const effortRefresher = new SnapshotRefresher(
+    () => {
+      const efforts: Record<string, string> = {};
+      for (const s of hookSessions.listWithCounts()) {
+        const effort = sessionProbe.currentEffort(s.sessionId);
+        if (effort !== null) efforts[s.sessionId] = effort;
+      }
+      return { efforts };
+    },
+    dataBus,
+    { key: 'sessionEffort', intervalMs: 15_000, shouldRun: () => dataBus.hasSubscribers() },
+  );
+  effortRefresher.start();
   // 会话活动（子 agent/shell/任务）：事件账已在 ingest 时就地更新，这里只兜「SubagentStop
   // 没到但文件面变了」的尾巴——失效帧让前端重拉 /activity 合账，不带快照。
   const activityRefresher = new SnapshotRefresher(
@@ -696,6 +712,7 @@ export function startDaemon(): void {
     dataBus,
     terminalRefresher,
     interruptRefresher,
+    effortRefresher,
     livenessRefresher,
     sessionProbe,
     inflightRefresher,
@@ -773,6 +790,7 @@ export function startDaemon(): void {
     terminalRefresher.stop();
     livenessRefresher.stop();
     interruptRefresher.stop();
+    effortRefresher.stop();
     syncScheduler.stop();
     watch.stop();
     shutdownPetWindow();

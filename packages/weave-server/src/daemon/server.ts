@@ -125,6 +125,8 @@ export interface WeaveServerDeps {
   terminalRefresher?: TerminalTopologyRefresher;
   /** 会话中断态快照刷新器（ESC 打断后多数连 Stop 都不发）：中断成功后即时补一拍。 */
   interruptRefresher?: SnapshotRefresher;
+  /** 推理档位快照刷新器（`/effort` 在 hook 域零事件、真相只在转录）：切完即时补一拍。 */
+  effortRefresher?: SnapshotRefresher;
   /** 会话判活快照刷新器（关 pane 后进程死掉同样无 hook 事件）：关完即时补一拍。 */
   livenessRefresher?: SnapshotRefresher;
   /** 会话转录探测（中断态判据）：GET /sessions 逐行现算；缺省不带该字段。 */

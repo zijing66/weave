@@ -410,6 +410,20 @@ async function main(): Promise<void> {
     { key: 'sessionInterrupt', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
   );
   interruptRefresher.start();
+  // 推理档位（同生产入口）：`/effort` 在 hook 域零事件，只剩转录尾读一条事实源。
+  const effortRefresher = new SnapshotRefresher(
+    () => {
+      const efforts: Record<string, string> = {};
+      for (const s of hookSessions.listWithCounts()) {
+        const effort = sessionProbe.currentEffort(s.sessionId);
+        if (effort !== null) efforts[s.sessionId] = effort;
+      }
+      return { efforts };
+    },
+    dataBus,
+    { key: 'sessionEffort', intervalMs: 15_000, shouldRun: () => dataBus.hasSubscribers() },
+  );
+  effortRefresher.start();
   // 会话活动（子 agent/shell/任务）：事件账已在 ingest 时就地更新，这里只兜「SubagentStop
   // 没到但文件面变了」的尾巴——失效帧让前端重拉 /activity 合账，不带快照。
   const activityRefresher = new SnapshotRefresher(
@@ -657,6 +671,7 @@ async function main(): Promise<void> {
     dataBus,
     terminalRefresher,
     interruptRefresher,
+    effortRefresher,
     livenessRefresher,
     sessionProbe,
     inflightRefresher,
@@ -735,6 +750,7 @@ async function main(): Promise<void> {
     terminalRefresher.stop();
     livenessRefresher.stop();
     interruptRefresher.stop();
+    effortRefresher.stop();
     shutdownPetWindow();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();

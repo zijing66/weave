@@ -163,7 +163,10 @@ export class OrchestrationEngine {
         OrchestrationRunRepository,
         'insert' | 'listRunning' | 'updateState' | 'finish' | 'prune'
       >;
-      deliverer: Pick<MessageDeliverer, 'send' | 'registerInduction' | 'consumeInduction'> &
+      deliverer: Pick<
+        MessageDeliverer,
+        'send' | 'registerInduction' | 'consumeInduction' | 'markCompleted'
+      > &
         Partial<Pick<MessageDeliverer, 'awaitInboxReady' | 'lastTurnOutput'>>;
       sessions: Pick<SessionRepository, 'listWithCounts' | 'getBySessionId' | 'turnOpenOf'>;
       bus: HookEventBus;
@@ -309,8 +312,12 @@ export class OrchestrationEngine {
       for (const rt of [...this.runtime.values()]) {
         const pending = rt.state.pending[input.sessionId];
         if (!rt.running || !pending || pending.length === 0) continue;
-        pending.shift();
+        const entry = pending.shift();
         this.persist(rt);
+        // idle 消费那一拍顺手回写「已执行」到投递行（observer 字段，消息域不倒灌
+        // 编排语义）：defer 占位的 `defer-` 发号在管道里查不到，markCompleted 自然
+        // no-op——它承载的正文都还没真投出去，谈不上已执行。
+        if (entry) this.deps.deliverer.markCompleted(entry.messageId);
         void this.fireEdges(rt, input.sessionId);
       }
       if (!orchestrationTurn) {

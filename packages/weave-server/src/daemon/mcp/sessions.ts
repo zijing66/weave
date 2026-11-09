@@ -76,7 +76,7 @@ export const SESSIONS_TOOLS = [
   {
     name: 'send_message',
     description:
-      'Send a prompt message to a session (goes through the prompt delivery channel; the message appears in the target session as if from another session, NOT as the user). In the text you may add recipient annotations `#<sessionId>「<session name>」` — these are labels for the target model to forward via its own native SendMessage; weave does not deliver them itself. Fast repeated sends to one session can be rejected (strict 1 send / 1 ack). Returns { ok, messageId, status, message }.',
+      'Send a prompt message to a session (goes through the prompt delivery channel; the message appears in the target session as if from another session, NOT as the user). In the text you may add recipient annotations `#<sessionId>「<session name>」` — these are labels for the target model to forward via its own native SendMessage; weave does not deliver them itself. Fast repeated sends to one session can be rejected (strict 1 send / 1 ack). Delivery success only means "handed over" — poll get_message_status to confirm the target host actually started/completed the turn (acked / executed). Returns { ok, messageId, status, message }.',
     inputSchema: {
       type: 'object',
       required: ['sessionId', 'text'],
@@ -94,6 +94,27 @@ export const SESSIONS_TOOLS = [
         message: { type: ['string', 'null'] },
       },
       required: ['ok'],
+    },
+  },
+  {
+    name: 'get_message_status',
+    description:
+      'Check whether a sent message was actually picked up by the target host: status (pending | delivering | delivered | failed | timeout), acked (the target session accepted the prompt — its own UserPromptSubmit matched), executed (an orchestration-driven turn driven by this message finished; manual sends have no writer for this and stay null), plus timestamps (at / settledAt / completedAt) and via (socket | queue | relay | terminal). Throws 404 when the id is unknown or the row already aged out of the in-flight view — history lives in the session transcript.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'messageId'],
+      properties: {
+        sessionId: { type: 'string' },
+        messageId: { type: 'string' },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['pending', 'delivering', 'running', 'injected', 'delivered', 'succeeded', 'failed', 'timeout'] },
+        executed: { type: 'boolean' },
+      },
+      required: ['status', 'executed'],
     },
   },
   {
@@ -222,6 +243,11 @@ export function toolRequest(name: string, args: Args): McpToolRequest {
         method: 'POST',
         path: `/sessions/${idOf(args)}/messages`,
         body: { text: args.text, fromKind: 'session' },
+      };
+    case 'get_message_status':
+      return {
+        method: 'GET',
+        path: `/sessions/${idOf(args)}/messages/${encodeURIComponent(String(args.messageId))}/status`,
       };
     case 'list_questions':
       return { method: 'GET', path: '/messaging/questions' };

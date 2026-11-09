@@ -68,12 +68,14 @@ export const bootRequests = {
       listeners.delete(listener);
     };
   },
-  /** 启动页退场后调用：封账 + 把本次实际总数写回存量（下次启动的分母）。 */
+  /** 启动页退场后调用：封账 + 把本次实际响应数写回存量（下次启动的分母）。
+   *  写 done 不写 total——固化分母是「上次首屏真实请求数」，本次 boot 后多发的
+   *  请求不该抬它（否则项目/会话增减时分母只涨不落）。 */
   seal(): void {
     if (!sealed) {
       sealed = true;
       try {
-        localStorage.setItem(STORE_KEY, String(Math.max(total, done)));
+        localStorage.setItem(STORE_KEY, String(done));
       } catch {
         // 存不进就退回每次动态计数
       }

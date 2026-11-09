@@ -454,7 +454,7 @@ export interface IngestedHandlerDeps {
     noteTranscript(sessionId: string, path: string | null): void;
     noteModel(sessionId: string, model: string): void;
     sessionStarted(sessionId: string, model: string | null): void;
-    noteEffort(sessionId: string, level: string): void;
+    noteEffort(sessionId: string, level: string, at?: string | null): void;
     noteMode(sessionId: string, mode: string): void;
   };
   /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
@@ -552,9 +552,17 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       const started = startedModelOf(record.input.eventType, payload?.raw);
       if (started) deps.sessionProbe?.sessionStarted?.(record.input.sessionId, started.model);
       // 推理档位（`effort.level`）：工具/回合类事件每条都带，逐条覆盖——状态栏
-      // `thinking` 块的事实在 hook 里，不必去读宿主 stdin 或转录。
+      // `thinking` 块的事实在 hook 里，不必去读宿主 stdin 或转录。带上事件时刻：
+      // probe 两路事实（事件/转录 stdout）按时刻比新旧，旧档位才压不过新切换。
       const effort = effortLevelOf(payload?.raw);
-      if (effort) deps.sessionProbe?.noteEffort?.(record.input.sessionId, effort);
+      if (effort) {
+        const ts = (payload?.raw as { timestamp?: unknown } | null)?.timestamp;
+        deps.sessionProbe?.noteEffort?.(
+          record.input.sessionId,
+          effort,
+          typeof ts === 'string' && ts ? ts : null,
+        );
+      }
       // 执行模式（`permission_mode`）：每条事件都带、答的是「此刻」——Shift+Tab 切模式
       // 既不落转录也没有专门事件，只读转录会一直停在切之前那个模式上。
       const permissionMode = permissionModeOf(payload?.raw);

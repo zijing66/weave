@@ -9,7 +9,7 @@ import {
 } from '@/lib/api';
 import { summarizeEvent } from '@/lib/hook-payload';
 import { usePullLoad } from '@/lib/pull-load';
-import { subscribeHook, type HookFrame } from '@/lib/sse';
+import { subscribeHook, subscribePush, type HookFrame } from '@/lib/sse';
 import { HARNESS_COMPACTION, isCompactionEnd } from './lifecycle';
 import { useSessionStatus } from './session-status-store';
 import {
@@ -344,6 +344,19 @@ export function useConvThread(deps: {
     }, ['narration.updated']);
     return off;
   }, [sessionId]);
+
+  // 档位快照帧（`/effort` 在 hook 域零事件，SSE 开闭轮那两条路全不通）：本会话的
+  // 档位变了 = 转录里落了新的命令执行行（命令回显读的就是转录）——补一拍
+  // command-executions，让 /effort 行 + stdout 出现在对话流里。
+  const lastEffort = useRef<string | null>(null);
+  useEffect(() => {
+    return subscribePush<{ efforts?: Record<string, string> }>('sessionEffort', (p) => {
+      const effort = p.efforts?.[sessionId] ?? null;
+      if (effort === lastEffort.current) return;
+      lastEffort.current = effort;
+      void loadExecutions();
+    });
+  }, [loadExecutions, sessionId]);
 
   /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
   const loadEarlier = useCallback(async (): Promise<void> => {

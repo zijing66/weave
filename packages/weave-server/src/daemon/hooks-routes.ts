@@ -535,6 +535,27 @@ export async function handleHooksRoutes(
   // ---- 宠物域 → routes/pets.ts（桌面宠物资产列举与 spritesheet 回吐）----
   if (await handlePetRoutes(req, res, deps, pathname, url)) return true;
 
+  // ---- 单条状态现查（「确认执行」缺口的消息面）：pending/delivering/delivered/
+  //      acked/completed/failed 的投递管道全事实 + 时刻戳。pending 只活在队列文件里
+  //      （内存从未持有），内存态行被 dismiss/TTL 清掉后即 404——历史在转录。----
+  const statusMatch = pathname.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/status$/);
+  if (statusMatch && req.method === 'GET') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const message = deps.messageDeliverer.statusOf(
+      decodeURIComponent(statusMatch[1]!),
+      decodeURIComponent(statusMatch[2]!),
+    );
+    if (!message) {
+      sendJson(res, 404, { error: 'Message not found' });
+      return true;
+    }
+    sendJson(res, 200, { message: { ...message, executed: message.completedAt != null } });
+    return true;
+  }
+
   // ---- 手动重发（暂停闸解除动作）：prompt 通道 failed / delivered-未回执 才可重发 ----
   const resendMatch = pathname.match(/^\/sessions\/([^/]+)\/messages\/([^/]+)\/resend$/);
   if (resendMatch && req.method === 'POST') {
