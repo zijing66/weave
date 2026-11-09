@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n/I18nProvider';
 import { RPG_SCENES, sceneOf } from './scenes';
@@ -10,34 +10,79 @@ import { ClassroomScene } from './ClassroomScene';
 import { MeetingScene } from './MeetingScene';
 import { CreateRoleForm } from './CreateRoleForm';
 import { RoleProgressPanel } from './RoleProgressPanel';
+import { PixelScene, RpgBootBar, rpgRetryHandlers } from './PixelScene';
+import {
+  GOD_SPOT,
+  HOME_HOTSPOTS,
+  HOME_MAP,
+  WORLD_HOTSPOTS,
+  WORLD_MAP,
+  projectHouseHotspots,
+  type Hotspot,
+} from './worldmap';
+import { rpgBoot, type RpgBootKey } from './rpg-boot';
+import { api } from '@/lib/api';
+import { PROJECTS_QUERY } from '@/hooks/use-projects';
+import { useToast } from '@/components/Toast';
 import { STATUS_BADGE } from '@/components/tasks/session-status';
-import type { SessionRow } from '@/lib/api';
+import { navigate } from '@/lib/route';
+import type { ProjectRow, SessionRow } from '@/lib/api';
 
 /**
- * RPG 游戏视图（D1 场景框架 + E4 语义收敛）：场景注册表切换；Home = 出征前
- * 准备视图（角色卡阵 + 修行详情 + 内建建角色入口），办公区 / 教室 / 会议室 =
- * 共用协同视图（CollabScene）的三份皮肤。位置即 URL（`/rpg/<scene>`，route.ts
- * 单向落下）；角色点击 = `navigate` 进既有会话详情，不新建对话面。
+ * RPG 游戏视图（G1 红白机骨架）：Home 重做为室内俯瞰场景（tile 网格 + 门热点 +
+ * 上帝化身静态摆位 + 管理区），`/rpg/world` 新增室外世界地图（宅基地/修炼点/
+ * 项目房）。既有协同场景（办公区/教室/会议室）原样保留。位置即 URL；进场景 =
+ * 淡出过渡（`.rpg-scene-fade`）。tile 槽位表/命中判定归 worldmap.ts。
  */
 
 export function RpgView({
   sceneKey,
   onOpenSession,
+  projects,
 }: {
   sceneKey: string | undefined;
   onOpenSession: (projectId: number, sessionId: string) => void;
+  projects: ProjectRow[];
 }) {
   const t = useT();
   const scene = sceneOf(sceneKey);
+  useRpgBootProgress();
+  const boot = useSyncExternalStore(rpgBoot.subscribe, rpgBoot.snapshot, rpgBoot.snapshot);
+  const [bootDismissed, setBootDismissed] = useState(false);
+  // 全清即淡出退场（复用门切换 transition）；失败项停住等重试，不假满格。
+  const bootVisible = !bootDismissed && (boot.done < boot.total || boot.failed);
+  const [entered, setEntered] = useState(false);
+  // 进场淡入（门切换过渡：场景键变化时重放一次 transition）
+  useEffect(() => {
+    setEntered(false);
+    const id = window.setTimeout(() => setEntered(true), 30);
+    return () => window.clearTimeout(id);
+  }, [scene.key]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+      {bootVisible && (
+        <div className="rpg-scene-fade rounded border border-[var(--w-border)] p-3">
+          <RpgBootBar />
+          {!boot.failed && boot.done >= boot.total && (
+            <button
+              type="button"
+              onClick={() => setBootDismissed(true)}
+              className="mt-2 rounded bg-[var(--w-surface-2)] px-2 py-0.5 text-[11px] text-[var(--w-text-dim)] hover:bg-[var(--w-surface-3)]"
+            >
+              {t('rpg.bootDone')}
+            </button>
+          )}
+        </div>
+      )}
       {/* 场景注册表切换条 */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs uppercase tracking-wide text-[var(--w-text-dim)]">{t('rpg.sceneRegistry')}</span>
         {RPG_SCENES.map((s) => (
-          <span
+          <button
             key={s.key}
+            type="button"
+            onClick={() => navigateScene(s.key)}
             className={
               'rounded px-2 py-0.5 text-xs ' +
               (s.key === scene.key
@@ -46,21 +91,30 @@ export function RpgView({
             }
           >
             {t(s.titleKey)}
-          </span>
+          </button>
         ))}
       </div>
 
-      {scene.kind === 'home' ? (
-        <HomeScene />
-      ) : scene.kind === 'classroom' ? (
-        <ClassroomSkin onOpenSession={onOpenSession} />
-      ) : scene.kind === 'meeting' ? (
-        <MeetingSkin onOpenSession={onOpenSession} />
-      ) : (
-        <OfficeSkin onOpenSession={onOpenSession} />
-      )}
+      <div className={'rpg-scene-fade flex min-h-0 flex-1 flex-col' + (entered ? ' rpg-entered' : '')}>
+        {scene.kind === 'home' ? (
+          <HomeIndoorScene projects={projects} />
+        ) : scene.kind === 'world' ? (
+          <WorldScene projects={projects} onOpenSession={onOpenSession} />
+        ) : scene.kind === 'classroom' ? (
+          <ClassroomSkin onOpenSession={onOpenSession} />
+        ) : scene.kind === 'meeting' ? (
+          <MeetingSkin onOpenSession={onOpenSession} />
+        ) : (
+          <OfficeSkin onOpenSession={onOpenSession} />
+        )}
+      </div>
     </div>
   );
+}
+
+/** 门切换与注册表切换共用一把 navigate（`lib/route.ts` 唯一写口）。 */
+function navigateScene(scene: string): void {
+  navigate({ kind: 'rpg', scene });
 }
 
 function ClassroomSkin(props: { onOpenSession: (projectId: number, sessionId: string) => void }) {
@@ -74,22 +128,65 @@ function OfficeSkin(props: { onOpenSession: (projectId: number, sessionId: strin
 }
 
 /**
- * Home 准备视图（E4 验收①）：角色卡阵（复用协同视图的角色卡）+ 修行详情 +
- * 空态引导 = 内建建角色表单（不绕资源管理）。零派位逻辑——不出征前的准备面。
+ * Home 室内（G1）：tile 俯瞰 + 南墙门（出室外）+ 上帝化身自由区静态摆位 +
+ * 管理区（角色卡阵/修行详情/建角色表单，功能全保留、铺在室内画面下方）。
  */
-function HomeScene() {
+function HomeIndoorScene({ projects }: { projects: ProjectRow[] }) {
   const t = useT();
+  void projects;
   const qc = useQueryClient();
   const data = useRpgData();
   const [detailRoleId, setDetailRoleId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
 
+  const onHotspot = (h: Hotspot): void => {
+    if (h.action.type === 'scene') navigateScene(h.action.scene);
+  };
+
   if (data.roles == null) {
-    return <div className="p-8 text-sm text-[var(--w-text-dim)]">…</div>;
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PixelScene map={HOME_MAP} hotspots={HOME_HOTSPOTS} onHotspot={onHotspot} />
+        <div className="p-8 text-sm text-[var(--w-text-dim)]">…</div>
+      </div>
+    );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <PixelScene
+        map={HOME_MAP}
+        hotspots={HOME_HOTSPOTS}
+        onHotspot={onHotspot}
+        sprites={[
+          {
+            key: 'god',
+            x: GOD_SPOT.x,
+            y: GOD_SPOT.y,
+            node: (
+              <div title={t('rpg.godAvatar')}>
+                <CharacterSprite archetype={null} status="idle" size={0.5} />
+              </div>
+            ),
+          },
+        ]}
+      >
+        {/* 门牌 */}
+        <span
+          className="absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
+          style={{ left: 8 * 24, top: 11 * 24 - 26 }}
+        >
+          {t('rpg.doorExit')} ↓
+        </span>
+        {/* 上帝自由区铭牌 */}
+        <span
+          className="absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
+          style={{ left: GOD_SPOT.x * 24 + 72, top: GOD_SPOT.y * 24 }}
+        >
+          {t('rpg.godZone')}
+        </span>
+      </PixelScene>
+
       {data.roles.length === 0 ? (
         <div className="rpg-tile flex min-h-0 flex-1 flex-col items-center justify-center gap-4 rounded border border-[var(--w-border)] p-8 text-center">
           <p className="text-sm text-[var(--w-text-dim)]">{t('rpg.emptyRolesHome')}</p>
@@ -184,6 +281,69 @@ function HomeScene() {
   );
 }
 
+/** 室外世界地图（G1）：宅基地（回 Home）/ 修炼点槽位（G3 占位）/ 项目房
+ *  （既有项目 → 点击进项目视图）。项目房沿土路一字排开、超出槽位截断展示。 */
+function WorldScene({
+  projects,
+  onOpenSession,
+}: {
+  projects: ProjectRow[];
+  onOpenSession: (projectId: number, sessionId: string) => void;
+}) {
+  const t = useT();
+  const { show } = useToast();
+  void onOpenSession;
+  const data = useRpgData();
+  const activeProjects = useMemo(() => projects.filter((p) => !p.archivedAt), [projects]);
+  const houseHotspots = useMemo(() => projectHouseHotspots(activeProjects), [activeProjects]);
+  const hotspots = useMemo(() => [...WORLD_HOTSPOTS, ...houseHotspots], [houseHotspots]);
+
+  const onHotspot = (h: Hotspot): void => {
+    if (h.action.type === 'scene') navigateScene(h.action.scene);
+    else if (h.action.type === 'project') {
+      // 项目房 → 既有项目视图（不破既有路由；G2 换 houses 表后改为进房）。
+      navigate({ kind: 'project', projectId: h.action.projectId, category: 'tasks', sessionId: null });
+    } else {
+      show('info', t('rpg.trainingTbd'));
+    }
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <PixelScene
+        map={WORLD_MAP}
+        hotspots={hotspots}
+        onHotspot={onHotspot}
+        sprites={
+          data.roles?.length
+            ? [
+                {
+                  key: `god-${data.roles[0]!.id}`,
+                  x: GOD_SPOT.x,
+                  y: GOD_SPOT.y,
+                  node: <CharacterSprite archetype={data.roles[0]!.archetype} status="idle" size={0.5} />,
+                },
+              ]
+            : undefined
+        }
+      >
+        {hotspots.map((h) => (
+          <span
+            key={`label-${h.id}`}
+            className="pointer-events-none absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
+            style={{ left: h.x * 24, top: h.y * 24 - 22 }}
+          >
+            {t(h.labelKey as 'rpg.doorExit')}
+          </span>
+        ))}
+      </PixelScene>
+      {activeProjects.length === 0 && (
+        <p className="text-xs text-[var(--w-text-dim)]">{t('rpg.worldNoProjects')}</p>
+      )}
+    </div>
+  );
+}
+
 function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -198,4 +358,42 @@ function latestSessionOf(
     if (!best || s.createdAt > best.createdAt) best = s;
   }
   return best;
+}
+
+/** G1 判据⑥：加载进度（真实六格）随 RpgView 挂载驱动——每格 = 一项真实请求
+ *  （会话状态总线 = 首拍 listSessions；模块装载 = 挂载完成的事实本身）。 */
+export function useRpgBootProgress(): void {
+  const snapshot = useSyncExternalStore(rpgBoot.subscribe, rpgBoot.snapshot, rpgBoot.snapshot);
+  const qc = useQueryClient();
+  const startedRef = useMemo(() => ({ started: false }), []);
+  useEffect(() => {
+    if (startedRef.started) return;
+    startedRef.started = true;
+    const runs: Record<RpgBootKey, () => Promise<unknown>> = {
+      roles: () => qc.fetchQuery({ queryKey: ['rpg-roles'], queryFn: () => api.listRoles() }),
+      orchestrations: () =>
+        qc.fetchQuery({ queryKey: ['rpg-orchestrations'], queryFn: () => api.listOrchestrations() }),
+      runs: () =>
+        qc.fetchQuery({ queryKey: ['rpg-runs'], queryFn: () => api.listOrchestrationRuns({ limit: 50 }) }),
+      sessions: () => api.listSessions(),
+      projects: () => qc.fetchQuery(PROJECTS_QUERY),
+      // 本地模块装载（tile 表/场景定义/组件树）——useEffect 跑到即事实落定。
+      modules: () => Promise.resolve(true),
+    };
+    for (const it of snapshot.items) {
+      rpgRetryHandlers.set(it.key, () => bootItem(it.key, runs[it.key]!));
+      bootItem(it.key, runs[it.key]!);
+    }
+    return () => {
+      for (const it of snapshot.items) rpgRetryHandlers.delete(it.key);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+
+function bootItem(key: RpgBootKey, run: () => Promise<unknown>): void {
+  rpgBoot.start(key);
+  run()
+    .then(() => rpgBoot.settle(key, true))
+    .catch(() => rpgBoot.settle(key, false));
 }

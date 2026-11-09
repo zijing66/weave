@@ -718,3 +718,48 @@
   border-top: 2px solid #e8b85a;
   border-left: 2px solid #e8b85a;
 }
+
+/* ---- G1 红白机骨架（web/src/rpg/worldmap.ts + PixelScene.tsx）：tile 色块由
+   组件内联 32 色板渲染，这里只放场景切换过渡、热点命中区与启动进度条。 ---- */
+.rpg-scene-fade {
+  opacity: 0;
+  transition: opacity 240ms steps(6);
+}
+.rpg-scene-fade.rpg-entered {
+  opacity: 1;
+}
+/* 热点命中区：常态只露四角虚线（不遮底图），悬停整块提亮 + 变手型。 */
+.rpg-hotspot {
+  cursor: pointer;
+  outline: 2px dashed rgba(242, 237, 228, 0.55);
+  outline-offset: -2px;
+  transition: background 120ms steps(2);
+}
+.rpg-hotspot:hover {
+  background: rgba(242, 193, 78, 0.28);
+  outline-color: #f2c14e;
+}
+/* 启动进度条（判据⑥）：每格 = 一项真实加载；pending 空格 / done 金格 /
+   failed 玫红格——断网停住，绝不假满格。 */
+.rpg-boot-cells {
+  display: flex;
+  gap: 2px;
+}
+.rpg-boot-cell {
+  width: 18px;
+  height: 10px;
+  background: #3a3444;
+  box-shadow: inset 0 0 0 1px #1a1721;
+}
+.rpg-boot-cell.done {
+  background: #d9a441;
+}
+.rpg-boot-cell.failed {
+  background: #c9566e;
+}
+.rpg-boot-label {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--w-text-dim, #8b8598);
+  image-rendering: pixelated;
+}

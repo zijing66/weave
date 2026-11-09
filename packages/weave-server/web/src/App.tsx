@@ -1030,6 +1030,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       return r.kind === 'rpg' ? r.scene : 'home';
                     })()}
                     onOpenSession={openSessionInProject}
+                    projects={projects}
                   />
                 </div>
               ) : showMain ? (
