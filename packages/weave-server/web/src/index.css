@@ -636,14 +636,6 @@
   50%, 74% { opacity: 0.5; }
   75%, 100% { opacity: 0.35; }
 }
-.rpg-tile {
-  image-rendering: pixelated;
-  background-image:
-    linear-gradient(45deg, var(--w-border, #2a2533) 25%, transparent 25%, transparent 75%, var(--w-border, #2a2533) 75%),
-    linear-gradient(45deg, var(--w-border, #2a2533) 25%, transparent 25%, transparent 75%, var(--w-border, #2a2533) 75%);
-  background-size: 24px 24px;
-  background-position: 0 0, 12px 12px;
-}
 
 /* ---- E1 教室/会议室大屏：像素 UI 框按 weaveRPG.md 第五章色值（黑板 = 深木外框
    2px + 金边 1px + 深绿内容区；会议室大屏 = 深色 4px 外框 + 靛蓝 2px 内框）。
@@ -792,5 +784,50 @@
     min-height: 44px;
     min-width: 44px;
     padding: 8px 12px;
+  }
+}
+
+/* ---- G2.5 全屏化：overlay HUD 面 ----
+   管理面浮层 = 半透明表面（游戏画面仍可见底下）；HUD 锚点层不挡画布交互。 */
+.rpg-overlay-surface {
+  background: color-mix(in srgb, var(--w-surface-1, #17141f) 88%, transparent);
+  backdrop-filter: blur(6px);
+}
+.rpg-hud-anchor {
+  pointer-events: none;
+}
+.rpg-hud-anchor > * {
+  pointer-events: auto;
+}
+
+/* ---- G2.5 全屏化：控制带（移动端硬规） ----
+   操作按钮（dpad 等）不浮在世界画面上：独立、不透明的控制区——竖屏整条垫在
+   画布下方、横屏整条立在画布右方（orientation 媒体查询 + flex order，纯 CSS
+   表达）。HUD 三件套不受此规约束（照旧 overlay）。 */
+.rpg-pixel-scene {
+  flex-direction: column;
+}
+.rpg-control-belt {
+  order: 2;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  background: var(--w-surface-1, #17141f);
+  border-top: 1px solid var(--w-border, #2c2735);
+}
+.rpg-pixel-viewport {
+  order: 1;
+}
+@media (orientation: landscape) {
+  .rpg-pixel-scene {
+    flex-direction: row;
+  }
+  .rpg-control-belt {
+    width: 180px;
+    align-self: stretch;
+    border-top: none;
+    border-left: 1px solid var(--w-border, #2c2735);
   }
 }

@@ -19,11 +19,14 @@ import {
 import { rpgBoot, type RpgBootSnapshot } from './rpg-boot';
 
 /**
- * 红白机像素场景渲染器（G1 骨架 + G4 行走）：tilemap 逐格渲成 CSS 色块，热点 =
- * 绝对定位的透明命中区，角色占 1×2 tile。G4：上帝化身格子步进（离散 transform，
- * 无插值）——键盘方向键/WASD 桌面、虚拟方向键触屏（use-media-query 唯一判断
- * 入口）、点一格 = 朝那格走一步或触发热点、长按连走、镜头跟随（画布自己滚，
- * 页面零横向溢出）。行走/碰撞/镜头裁决归 walker.ts 纯函数。
+ * 红白机像素场景渲染器（G1 骨架 + G4 行走 + G2.5 全屏化）：tilemap 逐格渲成
+ * CSS 色块，热点 = 绝对定位的透明命中区，角色占 1×2 tile。G4：上帝化身格子
+ * 步进（离散 transform，无插值）——键盘方向键/WASD 桌面、虚拟方向键触屏
+ * （use-media-query 唯一判断入口）、点一格 = 朝那格走一步或触发热点、长按连走。
+ * G2.5：画布铺满父级主区（拆卡片框），世界延展出屏由满屏镜头跟随（世界层整块
+ * translate，拖动平移并进 cam）；页面级溢出恒 0。操作按钮（dpad）不浮在画面上
+ * ——独立控制带（竖屏在下、横屏在右，orientation 媒体查询）。行走/碰撞/镜头
+ * 裁决归 walker.ts 纯函数。
  */
 
 /** 步进节拍（ms）：长按连走间隔——红白机手感约 6 格/秒。 */
@@ -39,6 +42,7 @@ export function PixelScene({
   /** 上帝化身（可走）：摆位由内部状态驱动，初始格由调用方给。 */
   god,
   children,
+  onEmptyClick,
 }: {
   map: WalkTileMap;
   hotspots: readonly Hotspot[];
@@ -49,6 +53,8 @@ export function PixelScene({
   god?: GodAvatar;
   /** 场景内浮层（表单区/详情面板，铺在画布上方）。 */
   children?: React.ReactNode;
+  /** 点空处（无热点、非拖动的画布点按）——选中详情条「点空收起」用。 */
+  onEmptyClick?: () => void;
 }) {
   const t = useT();
   const cols = map[0]?.length ?? 0;
@@ -99,17 +105,15 @@ export function PixelScene({
     return () => ro.disconnect();
   }, []);
 
+  // G2.5 镜头升级：viewport 从 overflow-auto 滚动改为满屏镜头（世界层整块
+  // translate）——滚动容器没了，拖动平移与镜头跟随都落到 cam 一处（transform
+  // 直改一步一格，页面级溢出恒 0 不变）。
   const cam = useMemo(
     () => (pos ? cameraOffset(map, pos, view.w, view.h, TILE_PX) : { x: 0, y: 0 }),
     [map, pos, view.w, view.h],
   );
-  // 镜头跟随：画布自己滚（overflow-auto 的 scrollTop/Left），页面级溢出恒 0
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el || !god) return;
-    el.scrollLeft = cam.x;
-    el.scrollTop = cam.y;
-  }, [cam, god]);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  useEffect(() => setPan({ x: 0, y: 0 }), [mapKey, hasGod]);
 
   // 热点触发统一出口：走到格上触发 = 点击热点同一处（onHotspot 由调用方路由）
   const fireHotspot = useCallback(
@@ -128,7 +132,7 @@ export function PixelScene({
         return next;
       });
     },
-    [map, hotspots, fireHotspot],
+    [map, hotspots, fireHotspot, onEmptyClick],
   );
 
   // 键盘：方向键 + WASD（桌面指针常态；触屏也有键时不冲突——按下即走）
@@ -189,13 +193,14 @@ export function PixelScene({
 
   // 画布点按：点一格 = 朝那格走一步（曼哈顿主轴；走到热点格即触发）；
   // 拖动 = 平移镜头（位移超阈值判拖，与点按分流——§11 手势分流约束）。
-  // pointerId 记名 + setPointerCapture 拖跟；拖动落定回写 scrollTop/Left（镜头）
+  // pointerId 记名 + setPointerCapture 拖跟；拖动偏移并进 cam（世界层整块
+  // translate），镜头不因拖动回弹——无 god 的场景平移只在本拖动会话内生效。
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
     startY: number;
-    scrollL: number;
-    scrollT: number;
+    baseX: number;
+    baseY: number;
     moved: boolean;
   } | null>(null);
 
@@ -204,8 +209,8 @@ export function PixelScene({
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
-      scrollL: e.currentTarget.scrollLeft,
-      scrollT: e.currentTarget.scrollTop,
+      baseX: cam.x + pan.x,
+      baseY: cam.y + pan.y,
       moved: false,
     };
   };
@@ -216,22 +221,25 @@ export function PixelScene({
     const dy = e.clientY - d.startY;
     if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
     d.moved = true;
-    e.currentTarget.scrollLeft = d.scrollL - dx;
-    e.currentTarget.scrollTop = d.scrollT - dy;
+    setPan({ x: d.baseX - cam.x - dx, y: d.baseY - cam.y - dy });
   };
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = dragRef.current;
     dragRef.current = null;
     if (!d || d.pointerId !== e.pointerId || d.moved) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const tx = Math.floor((e.clientX - rect.left + e.currentTarget.scrollLeft) / TILE_PX);
-    const ty = Math.floor((e.clientY - rect.top + e.currentTarget.scrollTop) / TILE_PX);
+    const camX = cam.x + pan.x;
+    const camY = cam.y + pan.y;
+    const tx = Math.floor((e.clientX - rect.left + camX) / TILE_PX);
+    const ty = Math.floor((e.clientY - rect.top + camY) / TILE_PX);
     // 双通道保留：点在热点上 = 直接触发（键盘时代的 hitTest 点按）
     const h = hitTest(hotspots, tx, ty);
     if (h) {
       fireHotspot(h);
       return;
     }
+    // 点空处（G2.5：选中详情条的「点空收起」通道；走一步的判定照旧）
+    onEmptyClick?.();
     // 点空地 = 朝那格走一步（主轴：水平位移大先横走，否则竖走）
     if (!pos) return;
     const ddx = tx - pos.x;
@@ -245,10 +253,12 @@ export function PixelScene({
   const touch = useMediaQuery('(hover: none), (pointer: coarse)');
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
+    /* G2.5 全屏世界：画布铺满父级主区（相对定位铺满），拆卡片框——世界延展出
+       屏由满屏镜头跟随（cameraOffset 钳制镜头，装得下锁定全图），页面级溢出恒 0。 */
+    <div className="rpg-pixel-scene flex min-h-0 flex-1">
       <div
         ref={viewportRef}
-        className="rpg-pixel-scene relative min-h-52 overflow-auto rounded border border-[var(--w-border)]"
+        className="rpg-pixel-viewport relative min-h-0 flex-1 overflow-hidden"
         onPointerDown={god ? onPointerDown : undefined}
         onPointerMove={god ? onPointerMove : undefined}
         onPointerUp={god ? onPointerUp : undefined}
@@ -256,7 +266,15 @@ export function PixelScene({
           dragRef.current = null;
         }}
       >
-        <div style={{ position: 'relative', width: cols * TILE_PX, height: rows * TILE_PX }}>
+        <div
+          style={{
+            position: 'absolute',
+            left: -(cam.x + pan.x),
+            top: -(cam.y + pan.y),
+            width: cols * TILE_PX,
+            height: rows * TILE_PX,
+          }}
+        >
           {cells}
           {/* 静态摆位角色（席位/NPC 不动——G4 裁决：只有上帝化身可走） */}
           {sprites?.map((s) => (
@@ -295,8 +313,13 @@ export function PixelScene({
           {children}
         </div>
       </div>
+      {/* 控制带（G2.5 移动端新规）：操作按钮不浮在世界画面上——竖屏整条垫在
+          画布下方、横屏整条立在画布右方（orientation 媒体查询 + flex order，
+          纯 CSS 表达，零新依赖）；HUD 三件套照旧 overlay。 */}
       {god && touch && (
-        <Dpad onStep={stepAndTrigger} />
+        <div className="rpg-control-belt">
+          <Dpad onStep={stepAndTrigger} />
+        </div>
       )}
     </div>
   );

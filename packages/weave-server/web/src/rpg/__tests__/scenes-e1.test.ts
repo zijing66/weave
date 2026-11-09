@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RPG_SCENES, sceneOf } from '../scenes';
+import { RPG_SCENES, roomSceneKey, sceneOf } from '../scenes';
 import { BIG_SCREEN_CARDS, cardByKey } from '../bigscreen';
 import { hexagonSum } from '../growth-derive';
 import { runGameStatusOf } from '../status-map';
@@ -42,6 +42,15 @@ describe('E1 场景注册表（E4 收敛后）', () => {
     expect(sceneOf('meeting').kind).toBe('meeting');
     expect(sceneOf('office').kind).toBe('office');
     expect(RPG_SCENES).toHaveLength(6); // G1：+world；G2：+room（进房协同棋盘）
+  });
+
+  it('房间动态键按前缀归一到 room（G2 断链回归守卫：room-<id> 深链不得回落 Home）', () => {
+    expect(sceneOf('room-3').kind).toBe('room');
+    expect(sceneOf(roomSceneKey(17)).kind).toBe('room');
+    // 裸 'room'（注册表键）仍命中；非法前缀变体不吞
+    expect(sceneOf('room').kind).toBe('room');
+    expect(sceneOf('roomroom').key).toBe('home');
+    expect(sceneOf('room-x').key).toBe('home');
   });
 });
 

@@ -28,5 +28,16 @@ export const RPG_SCENES: readonly RpgScene[] = [
 ];
 
 export function sceneOf(key: string | undefined): RpgScene {
+  // 房间键是动态键（`room-<houseId>`，深链直达某间房）——按前缀归一到 room。
+  if (isRoomSceneKey(key)) return RPG_SCENES.find((s) => s.kind === 'room')!;
   return RPG_SCENES.find((s) => s.key === key) ?? RPG_SCENES[0]!;
+}
+
+/** 房间场景键 = `room-<houseId>`（URL 唯一真源：深链可直接进某间房）。 */
+export function roomSceneKey(houseId: number): string {
+  return `room-${houseId}`;
+}
+
+export function isRoomSceneKey(key: string | undefined): boolean {
+  return /^room-\d+$/.test(key ?? '');
 }

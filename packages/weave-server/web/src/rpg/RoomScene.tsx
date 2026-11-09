@@ -6,6 +6,9 @@ import { useRpgData } from './use-rpg-data';
 import { CharacterSprite } from './CharacterSprite';
 import { gameStatusOf } from './status-map';
 import { PixelScene } from './PixelScene';
+import { SpriteHeadBars, headBarsOf, SelectionDetailBar } from './hud';
+import { RoleProgressPanel } from './RoleProgressPanel';
+import { useState } from 'react';
 import { ROOM_GOD_SPOT, ROOM_HOTSPOTS, ROOM_MAP, roomSeatSpot } from './worldmap';
 import { navigate } from '@/lib/route';
 import type { RpgRoleView, SessionRow } from '@/lib/api';
@@ -20,6 +23,7 @@ import type { RpgRoleView, SessionRow } from '@/lib/api';
 export function RoomScene({ houseId }: { houseId: number }) {
   const t = useT();
   const data = useRpgData();
+  const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const house = useQuery({
     queryKey: ['rpg-house', houseId],
     queryFn: () => api.fetchHouse(houseId),
@@ -50,7 +54,16 @@ export function RoomScene({ houseId }: { houseId: number }) {
       x: spot.x,
       y: spot.y,
       node: (
-        <div className="flex flex-col items-center" title={role.name}>
+        <div
+          className="flex cursor-pointer flex-col items-center"
+          title={role.name}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedRoleId((cur) => (cur === role.id ? null : role.id));
+          }}
+        >
+          {/* G2.5 三件套①：头顶状态条（派生不出的格不摆） */}
+          <SpriteHeadBars bars={headBarsOf(role, data, Date.now())} />
           <CharacterSprite archetype={role.archetype} status={gameStatusOf(status)} size={0.5} />
           <span
             className={
@@ -73,6 +86,7 @@ export function RoomScene({ houseId }: { houseId: number }) {
         map={ROOM_MAP}
         hotspots={ROOM_HOTSPOTS}
         onHotspot={onHotspot}
+        onEmptyClick={() => setSelectedRoleId(null)}
         sprites={[
           {
             key: 'coordinator',
@@ -116,7 +130,14 @@ export function RoomScene({ houseId }: { houseId: number }) {
           </span>
         )}
       </PixelScene>
-      {house.data == null && <p className="text-xs text-[var(--w-text-dim)]">…</p>}
+      {house.isPending && <p className="text-xs text-[var(--w-text-dim)]">…</p>}
+      {house.isError && <p className="text-xs text-[var(--w-text-dim)]">{t('rpg.roomNoHouse')}</p>}
+      {/* G2.5 三件套③：底部选中详情条（点席位 sprite 展开） */}
+      {selectedRoleId != null && (
+        <SelectionDetailBar roleId={selectedRoleId} onClose={() => setSelectedRoleId(null)}>
+          <RoleProgressPanel roleId={selectedRoleId} />
+        </SelectionDetailBar>
+      )}
     </div>
   );
 }

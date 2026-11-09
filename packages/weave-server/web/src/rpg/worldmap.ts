@@ -45,6 +45,7 @@ export type HotspotAction =
   | { type: 'scene'; scene: string }
   | { type: 'project'; projectId: number }
   | { type: 'training' }
+  | { type: 'console' }
   | { type: 'toast' };
 
 export interface Hotspot {
@@ -92,6 +93,9 @@ export const HOME_MAP: TileMap = [
 
 export const HOME_HOTSPOTS: readonly Hotspot[] = [
   { id: 'door', x: 9, y: 11, w: 2, h: 1, labelKey: 'rpg.doorExit', action: { type: 'scene', scene: 'world' } },
+  // 长案 = 统一控制台热点（G2.5：管理面 overlay 化后画布上的唯一管理门——
+  // HUD 右上角按钮与这里同开一面）
+  { id: 'console', x: 1, y: 1, w: 18, h: 1, labelKey: 'rpg.consoleTitle', action: { type: 'console' } },
 ];
 
 /** 上帝化身静态摆位（G1 不做行走）：Home 中央地毯上。占 1×2。 */

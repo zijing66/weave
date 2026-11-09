@@ -1851,10 +1851,10 @@ export function SessionMessages({
                   onPointerMove={onRowsMove}
                   onPointerUp={onRowsUp}
                   onPointerCancel={onRowsUp}
-                  className="group -mb-1 flex h-2 w-32 cursor-ns-resize touch-none items-center justify-center max-lg:w-full max-lg:h-4"
+                  className="group -mb-1 flex h-2 w-full cursor-ns-resize touch-none items-center justify-center max-lg:h-4"
                 >
-                  {/* Tooltip 只包住可见指示条：锚点跟随那根线（全宽手柄当锚点会让
-                      tooltip 飞到行中央/远端，与手柄位置脱钩）；side=top 不遮输入框 */}
+                  {/* Tooltip 只包住可见指示条（整宽手柄当锚点会让 tooltip 飞到编辑器
+                      中央之外的位置，锚在指示条上才贴着那根线）；side=top 不遮输入框 */}
                   <Tooltip label={t('tasks.msgResizeInput')} side="top">
                     <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
                   </Tooltip>

@@ -1008,22 +1008,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
               {rpgMode ? (
-                // RPG 游戏视图整屏接管（E4 验收③）：顶栏与左栏已隐藏，唯一退出 =
-                // 回项目视图（当前选中项目；没有选中回落全局任务页）。
+                // RPG 游戏视图整屏接管（E4 验收③ + G2.5 全屏化）：顶栏/左栏/rpg
+                // 头部行全部退场，主区 100% 给满屏世界；返回项目视图收进 HUD
+                // 左上角徽章（RpgView 内部浮层，onBack 回 App 既有的选中项目出口）。
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="flex items-center justify-between px-4 py-2 border-b border-edge/[0.06]">
-                    <h2 className="text-sm font-semibold">{t('rpg.entry')}</h2>
-                    <button
-                      onClick={() =>
-                        selected
-                          ? navigate({ kind: 'project', projectId: selected.id, category: 'tasks', sessionId: null })
-                          : navigate({ kind: 'global', category: 'tasks' })
-                      }
-                      className="rpg-back-btn rounded px-2 py-1 text-xs text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60"
-                    >
-                      {t('rpg.back')}
-                    </button>
-                  </div>
                   <RpgView
                     sceneKey={(() => {
                       const r = parseRoute(path);
@@ -1031,6 +1019,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                     })()}
                     onOpenSession={openSessionInProject}
                     projects={projects}
+                    onBack={() =>
+                      selected
+                        ? navigate({ kind: 'project', projectId: selected.id, category: 'tasks', sessionId: null })
+                        : navigate({ kind: 'global', category: 'tasks' })
+                    }
                   />
                 </div>
               ) : showMain ? (
