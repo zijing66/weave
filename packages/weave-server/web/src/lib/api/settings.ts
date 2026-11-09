@@ -57,6 +57,8 @@ export interface DaemonSettings {
   htmlExport?: HtmlExportSettings;
   /** 桌面宠物窗（开关/选宠/提醒——读时归一化）。 */
   pet?: PetSettings;
+  /** 联邦与 mTCP 发现（默认关——pairing 显式授权；mirror of daemon settings）。 */
+  federation?: { discovery: boolean; enabled: boolean };
 }
 
 /** 一份自定义头（原样注入导出 HTML 的 `</head>` 之前；只在导出文件里生效）。 */

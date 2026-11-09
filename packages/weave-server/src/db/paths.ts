@@ -106,6 +106,11 @@ export function getCertsDir(dir?: string): string {
   return path.join(dataRoots(dir).local, 'certs');
 }
 
+/** per-peer token 落盘目录（`<local>/peer-tokens/`，0600；同 localToken 纪律）。 */
+export function getPeerTokensDir(dir?: string): string {
+  return path.join(dataRoots(dir).local, 'peer-tokens');
+}
+
 /** 开机自启脚本（win32 的 VBS）。 */
 export function getAutoStartScriptPath(dir?: string): string {
   return path.join(dataRoots(dir).local, 'weave-autostart.vbs');

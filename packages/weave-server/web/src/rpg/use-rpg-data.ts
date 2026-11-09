@@ -51,6 +51,7 @@ export function useRpgData() {
     runs: (runs.data?.runs ?? null) as OrchestrationRunRow[] | null,
     statuses: statusBus.statuses,
     questions: statusBus.questions,
+    sessions: statusBus.sessions,
     sessionById,
   };
 }

@@ -322,6 +322,39 @@ CREATE TABLE IF NOT EXISTS rpg_scores (
   basis TEXT,                            -- 派生依据说明（基线/实战）
   at    TEXT NOT NULL
 );
+-- 成就解锁事实（RPG-3 派生落定）：一行 = 一枚成就的首次解锁；派生面重扫
+-- hook_events 统计，这里只记事实（哪枚、依据什么计数、何时解锁），重扫幂等。
+CREATE TABLE IF NOT EXISTS rpg_achievements (
+  role       INTEGER NOT NULL REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,              -- 成就词表键（封闭枚举，见 rpg/progress.ts）
+  stats      TEXT,                       -- 解锁依据摘要（触发口径的计数快照）
+  at         TEXT NOT NULL,
+  PRIMARY KEY (role, key)
+);
+-- XP 快照（RPG-3 派生落定）：一行 = 一次派生重算的总量快照（含分项）；读面
+-- 直接由 hook_events + growth 现算，本表只留历史曲线。
+CREATE TABLE IF NOT EXISTS rpg_xp (
+  role      INTEGER NOT NULL REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  total     INTEGER NOT NULL,
+  breakdown TEXT,                        -- JSON {quest, turns, cultivation}
+  at        TEXT NOT NULL,
+  PRIMARY KEY (role, at)
+);
+
+-- 联邦 peer 注册表（E3，RPG 稿 §六 + D8 预留）：手动 host:port 是基础、mDNS 自动
+-- 发现是增强。per-peer token 不落本表——落 <local>/peer-tokens/（0600，同 localToken
+-- 纪律）；last_seen_at 是心跳事实，online/offline 由 peerLiveness 派生不存列。
+CREATE TABLE IF NOT EXISTS peers (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  host         TEXT NOT NULL,
+  port         INTEGER NOT NULL,
+  fingerprint  TEXT,                     -- 对端证书指纹（TOFU 首见记录）
+  source       TEXT NOT NULL DEFAULT 'manual', -- manual | mdns | pairing
+  last_seen_at TEXT,
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  created_at   TEXT NOT NULL
+);
 `;
 
 /** schema 版本（写进 PRAGMA user_version）：结构有变就递增，迁移前据此备份。 */

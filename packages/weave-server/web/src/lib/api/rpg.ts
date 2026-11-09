@@ -47,6 +47,37 @@ export interface CultivateResultView {
   hexagon: RpgHexagon;
 }
 
+/** RPG-3 成长派生面（/rpg/roles/:id/progress）。 */
+export interface RpgProgressView {
+  xp: {
+    total: number;
+    breakdown: { quest: number; turns: number; cultivation: number; collaboration: number };
+    level: number;
+    nextAt: number;
+    remaining: number;
+    realm: string;
+  };
+  achievements: Array<{ key: string; describe: string; at: string | null; stats: string | null }>;
+  hexagon: {
+    base: RpgHexagon;
+    bonus: Record<string, number>;
+    dims: RpgHexagon;
+    reason: string;
+  };
+}
+
+/** RPG-3 成长榜行（/rpg/board）。 */
+export interface RpgBoardRow {
+  roleId: number;
+  name: string;
+  archetype: string | null;
+  total: number;
+  level: number;
+  realm: string;
+  achievements: number;
+  dims: RpgHexagon | null;
+}
+
 function post<T>(path: string, body: unknown): Promise<T> {
   return apiFetch<T>(path, { method: 'POST', body: JSON.stringify(body) });
 }
@@ -55,6 +86,10 @@ export const rpgApi = {
   listRoles: () => apiFetch<{ roles: RpgRoleView[] }>('/rpg/roles'),
   listGrowth: (roleId: number) => apiFetch<{ growth: RpgGrowthRow[] }>(`/rpg/roles/${roleId}/growth`),
   hexagonOf: (roleId: number) => apiFetch<RpgHexagonView>(`/rpg/roles/${roleId}/hexagon`),
+  /** 成长派生（XP/等级/境界/成就/六维修正；读侧派生 + 解锁事实落库）。 */
+  progressOf: (roleId: number) => apiFetch<{ progress: RpgProgressView }>(`/rpg/roles/${roleId}/progress`),
+  /** 成长榜（XP 降序）。 */
+  growthBoard: () => apiFetch<{ board: RpgBoardRow[] }>('/rpg/board'),
   /** 修炼：给角色装一门 skill（sourceDir = 已落盘的技能源目录）。 */
   cultivate: (roleId: number, skill: string, sourceDir: string) =>
     post<CultivateResultView>(`/rpg/roles/${roleId}/cultivate`, { skill, sourceDir }),

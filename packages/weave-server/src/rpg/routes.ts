@@ -12,6 +12,13 @@ import {
 import { provisionRole, scaffoldCoordinator } from './provisioning.js';
 import { readPlaybookFile, renderPlaybook, type PlaybookBindings } from './playbook.js';
 import { cultivate, currentHexagonOf, expedition, formTeam, transmit } from './verbs.js';
+import {
+  deriveRoleProgress,
+  growthBoardOf,
+  RpgAchievementRepository,
+  RpgXpRepository,
+  type ProgressDeps,
+} from './progress-store.js';
 
 /**
  * RPG 域路由（RPG-1 适配层写侧首批）：建角色 / 角色清单 / 协调者脚手架 / 剧本
@@ -40,6 +47,17 @@ function parseHexagon(raw: unknown): Hexagon | undefined {
     out[dim] = v;
   }
   return out as Hexagon;
+}
+
+/** 派生面 deps（RPG-3）：库连接 + 成长仓储 + 快照仓储（缺省自建，同库连接）。 */
+function progressDepsOf(deps: WeaveServerDeps): ProgressDeps {
+  const roles = deps.rpgRoles!;
+  return {
+    db: roles.db,
+    growth: deps.rpgGrowth ?? new RpgGrowthRepository(roles.db),
+    achievements: deps.rpgAchievements ?? new RpgAchievementRepository(roles.db),
+    xp: deps.rpgXp ?? new RpgXpRepository(roles.db),
+  };
 }
 
 /**
@@ -146,6 +164,27 @@ export async function handleRpgRoutes(
   const growthMatch = pathname.match(/^\/rpg\/roles\/(\d+)\/growth$/);
   if (growthMatch && req.method === 'GET') {
     sendJson(res, 200, { growth: growth.listByRole(Number(growthMatch[1])) });
+    return true;
+  }
+
+  // GET /rpg/roles/:id/progress — XP/等级/境界/成就/六维修正（RPG-3 派生面；
+  // 读侧派生 + 解锁事实落 rpg_achievements / rpg_xp 快照，幂等）
+  const progressMatch = pathname.match(/^\/rpg\/roles\/(\d+)\/progress$/);
+  if (progressMatch && req.method === 'GET') {
+    const role = roles.getById(Number(progressMatch[1]));
+    if (!role) {
+      sendJson(res, 404, { error: 'Role not found' });
+      return true;
+    }
+    sendJson(res, 200, {
+      progress: deriveRoleProgress(progressDepsOf(deps), role),
+    });
+    return true;
+  }
+
+  // GET /rpg/board — 成长榜（XP 降序；派生面同上）
+  if (pathname === '/rpg/board' && req.method === 'GET') {
+    sendJson(res, 200, { board: growthBoardOf(progressDepsOf(deps), roles.list()) });
     return true;
   }
 

@@ -644,3 +644,77 @@
   background-size: 24px 24px;
   background-position: 0 0, 12px 12px;
 }
+
+/* ---- E1 教室/会议室大屏：像素 UI 框按 weaveRPG.md 第五章色值（黑板 = 深木外框
+   2px + 金边 1px + 深绿内容区；会议室大屏 = 深色 4px 外框 + 靛蓝 2px 内框）。
+   粉笔字 = 无模糊的离散纹理；板擦痕 = 离散透明度阶梯；扫描线 = steps 帧移动。 ---- */
+.rpg-blackboard {
+  background: #3d4b3f;
+  border: 2px solid #6b463a;
+  box-shadow: inset 0 0 0 1px #e8b85a;
+}
+.rpg-chalk {
+  color: #f2e6c8;
+  text-shadow: none;
+  opacity: 0.92;
+}
+/* 板擦痕迹：几道低透明度横擦（离散透明度，不渐变）。 */
+.rpg-blackboard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(0deg, transparent 46%, rgba(242, 237, 228, 0.05) 46%, rgba(242, 237, 228, 0.05) 52%, transparent 52%),
+    linear-gradient(0deg, transparent 70%, rgba(242, 237, 228, 0.04) 70%, rgba(242, 237, 228, 0.04) 76%, transparent 76%);
+}
+/* 粉笔尘：1px 白点缓慢上浮，每 4 秒一轮（weaveRPG.md：每 4 秒最多 4 点）。 */
+.rpg-chalk-dust {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  background: #f0f0e8;
+  animation: rpg-chalk-rise 4s steps(8) infinite;
+}
+.rpg-chalk-dust:nth-child(2) { animation-delay: 1s; }
+.rpg-chalk-dust:nth-child(3) { animation-delay: 2s; }
+.rpg-chalk-dust:nth-child(4) { animation-delay: 3s; }
+@keyframes rpg-chalk-rise {
+  0% { transform: translateY(0); opacity: 0; }
+  12% { opacity: 0.8; }
+  100% { transform: translateY(-16px); opacity: 0; }
+}
+/* 会议室大屏像素框：4px 外边框 #171B2B + 2px 内边框 #376FA8，内容区 #29334A。 */
+.rpg-bigscreen {
+  background: #29334a;
+  border: 4px solid #171b2b;
+  box-shadow: inset 0 0 0 2px #376fa8;
+}
+/* 扫描线：屏宽 1px 亮线，每 5 秒滚过一轮（steps 离散，不插值）。 */
+.rpg-scanline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(105, 169, 214, 0.35);
+  animation: rpg-scan 5s steps(10) infinite;
+  pointer-events: none;
+}
+@keyframes rpg-scan {
+  0% { top: 0; }
+  100% { top: 100%; }
+}
+/* 选中项金色角标（2px，非整块高亮——weaveRPG.md 会议室规格）。 */
+.rpg-gold-corner {
+  position: relative;
+}
+.rpg-gold-corner::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-top: 2px solid #e8b85a;
+  border-left: 2px solid #e8b85a;
+}

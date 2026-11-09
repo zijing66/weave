@@ -61,6 +61,7 @@ import { handleNotifyChannelRoutes } from './routes/notify-channels.js';
 import { handleSearchRoutes } from './routes/search.js';
 import { handleProjectFileRoutes } from './routes/project-files.js';
 import { handleRpgRoutes } from '../rpg/routes.js';
+import { handleFederationRoutes } from './federation-routes.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
 import type { ProjectOpener } from './opener.js';
 import type { WorktreeGitExec } from './worktree.js';
@@ -178,6 +179,16 @@ export interface WeaveServerDeps {
   orchestrationEngine?: Pick<OrchestrationEngine, 'start' | 'cancel'>;
   /** 会话扩展点绑定存储；/extensions/bindings 与删会话/归档级联依赖它。 */
   extensionBindings?: import('../repositories/extension-bindings.js').ExtensionBindingRepository;
+  /** 联邦 peer 注册表（E3）；/federation/* 依赖它，缺省 503。 */
+  peers?: import('../repositories/peers.js').PeerRepository;
+  /** per-peer token 落盘目录（<local>/peer-tokens）；缺省 = 不落 token 文件。 */
+  peerTokensDir?: string;
+  /** 本机证书 PEM（pairing 要约带指纹 / TOFU 对齐用）；缺省 = pairing 503。 */
+  ownCertPem?: string;
+  /** 本机可读机器名（pairing 交换回对端）。 */
+  ownHostname?: string;
+  /** 本机证书指纹（SHA-256 hex；pairing 要约回给 web 展示）。 */
+  ownFingerprint?: string;
   /** 会话扩展点执行日志；/extensions/executions 与级联清理依赖它。 */
   extensionExecutions?: import('../repositories/extension-bindings.js').ExtensionExecutionRepository;
   /** 会话扩展点引擎；绑定 CRUD 后 reload 依赖它（缺省 = 绑定变更要重启才生效）。 */
@@ -214,6 +225,10 @@ export interface WeaveServerDeps {
   rpgScores?: import('../rpg/roles.js').RpgScoreRepository;
   /** 六维快照仓储（rpg_hexagram 表）；缺省由路由自建（同库连接）。 */
   rpgHexagram?: import('../rpg/roles.js').RpgHexagramRepository;
+  /** 成就解锁事实（rpg_achievements 表，RPG-3）；缺省由路由自建（同库连接）。 */
+  rpgAchievements?: import('../rpg/progress-store.js').RpgAchievementRepository;
+  /** XP 曲线快照（rpg_xp 表，RPG-3）；缺省由路由自建（同库连接）。 */
+  rpgXp?: import('../rpg/progress-store.js').RpgXpRepository;
   /** 角色仓库根覆盖（settings rpg.rolesRoot 的注入缝；缺省 `<data>/rpg/roles/`）。 */
   rpgRolesRoot?: string;
   /** 仪表盘速率快照（GET /dashboard 一次性读；ingest 侧累加，缺省 = 503）。 */
@@ -409,6 +424,9 @@ async function handleRequest(
   // --- 外发提醒通道 → routes/notify-channels.ts（CRUD + 测试发送）---
   if (await handleNotifyChannelRoutes(req, res, deps, pathname, url)) return;
 
+  // --- 联邦数据面（E3）→ federation-routes.ts（peer 注册表 + pairing + 心跳）---
+  if (await handleFederationRoutes(req, res, deps, pathname)) return;
+
   // --- 全局搜索 → routes/search.ts（Ctrl+K：会话名/聊天记录/项目文件三路聚合）---
   if (await handleSearchRoutes(req, res, deps, pathname, url)) return;
 
@@ -513,6 +531,9 @@ function isPublicRequest(
   // 编排的公开触发端点：token 即凭证（外部 webhook 无法带 dashboard 凭据）。
   // 必须在 GET-only 早退之前——它是 POST。
   if (pathname.startsWith('/webhooks/orchestrate/')) return true;
+  // 联邦的对端通道（pairing 交换 / 心跳）：per-peer token 是自己的门（认证豁免段
+  // 模式同上）；其余 /federation/*（管理面）仍在既有认证门内。
+  if (pathname === '/federation/pair' || pathname === '/federation/heartbeat') return true;
   if (req.method !== 'GET') return false;
   if ((req.headers.accept ?? '').includes('text/html')) return true;
   if (!deps.staticDir) return false;

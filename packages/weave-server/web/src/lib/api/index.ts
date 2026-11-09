@@ -25,6 +25,7 @@ import { petApi } from './pets';
 import { notifyApi } from './notify';
 import { extensionApi } from './extensions';
 import { rpgApi } from './rpg';
+import { federationApi } from './federation';
 import { refreshDashboard, eventsUrl } from './client';
 
 export const api = {
@@ -46,6 +47,7 @@ export const api = {
   ...notifyApi,
   ...extensionApi,
   ...rpgApi,
+  ...federationApi,
   refreshDashboard,
   eventsUrl,
 };
@@ -229,4 +231,7 @@ export type {
   RpgGrowthRow,
   RpgHexagonView,
   CultivateResultView,
+  RpgProgressView,
+  RpgBoardRow,
 } from './rpg';
+export type { PeerRow, DiscoveredPeer, PairingOfferResult } from './federation';

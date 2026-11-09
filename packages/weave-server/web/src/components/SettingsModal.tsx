@@ -65,6 +65,7 @@ import { registerInvalidator } from '@/lib/sse';
 import { sessionLabel } from '@/lib/hook-payload';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { NotifyChannelsSection } from '@/components/NotifyChannelsSection';
+import { FederationSection } from '@/components/FederationSection';
 import { useToast } from '@/components/Toast';
 import {
   ensurePushSubscribed,
@@ -129,6 +130,7 @@ const SECTIONS: Array<{ id: string; key: MessageKey; icon: LucideIcon }> = [
   { id: 'data', key: 'settings.sectionData', icon: Database },
   { id: 'notify', key: 'settings.sectionNotify', icon: Bell },
   { id: 'pet', key: 'settings.sectionPet', icon: Cat },
+  { id: 'federation', key: 'settings.sectionFederation', icon: Globe },
   { id: 'ai', key: 'settings.sectionAi', icon: Sparkles },
   { id: 'export', key: 'settings.sectionExport', icon: FileCode },
 ];
@@ -1300,6 +1302,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </span>
             </div>
           </div>
+          </SettingsSection>
+
+          <SettingsSection id="federation" icon={Globe} title={t('settings.sectionFederation')}>
+            <FederationSection enabled={settings?.federation?.enabled ?? false} discovery={settings?.federation?.discovery ?? false} onChange={(patch) => setSettings((s) => (s === null ? s : { ...s, federation: { ...(s.federation ?? { discovery: false, enabled: false }), ...patch } }))} />
           </SettingsSection>
 
           <SettingsSection id="ai" icon={Sparkles} title={t('settings.sectionAi')}>

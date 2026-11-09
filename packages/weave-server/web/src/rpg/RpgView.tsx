@@ -1,10 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useT } from '@/i18n/I18nProvider';
 import { RPG_SCENES, sceneOf } from './scenes';
 import { useRpgData } from './use-rpg-data';
 import { CharacterSprite } from './CharacterSprite';
 import { gameStatusOf } from './status-map';
 import { GameGraph } from './GameGraph';
+import { ClassroomScene } from './ClassroomScene';
+import { MeetingScene } from './MeetingScene';
+import { RoleProgressPanel } from './RoleProgressPanel';
+import { GrowthBoard } from './GrowthBoard';
 import { BIG_SCREEN_CARDS, type FlowEntryView, type DecisionEntryView } from './bigscreen';
 import { STATUS_BADGE } from '@/components/tasks/session-status';
 import type { SessionRow } from '@/lib/api';
@@ -46,7 +50,11 @@ export function RpgView({
         ))}
       </div>
 
-      {scene.kind === 'placeholder' ? (
+      {scene.kind === 'classroom' ? (
+        <ClassroomScene data={data} onOpenSession={onOpenSession} />
+      ) : scene.kind === 'meeting' ? (
+        <MeetingScene data={data} onOpenSession={onOpenSession} />
+      ) : scene.kind === 'placeholder' ? (
         <div className="rpg-tile flex min-h-0 flex-1 items-center justify-center rounded border border-[var(--w-border)] p-8 text-center text-sm text-[var(--w-text-dim)]">
           {t('rpg.scenePlaceholder')}
         </div>
@@ -57,7 +65,7 @@ export function RpgView({
   );
 }
 
-/** 办公区俯视 MVP：角色卡阵（状态映射动画）+ 任务栏。 */
+/** 办公区俯视 MVP：角色卡阵（状态映射动画）+ 任务栏 + 成长榜 + 角色修行详情。 */
 function OfficeScene({
   data,
   onOpenSession,
@@ -67,6 +75,7 @@ function OfficeScene({
 }) {
   const t = useT();
   const board = useBoard(data);
+  const [detailRoleId, setDetailRoleId] = useState<number | null>(null);
 
   if (data.roles == null) {
     return <div className="p-8 text-sm text-[var(--w-text-dim)]">…</div>;
@@ -95,14 +104,16 @@ function OfficeScene({
               <button
                 key={role.id}
                 type="button"
-                onClick={row ? () => onOpenSession(role.projectId, row.sessionId) : undefined}
+                onClick={() => setDetailRoleId((cur) => (cur === role.id ? null : role.id))}
                 className={
                   'flex w-40 flex-col items-center gap-2 rounded border p-3 ' +
-                  (row
-                    ? 'border-[var(--w-border)] bg-[var(--w-surface-2)] hover:border-[var(--w-accent)]'
-                    : 'border-dashed border-[var(--w-border)] opacity-70')
+                  (detailRoleId === role.id
+                    ? 'border-[var(--w-accent)] bg-[var(--w-surface-3)]'
+                    : row
+                      ? 'border-[var(--w-border)] bg-[var(--w-surface-2)] hover:border-[var(--w-accent)]'
+                      : 'border-dashed border-[var(--w-border)] opacity-70')
                 }
-                title={row ? t('rpg.openConversation') : undefined}
+                title={t('rpg.roleProgress')}
               >
                 <div className={game === 'gone' ? 'opacity-40' : undefined}>
                   <CharacterSprite archetype={role.archetype} status={game} size={3} />
@@ -138,7 +149,25 @@ function OfficeScene({
         )}
       </div>
 
+      {detailRoleId != null && (
+        <div className="rounded border border-[var(--w-border)] bg-[var(--w-surface-1)] p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs uppercase tracking-wide text-[var(--w-text-dim)]">{t('rpg.roleProgress')}</span>
+            <button
+              type="button"
+              onClick={() => setDetailRoleId(null)}
+              className="rounded px-2 py-0.5 text-xs text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)]"
+            >
+              ✕
+            </button>
+          </div>
+          <RoleProgressPanel roleId={detailRoleId} />
+        </div>
+      )}
+
       <GameBoard data={data} onOpenSession={onOpenSession} />
+
+      <GrowthBoard />
     </div>
   );
 }
@@ -170,8 +199,8 @@ function GameBoard({
   const t = useT();
   const flowCard = BIG_SCREEN_CARDS[0]!;
   const decisionCard = BIG_SCREEN_CARDS[1]!;
-  const flow = flowCard.derive({ runs: data.runs, questions: data.questions }) as FlowEntryView[] | null;
-  const decisions = decisionCard.derive({ runs: data.runs, questions: data.questions }) as DecisionEntryView[] | null;
+  const flow = flowCard.derive({ runs: data.runs, questions: data.questions, sessions: data.sessions, rate: null, rateSeries: null }) as FlowEntryView[] | null;
+  const decisions = decisionCard.derive({ runs: data.runs, questions: data.questions, sessions: data.sessions, rate: null, rateSeries: null }) as DecisionEntryView[] | null;
 
   return (
     <>

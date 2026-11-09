@@ -53,6 +53,7 @@
     "@weavecode/core": "workspace:^",
     "@weavecode/harness": "workspace:^",
     "@weavecode/templates": "workspace:^",
+    "bonjour-service": "^1.4.4",
     "chokidar": "^4.0.0",
     "js-yaml": "^4.1.0",
     "nodemailer": "^10.3.1",

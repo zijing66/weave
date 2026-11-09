@@ -1,4 +1,7 @@
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -46,6 +49,7 @@ import {
   RpgRoleRepository,
   RpgScoreRepository,
 } from '../rpg/roles.js';
+import { RpgAchievementRepository, RpgXpRepository } from '../rpg/progress-store.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
 import { createDecisionKernel } from '../hooks/decision-kernel.js';
@@ -82,10 +86,15 @@ import { pruneFileIndexes } from './project-files.js';
 import { pruneInstallTmp } from '../hooks/plugin-installer.js';
 import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
+import { getCertsDir } from '../db/paths.js';
 import { syncLaunchOnLogin } from './auto-start.js';
 import { resolveStaticDir } from './static.js';
 import { openPetWindow, shutdownPetWindow } from './pet-window.js';
 import { seedBuiltinPets } from './pet-seed.js';
+import { PeerRepository } from '../repositories/peers.js';
+import { getPeerTokensDir } from '../db/paths.js';
+import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
+import { certFingerprint } from './federation.js';
 
 // 同 dev-entry：入口剥离 Claude Code child-session 标记与继承来的终端 pane
 // 定位键，防污染派生物（后者留着会让新会话把自己报成活在别人的 pane 里）。
@@ -276,6 +285,8 @@ export function startDaemon(): void {
   const rpgGrowth = new RpgGrowthRepository(db);
   const rpgScores = new RpgScoreRepository(db);
   const rpgHexagram = new RpgHexagramRepository(db);
+  const rpgAchievements = new RpgAchievementRepository(db);
+  const rpgXp = new RpgXpRepository(db);
   // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
   const sessionProbe = new SessionProbe(
     dbTranscriptPathResolver(hookEvents),
@@ -536,6 +547,8 @@ export function startDaemon(): void {
   // fork 池独立实例（同样 4 槽）——与编排的 edgeExtract / classify 互不挤占。
   const extensionBindings = new ExtensionBindingRepository(db);
   const extensionExecutions = new ExtensionExecutionRepository(db);
+  // 联邦 peer 注册表（E3）：本批只做发现/注册表/pairing 数据面；call 转发是 F1 的门。
+  const peers = new PeerRepository(db);
   const extensionKernel = createDecisionKernel({
     fork: {
       supports: (sessionId) => extensionEdgeExtract.supports(sessionId),
@@ -618,6 +631,17 @@ export function startDaemon(): void {
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
+
+  // 本机身份（pairing 要约 / TOFU 对齐）：证书来自 <local>/certs（TLS 监听同源）。
+  const certDir = getCertsDir();
+  let ownCert = '';
+  try {
+    ownCert = readFileSync(path.join(certDir, 'host.crt'), 'utf8');
+  } catch {
+    // 证书未生成（TLS 没开过）：pairing 侧如实 503
+  }
+  let mdnsAdvertiser: MdnsAdvertiser | null = null;
+  const ownFingerprint = ownCert ? certFingerprint(ownCert) : null;
   // shutdown 定义在下方（要等各子系统都建好）：路由经这个容器拿到它
   const shutdownRef: { fn?: () => void } = {};
 
@@ -662,6 +686,11 @@ export function startDaemon(): void {
     extensionBindings,
     extensionExecutions,
     extensionEngine,
+    peers,
+    peerTokensDir: getPeerTokensDir(),
+    ownCertPem: ownCert,
+    ownHostname: os.hostname(),
+    ownFingerprint: ownFingerprint ?? undefined,
     pushSubscriptions,
     pushNotifier,
     notifyChannels,
@@ -669,6 +698,8 @@ export function startDaemon(): void {
     rpgGrowth,
     rpgScores,
     rpgHexagram,
+    rpgAchievements,
+    rpgXp,
     onAttach: dashboardPusher.attach,
     dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,
@@ -683,6 +714,17 @@ export function startDaemon(): void {
   let tls: TlsListener | null = null;
   void startTlsServer({ port: tlsPort, bindHost, handler: requestHandler }).then((r) => {
     tls = r;
+    // mTCP 发现（E3）：联邦/广播开关（settings federation）开着才播；只广播不
+    // 接收执行，安全面不变（对端仍要令牌）。tlsPort 未开 = 无 HTTPS，不播。
+    const fed = readDaemonSettingsSync().federation;
+    if (r && fed?.discovery && tlsPort > 0) {
+      mdnsAdvertiser = startMdnsAdvertiser({
+        tlsPort,
+        httpPort: state.port,
+        certPem: ownCert,
+        hostname: os.hostname(),
+      });
+    }
   });
 
   const shutdown = (): void => {
@@ -698,6 +740,7 @@ export function startDaemon(): void {
     clearInterval(cronTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
+    mdnsAdvertiser?.stop();
     server.close();
     tls?.server.close();
     // 等 inbox worker 真停（terminate 是异步的，worker 的 DB 连接/WAL 锁要

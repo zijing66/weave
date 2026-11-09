@@ -77,6 +77,8 @@ export interface DaemonSettings {
   htmlExport?: HtmlExportSettings;
   /** 桌面宠物窗（开关/选宠/提醒——读时归一化）。 */
   pet?: PetSettings;
+  /** 联邦与 mTCP 发现（默认关——安全红线：pairing 显式授权，读时归一化）。 */
+  federation?: FederationSettings;
 }
 
 export interface HooksSettings {
@@ -199,6 +201,21 @@ export const DEFAULT_PET_SETTINGS: PetSettings = {
   size: 'small',
 };
 
+/**
+ * 联邦与 mTCP 发现（E3）：discovery = 广播本机 MCP 端点到 LAN（只广播不接收执行）；
+ * federation = 跨机联邦面总闸（默认关——pairing 显式授权、联邦默认关闭，D8 红线）。
+ * per-peer token 不在这里（落 <local>/peer-tokens/，0600）。
+ */
+export interface FederationSettings {
+  discovery: boolean;
+  enabled: boolean;
+}
+
+export const DEFAULT_FEDERATION_SETTINGS: FederationSettings = {
+  discovery: false,
+  enabled: false,
+};
+
 /** 尺寸档 → 窗像素（宽×高；精灵单元比例约 12:13，留气泡余量）。 */
 export const PET_SIZE_PRESETS: Record<PetSettings['size'], { width: number; height: number }> = {
   small: { width: 160, height: 192 },
@@ -219,6 +236,7 @@ export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   ai: DEFAULT_AI_SETTINGS,
   htmlExport: DEFAULT_HTML_EXPORT_SETTINGS,
   pet: DEFAULT_PET_SETTINGS,
+  federation: DEFAULT_FEDERATION_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -356,6 +374,17 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const decision = (obj.decision ?? {}) as Partial<DecisionSettings>;
   const htmlExport = normalizeHtmlExport(obj.htmlExport);
   const pet = normalizePet(obj.pet);
+  const federationRaw = (obj.federation ?? {}) as Partial<FederationSettings>;
+  const federation: FederationSettings = {
+    discovery:
+      typeof federationRaw.discovery === 'boolean'
+        ? federationRaw.discovery
+        : DEFAULT_FEDERATION_SETTINGS.discovery,
+    enabled:
+      typeof federationRaw.enabled === 'boolean'
+        ? federationRaw.enabled
+        : DEFAULT_FEDERATION_SETTINGS.enabled,
+  };
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1
       ? (events.retentionDays as number)
@@ -406,6 +435,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
     },
     htmlExport,
     pet,
+    federation,
   };
 }
 
@@ -433,6 +463,8 @@ const KEYS = {
   htmlExport: 'htmlExport',
   /** 整段 JSON：宠物窗配置（开关/选宠/提醒）。 */
   pet: 'pet.config',
+  /** 整段 JSON：联邦与 mTCP 发现（discovery/enabled 两个布尔）。 */
+  federation: 'federation.config',
 } as const;
 
 /** 测试注入（内存库）；null = 未注入。 */
@@ -518,6 +550,9 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(jsonOf(map.get(KEYS.pet)) != null
       ? { pet: jsonOf(map.get(KEYS.pet)) as Partial<PetSettings> }
       : {}),
+    ...(jsonOf(map.get(KEYS.federation)) != null
+      ? { federation: jsonOf(map.get(KEYS.federation)) as Partial<FederationSettings> }
+      : {}),
   });
 }
 
@@ -563,6 +598,10 @@ function toEntries(settings: DaemonSettings): [string, string][] {
       JSON.stringify(settings.htmlExport ?? DEFAULT_HTML_EXPORT_SETTINGS),
     ],
     [KEYS.pet, JSON.stringify(settings.pet ?? DEFAULT_PET_SETTINGS)],
+    [
+      KEYS.federation,
+      JSON.stringify(settings.federation ?? DEFAULT_FEDERATION_SETTINGS),
+    ],
   ];
 }
 

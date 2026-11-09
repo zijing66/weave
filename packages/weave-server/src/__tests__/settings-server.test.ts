@@ -112,6 +112,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       htmlExport: { activeId: null, profiles: [] }, // 导出 HTML 的自定义头（默认没有）
       extensions: { staleMs: 600000 }, // 会话扩展点陈旧窗（归一化补默认 10min）
       pet: { enabled: false, petId: 'weave-spider', notifications: true, size: 'small' }, // 桌面宠物（归一化补默认，默认关+小号）
+      federation: { discovery: false, enabled: false }, // 联邦与发现（归一化补默认，双关——安全红线）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）
     expect(autoStartCalls).toEqual([false]);
