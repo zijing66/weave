@@ -262,27 +262,7 @@ export function SessionMessages({
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const coarse = useMediaQuery('(pointer: coarse)');
-  /** 输入框右边到整行右边的距离（发送组 + 中间的附件条 + 两道 gap）：对话区框的
-      右边以输入框为准，按它让出。窄屏发送组折到下一行，那时这段是 0。 */
   const sendGroupRef = useRef<HTMLDivElement | null>(null);
-  const [composerInset, setComposerInset] = useState(0);
-  useEffect(() => {
-    const el = sendGroupRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const row = el.parentElement;
-    const editor = row?.querySelector('[contenteditable]');
-    if (!row || !editor) return;
-    const sync = () =>
-      setComposerInset(
-        Math.round(row.getBoundingClientRect().right - editor.getBoundingClientRect().right),
-      );
-    const ro = new ResizeObserver(sync);
-    ro.observe(el);
-    ro.observe(row);
-    ro.observe(editor);
-    sync();
-    return () => ro.disconnect();
-  }, []);
   const [inputRows, setInputRows] = useState<number>(() => {
     const v = Number(localStorage.getItem('weave:conv-input-rows'));
     return Number.isFinite(v) && v > 0
@@ -674,8 +654,6 @@ export function SessionMessages({
                 transform: pos.x || pos.y ? `translate(${pos.x}px, ${pos.y}px)` : undefined,
               }
             : {}),
-          // 对话区框右边与输入框右边对齐（见滚动区那圈框），让出的宽度实测
-          ...{ '--conv-inset': `${composerInset}px` },
         }}
         className={cn(
           'relative min-h-0 w-full flex-col overflow-hidden p-3 max-lg:pt-2',
@@ -886,12 +864,12 @@ export function SessionMessages({
           // 嵌入右栏时右栏本身没有卡片壳（见上面的面板类），气泡区就成了「白底上
           // 一片没有边的对话」——给滚动区自己描一圈（用户报「气泡显示区域没有边框」）。
           // 浮窗/全屏那份外层已经有一圈边框，这里不再叠。
-          // 这圈框与输入框同款（圆角/线色/底色），右边也对齐输入框右边：让出发送组
+          // 不再让出发送组那一列（`--conv-inset` 已退役）：发送组只占输入框行右下
+          // 角，整条高度让位只会在对话区右侧留一条空竖条（2026-11-08 用户截图）；
+          // 气泡区用满宽度，右边与控制行（模式/模型）对齐。
           className={cn(
             'relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain',
-            embedded
-              ? 'rounded border border-edge/[0.1] bg-neutral-950 p-2 lg:mr-[var(--conv-inset,0px)]'
-              : 'pr-1',
+            embedded ? 'rounded border border-edge/[0.1] bg-neutral-950 p-2' : 'pr-1',
           )}
           // 渲染块的高度上限按这个容器算（见 lib/visualization 的 CONV_SCROLLER_ATTR）
           {...{ [CONV_SCROLLER_ATTR]: '' }}
@@ -1855,31 +1833,38 @@ export function SessionMessages({
             {/* 顶边拖拽手柄：贴在两行之间，负边距吃掉 gap，免得常显多出一条空隙。
                 触屏同样可用（pointer capture + touch-none；手柄自身不吃滚动，
                 旁边的对话区照常滚）。 */}
-            <div
-              role="separator"
-              aria-label={t('tasks.msgResizeInput')}
-              onPointerDown={onRowsDown}
-              onPointerMove={onRowsMove}
-              onPointerUp={onRowsUp}
-              onPointerCancel={onRowsUp}
-              className="group -mb-1 flex h-2 cursor-ns-resize touch-none items-center justify-center max-lg:h-4"
-            >
-              {/* Tooltip 只包住可见指示条：锚点跟随那根线（全宽手柄当锚点会让
-                  tooltip 飞到行中央/远端，与手柄位置脱钩）；side=top 不遮输入框 */}
-              <Tooltip label={t('tasks.msgResizeInput')} side="top">
-                <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
-              </Tooltip>
-            </div>
             <div className="flex flex-wrap items-end gap-1.5">
               {/* 输入框是 contenteditable 而非 textarea：内联引用胶囊必须是
                   `contenteditable=false` 的原子块（退格整枚删、光标进不去），
                   textarea 里塞不了元素。高度仍按行数算（顶边可拖），换行靠自己
                   插——浏览器 Enter 那套会给出 `<div>`，序列化就不干净了。 */}
               <div className="relative min-w-0 flex-1 max-lg:basis-full">
+                {/* 顶边拖拽手柄贴在**编辑器自己**的顶边：此前挂在输入行顶上，桌面
+                    纵向按钮组（ESC/Ctrl+C/Enter/发送竖排 108px）把整行撑高、编辑器
+                    `items-end` 贴底，手柄与输入框之间隔着 60+px 空白，看着像悬空
+                    的孤立横线（2026-11-07 用户截图实测）。居中指示条只占编辑器
+                    宽度一小段；窄屏加高触控区（负边距吃 gap 不多占行高）。 */}
+                <div
+                  role="separator"
+                  aria-label={t('tasks.msgResizeInput')}
+                  onPointerDown={onRowsDown}
+                  onPointerMove={onRowsMove}
+                  onPointerUp={onRowsUp}
+                  onPointerCancel={onRowsUp}
+                  className="group -mb-1 flex h-2 w-32 cursor-ns-resize touch-none items-center justify-center max-lg:w-full max-lg:h-4"
+                >
+                  {/* Tooltip 只包住可见指示条：锚点跟随那根线（全宽手柄当锚点会让
+                      tooltip 飞到行中央/远端，与手柄位置脱钩）；side=top 不遮输入框 */}
+                  <Tooltip label={t('tasks.msgResizeInput')} side="top">
+                    <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
+                  </Tooltip>
+                </div>
                 {draft === '' && (
                   /* 触发符提示拼在文案尾部，窄屏一行摆不下会被 truncate 整段截掉
-                     ⇒ 移动端放开换行（两行装得进两行的输入框），桌面维持单行截断 */
-                  <span className="pointer-events-none absolute left-2 right-2 top-1.5 truncate text-xs text-neutral-600 max-lg:whitespace-normal max-lg:break-words">
+                     ⇒ 移动端放开换行（两行装得进两行的输入框），桌面维持单行截断。
+                     top 要跨过上面的拖拽手柄（h-2/h-4 减 -mb-1 净占 4px/12px）再落
+                     到编辑器内边距位（py-1.5=6px）：桌面 10px、窄屏 18px。 */
+                  <span className="pointer-events-none absolute left-2 right-2 top-2.5 truncate text-xs text-neutral-600 max-lg:top-[18px] max-lg:whitespace-normal max-lg:break-words">
                     {asking
                       ? t('tasks.msgBlockedByQuestion')
                       : t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}

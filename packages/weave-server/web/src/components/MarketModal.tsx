@@ -546,7 +546,7 @@ export function MarketModal({
                     type="button"
                     onClick={() => void handleCheckUpdates()}
                     disabled={checking}
-                    className="w-full rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40"
+                    className="flex w-full items-center justify-center gap-1.5 rounded bg-neutral-800 px-2 py-1.5 text-xs hover:bg-neutral-700 disabled:opacity-40"
                   >
                     <FeedbackIcon
                       state={fb.stateOf('mkt-check-updates')}
@@ -561,7 +561,7 @@ export function MarketModal({
                     type="button"
                     onClick={() => void handleRefreshAll()}
                     disabled={refreshing || [...marketStatus.values()].filter((s) => s === 'update-available').length === 0}
-                    className="w-full rounded bg-blue-900/40 px-2 py-1.5 text-xs text-blue-300 hover:bg-blue-900/60 disabled:opacity-40"
+                    className="flex w-full items-center justify-center gap-1.5 rounded bg-blue-900/40 px-2 py-1.5 text-xs text-blue-300 hover:bg-blue-900/60 disabled:opacity-40"
                   >
                     <FeedbackIcon
                       state={fb.stateOf('mkt-refresh-all')}

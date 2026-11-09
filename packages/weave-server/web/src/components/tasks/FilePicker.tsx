@@ -43,6 +43,7 @@ import { useBackPop } from '@/lib/back-pop';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useTheme } from '@/lib/theme';
 import {
+  useColumnWidths,
   FileColumnsBrowser,
   FinderColumnList,
   MobileFadePanels,
@@ -76,8 +77,8 @@ import {
 /** 搜索输入的防抖窗：服务端一次模糊匹配 ~10ms，剩下全是省往返。 */
 const SEARCH_DEBOUNCE_MS = 120;
 
-/** Finder 父级列的定宽（px）：与 DirectoryPickerModal 的 COL_WIDTH_DEFAULT 同档。 */
-const FINDER_COL_W = 208;
+/** 三栏拖宽记忆的会话键（与全局文件浏览器分开，两处互不干扰）。 */
+const SPLIT_KEY = 'weave:file-picker-split';
 
 /** 换一条选中之后的防抖窗：箭头连滑过十行不该打十次预览 / 十次子目录。 */
 const SELECT_DEBOUNCE_MS = 150;
@@ -447,6 +448,8 @@ export function FilePicker({
   const t = useT();
   const { show } = useToast();
   const isDesktop = useMediaQuery('(min-width: 1024px)');
+  /** 三栏拖宽（只桌面）：会话级记忆，重开弹窗还在。 */
+  const { leftW, setLeftW, previewW, setPreviewW } = useColumnWidths(SPLIT_KEY);
 
   const [query, setQuery] = useState('');
   const [dir, setDir] = useState(() => {
@@ -479,6 +482,8 @@ export function FilePicker({
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
+  /** 查找大小写敏感开关：默认不敏感（Aa 按钮切）。 */
+  const [matchCase, setMatchCase] = useState(false);
   const [jump, setJump] = useState('');
   const [hits, setHits] = useState<number | null>(null);
 
@@ -767,10 +772,15 @@ export function FilePicker({
     applyLines({ start: Math.min(anchor, n), end: Math.max(anchor, n) });
   };
 
-  /** 全文命中（一次扫描同时供计数与前后跳；预览上限 1MB，够快）。 */
+  /** 全文命中（一次扫描同时供计数与前后跳；预览上限 1MB，够快）。
+   *  默认大小写不敏感，bar 上的 Aa 按钮切敏感。 */
   const matchesOf = (view: EditorView, q: string): { from: number; to: number }[] => {
     const out: { from: number; to: number }[] = [];
-    for (const cur = new SearchCursor(view.state.doc, q, 0); !cur.next().done; ) {
+    for (
+      // 敏感 = 恒等 normalize（不折大小写）；缺省 normalize 自带 toLowerCase（不敏感）
+      const cur = new SearchCursor(view.state.doc, q, 0, undefined, matchCase ? (s) => s : undefined);
+      !cur.next().done;
+    ) {
       out.push({ from: cur.value.from, to: cur.value.to });
     }
     return out;
@@ -930,6 +940,16 @@ export function FilePicker({
     // 搜索框不同：打完词按 ↓ 进列表是主路径，故它下面的方向键照样算导航
     const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (inInput && e.target !== searchRef.current) return;
+    // 预览文本在场上时 Ctrl+F 查找 / Ctrl+G 跳到行：拦下不给浏览器 find 抢键
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if ((k === 'f' || k === 'g') && current?.kind === 'file' && !IMAGE_EXT.test(current.name)) {
+        e.preventDefault();
+        e.stopPropagation();
+        setBar((b) => (k === 'f' ? (b === 'find' ? null : 'find') : b === 'line' ? null : 'line'));
+      }
+      return;
+    }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       // 键盘接管：此后鼠标只是停着不动（悬停）就不许把选中抢回去
@@ -1160,10 +1180,10 @@ export function FilePicker({
                 <TextSearch className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
-            <Tooltip label={t('tasks.fileGoToLine')}>
+            <Tooltip label={t('tasks.fileGoToLineShortcut')}>
               <button
                 type="button"
-                aria-label={t('tasks.fileGoToLine')}
+                aria-label={t('tasks.fileGoToLineShortcut')}
                 onClick={() => setBar(bar === 'line' ? null : 'line')}
                 className={cn(
                   'rounded p-0.5 hover:text-neutral-100',
@@ -1205,6 +1225,24 @@ export function FilePicker({
           />
           {bar === 'find' ? (
             <>
+              {/* 大小写匹配开关：默认不敏感（Aa 亮 = 敏感）；切换即重跑当前词 */}
+              <Tooltip label={t('tasks.fileMatchCase')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.fileMatchCase')}
+                  onClick={() => {
+                    const next = !matchCase;
+                    setMatchCase(next);
+                    if (find) runFind(find);
+                  }}
+                  className={cn(
+                    'shrink-0 rounded px-1 py-0.5 text-10 font-semibold',
+                    matchCase ? 'bg-blue-500/20 text-blue-200' : 'text-neutral-500 hover:text-neutral-200',
+                  )}
+                >
+                  Aa
+                </button>
+              </Tooltip>
               <span className="shrink-0 text-10 tabular-nums text-neutral-500">
                 {hits == null ? '' : hits === 0 ? t('tasks.fileNoMatch') : t('tasks.fileMatchCount', { n: hits })}
               </span>
@@ -1347,7 +1385,7 @@ export function FilePicker({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex h-[70%] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac focus:outline-none max-lg:h-full max-lg:max-w-none max-lg:rounded-none"
+        className="flex h-[82%] w-[92%] max-w-[1600px] flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-900 shadow-mac focus:outline-none max-lg:h-full max-lg:max-w-none max-lg:w-full max-lg:rounded-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头：面包屑 + 搜索 */}
@@ -1443,8 +1481,10 @@ export function FilePicker({
                 parentRootLabel={rootLabel}
                 middleCol={list}
                 previewCol={previewPane}
-                leftW={FINDER_COL_W}
-                onLeftResize={() => {}}
+                leftW={leftW}
+                onLeftResize={(d) => setLeftW(leftW + d)}
+                previewW={previewW}
+                onPreviewResize={(d) => setPreviewW(previewW - d)}
               />
             ) : (
               /* 窄屏：可操作屏 = 列表 / 预览两态轮换（选中文件进预览屏操作），

@@ -26,6 +26,7 @@ export const libraryZh = {
   'picker.quickAlready': '已在快速访问中',
   'picker.quickRemove': '从快速访问中移除',
   'picker.columnHint': '从左侧选择一个位置开始浏览',
+  'picker.up': '返回上级',
 
   // —— CategoryDetail（category.*）——
   'category.tabAllTip': '展示全部工具的资产',
@@ -154,6 +155,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'picker.quickAlready': 'Already in quick access',
   'picker.quickRemove': 'Remove from quick access',
   'picker.columnHint': 'Pick a location on the left to browse',
+  'picker.up': 'Go up one level',
 
   // —— CategoryDetail（category.*）——
   'category.tabAllTip': 'Show assets from every tool',

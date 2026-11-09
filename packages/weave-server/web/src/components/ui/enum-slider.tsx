@@ -115,11 +115,18 @@ export function EnumSlider({
             data-effort-pop
             className="fixed z-[60] w-56 rounded-lg border border-edge/[0.12] bg-neutral-900 p-3 shadow-mac"
             style={{
-              // 右沿对齐按钮右沿（箭头在按钮右端，浮层跟着它走）、右贴视口时夹回 8px；
+              // 右沿对齐按钮右沿（箭头在按钮右端，浮层跟着它走）、两端都夹回视口内
+              //（右贴边夹 8px；控件折到屏幕左侧时右对齐会把左半截推出屏——
+              // 2026-11-08 用户实测——左沿也要钳到 ≥8px）。
               // 下方放得下就向下弹，贴底放不下再向上弹（bottom 钳回视口内）。
               // 锚点矩形是视觉 px，落 style 前经 cssPx 除回 CSS 值（根 zoom 会把
               // fixed 的 CSS 值再乘一次）。
-              right: cssPx(Math.max(8, window.innerWidth - anchor.right)),
+              right: cssPx(
+                Math.min(
+                  Math.max(8, window.innerWidth - anchor.right),
+                  Math.max(8, window.innerWidth - 8 - 232),
+                ),
+              ),
               ...(anchor.bottom + 6 + 140 <= window.innerHeight
                 ? { top: cssPx(anchor.bottom + 6) }
                 : { bottom: cssPx(Math.max(8, window.innerHeight - anchor.top + 6)) }),

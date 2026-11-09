@@ -44,17 +44,30 @@ describe('statuslineFactsFromCache', () => {
     });
   });
 
-  it('同步条目缺席或过期时 git 块只剩 branch', () => {
+  it('同步条目缺席或超陈旧窗时 git 块只剩 branch', () => {
     const { dir, cwd } = cacheDirWith({
       branch: { expires: NOW + 60_000, value: 'main' },
-      sync: { expires: NOW - 1, value: { ahead: '1', behind: '0', sync: '(1↑)' } },
+      sync: { expires: NOW - 25 * 60 * 60_000, value: { ahead: '1', behind: '0', sync: '(1↑)' } },
     });
     expect(statuslineFactsFromCache(dir, cwd, NOW)).toEqual({ git: { branch: 'main' } });
   });
 
-  it('过期条目、失败条目（value null）、没缓存一律不认', () => {
+  it('TTL 过期但陈旧窗内的好值照摆（非活跃仓库的现值）', () => {
     const { dir, cwd } = cacheDirWith({
-      branch: { expires: NOW - 1, value: 'main' },
+      branch: { expires: NOW - 60_000, value: 'main' },
+      git_user: { expires: NOW - 60_000, value: { user: 'yao', email: 'yao@weave.dev' } },
+      changes: { expires: NOW - 60_000, value: { added: 2, deleted: 1, files: 1 } },
+    });
+    expect(statuslineFactsFromCache(dir, cwd, NOW)).toEqual({
+      git: { branch: 'main' },
+      git_user: { user: 'yao', email: 'yao@weave.dev' },
+      changes: { added: '2', deleted: '1', files: '1' },
+    });
+  });
+
+  it('超陈旧窗（25h）、失败条目（value null）、没缓存一律不认', () => {
+    const { dir, cwd } = cacheDirWith({
+      branch: { expires: NOW - 25 * 60 * 60_000, value: 'main' },
       git_user: { expires: NOW + 1_000, value: null },
     });
     expect(statuslineFactsFromCache(dir, cwd, NOW)).toBeNull();

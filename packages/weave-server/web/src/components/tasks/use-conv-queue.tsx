@@ -226,6 +226,23 @@ const send = (): void => {
         // 目标会话判死 → 后端当场落 failed（reason=offline）：行会说清，但发送
         // 这个手势本身也要有回音（「发了没反应」正是用户撞过的坑）。
         if (res.message?.reason === 'offline') show('error', t('tasks.msgOfflineToast'));
+        // 唯一身份落定：本地行的 `local:` id 就地换成服务端 messageId——此后它就是
+        // 那条真实投递行的本地镜像，全量刷新直接按 id 覆盖，不再靠文案/时间窗匹配
+        // （两钟有差时匹配不上，乐观行滞留成第二条「排队中」，2026-11-07 实测）。
+        // `at` 一并对齐服务端钟，后续认领/排序不再夹着两个时源。**只换身份不洗状态**：
+        // 其余字段（status/attachments/…）原样展开保留，「排队中」徽章等本地呈现
+        // 平滑过渡到服务端行（POST 返回时该行必已在 listVisible 的 promptbox ∪
+        // memory 里——层② delivering / 队列 pending / failed 三分支全覆盖），
+        // message.acknowledged 帧的就地标回执也从这拍起按真 id 命中。
+        const serverId = res.message?.id ?? res.messageId;
+        const serverAt = res.message?.at;
+        if (serverId) {
+          setMessages((prev) =>
+            (prev ?? []).map((m) =>
+              m.id === localId ? { ...m, id: serverId, ...(serverAt ? { at: serverAt } : {}) } : m,
+            ),
+          );
+        }
       } catch (e) {
         setMessages((prev) => (prev ?? []).filter((m) => m.id !== localId));
         restore();

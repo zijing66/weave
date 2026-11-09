@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -11,6 +11,7 @@ import {
   ChevronUp,
   Copy,
   Download,
+  AlignLeft,
   Eye,
   FileCode,
   Folder,
@@ -19,7 +20,6 @@ import {
   Maximize,
   Minimize,
   RefreshCw,
-  RemoveFormatting,
   Search,
   TextSearch,
   WrapText,
@@ -53,6 +53,7 @@ import {
   MobileFadePanels,
   useColumnWidths,
 } from '@/components/FileColumnsBrowser';
+import { Resizer } from '@/components/Resizer';
 
 /**
  * 项目文件资源浏览器（只读 modal）：FilePicker 的项目级全量版——同样的三栏
@@ -131,9 +132,9 @@ function cacheSet<T>(cache: Map<string, T>, key: string, value: T, max: number):
 function MarkdownPreview({ text }: { text: string }) {
   const parsed = splitFrontmatter(text);
   return (
-    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4">
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-4">
       {parsed.frontmatter && <FrontmatterCard data={parsed.frontmatter} />}
-      <div className="prose prose-invert prose-sm max-w-none [&_pre]:whitespace-pre-wrap [&_pre]:overflow-x-hidden [&_a]:break-all [&_code]:break-words [&_table]:block [&_table]:overflow-x-auto">
+      <div className="prose prose-invert prose-sm max-w-none [&_pre]:whitespace-pre-wrap [&_pre]:overflow-x-hidden [&_a]:break-all [&_code]:break-words [&_code]:whitespace-pre-wrap [&_table]:block [&_table]:overflow-x-auto">
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{ pre: markdownPre }}>
           {parsed.body}
         </ReactMarkdown>
@@ -189,12 +190,29 @@ export function FileBrowserModal({
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
+  /** 查找大小写敏感开关：默认不敏感（Aa 按钮切）。 */
+  const [matchCase, setMatchCase] = useState(false);
   const [jump, setJump] = useState('');
   const [hits, setHits] = useState<number | null>(null);
   /** 全屏（SessionMessages 先例）：面板类切换，ESC 链里优先于关闭。 */
   const [fullscreen, setFullscreen] = useState(false);
   /** 三栏拖宽（只桌面）：sessionStorage 会话级记忆，重开弹窗还在。 */
   const { leftW, setLeftW, previewW, setPreviewW } = useColumnWidths(SPLIT_KEY);
+  /** 首屏两栏分界：记比例（0.1–0.9，随窗口缩放跟着走），null = 未拖过 = 居中。 */
+  const [homeSplit, setHomeSplit] = useState<number | null>(() => {
+    const v = Number(sessionStorage.getItem(`${SPLIT_KEY}:home`));
+    return Number.isFinite(v) && v >= 0.1 && v <= 0.9 ? v : null;
+  });
+  useEffect(() => {
+    if (homeSplit != null) sessionStorage.setItem(`${SPLIT_KEY}:home`, String(homeSplit));
+  }, [homeSplit]);
+  const homeBodyRef = useRef<HTMLDivElement>(null);
+  /** 拖动：增量换算成比例落库（容器宽实时读，比例不写死像素）。 */
+  const homeSplitDrag = (d: number): void => {
+    const w = homeBodyRef.current?.clientWidth;
+    if (!w) return;
+    setHomeSplit((r) => Math.min(0.9, Math.max(0.1, (r ?? 0.5) + d / w)));
+  };
 
   const searchRef = useRef<HTMLInputElement>(null);
   /** 弹窗自己收焦点：不让按键漏到背后的页面。 */
@@ -232,12 +250,15 @@ export function FileBrowserModal({
   /** 窄屏搜索框展开态：默认收成图标，点开聚焦，清词失焦收回。 */
   const [searchOpen, setSearchOpen] = useState(false);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
-  /** 全项目模式：null = 还没进任何项目（首屏两栏，主区列项目）；非 null = 已进入。
+  /** 全项目模式：null = 还没进任何项目（首屏，主区列项目）；非 null = 已进入。
    *  面包屑点根（goTo('')）只停在该项目根，出项目走返回链的 exitOneLevel。 */
   const [picked, setPicked] = useState<ProjectRow | null>(null);
-  /** 全项目模式真正生效的 projectId/projectName：跟随 picked 漂移。 */
-  const activeProjectId = picked?.id ?? projectId;
-  const activeProjectName = picked?.name ?? projectName;
+  /** 首屏聚焦的项目（未进项目时）：聚焦即在中栏渲染它的根目录列表、右栏预览
+   *  跟随选中行——与进项目后「聚焦渲染、点击进入」同构。 */
+  const [focused, setFocused] = useState<ProjectRow | null>(null);
+  /** 数据面生效的 projectId/projectName：进项目跟 picked，首屏跟 focused。 */
+  const activeProjectId = picked?.id ?? focused?.id ?? projectId;
+  const activeProjectName = picked?.name ?? focused?.name ?? projectName;
   /** 路过每一层的账（层级递进本身）：父级列的数据源，键 = `projectId:path`。
    *  切项目清账——上一个项目的层对下一个项目没有意义。 */
   const visited = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
@@ -299,7 +320,7 @@ export function FileBrowserModal({
   /** 上一波 load 的 (project, dir, q)：同参重复 load 不重置选中（见 load 内）。 */
   const lastLoadKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!picked && projects) return; // 全项目模式第一屏：还没进项目，不打文件请求
+    if (!picked && !focused && projects) return; // 全项目第一屏还没聚焦：无数据面可拉
     const timer = setTimeout(() => {
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -465,7 +486,9 @@ export function FileBrowserModal({
   }, []);
 
   // 原始格式预览的快捷键：Ctrl+F 查找 / Ctrl+G 跳到行（bar 已开则切到另一格）。
-  // 只认文本文件预览在场上（current 是文件且 text 类）——目录/图片里按了没意义。
+  // 文本文件预览在场上就拦（preventDefault 不给浏览器 find/搜索抢键）——markdown
+  // 渲染态 Ctrl+F 顺手切到原始视图并开查找（渲染态没有高亮落点，先回原始才有处找）；
+  // 目录/图片/iframe 里没意义，不拦（浏览器默认照走）。
   const currentRef = useRef(current);
   currentRef.current = current;
   useEffect(() => {
@@ -473,19 +496,20 @@ export function FileBrowserModal({
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const cur = currentRef.current;
       if (!cur || cur.kind !== 'file') return;
-      const kind = previewKindOf(cur.name);
-      if (kind !== 'text') return;
-      if (MARKDOWN_EXT.test(cur.name) && !rawViewRef.current) return;
+      if (previewKindOf(cur.name) !== 'text') return;
       const k = e.key.toLowerCase();
-      if (k === 'f') {
-        e.preventDefault();
-        e.stopPropagation();
-        setBar((b) => (b === 'find' ? null : 'find'));
-      } else if (k === 'g') {
-        e.preventDefault();
-        e.stopPropagation();
-        setBar((b) => (b === 'line' ? null : 'line'));
+      if (k !== 'f' && k !== 'g') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (MARKDOWN_EXT.test(cur.name) && !rawViewRef.current) {
+        // 渲染态：Ctrl+F = 回原始视图并开查找；Ctrl+G 渲染态没有行号可跳，只吞键
+        if (k === 'f') {
+          setRawView(true);
+          setBar('find');
+        }
+        return;
       }
+      setBar((b) => (k === 'f' ? (b === 'find' ? null : 'find') : b === 'line' ? null : 'line'));
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
@@ -616,10 +640,15 @@ export function FileBrowserModal({
     };
   }, [rowMenu]);
 
-  /** 全文命中（一次扫描同时供计数与前后跳；预览上限 1MB，够快）。 */
+  /** 全文命中（一次扫描同时供计数与前后跳；预览上限 1MB，够快）。
+   *  默认大小写不敏感，bar 上的 Aa 按钮切敏感。 */
   const matchesOf = (view: EditorView, q: string): { from: number; to: number }[] => {
     const out: { from: number; to: number }[] = [];
-    for (const cur = new SearchCursor(view.state.doc, q, 0); !cur.next().done; ) {
+    for (
+      // 敏感 = 恒等 normalize（不折大小写）；缺省 normalize 自带 toLowerCase（不敏感）
+      const cur = new SearchCursor(view.state.doc, q, 0, undefined, matchCase ? (s) => s : undefined);
+      !cur.next().done;
+    ) {
       out.push({ from: cur.value.from, to: cur.value.to });
     }
     return out;
@@ -685,7 +714,8 @@ export function FileBrowserModal({
       setViewing(null);
       return;
     }
-    if (!isDesktop) setViewing(entry);
+    // 文件 = 到底态：中栏整个切进预览、右栏摆元信息（窄屏与桌面同构）
+    if (entry.kind === 'file') setViewing(entry);
   };
 
   /** 全项目模式点一条项目：就地切进该项目（从根开始浏览）。
@@ -710,6 +740,20 @@ export function FileBrowserModal({
 
   /** 项目行清单（虚拟根目录层）：键盘导航与渲染共用。 */
   const projectRows: ProjectRow[] = projects ?? [];
+
+  /** 首屏聚焦项目 ↔ 数据面同步：focused 变化即把中栏切到该项目根目录列表
+   *  （聚焦渲染，不进入——三栏态的进入是 pickProject）。dir 归零：上一个
+   *  项目浏览到多深都不带走。 */
+  useEffect(() => {
+    if (picked || !focused) return;
+    userTouched.current = false;
+    focusPath.current = null;
+    setQuery('');
+    setViewing(null);
+    setDir('');
+    firstLoad.current = true;
+    lastLoadKeyRef.current = null;
+  }, [focused, picked]);
 
   /** 方向键/回车的导航。挂 document 捕获阶段：点空白处焦点会落到 `body`，
    *  那时事件目标的祖先链上没有弹窗，容器级监听根本收不到——只有 document 级
@@ -748,10 +792,9 @@ export function FileBrowserModal({
           const step = e.key === 'ArrowDown' ? 1 : -1;
           const at = Math.min(list.length - 1, Math.max(0, projSelected + step));
           setProjSelected(at);
-          // 项目 = 普通目录行：选中即在中栏展开它的文件树（与选中目录立即
-          // 在右列显示内容同构），不用再按一次 Enter。
+          // 聚焦即在中栏渲染它的根目录列表（不进入——进入是 Enter/点击）
           const proj: ProjectRow | undefined = list[at];
-          if (proj && picked !== proj) pickProject(proj);
+          if (proj && focused !== proj) setFocused(proj);
           return;
         }
         if (e.key === 'Enter') {
@@ -761,15 +804,23 @@ export function FileBrowserModal({
           return;
         }
         if (e.key === 'ArrowRight') {
-          // 焦点移进中栏（中栏已随选中在渲染该项目的文件树）
+          // → = 进入聚焦（选中）的项目：与点击同一条路，切进三栏文件树态
           e.preventDefault();
-          const hit = entries[selected];
-          if (hit) userTouched.current = true;
+          const hit = projectRows[projSelected];
+          if (hit) pickProject(hit);
+          return;
+        }
+        if (e.key === 'ArrowLeft') {
+          // 首屏没有更上一层：只吞键，不给任何反应
+          e.preventDefault();
           return;
         }
       }
     } else {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        // 「到底」态中栏是文件预览：↑↓ 归预览（滚动/移动光标），不切文件
+        if (viewingRef.current) return;
+        e.preventDefault();
         e.preventDefault();
         // 键盘接管：此后鼠标只是停着不动（悬停）就不许把选中抢回去
         kbdNav.current = true;
@@ -780,6 +831,11 @@ export function FileBrowserModal({
       }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
+        // 「到底」态：← 先退回目录列表（与头部返回键同链），再 ← 才是 goUp
+        if (viewingRef.current) {
+          setViewing(null);
+          return;
+        }
         goUp();
         return;
       }
@@ -792,7 +848,8 @@ export function FileBrowserModal({
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         const hit = entries[selected];
-        if (hit?.kind === 'dir') enter(hit);
+        // 目录 = 下钻；文件 = 到底态（与 Enter/双击同一条路：预览进中栏、右栏元信息）
+        if (hit) enter(hit);
         return;
       }
     }
@@ -818,6 +875,11 @@ export function FileBrowserModal({
     dialogRef.current?.focus();
   }, []);
 
+  // 首屏默认聚焦第一个项目（projects 一到就补账）：中栏从第一拍起就有内容可看
+  useEffect(() => {
+    if (!picked && !focused && projectRows.length > 0) setFocused(projectRows[0]!);
+  }, [picked, focused, projectRows]);
+
   const crumb = dir ? dir.split('/') : [];
   /** 搜索是当前目录子树的（带 q 时 `dir` 照传）：行与预览头都按这个口径换展示。 */
   const searching = query.trim() !== '';
@@ -827,7 +889,7 @@ export function FileBrowserModal({
     ? root
       ? joinAbsPath(root, dir, false)
       : activeProjectName
-    : (projectRows[projSelected]?.path ?? activeProjectName);
+    : (focused?.path ?? activeProjectName);
 
   /** 全项目模式第一屏（左栏 = 项目列表 = 虚拟根目录层）。搜索框走全局检索
    *  的文件路（`/search`，跨项目窥视就绪索引，冷项目跳过）——命中行带项目名，
@@ -955,11 +1017,11 @@ export function FileBrowserModal({
                   role="option"
                   aria-selected={i === projSelected}
                   onMouseEnter={() => {
-                    if (kbdNav.current) return;
+                    // 悬停 = 只聚焦（中栏渲染该项目根列表、右栏预览跟随），不进入；
+                    // 进入（切三栏文件树态）只有点击。窄屏不悬停——tap 扫过行会抢屏。
+                    if (!isDesktop || kbdNav.current) return;
                     setProjSelected(i);
-                    // 项目 = 普通目录行：悬停即在中栏展开（同构选中目录的预览跟随）。
-                    // 窄屏不悬停展开——tap 切栏那一拍指针扫过行会把活动屏抢回去
-                    if (isDesktop && picked !== p) pickProject(p);
+                    setFocused(p);
                   }}
                   onClick={() => {
                     // 长按刚开的菜单：这一击是抬手补的，不当点选
@@ -969,6 +1031,7 @@ export function FileBrowserModal({
                     }
                     userTouched.current = true;
                     setProjSelected(i);
+                    setFocused(p);
                     pickProject(p);
                   }}
                   onPointerDown={onProjPointerDown(p)}
@@ -1052,7 +1115,9 @@ export function FileBrowserModal({
                 }
                 userTouched.current = true;
                 setSelected(i);
-                if (!isDesktop) enter(entry);
+                // 单击 = 选中聚焦；文件行单击即到底态（中栏切预览、右栏元信息，
+                // 窄屏与桌面同构）；目录行单击只聚焦（预览栏渲染子目录），双击/→ 才进入
+                if (entry.kind === 'file' || !isDesktop) enter(entry);
               }}
               onPointerDown={onRowPointerDown(entry)}
               onPointerMove={onRowPointerMove}
@@ -1118,12 +1183,13 @@ export function FileBrowserModal({
   const previewPane = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-edge/[0.06] px-2 py-1">
-        {/* 文件路径行：超长不截断，给横向滚动（细滚条）——用户要完整看着路径走 */}
+        {/* 文件路径行：超长不截断，给横向滚动（细滚条）——用户要完整看着路径走。
+            首屏右栏摆的是聚焦项目根子目录，这里跟着显示项目根（不跟随中栏选中下探）。 */}
         <span
           className="scrollbar-thin min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-11 text-neutral-300"
-          title={current ? joinAbsPath(root, current.path) : root || undefined}
+          title={!picked && focused ? focused.path : current ? joinAbsPath(root, current.path) : root || undefined}
         >
-          {current ? joinAbsPath(root, current.path, false) : ''}
+          {!picked && focused ? focused.path : current ? joinAbsPath(root, current.path, false) : ''}
         </span>
         {current?.kind === 'file' && previewKindOf(current.name) === 'text' && preview?.text != null && (
           <>
@@ -1159,7 +1225,7 @@ export function FileBrowserModal({
                       wrapText ? 'text-blue-300' : 'text-neutral-400',
                     )}
                   >
-                    {wrapText ? <WrapText className="h-3.5 w-3.5" /> : <RemoveFormatting className="h-3.5 w-3.5" />}
+                    {wrapText ? <WrapText className="h-3.5 w-3.5" /> : <AlignLeft className="h-3.5 w-3.5" />}
                   </button>
                 </Tooltip>
                 <Tooltip label={t('tasks.fileFind')}>
@@ -1222,6 +1288,24 @@ export function FileBrowserModal({
           />
           {bar === 'find' ? (
             <>
+              {/* 大小写匹配开关：默认不敏感（Aa 亮 = 敏感）；切换即重跑当前词 */}
+              <Tooltip label={t('tasks.fileMatchCase')}>
+                <button
+                  type="button"
+                  aria-label={t('tasks.fileMatchCase')}
+                  onClick={() => {
+                    const next = !matchCase;
+                    setMatchCase(next);
+                    if (find) runFind(find);
+                  }}
+                  className={cn(
+                    'shrink-0 rounded px-1 py-0.5 text-10 font-semibold',
+                    matchCase ? 'bg-blue-500/20 text-blue-200' : 'text-neutral-500 hover:text-neutral-200',
+                  )}
+                >
+                  Aa
+                </button>
+              </Tooltip>
               <span className="shrink-0 text-10 tabular-nums text-neutral-500">
                 {hits == null ? '' : hits === 0 ? t('tasks.fileNoMatch') : t('tasks.fileMatchCount', { n: hits })}
               </span>
@@ -1267,7 +1351,34 @@ export function FileBrowserModal({
           </Tooltip>
         </div>
       )}
-      {current?.kind === 'dir' ? (
+      {!picked && focused ? (
+        // 首屏两栏右栏：恒摆聚焦项目的根子目录清单（不下探选中项——核心可操作
+        // 区域只有中栏即项目列表，右栏是「这个项目里有什么」的一览）。位置在
+        // 目录/文件分支之前：首屏 entries[selected] 也有值，不许被下探渲染抢走。
+        <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+          {loading && entries.length === 0 ? (
+            <li className="flex items-center gap-2 px-2.5 py-3 text-11 text-neutral-500">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('tasks.fileLoading')}
+            </li>
+          ) : entries.length === 0 ? (
+            <li className="px-2.5 py-3 text-11 text-neutral-600">{t('common.empty')}</li>
+          ) : (
+            entries.map((child) => (
+              <li
+                key={child.path}
+                className="flex items-center gap-2 px-2.5 py-0.5 text-11 text-neutral-400"
+              >
+                {iconFor(child)}
+                <span className="min-w-0 flex-1 truncate font-mono">
+                  {child.kind === 'dir' ? `${child.name}/` : child.name}
+                </span>
+                {child.head && <HeadBadge head={child.head} />}
+              </li>
+            ))
+          )}
+        </ul>
+      ) : current?.kind === 'dir' ? (
         // 第三栏选中目录时列它的直接子项：**只读**，进入仍归第二栏（双击 / →），
         // 两栏都能下钻会打架。列不下就明说还有多少（不假装列全了）。
         <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
@@ -1357,13 +1468,12 @@ export function FileBrowserModal({
     </div>
   );
 
-  /** 窄屏「到底」态的右窄条：文件元信息（大小 / 修改时间）——正文已满宽在中栏，
-   *  窄条给点有内容的账，没有就空白。 */
-  const mobileMetaPane = viewing ? (
+  /** 文件元信息清单（大小 / 修改时间）：到底态右栏与三栏「选中文件」右栏共用。 */
+  const metaList = (e: ProjectFileEntry): ReactNode => (
     <ul className="min-h-0 flex-1 overflow-y-auto py-1">
       {[
-        viewing.size != null ? sizeText(viewing.size) : null,
-        viewing.mtime ? new Date(viewing.mtime).toLocaleString() : null,
+        e.size != null ? sizeText(e.size) : null,
+        e.mtime ? new Date(e.mtime).toLocaleString() : null,
       ]
         .filter(Boolean)
         .map((line) => (
@@ -1372,9 +1482,10 @@ export function FileBrowserModal({
           </li>
         ))}
     </ul>
-  ) : (
-    <div className="min-h-0 flex-1" />
   );
+
+  /** 窄屏「到底」态的右窄条：文件元信息——正文已满宽在中栏。 */
+  const mobileMetaPane = viewing ? metaList(viewing) : <div className="min-h-0 flex-1" />;
 
   return createPortal(
     <div
@@ -1395,7 +1506,7 @@ export function FileBrowserModal({
           'relative min-h-0 w-full flex-col overflow-hidden bg-neutral-900 focus:outline-none',
           fullscreen
             ? 'fixed inset-0 z-[55] flex rounded-none border-0 shadow-none'
-            : 'flex h-[70%] max-w-4xl rounded-xl border border-edge/[0.08] shadow-mac max-lg:h-full max-lg:max-w-none max-lg:rounded-none',
+            : 'flex h-[82%] w-[92%] max-w-[1600px] rounded-xl border border-edge/[0.08] shadow-mac max-lg:h-full max-lg:w-full max-lg:max-w-none max-lg:rounded-none',
         )}
         onClick={(e) => e.stopPropagation()}
       >
@@ -1408,6 +1519,7 @@ export function FileBrowserModal({
               type="button"
               aria-label={t('tasks.fileUp')}
               disabled={crumb.length === 0 && !picked}
+              hidden={!picked}
               onClick={() => {
                 // 窄屏「到底」态：先退回目录列表（多退一级的修复——返回键也要
                 // 走 backPop 同一条链：到底 → 列表 → 上一级）
@@ -1538,19 +1650,17 @@ export function FileBrowserModal({
           </Tooltip>
         </div>
 
-        {/* 体：父目录 | 当前目录 | 预览。窄屏一屏一栏（列表 ⇄ 预览）。
-            键盘处理只挂在列表这一侧——预览里是编辑器，方向键归它。
-            全项目模式第一屏三栏照摆：中栏 = 项目列表，左/预览栏空占位——
-            键盘操作（↑↓/Enter）从第一拍起就是主路径。 */}
+        {/* 体：父目录 | 当前目录 | 预览。桌面进项目后三栏（父目录 | 当前 | 预览），
+            首屏两栏（项目列表 = 主展示区 + 右栏聚焦项目元信息）；窄屏一屏一栏，
+            左右窄条提示层渐入渐出——两套布局同一套状态机（聚焦渲染、点击进入）。 */}
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
-            {/* 左栏语义：未进项目 = 项目列表（虚拟根）；进了项目 = 该项目的上级目录。
-                窄屏与桌面共用同一份 parentCol，层级表达一致。 */}
-            {isDesktop ? (
-              // 桌面恒 3 栏：未点项目时中栏摆提示，点了项目中栏切进该项目的文件树。
+            {isDesktop && picked ? (
+              // 桌面进项目后恒 3 栏。左栏语义与窄屏同一份：项目根（无父列）=
+              // 项目列表（可点切换项目），深处 = 父目录列——不摆「浏览文件」占位。
               <FileColumnsBrowser
                 parentCol={
-                  picked && finderCols.length > 0 ? (
+                  finderCols.length > 0 ? (
                     <FinderColumnList
                       entries={finderCols[0]!.entries}
                       loading={finderCols[0]!.loading}
@@ -1565,21 +1675,29 @@ export function FileBrowserModal({
                   )
                 }
                 parentRootLabel={t('app.openFileBrowser')}
-                middleCol={
-                  picked ? (
-                    list
-                  ) : (
-                    <div className="flex flex-1 items-center justify-center text-11 text-neutral-600">
-                      {t('tasks.filePreviewEmpty')}
-                    </div>
-                  )
-                }
-                previewCol={previewPane}
+                middleCol={viewing ? previewPane : list}
+                previewCol={viewing ? mobileMetaPane : previewPane}
                 leftW={leftW}
                 onLeftResize={(d) => setLeftW(leftW + d)}
                 previewW={current ? previewW : undefined}
                 onPreviewResize={(d) => setPreviewW(previewW - d)}
+                dimSides
               />
+            ) : isDesktop ? (
+              /* 桌面首屏两栏：项目列表 = 主展示区 + 右栏 = 聚焦项目根子目录
+                 （只读预览，聚焦渲染不进入）。分界可拖，默认居中。 */
+              <div ref={homeBodyRef} className="flex min-h-0 min-w-0 flex-1">
+                <div
+                  className="flex min-h-0 min-w-0 flex-col"
+                  style={{ width: `${(homeSplit ?? 0.5) * 100}%` }}
+                >
+                  {projectList}
+                </div>
+                <Resizer onResize={homeSplitDrag} title={t('app.resizeLeft')} />
+                <div className="pointer-events-none flex min-h-0 min-w-0 flex-1 flex-col border-l border-edge/[0.18] opacity-40">
+                  {previewPane}
+                </div>
+              </div>
             ) : (
               /* 窄屏（状态机）：level = picked 有无。可操作栏恒为中栏。
                  root 首屏 = 两栏，主展示区就是项目列表（中栏位）；

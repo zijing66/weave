@@ -133,6 +133,7 @@ export function FileColumnsBrowser({
   previewW,
   onPreviewResize,
   showPreview = true,
+  dimSides = false,
 }: {
   /** 父级列内容；null = 根态空占位（摆一行 `parentRootLabel`）。 */
   parentCol: ReactNode | null;
@@ -148,12 +149,18 @@ export function FileColumnsBrowser({
   onPreviewResize?: (delta: number) => void;
   /** false = 右列摆空占位（无预览内容可摆的第一屏）。 */
   showPreview?: boolean;
+  /** true = 三栏态左右栏压暗不可点（可操作栏只有中栏；与窄屏提示层同一语义）。 */
+  dimSides?: boolean;
 }) {
   const t = useT();
+  const dim = 'pointer-events-none opacity-40';
   return (
     <>
       <div
-        className="flex h-full min-w-0 shrink-0 flex-col border-r border-edge/[0.18]"
+        className={cn(
+          'flex h-full min-w-0 shrink-0 flex-col border-r border-edge/[0.18]',
+          dimSides && dim,
+        )}
         style={{ width: leftW }}
       >
         {parentCol ?? <RootPlaceholderCol label={parentRootLabel} />}
@@ -161,12 +168,22 @@ export function FileColumnsBrowser({
       <Resizer onResize={onLeftResize} title={t('app.resizeLeft')} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">{middleCol}</div>
       {previewW === undefined ? (
-        <div className="flex w-2/5 shrink-0 flex-col border-l border-edge/[0.18]">{previewCol}</div>
+        <div
+          className={cn(
+            'flex w-2/5 shrink-0 flex-col border-l border-edge/[0.18]',
+            dimSides && dim,
+          )}
+        >
+          {previewCol}
+        </div>
       ) : (
         <>
           <Resizer onResize={onPreviewResize ?? (() => {})} title={t('app.resizePreview')} />
           <div
-            className="flex min-h-0 shrink-0 flex-col border-l border-edge/[0.18]"
+            className={cn(
+              'flex min-h-0 shrink-0 flex-col border-l border-edge/[0.18]',
+              dimSides && dim,
+            )}
             style={{ width: previewW }}
           >
             {showPreview ? previewCol : <RootPlaceholderCol label="" />}

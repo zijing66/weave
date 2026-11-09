@@ -1677,32 +1677,49 @@ describe('isRewindCommand（`/rewind` 拦截）', () => {
 });
 
 describe('withLocalOptimistic（全量刷新保住还没落定的乐观行）', () => {
+  // 夹具时刻在 2023-11，对 Date.now() 全部超龄 ⇒ TTL 判定注入同一个基准「现在」。
+  const now = 1_700_000_000_000 + 10.5 * 60_000;
   const local = (over: Partial<SessionMessageRow> = {}): SessionMessageRow =>
     delivery({ id: 'local:1', text: 'hi', at: at(10), status: 'pending', ...over });
+  const run = (prev: readonly SessionMessageRow[], rows: readonly SessionMessageRow[]): SessionMessageRow[] =>
+    withLocalOptimistic(prev, rows, 's1', now);
 
   it('① 服务端还没有这条（拉起会话期间）→ 乐观行原样留在末尾', () => {
     const rows = [delivery({ id: 'm0', text: '旧消息', at: at(1), status: 'delivered' })];
-    expect(withLocalOptimistic([local()], rows, 's1').map((m) => m.id)).toEqual(['m0', 'local:1']);
+    expect(run([local()], rows).map((m) => m.id)).toEqual(['m0', 'local:1']);
   });
 
   it('② 服务端出现同文案、不早于它的行 → 乐观行让位（不会重复一条）', () => {
     const rows = [delivery({ id: 'm1', text: 'hi', at: at(10), status: 'delivering' })];
-    expect(withLocalOptimistic([local()], rows, 's1').map((m) => m.id)).toEqual(['m1']);
+    expect(run([local()], rows).map((m) => m.id)).toEqual(['m1']);
   });
 
   it('③ 同文案连发：服务端只回来一条时只接走一条乐观行', () => {
     const prev = [local(), local({ id: 'local:2', at: at(11) })];
     const rows = [delivery({ id: 'm1', text: 'hi', at: at(10), status: 'delivered' })];
-    expect(withLocalOptimistic(prev, rows, 's1').map((m) => m.id)).toEqual(['m1', 'local:2']);
+    expect(run(prev, rows).map((m) => m.id)).toEqual(['m1', 'local:2']);
   });
 
-  it('④ 同文案但服务端那条比它早（历史消息）→ 不让位', () => {
+  it('④ 同文案即让位（POST 在飞的兜底窗口只有 1–2s，误接历史行的代价是行短暂消失，比恒久双行小）', () => {
     const rows = [delivery({ id: 'm-old', text: 'hi', at: at(5), status: 'delivered' })];
-    expect(withLocalOptimistic([local()], rows, 's1').map((m) => m.id)).toEqual(['m-old', 'local:1']);
+    expect(run([local()], rows).map((m) => m.id)).toEqual(['m-old']);
+  });
+
+  it('④′ 服务端行的时刻早于乐观行（两钟有差）→ 照样让位（不比时刻）', () => {
+    // 浏览器钟快 1s：点击时记 at=10，服务端建行落在 at=9.5——旧判据 r.at>=m.at 永不成立，
+    // 乐观行（「排队中」）与服务端行并排挂着 = 「发一条多出一条排队中」。
+    const rows = [delivery({ id: 'm1', text: 'hi', at: at(9.5), status: 'delivering' })];
+    expect(run([local()], rows).map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('④″ 超过 60s 还没被服务端接住的乐观行自清（僵尸「排队中」不常驻）', () => {
+    const stale = local({ at: new Date(Date.parse(at(10)) - 61_000).toISOString() });
+    const rows = [delivery({ id: 'm0', text: '旧消息', at: at(1), status: 'delivered' })];
+    expect(run([stale], rows).map((m) => m.id)).toEqual(['m0']);
   });
 
   it('⑤ 别的会话的乐观行不保留', () => {
-    expect(withLocalOptimistic([{ ...local(), sessionId: 's2' }], [], 's1')).toEqual([]);
+    expect(withLocalOptimistic([{ ...local(), sessionId: 's2' }], [], 's1', now)).toEqual([]);
   });
 });
 

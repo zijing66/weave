@@ -553,31 +553,45 @@ function supersededCommand(
 }
 
 /** 还没落定的本地乐观行（发送那一拍插的；服务端可见列表里可能还没有它）。 */
-function isLocalOptimistic(m: SessionMessageRow, sessionId: string): boolean {
-  return (
-    m.sessionId === sessionId &&
-    m.id.startsWith('local:') &&
-    (m.status === 'pending' || m.status === 'opening')
-  );
+/** 乐观行的最长驻留：超过它服务端还没接住（POST 丢了 / 行没建起来），就地清掉
+ *  ——挂着一条永远「排队中」的僵尸比短暂消失更误导（2026-11-07 实测）。 */
+const LOCAL_OPTIMISTIC_TTL_MS = 60_000;
+
+function isLocalOptimistic(
+  m: SessionMessageRow,
+  sessionId: string,
+  now: number,
+): boolean {
+  if (!(m.sessionId === sessionId && m.id.startsWith('local:'))) return false;
+  if (m.status !== 'pending' && m.status !== 'opening') return false;
+  // 超龄自清：浏览器时钟与 daemon 时钟无关紧要——期限从「行的出生时刻」起算，
+  // 出生那一刻时钟差已经定死，60s 内时钟漂不出一个可感知的量。
+  const age = now - Date.parse(m.at);
+  return Number.isFinite(age) && age < LOCAL_OPTIMISTIC_TTL_MS;
 }
 
 /**
  * 全量刷新时保住还没落定的乐观行：拉起会话最长 15s 才真正投递，这期间服务端
  * 的可见列表里根本没有这条消息——整包替换会把刚发出去的气泡吞掉，等真正入队
- * 才又冒出来。服务端出现同文案、时刻不早于它的行即让位（此后照常由
- * ackedEventId/同文案认领接上气泡）；同文案连发按「一条服务端行只接一条乐观行」
- * 配对，不会把后一条提前顶掉。
+ * 才又冒出来。服务端出现同文案的行即让位（此后照常由 ackedEventId/同文案认领
+ * 接上气泡）；同文案连发按「一条服务端行只接一条乐观行」配对，不会把后一条提前
+ * 顶掉。**不比时刻**：`m.at` 是浏览器钟、`r.at` 是 daemon 钟，两钟有差时
+ * `r.at >= m.at` 永不成立 → 乐观行（「排队中」）与服务端行并排挂着，正是
+ * 「发一条多出一条排队中」的来历。文案相同 + 服务端行在列表里 = 就是那条，
+ * 让位不会错——比它早的同文案行（历史消息）只会出现在有 older 会话的列表里，
+ * 而乐观行出生时列表里不可能有「未来的历史」。
  */
 export function withLocalOptimistic(
   prev: readonly SessionMessageRow[] | null,
   rows: readonly SessionMessageRow[],
   sessionId: string,
+  now: number = Date.now(),
 ): SessionMessageRow[] {
-  const local = (prev ?? []).filter((m) => isLocalOptimistic(m, sessionId));
+  const local = (prev ?? []).filter((m) => isLocalOptimistic(m, sessionId, now));
   if (local.length === 0) return [...rows];
   const claimed = new Set<string>();
   const kept = local.filter((m) => {
-    const hit = rows.find((r) => !claimed.has(r.id) && r.text === m.text && r.at >= m.at);
+    const hit = rows.find((r) => !claimed.has(r.id) && r.text === m.text);
     if (hit) {
       claimed.add(hit.id);
       return false;

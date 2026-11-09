@@ -8,6 +8,9 @@
  * production — 前台运行，首启的初始密码直接打在屏幕上。
  */
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -84,6 +87,17 @@ import { pruneFileIndexes } from './project-files.js';
 import { pruneInstallTmp } from '../hooks/plugin-installer.js';
 import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
+import {
+  RpgRoleRepository,
+  RpgGrowthRepository,
+  RpgScoreRepository,
+  RpgHexagramRepository,
+} from '../rpg/roles.js';
+import { RpgAchievementRepository, RpgXpRepository } from '../rpg/progress-store.js';
+import { PeerRepository } from '../repositories/peers.js';
+import { getPeerTokensDir, getCertsDir } from '../db/paths.js';
+import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
+import { certFingerprint } from './federation.js';
 import { openPetWindow, shutdownPetWindow } from './pet-window.js';
 import { seedBuiltinPets } from './pet-seed.js';
 import { resolveStaticDir } from './static.js';
@@ -255,6 +269,16 @@ async function main(): Promise<void> {
   // 跨会话编排（与 start.ts 同装配）：定义 + 运行日志 + 引擎。
   const orchestrations = new OrchestrationRepository(db);
   const orchestrationRuns = new OrchestrationRunRepository(db);
+  // RPG 域（RPG-1：与 start.ts 同装配）：角色/成长两行挂上即「已装」——dev 入口
+  // 此前漏挂 → /rpg/* 在 dev 下恒 503（游戏视图停在「…」）。
+  const rpgRoles = new RpgRoleRepository(db);
+  const rpgGrowth = new RpgGrowthRepository(db);
+  const rpgScores = new RpgScoreRepository(db);
+  const rpgHexagram = new RpgHexagramRepository(db);
+  const rpgAchievements = new RpgAchievementRepository(db);
+  const rpgXp = new RpgXpRepository(db);
+  // 联邦 peer 注册表（E3）：与 start.ts 同装配；call 转发是 F1 的门。
+  const peers = new PeerRepository(db);
   // 会话转录探测（中断态）：与生产入口同一装配——见 start.ts 的说明。
   const sessionProbe = new SessionProbe(
     dbTranscriptPathResolver(hookEvents),
@@ -414,6 +438,16 @@ async function main(): Promise<void> {
     dataBus,
     hookBus,
   );
+  // 本机身份（pairing 要约 / TOFU 对齐）：与 start.ts 同装配，证书来自 <local>/certs。
+  const certDir = getCertsDir();
+  let ownCert = '';
+  try {
+    ownCert = readFileSync(path.join(certDir, 'host.crt'), 'utf8');
+  } catch {
+    // 证书未生成（TLS 没开过）：pairing 侧如实 503
+  }
+  let mdnsAdvertiser: MdnsAdvertiser | null = null;
+  const ownFingerprint = ownCert ? certFingerprint(ownCert) : null;
   // 编排边级提取（fork 无头回合）：与 start.ts 同装配，pipeline 引用占位后赋值。
   let hookPipelineRef: ReturnType<typeof wireHookFilePipeline> | null = null;
   const edgeExtract = createEdgeExtract({
@@ -616,9 +650,20 @@ async function main(): Promise<void> {
     extensionBindings,
     extensionExecutions,
     extensionEngine,
+    peers,
+    peerTokensDir: getPeerTokensDir(),
+    ownCertPem: ownCert,
+    ownHostname: os.hostname(),
+    ownFingerprint: ownFingerprint ?? undefined,
     pushSubscriptions,
     pushNotifier,
     notifyChannels,
+    rpgRoles,
+    rpgGrowth,
+    rpgScores,
+    rpgHexagram,
+    rpgAchievements,
+    rpgXp,
     onAttach: dashboardPusher.attach,
     dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,
@@ -636,6 +681,17 @@ async function main(): Promise<void> {
   void startTlsServer({ port: tlsPort, bindHost, handler: requestHandler }).then((r) => {
     tls = r;
     if (r) console.log(`[dev] weave daemon tls listening on https://${bindHost}:${r.port}`);
+    // mTCP 发现（E3，与 start.ts 同装配）：联邦/广播开关开着才播；只广播不接收
+    // 执行，安全面不变。tlsPort 未开 = 无 HTTPS，不播。
+    const fed = readDaemonSettingsSync().federation;
+    if (r && fed?.discovery && tlsPort > 0) {
+      mdnsAdvertiser = startMdnsAdvertiser({
+        tlsPort,
+        httpPort: port,
+        certPem: ownCert,
+        hostname: os.hostname(),
+      });
+    }
   });
 
   const shutdown = (): void => {
@@ -648,6 +704,7 @@ async function main(): Promise<void> {
     clearInterval(cronTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
+    mdnsAdvertiser?.stop();
     server.close();
     tls?.server.close();
     // WAL 并回主库再退（与生产入口同口径）：升级/重启后不必回放孤儿 -wal
