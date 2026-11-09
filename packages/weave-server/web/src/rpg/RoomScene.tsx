@@ -9,7 +9,7 @@ import { PixelScene } from './PixelScene';
 import { SpriteHeadBars, headBarsOf, SelectionDetailBar } from './hud';
 import { RoleProgressPanel } from './RoleProgressPanel';
 import { useState } from 'react';
-import { ROOM_GOD_SPOT, ROOM_HOTSPOTS, ROOM_MAP, roomSeatSpot } from './worldmap';
+import { ROOM_GOD_SPOT, ROOM_HOTSPOTS, ROOM_MAP, TILE_PX, roomSeatSpot } from './worldmap';
 import { navigate } from '@/lib/route';
 import type { RpgRoleView, SessionRow } from '@/lib/api';
 
@@ -84,6 +84,7 @@ export function RoomScene({ houseId }: { houseId: number }) {
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <PixelScene
         map={ROOM_MAP}
+          indoor
         hotspots={ROOM_HOTSPOTS}
         onHotspot={onHotspot}
         onEmptyClick={() => setSelectedRoleId(null)}
@@ -111,20 +112,20 @@ export function RoomScene({ houseId }: { houseId: number }) {
       >
         <span
           className="absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
-          style={{ left: 8 * 24, top: 11 * 24 - 26 }}
+          style={{ left: 8 * TILE_PX, top: 11 * TILE_PX - 26 }}
         >
           {t('rpg.doorExit')} ↓
         </span>
         <span
           className="absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
-          style={{ left: ROOM_GOD_SPOT.x * 24 + 60, top: ROOM_GOD_SPOT.y * 24 }}
+          style={{ left: ROOM_GOD_SPOT.x * TILE_PX + TILE_PX * 2.5, top: ROOM_GOD_SPOT.y * TILE_PX }}
         >
           {t('rpg.godZone')}
         </span>
         {house.data && (
           <span
             className="absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
-            style={{ left: 24, top: 6 }}
+            style={{ left: TILE_PX, top: 6 }}
           >
             {house.data.name} · {t('rpg.coordinatorSeat')}
           </span>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n/I18nProvider';
 import { RPG_SCENES, roomSceneKey, sceneOf } from './scenes';
@@ -11,19 +11,33 @@ import { HouseCreateDialog } from './HouseCreateDialog';
 import { HomeConsole } from './HomeConsole';
 import { TrainingPanel } from './TrainingPanel';
 import { RoomScene } from './RoomScene';
-import { RoleProgressPanel } from './RoleProgressPanel';
 import { PixelScene, RpgBootBar, rpgRetryHandlers } from './PixelScene';
 import {
   GOD_SPOT,
   HOME_HOTSPOTS,
   HOME_MAP,
+  HOUSE_TILES,
+  TILE_PX,
+  TRAINING_HOTSPOT,
+  WORLD_GOD_SPOT,
   WORLD_HOTSPOTS,
   WORLD_MAP,
   projectHouseHotspots,
   type Hotspot,
 } from './worldmap';
+import { triggerHotspotAt, type Cell } from './walker';
+import { HouseTile } from './tile-decor';
+import { useTileSprites } from './tile-atlas';
 import { rpgBoot, type RpgBootKey } from './rpg-boot';
-import { AlertStrip, ClockWidget, SpriteHeadBars, headBarsOf, SelectionDetailBar } from './hud';
+import {
+  AlertStrip,
+  ClockWidget,
+  DetailHud,
+  SpriteHeadBars,
+  headBarsOf,
+  nextSelectedRoleId,
+} from './hud';
+import { latestSessionOf } from './hud-derive';
 import { useRateSeries } from './use-rate';
 import { api } from '@/lib/api';
 import { PROJECTS_QUERY } from '@/hooks/use-projects';
@@ -135,20 +149,22 @@ export function RpgView({
         </div>
       )}
       <div className="rpg-hud-anchor pointer-events-none absolute left-0 top-0 z-10 flex items-start gap-2 p-2">
-        <div className="pointer-events-auto flex items-center gap-1 rounded border border-[var(--w-border)] bg-[var(--w-surface-1)]/80 px-2 py-1 text-xs backdrop-blur-sm">
-          <span className="font-semibold">{t('rpg.entry')}</span>
-          <span className="text-[var(--w-text-dim)]">·</span>
-          <span className="text-[var(--w-text-dim)]">{t(scene.titleKey)}</span>
-          <button
-            type="button"
-            onClick={onBack}
-            className="rpg-back-btn rounded px-1.5 py-0.5 text-[11px] text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)] hover:text-[var(--w-text)]"
-          >
-            {t('rpg.back')}
-          </button>
+        <div className="rpg-hud-face pointer-events-auto flex flex-col gap-0.5 px-2 py-1 text-xs">
+          <div className="flex items-center gap-1">
+            <span className="font-semibold">{t('rpg.entry')}</span>
+            <span className="text-[var(--w-text-dim)]">·</span>
+            <span className="text-[var(--w-text-dim)]">{t(scene.titleKey)}</span>
+            <button
+              type="button"
+              onClick={onBack}
+              className="rpg-back-btn rounded px-1.5 py-0.5 text-[11px] text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)] hover:text-[#4ec9b0]"
+            >
+              {t('rpg.back')}
+            </button>
+          </div>
+          <SceneHotkeysHint />
         </div>
       </div>
-      <SceneHotkeysHint />
       <AlertStrip data={rpgData} />
       <ClockRateBadge />
 
@@ -180,17 +196,15 @@ function ClockRateBadge() {
   return <ClockWidget rate={rate} runningCount={runningCount} />;
 }
 
-/** 键盘党提示（桌面指针常态才摆：触屏无键盘，摆了就是死字）。 */
+/** 快捷键提示（G2.6 规格行，挂在左上徽章下一行；触屏无键盘不摆）。 */
 function SceneHotkeysHint() {
   const t = useT();
   const coarse = useMediaQueryCoarse();
   if (coarse) return null;
   return (
-    <div className="rpg-hud-anchor pointer-events-none absolute bottom-2 left-2 z-10">
-      <span className="rounded bg-[var(--w-surface-1)]/70 px-2 py-1 text-[10px] text-[var(--w-text-dim)]">
-        {t('rpg.sceneHotkeys')}
-      </span>
-    </div>
+    <span className="whitespace-nowrap text-[10px] text-[var(--w-text-dim)]">
+      {t('rpg.sceneHotkeys')}
+    </span>
   );
 }
 
@@ -262,6 +276,7 @@ function HomeIndoorScene({
       <div className="flex min-h-0 flex-1 flex-col">
         <PixelScene
           map={HOME_MAP}
+          indoor
           hotspots={HOME_HOTSPOTS}
           onHotspot={onHotspot}
           god={{ start: GOD_SPOT, node: <CharacterSprite archetype={null} status="idle" size={0.5} /> }}
@@ -275,6 +290,7 @@ function HomeIndoorScene({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <PixelScene
         map={HOME_MAP}
+          indoor
         hotspots={HOME_HOTSPOTS}
         onHotspot={onHotspot}
         god={{
@@ -289,14 +305,14 @@ function HomeIndoorScene({
         {/* 门牌 */}
         <span
           className="pointer-events-none absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
-          style={{ left: 8 * 24, top: 11 * 24 - 26 }}
+          style={{ left: 8 * TILE_PX, top: 11 * TILE_PX - 26 }}
         >
           {t('rpg.doorExit')} ↓
         </span>
         {/* 上帝自由区铭牌 */}
         <span
           className="pointer-events-none absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
-          style={{ left: GOD_SPOT.x * 24 + 72, top: GOD_SPOT.y * 24 }}
+          style={{ left: GOD_SPOT.x * TILE_PX + TILE_PX * 3, top: GOD_SPOT.y * TILE_PX }}
         >
           {t('rpg.godZone')}
         </span>
@@ -368,12 +384,19 @@ function WorldScene({
   const t = useT();
   void onOpenSession;
   const data = useRpgData();
+  const coarse = useMediaQueryCoarse();
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const houses = useQuery({ queryKey: ['rpg-houses'], queryFn: () => api.listHouses(), staleTime: 15_000 });
   const activeProjects = useMemo(() => projects.filter((p) => !p.archivedAt), [projects]);
   const houseHotspots = useMemo(() => projectHouseHotspots(activeProjects), [activeProjects]);
+  // G2.6 资产化：房体九宫用单 tile data URL（加载失败退色块）
+  const tileSprites = useTileSprites();
   const hotspots = useMemo(() => [...WORLD_HOTSPOTS, ...houseHotspots], [houseHotspots]);
+  const selectedRole = useMemo(
+    () => data.roles?.find((r) => r.id === selectedRoleId) ?? null,
+    [data.roles, selectedRoleId],
+  );
 
   // 修炼浮层：Esc / 移动端返回键收起（G2.5 overlay 纪律）。
   useBackPop(trainingOpen, () => {
@@ -391,7 +414,39 @@ function WorldScene({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [trainingOpen]);
 
+  // G2.6 交互补齐：[空格] 选中最近角色 / 循环切换；[E] 触发脚下/面前热点
+  // （与走到格触发同管道 triggerHotspotAt）。浮层开着（修炼）时不抢键。
+  const fireHotspotRef = useRef<(h: Hotspot) => void>(() => {});
+  useEffect(() => {
+    if (coarse || trainingOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setSelectedRoleId((cur) => nextSelectedRoleId(data.roles ?? [], cur));
+      } else if (e.code === 'KeyE') {
+        e.preventDefault();
+        godPosRef.current?.((pos) => {
+          if (!pos) return;
+          // 脚格锚定（G2.6 复测裁决）：E = 脚格本身 + 脚格四邻——「面前」无朝向
+          // 态，四邻全覆盖（命中哪个热点触发哪个，与走到格触发同管道）。
+          const foot = { x: pos.x, y: pos.y + 1 };
+          const near = [foot, { x: foot.x, y: foot.y - 1 }, { x: foot.x, y: foot.y + 1 }, { x: foot.x - 1, y: foot.y }, { x: foot.x + 1, y: foot.y }];
+          const h = near.map((p) => triggerHotspotAt(hotspots, { x: p.x, y: p.y - 1 })).find(Boolean);
+          if (h) fireHotspotRef.current(h);
+        });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [coarse, trainingOpen, data.roles, hotspots]);
+
   const onHotspot = (h: Hotspot): void => {
+    fireHotspotRef.current(h);
+  };
+  fireHotspotRef.current = (h: Hotspot): void => {
     if (h.action.type === 'scene') navigate({ kind: 'rpg', scene: h.action.scene });
     else if (h.action.type === 'project') {
       // 项目房 → 进房协同棋盘（G2）：house 存在即进房间场景；没建房的项目
@@ -409,8 +464,12 @@ function WorldScene({
     }
   };
 
-  // G2.5 三件套①③：在野角色静态摆位（草地锚位，纯派生可测）+ 头顶状态条；
-  // 点选 sprite 展开底部选中详情条（点空处/✕ 收起）。
+  // 化身实时格（E 键读面前热点用）：PixelScene 不外吐 pos，这里用同步快照
+  // （god 起始格起步，行走由 walker 判——E 只读不写）。
+  const godPosRef = useRef<((read: (pos: Cell | null) => void) => void) | null>(null);
+
+  // G2.5 三件套①③ + G2.6 选中青色标记：在野角色静态摆位 + 头顶状态条 +
+  // 被选中者脚下青描边；点选 sprite 展开底部详情 HUD（点空处/✕ 收起）。
   const now = Date.now();
   const roleSprites = useMemo(
     () =>
@@ -418,13 +477,17 @@ function WorldScene({
         const spot = wandererSpot(i);
         if (!spot) return null;
         const bars = headBarsOf(role, data, now);
+        const selected = role.id === selectedRoleId;
         return {
           key: `wanderer-${role.id}`,
           x: spot.x,
           y: spot.y,
           node: (
             <div
-              className="relative flex cursor-pointer flex-col items-center"
+              className={
+                'relative flex cursor-pointer flex-col items-center' +
+                (selected ? ' rpg-selected-mark' : '')
+              }
               title={role.name}
               onClick={(e) => {
                 e.stopPropagation();
@@ -433,7 +496,12 @@ function WorldScene({
             >
               <SpriteHeadBars bars={bars} />
               <CharacterSprite archetype={role.archetype} status="idle" size={0.5} />
-              <span className="whitespace-nowrap rounded bg-[var(--w-surface-1)]/70 px-1 text-[9px] text-[var(--w-text-dim)]">
+              <span
+                className={
+                  'whitespace-nowrap rounded-sm px-1 text-[9px] ' +
+                  (selected ? 'bg-[#4ec9b0]/25 text-[#4ec9b0]' : 'bg-[var(--w-surface-1)]/70 text-[var(--w-text-dim)]')
+                }
+              >
                 {role.name}
               </span>
             </div>
@@ -441,8 +509,34 @@ function WorldScene({
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.roles, data.sessionById, data.statuses, data.runs],
+    [data.roles, data.sessionById, data.statuses, data.runs, selectedRoleId],
   );
+
+  // ④ 最近回合摘要：该角色项目下最近 runs（≤3 行，真实账派生）。
+  const recentRuns = useMemo(() => {
+    if (!selectedRole) return [];
+    return (data.runs ?? [])
+      .filter((r) => r.projectId === selectedRole.projectId)
+      .slice(0, 3)
+      .map((r) => `${r.status === 'failed' ? '✕' : r.status === 'done' ? '✓' : '▶'} #${r.id} ${r.orchestrationName}`);
+  }, [selectedRole, data.runs]);
+  const behavior = recentRuns[0] != null ? t('rpg.behaviorLastRun', { name: recentRuns[0] }) : null;
+  const statusLabel = useMemo(() => {
+    if (!selectedRole) return '';
+    const row = latestSessionOf(selectedRole.projectId, data.sessionById);
+    const st = row ? (data.statuses.get(row.sessionId) ?? 'open') : 'open';
+    return st === 'running' || st === 'compacting'
+      ? t('rpg.statusBattle')
+      : st === 'failed'
+        ? t('rpg.statusDefeated')
+        : t('rpg.statusIdle');
+  }, [selectedRole, data.sessionById, data.statuses, t]);
+  const progress = useQuery({
+    queryKey: ['rpg-progress', selectedRoleId],
+    queryFn: () => api.progressOf(selectedRoleId!),
+    enabled: selectedRoleId != null,
+    staleTime: 15_000,
+  });
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -452,10 +546,20 @@ function WorldScene({
         onHotspot={onHotspot}
         onEmptyClick={() => setSelectedRoleId(null)}
         sprites={roleSprites.filter((s): s is NonNullable<typeof s> => s != null)}
+        godPosProbe={godPosRef}
+        viewportOverlay={
+          /* G2.6 底部字幕：贴视口底（不随镜头/控制带平移）；无选中才摆
+              （选中时详情条占位，不叠两行）。 */
+          selectedRoleId == null ? (
+            <div className="rpg-hud-anchor pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+              <span className="rpg-subtitle text-sm">{t('rpg.worldSubtitle')}</span>
+            </div>
+          ) : null
+        }
         god={
           data.roles?.length
             ? {
-                start: GOD_SPOT,
+                start: WORLD_GOD_SPOT,
                 node: (
                   <div className="relative">
                     <CharacterSprite archetype={data.roles[0]!.archetype} status="idle" size={0.5} />
@@ -465,15 +569,37 @@ function WorldScene({
             : undefined
         }
       >
+        {/* G2.6 参考图：项目房 tile 级房体（坡屋顶+窗光+门前小牌+投影），
+            seed 派生窗位微差连排不呆板；画在热点之下、label 之上。 */}
+        {houseHotspots.map((h, i) => (
+          <div
+            key={`house-body-${h.id}`}
+            className="pointer-events-none absolute"
+            style={{ left: h.x * TILE_PX, top: h.y * TILE_PX, width: HOUSE_TILES * TILE_PX, height: HOUSE_TILES * TILE_PX, zIndex: 2 }}
+            aria-hidden
+          >
+            <HouseTile seed={i} sprites={tileSprites} />
+          </div>
+        ))}
         {hotspots.map((h) => (
           <span
             key={`label-${h.id}`}
-            className="pointer-events-none absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
-            style={{ left: h.x * 24, top: h.y * 24 - 22 }}
+            className="pointer-events-none absolute whitespace-nowrap text-[9px] text-[rgba(242,237,228,0.5)] [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]"
+            style={{ left: h.x * TILE_PX, top: h.y * TILE_PX - 14 }}
           >
             {t(h.labelKey as 'rpg.doorExit')}
           </span>
         ))}
+        {/* G2.6 灵田灵气：修炼点四周低亮度青色发光（克制的呼吸，参考图 A 灵气感）。 */}
+        <div
+          className="rpg-aura pointer-events-none"
+          style={{
+            left: (TRAINING_HOTSPOT.x - 1) * TILE_PX,
+            top: (TRAINING_HOTSPOT.y - 1) * TILE_PX,
+            width: (TRAINING_HOTSPOT.w + 2) * TILE_PX,
+            height: (TRAINING_HOTSPOT.h + 2) * TILE_PX,
+          }}
+        />
       </PixelScene>
       {activeProjects.length === 0 && (
         <div className="pointer-events-none absolute inset-x-0 bottom-10 flex justify-center">
@@ -487,24 +613,31 @@ function WorldScene({
           <TrainingPanel roles={data.roles} onClose={() => setTrainingOpen(false)} />
         </div>
       )}
-      {/* G2.5 三件套③：底部选中详情条（点 sprite 展开；点空处/✕ 收起） */}
-      {selectedRoleId != null && data.roles?.some((r) => r.id === selectedRoleId) && (
-        <SelectionDetailBar roleId={selectedRoleId} onClose={() => setSelectedRoleId(null)}>
-          <RoleProgressPanel roleId={selectedRoleId} />
-        </SelectionDetailBar>
+      {/* G2.6 五区详情 HUD（选中真实角色才摆；派生不出的区不摆） */}
+      {selectedRole != null && (
+        <DetailHud
+          role={selectedRole}
+          statusLabel={statusLabel}
+          behavior={behavior}
+          progress={progress.data?.progress ?? null}
+          recentRuns={recentRuns}
+          compact={coarse}
+          onClose={() => setSelectedRoleId(null)}
+        />
       )}
     </div>
   );
 }
 
-/** 在野角色锚位（纯函数，可单测）：世界地图草地上第 i 个角色的 1×2 sprite
- *  左上角——从北面草带向下一排（避开宅基/修炼/项目房槽位与土路）；出界 = null
+/** 在野角色锚位（纯函数，可单测）：世界地图（54×32）草地上第 i 个角色的
+ *  1×2 sprite 左上角——路南草带一排横列（x=22 起、间隔 4：避开项目房连排
+ *  cols 2-20 / 宅基地 / 灵田 (11-14,18-21) 与湖 cols 25+）；出界 = null
  *  （调用方截断，不摆）。 */
 export function wandererSpot(i: number): { x: number; y: number } | null {
   if (!Number.isInteger(i) || i < 0) return null;
-  const x = 2 + i * 2;
-  const y = 2;
-  if (x + 1 > 26) return null;
+  const x = 22 + i * 4;
+  const y = 12;
+  if (x + 1 > 54) return null;
   return { x, y };
 }
 

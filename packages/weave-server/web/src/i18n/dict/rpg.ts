@@ -163,8 +163,13 @@ export const rpgZh = {
   'rpg.teamForm': '组建 team',
   'rpg.teamFormed': 'team 已落册（协调者 teams/ 声明文件即事实）。',
   'rpg.roomNoHouse': '这间房还没建——在世界地图点项目房进房；未建房的项目直接进项目视图。',
-  'rpg.sceneHotkeys': '数字键 1-6 直跳场景；走到门/热点触发',
+  'rpg.sceneHotkeys': '[WASD]移动 [空格]选中 [E]交互 [1-6]切场景 [Esc]菜单',
   'rpg.alertTitle': '警报',
+  'rpg.worldSubtitle': '世界由此展开',
+  'rpg.statusIdle': '待命',
+  'rpg.statusBattle': '交战中',
+  'rpg.statusDefeated': '受挫',
+  'rpg.behaviorLastRun': '最近回合：{name}',
 };
 
 export const rpgEn: Record<keyof typeof rpgZh, string> = {
@@ -331,6 +336,11 @@ export const rpgEn: Record<keyof typeof rpgZh, string> = {
   'rpg.teamForm': 'Form team',
   'rpg.teamFormed': 'Team registered (coordinator teams/ declaration is the source of truth).',
   'rpg.roomNoHouse': 'This house has not been built — click a project house on the world map; unbuilt projects fall through to the project view.',
-  'rpg.sceneHotkeys': 'Number keys 1-6 jump scenes; walk into doors/hotspots to trigger',
+  'rpg.sceneHotkeys': '[WASD] move [Space] select [E] interact [1-6] scene [Esc] menu',
   'rpg.alertTitle': 'Alerts',
+  'rpg.worldSubtitle': 'The world unfolds here',
+  'rpg.statusIdle': 'Idle',
+  'rpg.statusBattle': 'Fighting',
+  'rpg.statusDefeated': 'Stumbled',
+  'rpg.behaviorLastRun': 'Last turn: {name}',
 };

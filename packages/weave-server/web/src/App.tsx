@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   api,
   skillSourceRuntime,
@@ -28,7 +28,9 @@ import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
-import { RpgView } from '@/rpg/RpgView';
+// G2.6 收尾硬项：rpg 域懒加载——weave 启动不载游戏场景元素，切到游戏视图才
+// 拉独立 chunk（验收 = 主 chunk 不含 rpg 符号）。
+const RpgView = lazy(() => import('@/rpg/RpgView').then((m) => ({ default: m.RpgView })));
 import { DashboardOverview } from '@/components/DashboardOverview';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { MarketModal } from '@/components/MarketModal';
@@ -79,7 +81,9 @@ function useBootProgress(): { progress: number; done: number; total: number; sta
   const { sessions, projectStats } = useSessionStatus();
   const req = useSyncExternalStore(bootRequests.subscribe, bootRequests.snapshot);
   const [fallback, setFallback] = useState(false);
-  // 兜底计时从「认证有结果」起算：登录页路径根本不看后面几路
+  // 核心数据就位（projects 回来 → shellReady）即封账：此后 Dashboard 挂载发的
+  // 尾部请求不进账——分母存的是「首屏真实请求数」，尾部请求涨分母会让存量
+  // 只涨不落（2026-11-09 用户实测 65 → 60 后分母仍是 65）。8s 兜底同理。
   useEffect(() => {
     if (auth !== 'authenticated') return;
     const timer = setTimeout(() => {
@@ -88,12 +92,11 @@ function useBootProgress(): { progress: number; done: number; total: number; sta
     }, BOOT_STAGE_FALLBACK_MS);
     return () => clearTimeout(timer);
   }, [auth]);
+  useEffect(() => {
+    if (sessions !== null) bootRequests.seal();
+  }, [sessions]);
   const total = req.total + BOOT_LIVE_WEIGHT;
   const done = req.done + (live || fallback ? 1 : 0);
-  // 正常就位即封账：把本次实际请求数写回存量（下次启动的分母），此后请求不进进度
-  useEffect(() => {
-    if (auth === 'authenticated' && done >= total) bootRequests.seal();
-  }, [auth, done, total]);
   // 就位判据与「数据门」解耦：核心数据（shellReady 会调 onBootReady）+ 实时通道
   // 就位即算满——分母固化自上次启动，本次请求若比上次少，进度条到不了 1 是
   // 正常的（少的那格本就没发），不能反过来卡住进 dashboard。
@@ -1012,7 +1015,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 // 头部行全部退场，主区 100% 给满屏世界；返回项目视图收进 HUD
                 // 左上角徽章（RpgView 内部浮层，onBack 回 App 既有的选中项目出口）。
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <RpgView
+                  <Suspense fallback={null}>
+                    <RpgView
                     sceneKey={(() => {
                       const r = parseRoute(path);
                       return r.kind === 'rpg' ? r.scene : 'home';
@@ -1024,7 +1028,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         ? navigate({ kind: 'project', projectId: selected.id, category: 'tasks', sessionId: null })
                         : navigate({ kind: 'global', category: 'tasks' })
                     }
-                  />
+                    />
+                  </Suspense>
                 </div>
               ) : showMain ? (
                 <>

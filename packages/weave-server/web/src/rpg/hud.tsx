@@ -3,7 +3,8 @@ import { useT } from '@/i18n/I18nProvider';
 import type { RpgData } from './use-rpg-data';
 import { contextWindowOf } from '@/components/tasks/use-session-controls';
 import { latestSessionOf } from './hud-derive';
-import type { RpgRoleView } from '@/lib/api';
+import { CharacterSprite } from './CharacterSprite';
+import type { RpgHexagon, RpgProgressView, RpgRoleView } from '@/lib/api';
 
 /**
  * RimWorld 三件套 HUD（G2.5，设计 §九「全屏世界 + overlay HUD」）：全部是普通
@@ -116,7 +117,7 @@ export function AlertStrip({ data }: { data: RpgData }) {
   if (alerts.length === 0) return null;
   return (
     <div className="rpg-hud-anchor pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center">
-      <div className="pointer-events-auto mt-1 flex max-w-[92%] flex-wrap items-center justify-center gap-1 rounded-b border border-t-0 border-[var(--w-border)] bg-[var(--w-surface-1)]/90 px-2 py-1 backdrop-blur-sm">
+      <div className="rpg-hud-face pointer-events-auto mt-1 flex max-w-[92%] flex-wrap items-center justify-center gap-1 rounded-t-none border-t-0 px-2 py-1">
         <span className="text-[10px] uppercase tracking-wide text-[var(--w-text-dim)]">
           {t('rpg.alertTitle')}
         </span>
@@ -125,7 +126,7 @@ export function AlertStrip({ data }: { data: RpgData }) {
             key={a.key}
             title={a.label}
             className={
-              'max-w-56 cursor-pointer truncate rounded px-1.5 py-0.5 text-[11px] ' +
+              'max-w-56 cursor-pointer truncate rounded-sm px-1.5 py-0.5 text-[11px] ' +
               (a.severity === 'red'
                 ? 'bg-[#c9566e]/25 text-[#e58ca0]'
                 : 'bg-[#d9a441]/20 text-[#e0b768]')
@@ -139,7 +140,137 @@ export function AlertStrip({ data }: { data: RpgData }) {
   );
 }
 
-/* ---- ③ 底部选中详情条 ---- */
+/* ---- ③ 底部选中详情条（G2.6 五区重组） ---- */
+
+/** 六维条色（参考图 A：青/绿/橙/绿/黄/红 依维度）。 */
+export const HEX_DIM_BAR_COLORS: Record<keyof RpgHexagon, string> = {
+  力量: '#4ec9b0',
+  智慧: '#3fbf5f',
+  敏捷: '#d9822b',
+  速度: '#3fbf5f',
+  内力: '#d9a441',
+  运气: '#c9566e',
+};
+
+/** 六维展示序（固定）。 */
+export const HEX_DIM_ORDER: readonly (keyof RpgHexagon)[] = ['力量', '智慧', '敏捷', '速度', '内力', '运气'];
+
+/** 修为进度（0-1）= 距下一级余量占整档比例：1 - remaining/nextAt；异常档位
+ *  （nextAt 非正 / remaining 超档）= null（不摆③区空壳条）。 */
+export function xpRatioOf(p: RpgProgressView['xp']): number | null {
+  if (!Number.isFinite(p.nextAt) || p.nextAt <= 0) return null;
+  if (p.remaining < 0 || p.remaining > p.nextAt) return null;
+  return Math.max(0, Math.min(1, 1 - p.remaining / p.nextAt));
+}
+
+/** 五区详情 HUD（横向半透明条，非卡片壳）：①头像·名字·状态·当前行为 ②六维
+ *  细长像素条 ③修为 Lv + 青色进度条 ④最近回合摘要（≤3 行，最近 runs 会话）。
+ *  数据恒真实派生：六维/修为取 progress 派生面、摘要取 runs——派生不出的区
+ *  整区不摆（不摆空壳铁律）。移动端紧凑横条（六维折叠，点开）。 */
+export function DetailHud({
+  role,
+  statusLabel,
+  behavior,
+  progress,
+  recentRuns,
+  compact,
+  onClose,
+}: {
+  role: RpgRoleView;
+  statusLabel: string;
+  /** 当前行为一句话（最近 run 名 / 摘要；派生不出 = null 不摆）。 */
+  behavior: string | null;
+  /** progress 派生面（六维/修为）；null = 派生中/不出（②③区不摆）。 */
+  progress: RpgProgressView | null;
+  /** 最近回合摘要行（≤3 条，调用方已截）。 */
+  recentRuns: string[];
+  compact: boolean;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const [dimsOpen, setDimsOpen] = useState(false);
+  const xp = progress ? xpRatioOf(progress.xp) : null;
+  const dims = progress ? progress.hexagon.dims : null;
+  return (
+    <div className="rpg-hud-face pointer-events-auto absolute inset-x-2 bottom-2 z-20 flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 shadow-xl">
+      {/* ① 像素头像 · 名字 · 状态 · 当前行为 */}
+      <div className="flex min-w-32 items-center gap-2">
+        <div className="h-8 w-8 shrink-0 overflow-hidden">
+          <CharacterSprite archetype={role.archetype} status="idle" size={0.17} />
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-xs text-[#d7d1c6]">{role.name}</div>
+          <div className="truncate text-[10px] text-[var(--w-text-dim)]">{statusLabel}</div>
+          {behavior != null && <div className="truncate text-[10px] text-[var(--w-text-dim)]">{behavior}</div>}
+        </div>
+      </div>
+
+      {/* ② 六维细长像素条（移动端折叠可点开） */}
+      {dims != null && (!compact || dimsOpen) && (
+        <div className="flex min-w-40 flex-col gap-1">
+          {HEX_DIM_ORDER.map((dim) => {
+            const v = Math.max(0, Math.min(1, (dims[dim] ?? 0) / HEX_BAR_MAX));
+            return (
+              <div key={dim} className="flex items-center gap-1.5">
+                <span className="w-8 shrink-0 text-[9px] text-[var(--w-text-dim)]">{t(`rpg.dim.${dim}` as 'rpg.dim.力量')}</span>
+                <div className="rpg-dim-bar flex-1">
+                  <div style={{ width: `${Math.round(v * 100)}%`, background: HEX_DIM_BAR_COLORS[dim] }} />
+                </div>
+                <span className="w-6 shrink-0 text-right font-mono tabular-nums text-[9px] text-[var(--w-text-dim)]">
+                  {dims[dim] ?? 0}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {dims != null && compact && (
+        <button
+          type="button"
+          onClick={() => setDimsOpen((cur) => !cur)}
+          className="rounded px-1.5 py-0.5 text-[10px] text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)]"
+        >
+          {dimsOpen ? '▾' : '▸'} {t('rpg.hexagon')}
+        </button>
+      )}
+
+      {/* ③ 修为 Lv + 青色进度条 */}
+      {progress != null && xp != null && (
+        <div className="min-w-28">
+          <div className="flex items-baseline gap-1.5 text-[10px] text-[var(--w-text-dim)]">
+            <span className="text-xs text-[#4ec9b0]">{t('rpg.levelN', { n: String(progress.xp.level) })}</span>
+            <span>{progress.xp.realm}</span>
+          </div>
+          <div className="rpg-xp-bar mt-1 w-full">
+            <div style={{ width: `${Math.round(xp * 100)}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* ④ 最近回合摘要（≤3 行，有账才摆） */}
+      {recentRuns.length > 0 && (
+        <div className="min-w-40 flex-1">
+          {recentRuns.map((line, i) => (
+            <div key={i} className="truncate text-[10px] leading-4 text-[var(--w-text-dim)]">
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onClose}
+        className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-xs text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)]"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/** 六维条满档（服务端 hexCap 对齐值；条只做相对热度，不装精确刻度）。 */
+export const HEX_BAR_MAX = 20;
 
 /** 底部选中详情条（点 sprite 展开、点空处收起）：RoleProgressPanel + 最近回合。
  *  `roleId` 供调用方判哪位被选中（本壳只负责表面）。 */
@@ -172,7 +303,8 @@ export function SelectionDetailBar({
   );
 }
 
-/** 时钟位（右上角）：事件速率 + 在跑会话数；读不到不摆（不摆空壳铁律）。 */
+/** 时钟位（右上角，G2.6 校色 = rpg-hud-face + 等宽数字）：事件速率 + 在跑会话
+ *  数；读不到不摆（不摆空壳铁律）。 */
 export function ClockWidget({
   rate,
   runningCount,
@@ -189,8 +321,8 @@ export function ClockWidget({
   if (rate == null && runningCount == null) return null;
   return (
     <div className="rpg-hud-anchor pointer-events-none absolute right-2 top-2 z-10">
-      <div className="pointer-events-auto flex items-center gap-2 rounded border border-[var(--w-border)] bg-[var(--w-surface-1)]/80 px-2 py-1 text-[11px] text-[var(--w-text-dim)] backdrop-blur-sm">
-        <span>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      <div className="rpg-hud-face pointer-events-auto flex items-center gap-2 px-2 py-1 text-[11px]">
+        <span className="font-mono tabular-nums">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
         {rate != null && (
           <span title={t('rpg.metricsRate')}>
             {rate} {t('rpg.metricsRate')}
@@ -204,4 +336,16 @@ export function ClockWidget({
       </div>
     </div>
   );
+}
+
+/** 选中角色循环（空格键）：返回下一个角色 id；无角色 = null。纯函数可单测。 */
+export function nextSelectedRoleId(
+  roles: readonly { id: number }[],
+  current: number | null,
+): number | null {
+  if (roles.length === 0) return null;
+  if (current == null) return roles[0]!.id;
+  const idx = roles.findIndex((r) => r.id === current);
+  if (idx < 0) return roles[0]!.id;
+  return roles[(idx + 1) % roles.length]!.id;
 }

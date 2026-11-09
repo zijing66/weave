@@ -13,7 +13,7 @@ import {
   HOMESTEAD_HOTSPOT,
   TRAINING_HOTSPOT,
 } from '../worldmap';
-import { PALETTE32 } from '../skin';
+import { RPG_SCENE_PALETTE } from '../worldmap';
 import { RPG_SCENES, sceneOf } from '../scenes';
 import { RPG_BOOT_ITEMS, rpgBoot, type RpgBootKey } from '../rpg-boot';
 
@@ -21,10 +21,12 @@ import { RPG_BOOT_ITEMS, rpgBoot, type RpgBootKey } from '../rpg-boot';
  *  的前提是「每行等宽、码在类型表内、命中判定矩形语义稳定」。 */
 
 describe('worldmap tile 槽位表', () => {
-  it('HOME_MAP 与 WORLD_MAP 全部行等宽（矩形网格不变式）', () => {
+  it('HOME_MAP 与 WORLD_MAP 全部行等宽（矩形网格不变式）；世界 54×32', () => {
     const widths = (m: readonly string[]) => new Set([...m].map((r) => r.length));
     expect(widths(HOME_MAP).size).toBe(1);
     expect(widths(WORLD_MAP).size).toBe(1);
+    expect(WORLD_MAP.length).toBe(32);
+    expect(WORLD_MAP[0]!.length).toBe(54);
   });
 
   it('地图里出现的码全部在 TILE_TYPES 词表内（表外码 = 定义错误）', () => {
@@ -37,11 +39,12 @@ describe('worldmap tile 槽位表', () => {
     }
   });
 
-  it('tileColor 未知码回落 ink；棋盘变体只取 32 色板内的色', () => {
-    expect(tileColor('?', 0, 0)).toBe(PALETTE32.ink);
+  it('tileColor 未知码回落深底；取色全走 G2.6 色板', () => {
+    expect(tileColor('?', 0, 0)).toBe(RPG_SCENE_PALETTE.bgDeep);
+    const hex = new Set(Object.values(RPG_SCENE_PALETTE) as string[]);
     for (const row of WORLD_MAP) {
       for (let c = 0; c < row.length; c++) {
-        expect((Object.values(PALETTE32) as string[]).includes(tileColor(row[c]!, c, 0))).toBe(true);
+        expect(hex.has(tileColor(row[c]!, c, 0)), `tile ${row[c]} color not in scene palette`).toBe(true);
       }
     }
   });
@@ -80,8 +83,21 @@ describe('场景与热点布点', () => {
     }
   });
 
-  it('projectHouseSpot 沿路排开、越界返回 null；热点只含非隐藏项目', () => {
-    expect(projectHouseSpot(0)).toEqual({ x: 2, y: 7 });
+  it('G2.6 地图丰富化：松树/灌木/草丛/花草/岸石/湖水/石板/符文/耕地/幼苗 tile 全部落位', () => {
+    const codes = new Set(WORLD_MAP.join('').split(''));
+    for (const code of ['T', 'b', ',', '*', 'W', 'S', 's', 'y', 'f', 'g', 'P']) {
+      expect(codes.has(code), `tile ${code} missing`).toBe(true);
+    }
+  });
+
+  it('G2.6 solid 判定：树/石/水不可走、草丛/花/幼苗可走', () => {
+    for (const code of ['T', 'W', 'S']) expect(TILE_TYPES[code]!.solid).toBe(true);
+    for (const code of ['b', ',', '*', 'f', 'g', 'P', 's', 'y']) expect(TILE_TYPES[code]!.solid).toBeFalsy();
+  });
+
+  it('projectHouseSpot 沿路排开（路南 3×3、间隔 1）、越界返回 null；热点只含非隐藏项目', () => {
+    expect(projectHouseSpot(0)).toEqual({ x: 2, y: 11 });
+    expect(projectHouseSpot(1)).toEqual({ x: 6, y: 11 });
     expect(projectHouseSpot(-1)).toBeNull();
     const spots = projectHouseHotspots([
       { id: 1, name: 'a' },
@@ -93,9 +109,9 @@ describe('场景与热点布点', () => {
       expect(s.x + s.w).toBeLessThanOrEqual(WORLD_MAP[0]!.length);
       expect(s.y + s.h).toBeLessThanOrEqual(WORLD_MAP.length);
     }
-    // 槽位上限之外的截断：把第 i 座推到地图外
+    // 槽位上限之外的截断：把第 i 座推到地图外（3 tile 宽）
     const beyond = projectHouseSpot(100);
-    expect(beyond === null || beyond.x + 2 <= WORLD_MAP[0]!.length).toBe(true);
+    expect(beyond === null || beyond.x + 3 <= WORLD_MAP[0]!.length).toBe(true);
   });
 });
 

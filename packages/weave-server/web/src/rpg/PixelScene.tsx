@@ -5,12 +5,17 @@ import {
   TILE_PX,
   tileColor,
   hitTest,
+  RPG_SCENE_PALETTE,
   type Hotspot,
 } from './worldmap';
+import { SteleTile, tileDecor } from './tile-decor';
+import { collectBaseRuns, collectSpriteRuns, type TileRun } from './tileset-map';
+import { useTileSprites } from './tile-atlas';
 import {
   resolveStep,
   triggerHotspotAt,
   cameraOffset,
+  viewportScale,
   DIR_DELTA,
   type Cell,
   type Dir,
@@ -43,6 +48,11 @@ export function PixelScene({
   god,
   children,
   onEmptyClick,
+  /** 化身当前格的只读探针（E 键「面前热点」读位用；ref 挂回调，读时回调）。 */
+  godPosProbe,
+  indoor,
+  /** 视口内浮层（不随镜头平移；底字幕这类「贴屏幕」的层用）。 */
+  viewportOverlay,
 }: {
   map: WalkTileMap;
   hotspots: readonly Hotspot[];
@@ -55,36 +65,90 @@ export function PixelScene({
   children?: React.ReactNode;
   /** 点空处（无热点、非拖动的画布点按）——选中详情条「点空收起」用。 */
   onEmptyClick?: () => void;
+  /** 可选：调用方持 ref，PixelScene 每拍把「读位回调」写进去。 */
+  godPosProbe?: React.MutableRefObject<((read: (pos: Cell | null) => void) => void) | null> | null;
+  /** 视口内浮层（不随镜头平移；底字幕这类「贴屏幕」的层用）。 */
+  viewportOverlay?: React.ReactNode;
+  /** 相机策略分档（G2.6 室内裁决）：false（缺省，world）= 视口自适应放大
+   *  铺满视口；true（室内 Home/Room）= 不放大、地图装得下时世界层居中、
+   *  四周露 viewport 深底（黑边是想要形态）。 */
+  indoor?: boolean;
 }) {
   const t = useT();
   const cols = map[0]?.length ?? 0;
   const rows = map.length;
 
-  const cells = useMemo(() => {
-    const out: React.ReactNode[] = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const code = map[r]?.[c] ?? '.';
-        out.push(
-          <div
-            key={`${r}-${c}`}
-            style={{
-              position: 'absolute',
-              left: c * TILE_PX,
-              top: r * TILE_PX,
-              width: TILE_PX,
-              height: TILE_PX,
-              background: tileColor(code, c, r),
-            }}
-          />,
-        );
-      }
-    }
-    return out;
-  }, [map, cols, rows]);
+  // G2.6 第三轮资产化：底图/sprite 双层 run——底图 run 同行同 kind 合并
+  // （backgroundColor 兜底 + 单 tile data URL repeat-x 取块），sprite run
+  // 承载树/灌木/花/作物/岸石透明贴图。div 数从逐格 1728 降到 ~200（世界层）。
+  const tileSprites = useTileSprites();
+  const baseRuns = useMemo(() => collectBaseRuns(map, indoor), [map, indoor]);
+  const spriteRuns = useMemo(() => collectSpriteRuns(map), [map]);
+
+  const baseRunNode = (run: TileRun): React.ReactNode => {
+    const code = map[run.row]?.[run.col] ?? '.';
+    // 北墙：底色墙暗面（立起段），墙板 tile 用 repeat-x 压在下半（position
+    // 下移 TILE_PX、容器裁掉上半）
+    const color = run.northWall
+      ? RPG_SCENE_PALETTE.wallDark
+      : tileColor(code, run.col, run.row);
+    const img = run.baseTile ? tileSprites?.get(run.baseTile) : undefined;
+    return (
+      <div
+        key={`b-${run.row}-${run.col}`}
+        style={{
+          position: 'absolute',
+          left: run.col * TILE_PX,
+          top: run.row * TILE_PX - (run.northWall ? TILE_PX : 0),
+          width: run.span * TILE_PX,
+          height: run.northWall ? TILE_PX * 2 : TILE_PX,
+          backgroundColor: color,
+          backgroundImage: img ? `url(${img})` : undefined,
+          backgroundRepeat: 'repeat-x',
+          backgroundSize: `${TILE_PX}px ${TILE_PX}px`,
+          backgroundPosition: run.northWall ? `0 ${TILE_PX}px` : undefined,
+          imageRendering: 'pixelated',
+          pointerEvents: 'none',
+        }}
+      />
+    );
+  };
+
+  const spriteRunNode = (run: TileRun): React.ReactNode => {
+    const img = run.spriteTile ? tileSprites?.get(run.spriteTile) : undefined;
+    return (
+      <div
+        key={`s-${run.row}-${run.col}`}
+        style={{
+          position: 'absolute',
+          left: run.col * TILE_PX,
+          top: run.row * TILE_PX,
+          width: run.span * TILE_PX,
+          height: TILE_PX,
+          zIndex: 1,
+          backgroundImage: img ? `url(${img})` : undefined,
+          backgroundRepeat: 'repeat-x',
+          backgroundSize: `${TILE_PX}px ${TILE_PX}px`,
+          imageRendering: 'pixelated',
+          pointerEvents: 'none',
+        }}
+      />
+    );
+  };
+
+  // G2.6 参考图逐像素对齐：符文格出石碑（装饰层纯派生；松树已入 sprite 层）。
+  const decor = useMemo(() => tileDecor(map), [map]);
 
   // ---- G4 行走状态（god 给出才启用） ----
   const [pos, setPos] = useState<Cell | null>(() => god?.start ?? null);
+  // E 键探针：把「同步读当前格」的回调交给调用方（只读，不写状态）。
+  useEffect(() => {
+    if (!godPosProbe) return;
+    godPosProbe.current = (read) => read(pos);
+    return () => {
+      godPosProbe.current = null;
+    };
+  });
   // 场景切换（map 变了 = 换场景）或化身出现（异步数据后到，god 从 undefined
   // 变有值）时落初始格——行走进行中不回卷（pos 已非 null 才是「进行中」）。
   const mapKey = useMemo(() => `${cols}x${rows}`, [cols, rows]);
@@ -108,12 +172,21 @@ export function PixelScene({
   // G2.5 镜头升级：viewport 从 overflow-auto 滚动改为满屏镜头（世界层整块
   // translate）——滚动容器没了，拖动平移与镜头跟随都落到 cam 一处（transform
   // 直改一步一格，页面级溢出恒 0 不变）。
+  // G2.6 复测欠账：满屏世界 = 视口自适应放大（世界层整层 scale，0.25 步进保
+  // 像素感且不过档）——镜头/点按命中数学全按缩放后的有效视野（视口 ÷ scale）口径。
+  const scale = useMemo(
+    () => (indoor ? 1 : viewportScale(map, view.w, view.h, TILE_PX)),
+    [indoor, map, view.w, view.h],
+  );
   const cam = useMemo(
-    () => (pos ? cameraOffset(map, pos, view.w, view.h, TILE_PX) : { x: 0, y: 0 }),
-    [map, pos, view.w, view.h],
+    () =>
+      pos
+        ? cameraOffset(map, pos, view.w / scale, view.h / scale, TILE_PX)
+        : { x: 0, y: 0 },
+    [map, pos, view.w, view.h, scale],
   );
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  useEffect(() => setPan({ x: 0, y: 0 }), [mapKey, hasGod]);
+  useEffect(() => setPan({ x: 0, y: 0 }), [mapKey, hasGod, scale]);
 
   // 热点触发统一出口：走到格上触发 = 点击热点同一处（onHotspot 由调用方路由）
   const fireHotspot = useCallback(
@@ -221,17 +294,18 @@ export function PixelScene({
     const dy = e.clientY - d.startY;
     if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
     d.moved = true;
-    setPan({ x: d.baseX - cam.x - dx, y: d.baseY - cam.y - dy });
+    // pan 与 cam 同口径（世界 px）：屏上位移 ÷ scale 折回世界单位
+    setPan({ x: d.baseX - cam.x - dx / scale, y: d.baseY - cam.y - dy / scale });
   };
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = dragRef.current;
     dragRef.current = null;
     if (!d || d.pointerId !== e.pointerId || d.moved) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const camX = cam.x + pan.x;
-    const camY = cam.y + pan.y;
-    const tx = Math.floor((e.clientX - rect.left + camX) / TILE_PX);
-    const ty = Math.floor((e.clientY - rect.top + camY) / TILE_PX);
+    const camX = (cam.x + pan.x) * scale;
+    const camY = (cam.y + pan.y) * scale;
+    const tx = Math.floor((e.clientX - rect.left + camX) / (TILE_PX * scale));
+    const ty = Math.floor((e.clientY - rect.top + camY) / (TILE_PX * scale));
     // 双通道保留：点在热点上 = 直接触发（键盘时代的 hitTest 点按）
     const h = hitTest(hotspots, tx, ty);
     if (h) {
@@ -269,13 +343,28 @@ export function PixelScene({
         <div
           style={{
             position: 'absolute',
-            left: -(cam.x + pan.x),
-            top: -(cam.y + pan.y),
+            left: -(cam.x + pan.x) * scale,
+            top: -(cam.y + pan.y) * scale,
             width: cols * TILE_PX,
             height: rows * TILE_PX,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            willChange: 'transform',
           }}
         >
-          {cells}
+          {/* 底图 run 层（色块兜底 + 图集取块同行合并） */}
+          {baseRuns.map(baseRunNode)}
+          {/* sprite run 层（树/灌木/花/作物/岸石；z1、不挡命中） */}
+          {spriteRuns.map(spriteRunNode)}
+          {/* tile 装饰层（石碑；z 在 sprite 上、角色下） */}
+          {decor.map((d) => (
+            <div
+              key={`decor-${d.kind}-${d.x}-${d.y}`}
+              style={{ position: 'absolute', left: d.x * TILE_PX, top: d.y * TILE_PX, width: TILE_PX, height: TILE_PX, zIndex: 2 }}
+            >
+              <SteleTile />
+            </div>
+          ))}
           {/* 静态摆位角色（席位/NPC 不动——G4 裁决：只有上帝化身可走） */}
           {sprites?.map((s) => (
             <div key={s.key} style={{ position: 'absolute', left: s.x * TILE_PX, top: s.y * TILE_PX, width: TILE_PX, height: TILE_PX * 2 }}>
@@ -312,6 +401,7 @@ export function PixelScene({
           ))}
           {children}
         </div>
+        {viewportOverlay}
       </div>
       {/* 控制带（G2.5 移动端新规）：操作按钮不浮在世界画面上——竖屏整条垫在
           画布下方、横屏整条立在画布右方（orientation 媒体查询 + flex order，

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canWalk, resolveStep, triggerHotspotAt, cameraOffset, DIR_DELTA } from '../walker';
+import { canWalk, resolveStep, triggerHotspotAt, cameraOffset, viewportScale, DIR_DELTA } from '../walker';
 import { HOME_MAP, HOME_HOTSPOTS, WORLD_MAP, WORLD_HOTSPOTS, ROOM_MAP, ROOM_HOTSPOTS, GOD_SPOT, ROOM_GOD_SPOT, HOMESTEAD_HOTSPOT } from '../worldmap';
 
 describe('canWalk 碰撞判据', () => {
@@ -75,20 +75,65 @@ describe('triggerHotspotAt 走到即触发', () => {
 });
 
 describe('cameraOffset 镜头裁决', () => {
-  it('视口装得下全图 → 锁定 offset 0（Home 20×24=480px 宽）', () => {
+  it('视口恰装下全图 → offset 0（Home 20×24=480px 宽）', () => {
     expect(cameraOffset(HOME_MAP, GOD_SPOT, 480, 288, 24)).toEqual({ x: 0, y: 0 });
   });
 
-  it('World 672px > 视口 → 跟随且钳制贴边', () => {
+  it('G2.6：视口大于全图 → 世界层居中（负 offset，Home 装进 1280 宽）', () => {
+    expect(cameraOffset(HOME_MAP, GOD_SPOT, 1280, 800, 24)).toEqual({ x: -400, y: -256 });
+  });
+
+  it('World 1296px > 视口 → 跟随且钳制贴边', () => {
     // 化身在宅基地附近（左上），镜头偏左但钳在 0
     const left = cameraOffset(WORLD_MAP, { x: 4, y: 4 }, 375, 300, 24);
     expect(left.x).toBe(0);
-    // 化身在右侧水边，镜头贴右缘
-    const right = cameraOffset(WORLD_MAP, { x: 24, y: 9 }, 375, 300, 24);
-    expect(right.x).toBe(672 - 375);
+    // 化身贴右缘（cx - vw/2 超 clamp 上界 1296-375=921）
+    const right = cameraOffset(WORLD_MAP, { x: 47, y: 9 }, 375, 300, 24);
+    expect(right.x).toBe(54 * 24 - 375);
+    // 中段跟随：镜头 = 化身脚底居中偏置
+    const mid = cameraOffset(WORLD_MAP, { x: 24, y: 9 }, 375, 300, 24);
+    expect(mid.x).toBe(24 * 24 + 12 - 375 / 2);
   });
 
   it('视口尺寸未知（0）回落 offset 0', () => {
     expect(cameraOffset(WORLD_MAP, GOD_SPOT, 0, 0, 24)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('viewportScale 视口自适应放大（G2.6 复测欠账：满屏世界，0.25 步进）', () => {
+  it('桌面 1280×800 盖 1296×768 地图 → 1.25（max(0.99,1.04)→ceil 0.25 步进；表观格 30px、可见 42.7 列对齐参考图）', () => {
+    expect(viewportScale(WORLD_MAP, 1280, 800, 24)).toBe(1.25);
+  });
+
+  it('视口比地图还小（手机 375×300 < 1296×768）→ 倍率 1（不缩小，靠镜头跟随）', () => {
+    expect(viewportScale(WORLD_MAP, 375, 300, 24)).toBe(1);
+    // 手机竖屏 375×600 / 390×664：高 600/768 < 1 → 仍 1（可见 15-16 列）
+    expect(viewportScale(WORLD_MAP, 375, 600, 24)).toBe(1);
+    // Home 480×288 在 375×300：max(0.78,1.04) → ceil(4.17)/4 = 1.25
+    expect(viewportScale(HOME_MAP, 375, 300, 24)).toBe(1.25);
+  });
+
+  it('0.25 步进：微超比率不整档虚进（0.5 步进会把 1.04 顶到 1.5）', () => {
+    // 1296×768：max(1246/1296=0.96, 686/768=0.89) < 1 → 1
+    expect(viewportScale(WORLD_MAP, 1246, 686, 24)).toBe(1);
+    // 恰在整档上不虚进
+    expect(viewportScale(WORLD_MAP, 1280, 768, 24)).toBe(1);
+  });
+
+  it('Home 480×288 在 1280×800 里 → max(2.67,2.78) → ceil(11.11)/4 = 3', () => {
+    expect(viewportScale(HOME_MAP, 1280, 800, 24)).toBe(3);
+  });
+
+  it('视口未知（0）回落 1', () => {
+    expect(viewportScale(WORLD_MAP, 0, 0, 24)).toBe(1);
+  });
+
+  it('缩放后镜头口径：1.25× 时有效视野缩小，跟随钳在世界界内', () => {
+    // 1280×800 ÷1.25 = 1024×614，世界 1296×768：两轴都跟随
+    const off = cameraOffset(WORLD_MAP, GOD_SPOT, 1024, 614, 24);
+    expect(off.x).toBeGreaterThanOrEqual(0);
+    expect(off.x).toBeLessThanOrEqual(1296 - 1024);
+    expect(off.y).toBeGreaterThanOrEqual(0);
+    expect(off.y).toBeLessThanOrEqual(768 - 614);
   });
 });

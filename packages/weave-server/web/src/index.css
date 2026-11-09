@@ -720,10 +720,10 @@
 .rpg-scene-fade.rpg-entered {
   opacity: 1;
 }
-/* 热点命中区：常态只露四角虚线（不遮底图），悬停整块提亮 + 变手型。 */
+/* 热点命中区：常态透明（底图已画房体/符文，虚线框退役），悬停提亮 + 变手型。 */
 .rpg-hotspot {
   cursor: pointer;
-  outline: 2px dashed rgba(242, 237, 228, 0.55);
+  outline: 2px dashed rgba(242, 237, 228, 0);
   outline-offset: -2px;
   transition: background 120ms steps(2);
 }
@@ -763,18 +763,21 @@
   z-index: 5;
   pointer-events: none;
 }
-/* 虚拟方向键（触屏）：触控面 ≥44px（52px 格）、按住高亮——桌面不渲染该层 */
+/* 虚拟方向键（触屏）：触控面 ≥44px（52px 格）、按下变亮青（G2.6 规格色
+   #4ec9b0 低饱和底）——桌面不渲染该层 */
 .rpg-dpad-btn {
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
-  border-radius: 10px;
-  border: 1px solid var(--w-border, #2c2735);
-  background: var(--w-surface-2, #262130);
+  border-radius: 2px;
+  border: 1px solid rgba(190, 190, 190, 0.28);
+  background: rgba(18, 17, 26, 0.88);
+  color: #d7d1c6;
   transition: background 80ms steps(2);
 }
 .rpg-dpad-btn:active {
-  background: var(--w-surface-3, #332c40);
+  background: rgba(78, 201, 176, 0.35);
+  border-color: #4ec9b0;
 }
 /* 场景切换条触屏态：按钮触控面放大到 ≥44px（媒体态放大，桌面观感不动） */
 @media (hover: none), (pointer: coarse) {
@@ -788,10 +791,65 @@
 }
 
 /* ---- G2.5 全屏化：overlay HUD 面 ----
-   管理面浮层 = 半透明表面（游戏画面仍可见底下）；HUD 锚点层不挡画布交互。 */
+   管理面浮层 = 半透明表面（游戏画面仍可见底下）；HUD 锚点层不挡画布交互。
+   G2.6：HUD 统一样式收敛（参考图 A 色板）：rgba 深面 + 浅灰描边 + 文字浅灰，
+   边角微像素化（2px，不是大圆角）——rpg-hud-face 是唯一 HUD 面样式。 */
 .rpg-overlay-surface {
   background: color-mix(in srgb, var(--w-surface-1, #17141f) 88%, transparent);
   backdrop-filter: blur(6px);
+}
+.rpg-hud-face {
+  background: rgba(18, 17, 26, 0.88);
+  border: 1px solid rgba(190, 190, 190, 0.28);
+  color: #d7d1c6;
+  border-radius: 2px;
+}
+/* 底部字幕：画面底部中央、浅灰 40%——只摆字，不摆面。 */
+.rpg-subtitle {
+  color: rgba(215, 209, 198, 0.4);
+  letter-spacing: 0.2em;
+}
+/* 选中角色青色标记：脚下描边（CSS 三角形描边不出像素感，用底部亮条）。 */
+.rpg-selected-mark {
+  box-shadow: 0 0 0 2px #4ec9b0;
+  border-radius: 1px;
+}
+/* 六维细长像素条（详情 HUD ②区）：4px 高、格状刻度 = repeating-linear-gradient
+   分小格（G2.6 参考图：像素条带刻度），无圆角 + 描边。 */
+.rpg-dim-bar {
+  height: 4px;
+  background:
+    repeating-linear-gradient(
+      to right,
+      transparent 0 3px,
+      rgba(18, 17, 26, 0.6) 3px 4px
+    ),
+    #2c2735;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.rpg-dim-bar > div {
+  height: 100%;
+}
+/* 修为青色进度条（③区）。 */
+.rpg-xp-bar {
+  height: 6px;
+  background: #2c2735;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.rpg-xp-bar > div {
+  height: 100%;
+  background: #4ec9b0;
+}
+/* 灵田灵气（G2.6）：低亮度青色呼吸——叠在田块上方、不挡点击。 */
+.rpg-aura {
+  position: absolute;
+  z-index: 1;
+  background: radial-gradient(ellipse at center, rgba(78, 201, 176, 0.16) 0%, rgba(78, 201, 176, 0.05) 55%, transparent 75%);
+  animation: rpg-aura-breathe 4s steps(4) infinite;
+}
+@keyframes rpg-aura-breathe {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 .rpg-hud-anchor {
   pointer-events: none;
@@ -813,12 +871,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 0;
+  padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px));
   background: var(--w-surface-1, #17141f);
   border-top: 1px solid var(--w-border, #2c2735);
 }
 .rpg-pixel-viewport {
   order: 1;
+  /* 恒垫场景深底（G2.6 复测欠账）：不随主题——浅色主题下场景外露白即修。 */
+  background: #17141f;
 }
 @media (orientation: landscape) {
   .rpg-pixel-scene {

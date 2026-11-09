@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { I18nProvider } from '@/i18n/I18nProvider';
-import { headBarsOf, SpriteHeadBars, alertsOf, ClockWidget } from '../hud';
+import { headBarsOf, SpriteHeadBars, alertsOf, ClockWidget, nextSelectedRoleId, xpRatioOf } from '../hud';
 import { wandererSpot } from '../RpgView';
 import type { RpgRoleView, SessionRow, OrchestrationRunRow } from '@/lib/api';
 
@@ -114,11 +114,28 @@ describe('alertsOf', () => {
 });
 
 describe('wandererSpot', () => {
-  it('草带向下一排、出界截断', () => {
-    expect(wandererSpot(0)).toEqual({ x: 2, y: 2 });
-    expect(wandererSpot(1)).toEqual({ x: 4, y: 2 });
+  it('路南草带一排（54 宽图，x=22 起间隔 4）、出界截断', () => {
+    expect(wandererSpot(0)).toEqual({ x: 22, y: 12 });
+    expect(wandererSpot(1)).toEqual({ x: 26, y: 12 });
     expect(wandererSpot(-1)).toBeNull();
-    expect(wandererSpot(13)).toBeNull();
+    expect(wandererSpot(8)).toBeNull();
+  });
+});
+
+describe('G2.6 交互与详情条派生', () => {
+  it('nextSelectedRoleId：无角色 null；无选中取首个；循环切换（尾→首）', () => {
+    const roles = [{ id: 7 }, { id: 3 }, { id: 5 }];
+    expect(nextSelectedRoleId([], null)).toBeNull();
+    expect(nextSelectedRoleId(roles, null)).toBe(7);
+    expect(nextSelectedRoleId(roles, 7)).toBe(3);
+    expect(nextSelectedRoleId(roles, 5)).toBe(7);
+    expect(nextSelectedRoleId(roles, 99)).toBe(7);
+  });
+
+  it('xpRatioOf：nextAt/remaining 派生进度，异常档位回落 null（不摆空壳条）', () => {
+    expect(xpRatioOf({ total: 40, breakdown: { quest: 0, turns: 0, cultivation: 0, collaboration: 0 }, level: 2, nextAt: 100, remaining: 60, realm: '炼气' })).toBeCloseTo(0.4, 5);
+    expect(xpRatioOf({ total: 40, breakdown: { quest: 0, turns: 0, cultivation: 0, collaboration: 0 }, level: 2, nextAt: 0, remaining: 0, realm: '炼气' })).toBeNull();
+    expect(xpRatioOf({ total: 40, breakdown: { quest: 0, turns: 0, cultivation: 0, collaboration: 0 }, level: 2, nextAt: 50, remaining: 100, realm: '炼气' })).toBeNull();
   });
 });
 
