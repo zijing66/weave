@@ -209,11 +209,14 @@ export const DEFAULT_PET_SETTINGS: PetSettings = {
 export interface FederationSettings {
   discovery: boolean;
   enabled: boolean;
+  /** 邀请自动接受（F2，默认关——全程 HITL 裁决：接受必须手动点）。 */
+  autoAccept?: boolean;
 }
 
 export const DEFAULT_FEDERATION_SETTINGS: FederationSettings = {
   discovery: false,
   enabled: false,
+  autoAccept: false,
 };
 
 /** 尺寸档 → 窗像素（宽×高；精灵单元比例约 12:13，留气泡余量）。 */
@@ -384,6 +387,10 @@ function mergeDefaults(raw: unknown): DaemonSettings {
       typeof federationRaw.enabled === 'boolean'
         ? federationRaw.enabled
         : DEFAULT_FEDERATION_SETTINGS.enabled,
+    autoAccept:
+      typeof federationRaw.autoAccept === 'boolean'
+        ? federationRaw.autoAccept
+        : DEFAULT_FEDERATION_SETTINGS.autoAccept,
   };
   const retention =
     Number.isInteger(events.retentionDays) && (events.retentionDays as number) >= 1

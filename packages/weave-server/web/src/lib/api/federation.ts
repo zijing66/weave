@@ -60,7 +60,55 @@ export const federationApi = {
     }),
   /** LAN mDNS 浏览快照（发现 ≠ 可用，仍须 pairing）。 */
   discover: () => apiFetch<{ peers: DiscoveredPeer[] }>('/federation/discover'),
+  /** 邀请发起（F2，本机协调者视角）：打对端 /federation/call 的 rpg.invite 行。 */
+  sendInvitation: (input: {
+    peerId: string;
+    team: string;
+    scene?: string;
+    roles?: Array<{ role: string; module?: string }>;
+    message?: string;
+  }) => apiFetch<{ ok: boolean; peer: string }>('/federation/invitations/send', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
+  /** 受邀侧待办（HITL：接受/拒绝必须手动点）。 */
+  listInvitations: () =>
+    apiFetch<{ invitations: RpgInvitationView[] }>('/federation/invitations'),
+  decideInvitation: (id: number, decision: 'accept' | 'decline') =>
+    apiFetch<{ invitation: RpgInvitationView }>(`/federation/invitations/${id}/${decision}`, {
+      method: 'POST',
+    }),
+  /** 对端只读 sessions 代理（F2 跨机角色卡/跨机看板的数据源）。 */
+  peerSessions: (peerId: string) =>
+    apiFetch<PeerSessionsView>(`/federation/peers/${encodeURIComponent(peerId)}/sessions`),
 };
+
+export interface RpgInvitationView {
+  id: number;
+  peerId: string;
+  peerName: string | null;
+  team: string;
+  scene: string | null;
+  roles: Array<{ role: string; module?: string }> | null;
+  message: string | null;
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
+  decidedBy: string | null;
+  provenance: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+export interface PeerSessionsView {
+  peer: string;
+  online: boolean;
+  sessions: Array<{
+    sessionId: string;
+    title: string | null;
+    harness: string | null;
+    turnOpen: boolean | null;
+    lastSeenAt: string | null;
+  }>;
+}
 
 export interface FederationCaps {
   hostname: string;

@@ -1305,7 +1305,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </SettingsSection>
 
           <SettingsSection id="federation" icon={Globe} title={t('settings.sectionFederation')}>
-            <FederationSection enabled={settings?.federation?.enabled ?? false} discovery={settings?.federation?.discovery ?? false} onChange={(patch) => setSettings((s) => (s === null ? s : { ...s, federation: { ...(s.federation ?? { discovery: false, enabled: false }), ...patch } }))} />
+            <FederationSection enabled={settings?.federation?.enabled ?? false} discovery={settings?.federation?.discovery ?? false} autoAccept={settings?.federation?.autoAccept ?? false} onChange={(patch) => setSettings((s) => (s === null ? s : { ...s, federation: { ...(s.federation ?? { discovery: false, enabled: false }), ...patch } }))} />
           </SettingsSection>
 
           <SettingsSection id="ai" icon={Sparkles} title={t('settings.sectionAi')}>

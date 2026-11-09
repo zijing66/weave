@@ -52,6 +52,7 @@ import {
   RpgScoreRepository,
 } from '../rpg/roles.js';
 import { RpgAchievementRepository, RpgXpRepository } from '../rpg/progress-store.js';
+import { RpgInvitationRepository } from '../rpg/invitations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
 import { createDecisionKernel } from '../hooks/decision-kernel.js';
@@ -302,6 +303,8 @@ export function startDaemon(): void {
   const rpgHexagram = new RpgHexagramRepository(db);
   const rpgAchievements = new RpgAchievementRepository(db);
   const rpgXp = new RpgXpRepository(db);
+  // 跨机角色邀请（F2）：对端 call rpg.invite 只落待确认记录（HITL），接受/拒绝手动。
+  const rpgInvitations = new RpgInvitationRepository(db);
   // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
   const sessionProbe = new SessionProbe(
     dbTranscriptPathResolver(hookEvents),
@@ -570,6 +573,15 @@ export function startDaemon(): void {
       extract: (input) => extensionEdgeExtract.run(input),
     },
   });
+  // 邀请选角内核（F2）：决策模型优先（conditionJudge 同链）+ fork 回落——A3 内核
+  // evaluate 档零新机制消费。fork 面用编排的 edgeExtract 池（选角频次极低，不另开池）。
+  const rpgCastKernel = createDecisionKernel({
+    conditionJudge,
+    fork: {
+      supports: (sessionId) => edgeExtract.supports(sessionId),
+      extract: (input) => edgeExtract.run(input),
+    },
+  });
   const extensionEngine = new ExtensionEngine({
     bindings: extensionBindings,
     executions: extensionExecutions,
@@ -716,6 +728,8 @@ export function startDaemon(): void {
     rpgHexagram,
     rpgAchievements,
     rpgXp,
+    rpgInvitations,
+    rpgCastKernel,
     onAttach: dashboardPusher.attach,
     dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,

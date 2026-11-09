@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Globe, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { api, type DiscoveredPeer, type PeerRow } from '@/lib/api';
+import { Globe, Loader2, Plus, RefreshCw, Trash2, UserPlus } from 'lucide-react';
+import { api, type DiscoveredPeer, type PeerRow, type RpgInvitationView } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
 import { registerInvalidator } from '@/lib/sse';
 import { Switch } from '@/components/ui/switch';
@@ -26,7 +26,8 @@ function livenessOf(lastSeenAt: string | null): 'online' | 'offline' | 'never-se
 export function FederationSection(props: {
   enabled: boolean;
   discovery: boolean;
-  onChange: (patch: { enabled?: boolean; discovery?: boolean }) => void;
+  autoAccept?: boolean;
+  onChange: (patch: { enabled?: boolean; discovery?: boolean; autoAccept?: boolean }) => void;
 }) {
   const { t } = useI18n();
   const [peers, setPeers] = useState<PeerRow[]>([]);
@@ -44,6 +45,14 @@ export function FederationSection(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initiateError, setInitiateError] = useState<string | null>(null);
+  // F2 邀请面：受邀待办 + 发起（选 peer → 选团队/场景 → 打对端 call rpg.invite）。
+  const [invitations, setInvitations] = useState<RpgInvitationView[]>([]);
+  const [invitePeerId, setInvitePeerId] = useState('');
+  const [inviteTeam, setInviteTeam] = useState('');
+  const [inviteScene, setInviteScene] = useState('');
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState<number | null>(null);
 
   const reloadPeers = useCallback(() => {
     api
@@ -52,18 +61,29 @@ export function FederationSection(props: {
       .catch((e) => setError(errorText(e)));
   }, []);
 
+  const reloadInvitations = useCallback(() => {
+    api
+      .listInvitations()
+      .then((r) => setInvitations(r.invitations))
+      .catch(() => setInvitations([]));
+  }, []);
+
   useEffect(() => {
     reloadPeers();
-  }, [reloadPeers]);
+    reloadInvitations();
+  }, [reloadPeers, reloadInvitations]);
 
   // SSE 单通道：服务端 peers 变更/心跳落地推 `{type:'invalidate', key:'federation'}`
   // 帧，这里接它重拉——在线态与列表变更不靠轮询。
   useEffect(() => {
-    const offInv = registerInvalidator('federation', reloadPeers);
+    const offInv = registerInvalidator('federation', () => {
+      reloadPeers();
+      reloadInvitations();
+    });
     return () => {
       offInv();
     };
-  }, [reloadPeers]);
+  }, [reloadPeers, reloadInvitations]);
 
   const scan = useCallback(() => {
     setBusy(true);
@@ -164,6 +184,42 @@ export function FederationSection(props: {
       .finally(() => setInitiateBusy(false));
   }, [peerCodeName, peerCodeHost, peerCodePort, peerCode, reloadPeers, t]);
 
+  // HITL：接受/拒绝必须手动点；对端接受后在其本机跑 AI 选角（本端只发邀请）。
+  const decideInvitation = useCallback(
+    (inv: RpgInvitationView, decision: 'accept' | 'decline') => {
+      setDeciding(inv.id);
+      setInviteError(null);
+      api
+        .decideInvitation(inv.id, decision)
+        .then(reloadInvitations)
+        .catch((e) => setInviteError(errorText(e)))
+        .finally(() => setDeciding(null));
+    },
+    [reloadInvitations],
+  );
+
+  // 邀请发起：对端落一条待确认记录（HITL 在对端）；本端只看到发送结果。
+  const sendInvitation = useCallback(() => {
+    if (!invitePeerId || !inviteTeam.trim()) {
+      setInviteError(t('settings.fedInviteInvalid'));
+      return;
+    }
+    setInviteBusy(true);
+    setInviteError(null);
+    api
+      .sendInvitation({
+        peerId: invitePeerId,
+        team: inviteTeam.trim(),
+        ...(inviteScene.trim() ? { scene: inviteScene.trim() } : {}),
+      })
+      .then(() => {
+        setInviteTeam('');
+        setInviteScene('');
+      })
+      .catch((e) => setInviteError(errorText(e)))
+      .finally(() => setInviteBusy(false));
+  }, [invitePeerId, inviteTeam, inviteScene, t]);
+
   const inputCls =
     'rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
@@ -198,6 +254,23 @@ export function FederationSection(props: {
               checked={props.discovery}
               onChange={(v) => props.onChange({ discovery: v })}
               title={t('settings.fedDiscovery')}
+            />
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Globe className="h-3.5 w-3.5 text-neutral-500" />
+          <label className="flex items-center text-xs font-medium text-neutral-300">
+            {t('settings.fedAutoAccept')}
+            <FieldHint>{t('settings.fedAutoAcceptHint')}</FieldHint>
+          </label>
+          <span className="ml-auto">
+            <Switch
+              checked={props.autoAccept ?? false}
+              onChange={(v) => props.onChange({ autoAccept: v })}
+              title={t('settings.fedAutoAccept')}
             />
           </span>
         </div>
@@ -306,6 +379,102 @@ export function FederationSection(props: {
           </ul>
         </div>
       )}
+
+      {/* F2 邀请待办（HITL）：pending 卡位（复用决策队列卡位风格）——接受/拒绝必须手动点 */}
+      {invitations.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-11 text-neutral-500">{t('settings.fedInvitations')}</p>
+          <ul className="space-y-1">
+            {invitations.map((inv) => (
+              <li
+                key={inv.id}
+                className="rounded-lg bg-neutral-800/60 px-2.5 py-1.5 text-11 text-neutral-300"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-neutral-200">{inv.team}</span>
+                  <span className="truncate text-neutral-500">
+                    {inv.peerName ?? inv.peerId}
+                    {inv.scene ? ` · ${inv.scene}` : ''}
+                  </span>
+                  <span className="ml-auto shrink-0 text-neutral-600">
+                    {t(`settings.fedInvStatus${inv.status.charAt(0).toUpperCase()}${inv.status.slice(1)}` as 'settings.fedInvStatusPending')}
+                  </span>
+                </div>
+                {inv.message && <p className="mt-0.5 truncate text-neutral-400">{inv.message}</p>}
+                {inv.status === 'pending' && (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={deciding === inv.id}
+                      onClick={() => decideInvitation(inv, 'accept')}
+                      className="rounded bg-blue-600/80 px-2 py-0.5 text-11 text-white hover:bg-blue-600 disabled:opacity-50"
+                    >
+                      {deciding === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : t('settings.fedInvAccept')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deciding === inv.id}
+                      onClick={() => decideInvitation(inv, 'decline')}
+                      className="rounded bg-neutral-800 px-2 py-0.5 text-11 text-neutral-400 hover:bg-neutral-700 disabled:opacity-50"
+                    >
+                      {t('settings.fedInvDecline')}
+                    </button>
+                    {deciding === inv.id && <span className="text-neutral-500">{t('settings.fedInvCasting')}</span>}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* F2 邀请发起：选 peer → 团队名/场景 → 打对端 rpg.invite（对端落待确认记录） */}
+      <div className="space-y-1.5">
+        <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+          {t('settings.fedInviteSend')}
+          <FieldHint>{t('settings.fedInviteSendHint')}</FieldHint>
+        </label>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <select
+            value={invitePeerId}
+            onChange={(e) => setInvitePeerId(e.target.value)}
+            className={`${inputCls} w-32`}
+          >
+            <option value="">{t('settings.fedInvitePickPeer')}</option>
+            {peers
+              .filter((p) => p.enabled)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+          </select>
+          <input
+            type="text"
+            value={inviteTeam}
+            onChange={(e) => setInviteTeam(e.target.value)}
+            placeholder={t('settings.fedInviteTeam')}
+            className={`${inputCls} w-36`}
+          />
+          <input
+            type="text"
+            value={inviteScene}
+            onChange={(e) => setInviteScene(e.target.value)}
+            placeholder={t('settings.fedInviteScene')}
+            className={`${inputCls} w-32`}
+          />
+          <button
+            type="button"
+            onClick={sendInvitation}
+            disabled={inviteBusy}
+            className="flex items-center gap-1 rounded-lg bg-neutral-800 px-2 py-1.5 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {inviteBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />}
+            {t('settings.fedInviteGo')}
+          </button>
+        </div>
+        {inviteError && <p className="text-11 text-red-400">{inviteError}</p>}
+      </div>
 
       <div className="flex items-center gap-1.5">
         <input

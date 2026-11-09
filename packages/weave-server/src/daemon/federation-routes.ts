@@ -20,6 +20,7 @@ import { tokenFileOf } from '../repositories/peers.js';
 import { handleDiscoverRoute } from './mdns-advertiser.js';
 import { handleFederationCall, readPeerTokenFromRequest } from './federation-call.js';
 import { peerRequest, describePeerError, peerEndpointOf } from './federation-client.js';
+import { withPeerNames } from '../rpg/invitations.js';
 
 /**
  * /federation/* 的**全量面**（F1 起）：peer 注册表 CRUD + pairing 全链（出站
@@ -54,6 +55,13 @@ const HeartbeatBody = z
 
 /** 活跃 pairing 要约（进程内存——重启即作废重开，短码本就是短命人工通道）。 */
 let activePairing: PairingSession | null = null;
+
+/** 对端 sessions.list 只读查询的短缓存（30s；federation 帧到即整表清空）。 */
+const PEER_SESSIONS_CACHE_MS = 30_000;
+const peerSessionsCache = new Map<
+  string,
+  { at: number; online: boolean; sessions: Array<{ sessionId: string; title: string | null; harness: string | null; turnOpen: boolean | null; lastSeenAt: string | null }> }
+>();
 
 export function resetPairingForTest(): void {
   activePairing = null;
@@ -102,6 +110,13 @@ export async function handleFederationRoutes(
   const certPem = deps.ownCertPem ?? '';
   const hostname = deps.ownHostname ?? '';
 
+  // federation 帧既是对端的失效信号，也是本端缓存的：心跳/call/管理面一动就整表清
+  // （对端 sessions.list 的 30s 短缓存随之失效——不靠计时器）。
+  const federate = (): void => {
+    peerSessionsCache.clear();
+    deps.dataBus?.emit({ key: 'federation' });
+  };
+
   // --- per-peer token 门内（豁免既有认证门）：对端来心跳 ---
   if (pathname === '/federation/heartbeat') {
     if (req.method !== 'POST') return true;
@@ -113,7 +128,7 @@ export async function handleFederationRoutes(
       return true;
     }
     peers.heartbeat(row.id, new Date().toISOString());
-    deps.dataBus?.emit({ key: 'federation' });
+    federate();
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -128,7 +143,7 @@ export async function handleFederationRoutes(
     }
     // 心跳副带：能过 token 门的请求就是对端活着的证据。
     peers.heartbeat(row.id, new Date().toISOString());
-    deps.dataBus?.emit({ key: 'federation' });
+    federate();
     if (pathname === '/federation/caps') {
       if (req.method !== 'GET') return true;
       sendJson(res, 200, {
@@ -139,7 +154,7 @@ export async function handleFederationRoutes(
       return true;
     }
     if (req.method !== 'POST') return true;
-    await handleFederationCall(req, res, deps);
+    await handleFederationCall(req, res, deps, { id: row.id, name: row.name });
     return true;
   }
 
@@ -206,7 +221,7 @@ export async function handleFederationRoutes(
         fingerprint: body.fingerprint ?? null,
         source: 'manual',
       });
-      deps.dataBus?.emit({ key: 'federation' });
+      federate();
       sendJson(res, 201, { peer: row });
       return true;
     }
@@ -238,14 +253,14 @@ export async function handleFederationRoutes(
         sendJson(res, 404, { error: 'Not found' });
         return true;
       }
-      deps.dataBus?.emit({ key: 'federation' });
+      federate();
       sendJson(res, 200, { peer: row });
       return true;
     }
     if (req.method === 'DELETE') {
       if (tokenDir) revokePeerToken(tokenDir, id, tokenFileOf);
       const ok = peers.delete(id);
-      deps.dataBus?.emit({ key: 'federation' });
+      federate();
       sendJson(res, 200, { ok });
       return true;
     }
@@ -358,8 +373,154 @@ export async function handleFederationRoutes(
         tokenFileOf,
       );
     }
-    deps.dataBus?.emit({ key: 'federation' });
+    federate();
     sendJson(res, 200, { peer: peers.getById(row.id) });
+    return true;
+  }
+
+  // --- RPG 跨机邀请（F2，HITL）：发起 = 打对端 call rpg.invite；收到的待办 =
+  // rpg_invitations 表（接受/拒绝必须手动点）。列表惰性跑一次 48h 过期扫。
+  if (pathname === '/federation/invitations' && req.method === 'GET') {
+    if (!deps.rpgInvitations) {
+      sendJson(res, 503, { error: 'RPG invitations subsystem unavailable' });
+      return true;
+    }
+    deps.rpgInvitations.expireOverdue();
+    federate();
+    sendJson(res, 200, { invitations: withPeerNames(deps.rpgInvitations.list(), peers) });
+    return true;
+  }
+
+  const inviteDecision = pathname.match(/^\/federation\/invitations\/(\d+)\/(accept|decline)$/);
+  if (inviteDecision && req.method === 'POST') {
+    if (!deps.rpgInvitations) {
+      sendJson(res, 503, { error: 'RPG invitations subsystem unavailable' });
+      return true;
+    }
+    const id = Number(inviteDecision[1]);
+    const status = inviteDecision[2] === 'accept' ? 'accepted' : 'declined';
+    // HITL 铁律：决定只能由用户手动发起——decided_by 恒 manual（自动模式默认关，
+    // v1 不给自动接受的写入口）。
+    const ok = deps.rpgInvitations.decide(id, status, 'manual');
+    if (!ok) {
+      sendJson(res, 409, { error: 'invitation is not pending (already decided or expired)' });
+      return true;
+    }
+    federate();
+    sendJson(res, 200, { invitation: withPeerNames([deps.rpgInvitations.getById(id)!], peers)[0] });
+    return true;
+  }
+
+  // 邀请发起（本机协调者视角）：选一个已配对在线 peer → 选团队/场景 → 经
+  // federation-client 打对端 /federation/call 的 rpg.invite 行（对端落一条待确认
+  // 记录；对端不可达/拒绝如实回错）。
+  if (pathname === '/federation/invitations/send' && req.method === 'POST') {
+    const body = await parseBody(
+      req,
+      res,
+      z
+        .object({
+          peerId: z.string().min(1).max(100),
+          team: z.string().min(1).max(200),
+          scene: z.string().max(200).optional(),
+          roles: z
+            .array(z.object({ role: z.string().min(1).max(200), module: z.string().max(200).optional() }).strict())
+            .max(50)
+            .optional(),
+          message: z.string().max(2_000).optional(),
+        })
+        .strict(),
+    );
+    if (!body) return true;
+    const peer = peers.getById(body.peerId);
+    if (!peer || !peer.enabled) {
+      sendJson(res, 404, { error: `Unknown peer: ${body.peerId}` });
+      return true;
+    }
+    const endpoint = peerEndpointOf(peer);
+    if (!endpoint) {
+      sendJson(res, 400, { error: 'peer endpoint unavailable (host/port missing)' });
+      return true;
+    }
+    const tokenDir = deps.peerTokensDir;
+    const token = tokenDir ? readPeerToken(tokenDir, peer.id, tokenFileOf)?.token : undefined;
+    if (!token) {
+      sendJson(res, 409, { error: 'no per-peer token for this peer — pair first' });
+      return true;
+    }
+    let r;
+    try {
+      r = await peerRequest(endpoint, {
+        method: 'POST',
+        path: '/federation/call',
+        token,
+        body: {
+          service: 'rpg.invite',
+          params: {
+            team: body.team,
+            ...(body.scene != null ? { scene: body.scene } : {}),
+            ...(body.roles != null ? { roles: body.roles } : {}),
+            ...(body.message != null ? { message: body.message } : {}),
+          },
+        },
+      });
+    } catch (err) {
+      const { reason, message } = describePeerError(err);
+      sendJson(res, reason === 'refused' ? 409 : 502, { error: `peer invite failed (${reason}): ${message}` });
+      return true;
+    }
+    if (!r.ok) {
+      sendJson(res, 502, { error: `peer rejected invite: HTTP ${r.status} ${r.body.slice(0, 200)}` });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, peer: peer.name });
+    return true;
+  }
+
+  // 对端只读会话清单（F2 跨机角色卡/跨机看板的数据源）：经 call sessions.list
+  // 查对端，30s 内存缓存 + federation 帧失效——不每渲染打一次。只读、绝不写远端。
+  const peerSessions = pathname.match(/^\/federation\/peers\/([\w-]+)\/sessions$/);
+  if (peerSessions && req.method === 'GET') {
+    const peer = peers.getById(peerSessions[1]!);
+    if (!peer || !peer.enabled) {
+      sendJson(res, 404, { error: 'Unknown peer' });
+      return true;
+    }
+    const endpoint = peerEndpointOf(peer);
+    if (!endpoint) {
+      sendJson(res, 200, { peer: peer.name, online: false, sessions: [] });
+      return true;
+    }
+    const cached = peerSessionsCache.get(peer.id);
+    if (cached && Date.now() - cached.at < PEER_SESSIONS_CACHE_MS) {
+      sendJson(res, 200, { peer: peer.name, online: cached.online, sessions: cached.sessions });
+      return true;
+    }
+    const tokenDir = deps.peerTokensDir;
+    const token = tokenDir ? readPeerToken(tokenDir, peer.id, tokenFileOf)?.token : undefined;
+    if (!token) {
+      sendJson(res, 409, { error: 'no per-peer token for this peer — pair first' });
+      return true;
+    }
+    let online = false;
+    let sessions: Array<{ sessionId: string; title: string | null; harness: string | null; turnOpen: boolean | null; lastSeenAt: string | null }> = [];
+    try {
+      const r = await peerRequest(endpoint, {
+        method: 'POST',
+        path: '/federation/call',
+        token,
+        body: { service: 'sessions.list', params: { limit: 100 } },
+      });
+      if (r.ok) {
+        const parsed = JSON.parse(r.body) as { sessions?: typeof sessions };
+        sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
+        online = true;
+      }
+    } catch {
+      /* 对端不可达 = 如实给空账 + online:false */
+    }
+    peerSessionsCache.set(peer.id, { at: Date.now(), online, sessions });
+    sendJson(res, 200, { peer: peer.name, online, sessions });
     return true;
   }
 

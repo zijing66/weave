@@ -83,6 +83,17 @@ export const rpgZh = {
   'rpg.ach.allArchived': '满门归档',
   'rpg.ach.iterationCraft': '迭代匠心',
   'rpg.roleProgress': '修行',
+  'rpg.peerRoleBadge': '跨机',
+  'rpg.crossBoard': '跨机看板',
+  'rpg.crossLocal': '本机战局',
+  'rpg.crossOpen': '交战 {n}',
+  'rpg.crossReadonly': '只读聚合——共享场景互相看，写操作永远落本机。',
+  'rpg.inviteAccept': '接受邀请',
+  'rpg.castingTitle': 'AI 选角推荐',
+  'rpg.castingReason': '推荐理由',
+  'rpg.castingFallback': 'AI 选角不可用——请手选角色。',
+  'rpg.castingConfirm': '确认入队',
+  'rpg.castingPick': '手选角色',
 };
 
 export const rpgEn: Record<keyof typeof rpgZh, string> = {
@@ -169,4 +180,15 @@ export const rpgEn: Record<keyof typeof rpgZh, string> = {
   'rpg.ach.allArchived': 'All Archived',
   'rpg.ach.iterationCraft': 'Iteration Craft',
   'rpg.roleProgress': 'Progress',
+  'rpg.peerRoleBadge': 'Peer',
+  'rpg.crossBoard': 'Cross-machine board',
+  'rpg.crossLocal': 'Local battles',
+  'rpg.crossOpen': '{n} fighting',
+  'rpg.crossReadonly': 'Read-only aggregation — shared scenes watch each other; writes always land locally.',
+  'rpg.inviteAccept': 'Accept invitation',
+  'rpg.castingTitle': 'AI casting recommendation',
+  'rpg.castingReason': 'Reason',
+  'rpg.castingFallback': 'AI casting unavailable — pick roles manually.',
+  'rpg.castingConfirm': 'Confirm into team',
+  'rpg.castingPick': 'Pick manually',
 };

@@ -234,4 +234,4 @@ export type {
   RpgProgressView,
   RpgBoardRow,
 } from './rpg';
-export type { PeerRow, DiscoveredPeer, PairingOfferResult } from './federation';
+export type { PeerRow, DiscoveredPeer, PairingOfferResult, RpgInvitationView, PeerSessionsView } from './federation';

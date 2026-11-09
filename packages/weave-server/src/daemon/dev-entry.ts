@@ -94,6 +94,7 @@ import {
   RpgHexagramRepository,
 } from '../rpg/roles.js';
 import { RpgAchievementRepository, RpgXpRepository } from '../rpg/progress-store.js';
+import { RpgInvitationRepository } from '../rpg/invitations.js';
 import { PeerRepository } from '../repositories/peers.js';
 import { getPeerTokensDir, getCertsDir } from '../db/paths.js';
 import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
@@ -289,6 +290,8 @@ async function main(): Promise<void> {
   const rpgHexagram = new RpgHexagramRepository(db);
   const rpgAchievements = new RpgAchievementRepository(db);
   const rpgXp = new RpgXpRepository(db);
+  // 跨机角色邀请（F2，与 start.ts 同装配）：对端 call rpg.invite 只落待确认记录。
+  const rpgInvitations = new RpgInvitationRepository(db);
   // 联邦 peer 注册表（E3）：与 start.ts 同装配；call 转发是 F1 的门。
   const peers = new PeerRepository(db);
   // 会话转录探测（中断态）：与生产入口同一装配——见 start.ts 的说明。
@@ -502,6 +505,14 @@ async function main(): Promise<void> {
       extract: (input) => edgeExtract.run(input),
     }),
   });
+  // 邀请选角内核（F2，与 start.ts 同装配）：决策模型优先 + fork 回落。
+  const rpgCastKernel = createDecisionKernel({
+    conditionJudge,
+    fork: {
+      supports: (sessionId) => edgeExtract.supports(sessionId),
+      extract: (input) => edgeExtract.run(input),
+    },
+  });
   // 判死拉起 = 共享工厂（session-open.ts，与 start.ts 同一份）：编排引擎的
   // 「目标会话没开就拉起来」用它（判据、预算、单飞只有一处）。
   const ensureOpen = createEnsureOpen({
@@ -677,6 +688,8 @@ async function main(): Promise<void> {
     rpgHexagram,
     rpgAchievements,
     rpgXp,
+    rpgInvitations,
+    rpgCastKernel,
     onAttach: dashboardPusher.attach,
     dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,

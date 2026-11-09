@@ -43,6 +43,19 @@ const SessionEventsParams = z
   })
   .strict();
 
+/** `rpg.invite` 参数（F2）：只落一条待确认记录——不执行任何动作（不违反 inject-only）。 */
+const InviteParams = z
+  .object({
+    team: z.string().min(1).max(200),
+    scene: z.string().max(200).optional(),
+    roles: z
+      .array(z.object({ role: z.string().min(1).max(200), module: z.string().max(200).optional() }).strict())
+      .max(50)
+      .optional(),
+    message: z.string().max(2_000).optional(),
+  })
+  .strict();
+
 /** per-peer token 请求读取（门内共用）：`Authorization: Bearer <token>`。 */
 export function readPeerTokenFromRequest(req: IncomingMessage): string | null {
   const h = req.headers.authorization;
@@ -59,6 +72,8 @@ export async function handleFederationCall(
     setHeader: (name: string, value: string) => void;
   },
   deps: WeaveServerDeps,
+  /** 已过 token 门的调用方 peer（federation-routes 解析；invite 落记录要记来源）。 */
+  callerPeer?: { id: string; name: string },
 ): Promise<void> {
   const json = (status: number, payload: unknown): void => {
     res.statusCode = status;
@@ -110,6 +125,33 @@ export async function handleFederationCall(
       return;
     }
     json(202, { ok: true, messageId: result.messageId, status: result.status });
+    return;
+  }
+
+  if (service === 'rpg.invite') {
+    if (!deps.rpgInvitations) {
+      json(503, { error: 'RPG invitations subsystem unavailable' });
+      return;
+    }
+    if (!callerPeer) {
+      json(403, { error: 'invite requires a caller peer identity' });
+      return;
+    }
+    const p = InviteParams.safeParse(params);
+    if (!p.success) {
+      json(400, { error: p.error.issues.map((i) => i.message).join('; ') });
+      return;
+    }
+    // 只落一条待确认记录（HITL：接受/拒绝由本机用户手动点）——绝不执行任何动作。
+    const row = deps.rpgInvitations.create({
+      peerId: callerPeer.id,
+      team: p.data.team,
+      scene: p.data.scene ?? null,
+      roles: p.data.roles ?? null,
+      message: p.data.message ?? null,
+    });
+    deps.dataBus?.emit({ key: 'federation' });
+    json(201, { ok: true, invitationId: row.id, status: row.status });
     return;
   }
 

@@ -1,6 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import * as yaml from 'js-yaml';
 import type { WeaveServerDeps } from '../daemon/server.js';
 import { readJson, sendJson } from '../daemon/http.js';
+import { readDaemonSettingsSync } from '../daemon/settings.js';
+import { readAiKey } from '../daemon/ai-config.js';
 import {
   RpgGrowthRepository,
   RpgHexagramRepository,
@@ -12,6 +17,11 @@ import {
 import { provisionRole, scaffoldCoordinator } from './provisioning.js';
 import { readPlaybookFile, renderPlaybook, type PlaybookBindings } from './playbook.js';
 import { cultivate, currentHexagonOf, expedition, formTeam, transmit } from './verbs.js';
+import {
+  castRolesFromInvitation,
+  GROWTH_VERB_CAST,
+} from './invitations.js';
+import { parseTeamRole } from './verbs.js';
 import {
   deriveRoleProgress,
   growthBoardOf,
@@ -263,6 +273,122 @@ export async function handleRpgRoutes(
     return true;
   }
 
+  // POST /rpg/invitations/:id/cast — 邀请选角（F2，A3 决策内核消费）：跑
+  // evaluate/批量形态出「推荐角色子集 + 理由」，**只是推荐**——落 provenance
+  // （rpg_growth verb=cast，§七可观测），用户手动确认后才写 teams。
+  const castMatch = pathname.match(/^\/rpg\/invitations\/(\d+)\/cast$/);
+  if (castMatch && req.method === 'POST') {
+    if (!deps.rpgCastKernel) {
+      sendJson(res, 503, { error: 'Decision kernel unavailable (casting falls back to manual selection)' });
+      return true;
+    }
+    const invRepo = deps.rpgInvitations;
+    const inv = invRepo?.getById(Number(castMatch[1]));
+    if (!inv) {
+      sendJson(res, 404, { error: 'Invitation not found' });
+      return true;
+    }
+    if (inv.status !== 'pending') {
+      sendJson(res, 409, { error: 'Invitation is not pending' });
+      return true;
+    }
+    // 决策模型配置每次现读（设置页改完即时生效）；未配 = null（内核 fork 回落）。
+    const decision = readDaemonSettingsSync().decision;
+    const apiKey = decision?.baseUrl && decision.model ? readAiKey(deps.aiKeyPath) : null;
+    const aiConfig =
+      decision?.baseUrl && decision.model && apiKey
+        ? { baseUrl: decision.baseUrl, model: decision.model, apiKey }
+        : null;
+    const result = await castRolesFromInvitation(
+      {
+        kernel: deps.rpgCastKernel,
+        roles,
+        aiConfig,
+      },
+      { team: inv.team, goal: null, scene: inv.scene },
+    );
+    // provenance 账（§七）：谁邀请、AI 推荐了什么——落邀请行自己的 provenance 列
+    // （rpg_growth 的 role 外键拦 roleId=0 的非角色行；失败也记，链路可观测）。
+    invRepo!.setProvenance(
+      inv.id,
+      `peer=${inv.peerName ?? inv.peerId} ai=${result.ok ? result.source : 'fallback'} picks=${
+        result.ok ? result.picks.map((p) => p.name).join(',') : 'none'
+      }`,
+    );
+    // 选角成功且邀带有本机角色行时，同步落一条成长记录（verb=cast，角色维度可回放）。
+    if (result.ok) {
+      for (const pick of result.picks) {
+        if (roles.getById(pick.roleId)) {
+          growth.insert({ roleId: pick.roleId, verb: GROWTH_VERB_CAST, target: `invitation:${inv.id}`, detail: pick.reason });
+        }
+      }
+    }
+    if (!result.ok) {
+      // 如实回落：无决策模型/解析不出 = 前端放手选全量表单，不硬造结果。
+      sendJson(res, 200, { ok: false, reason: result.reason, fallback: 'manual' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  // POST /rpg/invitations/:id/confirm — 选角确认（HITL 收口）：用户手动点确认后
+  // 才把所选角色写进本机 teams 数据（既有 formTeam 唯一写入口；peer: 形态透传）。
+  const confirmMatch = pathname.match(/^\/rpg\/invitations\/(\d+)\/confirm$/);
+  if (confirmMatch && req.method === 'POST') {
+    if (!deps.rpgInvitations) {
+      sendJson(res, 503, { error: 'RPG invitations subsystem unavailable' });
+      return true;
+    }
+    let body: { roles?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const picked = Array.isArray(body.roles) ? (body.roles as Array<{ role: string; module?: string }>) : [];
+    if (picked.length === 0) {
+      sendJson(res, 400, { error: '"roles" must be a non-empty array' });
+      return true;
+    }
+    const inv = deps.rpgInvitations.getById(Number(confirmMatch[1]));
+    if (!inv) {
+      sendJson(res, 404, { error: 'Invitation not found' });
+      return true;
+    }
+    if (inv.status !== 'pending') {
+      sendJson(res, 409, { error: 'Invitation is not pending' });
+      return true;
+    }
+    const written = await formTeam({ rolesRoot: deps.rpgRolesRoot }, undefined, {
+      name: kebabOf(inv.team),
+      goal: inv.message ?? undefined,
+      roles: picked,
+    });
+    if (!written.ok) {
+      sendJson(res, written.status, { error: written.error });
+      return true;
+    }
+    deps.rpgInvitations.decide(inv.id, 'accepted', 'manual');
+    deps.dataBus?.emit({ key: 'federation' });
+    sendJson(res, 200, written);
+    return true;
+  }
+
+  // GET /rpg/teams/:name/resolve — teams 角色来源解析（F2）：peer: 前缀查 peers
+  // 注册表得名；未知 peer 报错文案随行（web 据此置灰）。
+  const teamResolve = pathname.match(/^\/rpg\/teams\/([^/]+)\/resolve$/);
+  if (teamResolve && req.method === 'GET') {
+    const rows = deps.peers?.list() ?? [];
+    const fakePeers = { list: () => rows };
+    const entries = readTeamRoles(deps.rpgRolesRoot, decodeURIComponent(teamResolve[1]!));
+    sendJson(res, 200, {
+      roles: entries.map((e) => ({ entry: e, parsed: parseTeamRole(e.role, fakePeers) })),
+    });
+    return true;
+  }
+
   // POST /rpg/roles/:id/expedition — 出征（编排触发）
   const expeditionMatch = pathname.match(/^\/rpg\/roles\/(\d+)\/expedition$/);
   if (expeditionMatch && req.method === 'POST') {
@@ -336,4 +462,31 @@ export async function handleRpgRoutes(
 
   sendJson(res, 404, { error: 'Not found' });
   return true;
+}
+
+/** 团队名 → kebab-case 文件名（formTeam 的词法闸复用口径；非法字符压 '-'）。 */
+function kebabOf(team: string): string {
+  return (
+    team
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64) || 'team'
+  );
+}
+
+/** 读协调者 teams/<name>.yaml 的 roles 条目（文件即事实；读不到 = 空数组）。 */
+function readTeamRoles(rolesRoot: string | undefined, name: string): Array<{ role: string; module?: string }> {
+  if (!rolesRoot) return [];
+  try {
+    const file = path.join(rolesRoot, '..', 'coordinator', 'teams', `${name}.yaml`);
+    const doc = yaml.load(readFileSync(file, 'utf-8')) as { roles?: unknown } | null;
+    if (!Array.isArray(doc?.roles)) return [];
+    return (doc!.roles as Array<{ role?: unknown; module?: unknown }>)
+      .filter((r) => r != null && typeof r.role === 'string')
+      .map((r) => ({ role: r.role as string, ...(typeof r.module === 'string' ? { module: r.module } : {}) }));
+  } catch {
+    return [];
+  }
 }

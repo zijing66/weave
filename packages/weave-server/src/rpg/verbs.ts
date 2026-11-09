@@ -103,6 +103,36 @@ export type TeamResult =
 
 const TEAM_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 
+/** teams roles 条目的来源形态（F2）：本地 = 角色仓库名；跨机 = `peer:<peerName>/<roleName>`。 */
+export const PEER_ROLE_PREFIX = 'peer:';
+
+export interface TeamRoleEntry {
+  /** 本地名或 `peer:<peerName>/<roleName>`。 */
+  role: string;
+  module?: string;
+}
+
+/** 解析 teams 角色条目的来源：peer 形态拆出对端名与对端角色名；否则本地。 */
+export function parseTeamRole(
+  role: string,
+  peers: Pick<import('../repositories/peers.js').PeerRepository, 'list'>,
+): { source: 'local'; role: string } | { source: 'peer'; peerId: string; peerName: string; role: string } | { source: 'error'; error: string } {
+  if (!role.startsWith(PEER_ROLE_PREFIX)) {
+    return { source: 'local', role };
+  }
+  const rest = role.slice(PEER_ROLE_PREFIX.length);
+  const slash = rest.indexOf('/');
+  if (slash <= 0 || slash === rest.length - 1) {
+    return { source: 'error', error: `Malformed peer role "${role}" (expect peer:<peerName>/<roleName>)` };
+  }
+  const peerName = rest.slice(0, slash);
+  const row = peers.list().find((p) => p.name === peerName);
+  if (!row) {
+    return { source: 'error', error: `Unknown peer "${peerName}" in role "${role}" — check the paired machines` };
+  }
+  return { source: 'peer', peerId: row.id, peerName, role: rest.slice(slash + 1) };
+}
+
 /**
  * 组队 = 协调者仓库 `teams/<name>.yaml` 落一份声明文件（角色名单 + 目标 +
  * 可选剧本引用）。文件即事实——没有 teams 表写、没有编排创建（出征时才解析
@@ -123,6 +153,10 @@ export async function formTeam(
   for (const r of input.roles) {
     if (typeof r?.role !== 'string' || r.role.trim() === '') {
       return { ok: false, status: 400, error: 'each role entry needs a "role" name' };
+    }
+    // peer: 形态只验语法（来源解析在对端查询侧做，写文件不依赖 peers 装配）。
+    if (r.role.startsWith(PEER_ROLE_PREFIX) && !/^peer:[^/]+\/[^/]+$/.test(r.role)) {
+      return { ok: false, status: 400, error: `Malformed peer role "${r.role}" (expect peer:<peerName>/<roleName>)` };
     }
   }
   const base = root ?? deps.rolesRoot;

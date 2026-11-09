@@ -20,6 +20,7 @@ import { buildRunTimeline } from '@/components/tasks/orchestration-run-board';
 import { api, type SessionRow } from '@/lib/api';
 import { SessionEditsDialog } from '@/components/tasks/SessionEditsDialog';
 import { STATUS_BADGE } from '@/components/tasks/session-status';
+import { PeerRoleCards, CrossMachineBoard } from './peer-faces';
 
 /**
  * 共用协同状态视图（E4 验收②）：办公区 / 教室 / 会议室三场景的功能区块全在
@@ -123,6 +124,8 @@ export function CollabScene({
                 </button>
               );
             })}
+            {/* F2 跨机角色行：来源徽章（远端机器名），只读——点击不跳本地会话 */}
+            <PeerRoleCards />
           </div>
         </section>
       )}
@@ -172,6 +175,9 @@ export function CollabScene({
       }} />
 
       <BigScreenCards data={data} face={face} />
+
+      {/* F2 跨机看板：本机 + 已配对在线 peers 的只读聚合（只摆有数据） */}
+      <CrossMachineBoard localRuns={data.runs ? data.runs.filter((r) => r.status === 'running').length : null} />
 
       <GrowthBoard />
 

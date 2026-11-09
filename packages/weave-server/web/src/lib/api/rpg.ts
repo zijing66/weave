@@ -105,4 +105,18 @@ export const rpgApi = {
   /** 传音：给目标会话送一条消息。 */
   transmit: (roleId: number, toSessionId: string, text: string) =>
     post<{ ok: true; messageId: string; status: string }>(`/rpg/roles/${roleId}/message`, { toSessionId, text }),
+  /** 邀请选角（F2，A3 决策内核消费）：推荐角色子集 + 理由；ok:false = 回落手选。 */
+  castInvitation: (invitationId: number) =>
+    post<{ ok: true; source: string; picks: Array<{ roleId: number; name: string; reason: string }> } | { ok: false; reason: string; fallback: 'manual' }>(
+      `/rpg/invitations/${invitationId}/cast`,
+      {},
+    ),
+  /** 选角确认（HITL 收口）：用户手动确认后写本机 teams（peer: 形态透传）。 */
+  confirmInvitation: (invitationId: number, roles: Array<{ role: string; module?: string }>) =>
+    post<{ ok: true; file: string; name: string }>(`/rpg/invitations/${invitationId}/confirm`, { roles }),
+  /** teams 角色来源解析（peer: 前缀查 peers 注册表得名；未知 peer 报错随行）。 */
+  resolveTeamRoles: (name: string) =>
+    apiFetch<{ roles: Array<{ entry: { role: string; module?: string }; parsed: unknown }> }>(
+      `/rpg/teams/${encodeURIComponent(name)}/resolve`,
+    ),
 };

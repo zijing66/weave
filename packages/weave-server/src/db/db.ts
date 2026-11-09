@@ -346,6 +346,28 @@ CREATE TABLE IF NOT EXISTS rpg_xp (
 -- 联邦 peer 注册表（E3，RPG 稿 §六 + D8 预留）：手动 host:port 是基础、mDNS 自动
 -- 发现是增强。per-peer token 不落本表——落 <local>/peer-tokens/（0600，同 localToken
 -- 纪律）；last_seen_at 是心跳事实，online/offline 由 peerLiveness 派生不存列。
+-- 跨机角色邀请（F2，RPG 稿 §六 493-514 裁决：邀请制 + 全程 HITL）：对端经
+-- /federation/call 投递的一条待确认记录——只产生记录、不执行任何动作（不违反
+-- inject-only）。接受/拒绝必须用户手动点；status 词表封闭（pending/accepted/
+-- declined/expired）。
+CREATE TABLE IF NOT EXISTS rpg_invitations (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  peer_id     TEXT NOT NULL,             -- peers.id（对端机器名展示由 join 派生，不冗余）
+  team        TEXT NOT NULL,             -- 邀请加入的团队名
+  scene       TEXT,                      -- 目标场景（可空）
+  roles       TEXT,                      -- JSON 候选角色（可空）
+  message     TEXT,                      -- 邀请附言（可空）
+  status      TEXT NOT NULL DEFAULT 'pending', -- pending | accepted | declined | expired
+  decided_by  TEXT,                      -- manual | auto（auto = 自动模式，默认关）
+  provenance  TEXT,                      -- §七可观测：谁邀请、AI 推荐了什么、用户实际选了什么
+  created_at  TEXT NOT NULL,
+  decided_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rpg_invitations_peer ON rpg_invitations(peer_id, id);
+
+-- 联邦 peer 注册表（E3，RPG 稿 §六 + D8 预留）：手动 host:port 是基础、mDNS 自动
+-- 发现是增强。per-peer token 不落本表——落 <local>/peer-tokens/（0600，同 localToken
+-- 纪律）；last_seen_at 是心跳事实，online/offline 由 peerLiveness 派生不存列。
 CREATE TABLE IF NOT EXISTS peers (
   id           TEXT PRIMARY KEY,
   name         TEXT NOT NULL,

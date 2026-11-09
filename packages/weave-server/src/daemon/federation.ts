@@ -205,6 +205,12 @@ export const FEDERATION_SERVICES: readonly FederationServiceRow[] = [
     effect: 'delivering',
     description: 'Deliver a prompt into one local session via the messaging pipe (inject-only per D8).',
   },
+  {
+    service: 'rpg.invite',
+    effect: 'delivering',
+    description:
+      'Deliver an RPG team invitation into one local pending record — HITL: the recipient user must accept manually; no action is executed.',
+  },
 ] as const;
 
 /** caps 响应形状（互报端点的载荷；对端 pairing 后即可取）。 */
