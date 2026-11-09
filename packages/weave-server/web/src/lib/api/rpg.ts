@@ -82,8 +82,44 @@ function post<T>(path: string, body: unknown): Promise<T> {
   return apiFetch<T>(path, { method: 'POST', body: JSON.stringify(body) });
 }
 
+export interface RpgHouseMemberView {
+  id: number;
+  houseId: number;
+  kind: 'aux' | 'role';
+  projectId: number | null;
+  roleId: number | null;
+  addedAt: string;
+}
+
+export interface RpgHouseView {
+  id: number;
+  name: string;
+  coreProjectId: number;
+  coordinatorPersona: string | null;
+  createdAt: string;
+  updatedAt: string;
+  members: RpgHouseMemberView[];
+}
+
 export const rpgApi = {
   listRoles: () => apiFetch<{ roles: RpgRoleView[] }>('/rpg/roles'),
+  /** 房子域（G2）：建房（核心+辅助+角色入住一步落）/ 名册（live 展开随库现读）。 */
+  listHouses: () => apiFetch<{ houses: RpgHouseView[] }>('/rpg/houses'),
+  fetchHouse: (id: number) => apiFetch<RpgHouseView>(`/rpg/houses/${id}`),
+  createHouse: (input: {
+    name: string;
+    coreProjectId: number;
+    coordinatorPersona?: string;
+    auxProjectIds?: number[];
+    roleIds?: number[];
+  }) => post<RpgHouseView>('/rpg/houses', input),
+  updateHouse: (id: number, patch: { name?: string; coordinatorPersona?: string | null }) =>
+    apiFetch<RpgHouseView>(`/rpg/houses/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteHouse: (id: number) => apiFetch<{ ok: boolean }>(`/rpg/houses/${id}`, { method: 'DELETE' }),
+  addHouseMember: (id: number, member: { kind: 'aux'; projectId: number } | { kind: 'role'; roleId: number }) =>
+    post<RpgHouseView>(`/rpg/houses/${id}/members`, member),
+  removeHouseMember: (id: number, memberId: number) =>
+    apiFetch<RpgHouseView>(`/rpg/houses/${id}/members/${memberId}`, { method: 'DELETE' }),
   /** 建角色（E4 验收④）：游戏视图内建角色入口，落 `<data>/rpg/roles/`。 */
   createRole: (input: { name: string; archetype?: string; persona?: string }) =>
     post<RpgRoleView>('/rpg/roles', input),

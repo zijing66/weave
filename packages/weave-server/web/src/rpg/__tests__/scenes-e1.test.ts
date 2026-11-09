@@ -41,7 +41,7 @@ describe('E1 场景注册表（E4 收敛后）', () => {
     expect(sceneOf('classroom').kind).toBe('classroom');
     expect(sceneOf('meeting').kind).toBe('meeting');
     expect(sceneOf('office').kind).toBe('office');
-    expect(RPG_SCENES).toHaveLength(5); // G1：+world
+    expect(RPG_SCENES).toHaveLength(6); // G1：+world；G2：+room（进房协同棋盘）
   });
 });
 

@@ -233,5 +233,7 @@ export type {
   CultivateResultView,
   RpgProgressView,
   RpgBoardRow,
+  RpgHouseView,
+  RpgHouseMemberView,
 } from './rpg';
 export type { PeerRow, DiscoveredPeer, PairingOfferResult, RpgInvitationView, PeerSessionsView } from './federation';

@@ -343,6 +343,61 @@ CREATE TABLE IF NOT EXISTS rpg_xp (
   PRIMARY KEY (role, at)
 );
 
+-- 房子域（G2，G线设计 §一）：项目组合 = 1 核心工作空间 + N 辅助项目 + team/角色
+-- 入住；**同一张 houses 表**，单项目房 = 退化态（core=自己、无成员行）。分身
+-- （协调者）= 每房必有的上帝分身，v1 最小形只存人设文本（名字固定语义、随房建）。
+CREATE TABLE IF NOT EXISTS rpg_houses (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  name                TEXT NOT NULL,
+  core_project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  coordinator_persona TEXT,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rpg_house_members (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  house_id   INTEGER NOT NULL REFERENCES rpg_houses(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,            -- aux（辅助项目）| role（入住角色）
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  role_id    INTEGER REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  added_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rpg_house_members_house ON rpg_house_members(house_id, id);
+
+-- 出征账（G2 方案 C）：一次出征 = 角色 × 目标项目 × worktree 分支；anchor_* 是
+-- 起手快照锚（并回恒锚这个 ref，不跟用户切分支走）。status 词表封闭：
+-- active | merged | conflict | dangling（锚定悬空）| frozen | error。
+CREATE TABLE IF NOT EXISTS rpg_expeditions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id       INTEGER NOT NULL REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  session_key   TEXT,                    -- 占位键/会话 id（登记键，认领后改写）
+  branch        TEXT NOT NULL,           -- weave/session-xxx 出征分支
+  anchor_branch TEXT NOT NULL,           -- 起手锚定的目标分支
+  anchor_sha    TEXT NOT NULL,           -- 起手锚定时的分支头
+  status        TEXT NOT NULL DEFAULT 'active',
+  title         TEXT,                    -- [weave] 出征·<角色>·<目标简述>
+  note          TEXT,                    -- 最近一次动作的原文（冲突/悬空原因）
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rpg_expeditions_project ON rpg_expeditions(project_id, id);
+
+-- 合并梯账（G2 段3）：一次并回的每一层动作一行（机械/rerere/mergiraf/AI 修补/
+-- 打回），人机共读同一份底账（G线设计 §三 合并链路卡的数据源）。
+CREATE TABLE IF NOT EXISTS rpg_merge_ladder (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  expedition  INTEGER REFERENCES rpg_expeditions(id) ON DELETE SET NULL,
+  project_id  INTEGER NOT NULL,
+  from_branch TEXT NOT NULL,
+  into_branch TEXT NOT NULL,
+  layer       TEXT NOT NULL,             -- mechanical | rerere | mergiraf | ai | returned
+  outcome     TEXT NOT NULL,             -- ok | replay | resolved | unsolvable | returned | failed
+  signature   TEXT,                      -- 冲突形状指纹（文件集），AI 修补成功计数按它
+  reason      TEXT,
+  at          TEXT NOT NULL
+);
+
 -- 联邦 peer 注册表（E3，RPG 稿 §六 + D8 预留）：手动 host:port 是基础、mDNS 自动
 -- 发现是增强。per-peer token 不落本表——落 <local>/peer-tokens/（0600，同 localToken
 -- 纪律）；last_seen_at 是心跳事实，online/offline 由 peerLiveness 派生不存列。

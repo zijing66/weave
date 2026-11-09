@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n/I18nProvider';
 import { RPG_SCENES, sceneOf } from './scenes';
 import { useRpgData } from './use-rpg-data';
@@ -8,8 +8,9 @@ import { gameStatusOf } from './status-map';
 import { CollabScene } from './CollabScene';
 import { ClassroomScene } from './ClassroomScene';
 import { MeetingScene } from './MeetingScene';
-import { CreateRoleForm } from './CreateRoleForm';
 import { RoleProgressPanel } from './RoleProgressPanel';
+import { HomeConsole } from './HomeConsole';
+import { RoomScene } from './RoomScene';
 import { PixelScene, RpgBootBar, rpgRetryHandlers } from './PixelScene';
 import {
   GOD_SPOT,
@@ -100,6 +101,8 @@ export function RpgView({
           <HomeIndoorScene projects={projects} />
         ) : scene.kind === 'world' ? (
           <WorldScene projects={projects} onOpenSession={onOpenSession} />
+        ) : scene.kind === 'room' ? (
+          <RoomBoard houseId={roomHouseIdOf(sceneKey)} />
         ) : scene.kind === 'classroom' ? (
           <ClassroomSkin onOpenSession={onOpenSession} />
         ) : scene.kind === 'meeting' ? (
@@ -117,6 +120,29 @@ function navigateScene(scene: string): void {
   navigate({ kind: 'rpg', scene });
 }
 
+/** 房间场景键 = `room-<houseId>`（URL 唯一真源：深链可直接进某间房）。 */
+export function roomSceneKey(houseId: number): string {
+  return `room-${houseId}`;
+}
+
+function roomHouseIdOf(sceneKey: string | undefined): number {
+  const m = /^room-(\d+)$/.exec(sceneKey ?? '');
+  return m ? Number(m[1]) : 0;
+}
+
+/** 房间棋盘（G2）：houseId=0（无房或缺省深链）回落提示；有房进 RoomScene。 */
+function RoomBoard({ houseId }: { houseId: number }) {
+  const t = useT();
+  if (houseId <= 0) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <p className="text-sm text-[var(--w-text-dim)]">{t('rpg.roomNoHouse')}</p>
+      </div>
+    );
+  }
+  return <RoomScene houseId={houseId} />;
+}
+
 function ClassroomSkin(props: { onOpenSession: (projectId: number, sessionId: string) => void }) {
   return <ClassroomScene {...props} />;
 }
@@ -128,16 +154,14 @@ function OfficeSkin(props: { onOpenSession: (projectId: number, sessionId: strin
 }
 
 /**
- * Home 室内（G1）：tile 俯瞰 + 南墙门（出室外）+ 上帝化身自由区静态摆位 +
- * 管理区（角色卡阵/修行详情/建角色表单，功能全保留、铺在室内画面下方）。
+ * Home 室内（G1 骨架 + G2 统一控制台）：tile 俯瞰 + 南墙门（出室外）+ 上帝
+ * 化身自由区静态摆位 + 角色卡阵/修行详情 + 统一控制台（分身编辑/角色创建/
+ * team 管理三合一——2026-11-08 用户裁决，不开散装入口；任务管理归 G6 不摆）。
  */
 function HomeIndoorScene({ projects }: { projects: ProjectRow[] }) {
   const t = useT();
-  void projects;
-  const qc = useQueryClient();
   const data = useRpgData();
   const [detailRoleId, setDetailRoleId] = useState<number | null>(null);
-  const [creating, setCreating] = useState(false);
 
   const onHotspot = (h: Hotspot): void => {
     if (h.action.type === 'scene') navigateScene(h.action.scene);
@@ -187,96 +211,62 @@ function HomeIndoorScene({ projects }: { projects: ProjectRow[] }) {
         </span>
       </PixelScene>
 
-      {data.roles.length === 0 ? (
-        <div className="rpg-tile flex min-h-0 flex-1 flex-col items-center justify-center gap-4 rounded border border-[var(--w-border)] p-8 text-center">
-          <p className="text-sm text-[var(--w-text-dim)]">{t('rpg.emptyRolesHome')}</p>
-          <div className="w-full max-w-2xl">
-            <CreateRoleForm
-              onCreated={() => {
-                void qc.invalidateQueries({ queryKey: ['rpg-roles'] });
-                setCreating(false);
-              }}
-            />
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="rpg-tile min-h-0 flex-1 overflow-auto rounded border border-[var(--w-border)] p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs text-[var(--w-text-dim)]">
-                {t('rpg.charCount')} · {data.roles.length}
-              </span>
+      {/* 角色卡阵（在场点名，修行详情保留） */}
+      {data.roles.length > 0 && (
+        <div className="flex flex-wrap gap-4">
+          {data.roles.map((role) => {
+            // 角色 = 项目：取该项目最近会话的派生状态（无会话 = 待命）。
+            const row = latestSessionOf(role.projectId, data.sessionById);
+            const status = row ? (data.statuses.get(row.sessionId) ?? 'open') : 'open';
+            const game = gameStatusOf(status);
+            return (
               <button
+                key={role.id}
                 type="button"
-                onClick={() => setCreating((v) => !v)}
-                className="rounded bg-[var(--w-surface-2)] px-2 py-1 text-xs text-[var(--w-text-dim)] hover:bg-[var(--w-surface-3)]"
+                onClick={() => setDetailRoleId((cur) => (cur === role.id ? null : role.id))}
+                className={
+                  'flex w-40 flex-col items-center gap-2 rounded border p-3 ' +
+                  (detailRoleId === role.id
+                    ? 'border-[var(--w-accent)] bg-[var(--w-surface-3)]'
+                    : row
+                      ? 'border-[var(--w-border)] bg-[var(--w-surface-2)] hover:border-[var(--w-accent)]'
+                      : 'border-dashed border-[var(--w-border)] opacity-70')
+                }
+                title={t('rpg.roleProgress')}
               >
-                {t('rpg.roleCreate')}
-              </button>
-            </div>
-            {creating && (
-              <div className="mb-4 rounded border border-[var(--w-border)] bg-[var(--w-surface-1)] p-3">
-                <CreateRoleForm
-                  onCreated={() => {
-                    void qc.invalidateQueries({ queryKey: ['rpg-roles'] });
-                    setCreating(false);
-                  }}
-                />
-              </div>
-            )}
-            <div className="flex flex-wrap gap-4">
-              {data.roles.map((role) => {
-                // 角色 = 项目：取该项目最近会话的派生状态（无会话 = 待命）。
-                const row = latestSessionOf(role.projectId, data.sessionById);
-                const status = row ? (data.statuses.get(row.sessionId) ?? 'open') : 'open';
-                const game = gameStatusOf(status);
-                return (
-                  <button
-                    key={role.id}
-                    type="button"
-                    onClick={() => setDetailRoleId((cur) => (cur === role.id ? null : role.id))}
-                    className={
-                      'flex w-40 flex-col items-center gap-2 rounded border p-3 ' +
-                      (detailRoleId === role.id
-                        ? 'border-[var(--w-accent)] bg-[var(--w-surface-3)]'
-                        : row
-                          ? 'border-[var(--w-border)] bg-[var(--w-surface-2)] hover:border-[var(--w-accent)]'
-                          : 'border-dashed border-[var(--w-border)] opacity-70')
-                    }
-                    title={t('rpg.roleProgress')}
-                  >
-                    <div className={game === 'gone' ? 'opacity-40' : undefined}>
-                      <CharacterSprite archetype={role.archetype} status={game} size={3} />
-                    </div>
-                    <span className="truncate text-sm font-medium">{role.name}</span>
-                    <span className={'rounded px-1.5 py-0.5 text-[11px] ' + STATUS_BADGE[status]}>
-                      {role.archetype ?? '—'} · {t(`tasks.status${cap(status)}` as 'tasks.statusOpen')}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {detailRoleId != null && (
-            <div className="rounded border border-[var(--w-border)] bg-[var(--w-surface-1)] p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs uppercase tracking-wide text-[var(--w-text-dim)]">
-                  {t('rpg.roleProgress')}
+                <div className={game === 'gone' ? 'opacity-40' : undefined}>
+                  <CharacterSprite archetype={role.archetype} status={game} size={3} />
+                </div>
+                <span className="truncate text-sm font-medium">{role.name}</span>
+                <span className={'rounded px-1.5 py-0.5 text-[11px] ' + STATUS_BADGE[status]}>
+                  {role.archetype ?? '—'} · {t(`tasks.status${cap(status)}` as 'tasks.statusOpen')}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setDetailRoleId(null)}
-                  className="rounded px-2 py-0.5 text-xs text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)]"
-                >
-                  ✕
-                </button>
-              </div>
-              <RoleProgressPanel roleId={detailRoleId} />
-            </div>
-          )}
-        </>
+              </button>
+            );
+          })}
+        </div>
       )}
+
+      {detailRoleId != null && (
+        <div className="rounded border border-[var(--w-border)] bg-[var(--w-surface-1)] p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs uppercase tracking-wide text-[var(--w-text-dim)]">
+              {t('rpg.roleProgress')}
+            </span>
+            <button
+              type="button"
+              onClick={() => setDetailRoleId(null)}
+              className="rounded px-2 py-0.5 text-xs text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)]"
+            >
+              ✕
+            </button>
+          </div>
+          <RoleProgressPanel roleId={detailRoleId} />
+        </div>
+      )}
+
+      {/* 统一控制台（G2）：分身编辑 / 角色创建 / team 管理三合一，不开散装入口 */}
+      <HomeConsole projects={projects} />
     </div>
   );
 }
@@ -294,6 +284,7 @@ function WorldScene({
   const { show } = useToast();
   void onOpenSession;
   const data = useRpgData();
+  const houses = useQuery({ queryKey: ['rpg-houses'], queryFn: () => api.listHouses(), staleTime: 15_000 });
   const activeProjects = useMemo(() => projects.filter((p) => !p.archivedAt), [projects]);
   const houseHotspots = useMemo(() => projectHouseHotspots(activeProjects), [activeProjects]);
   const hotspots = useMemo(() => [...WORLD_HOTSPOTS, ...houseHotspots], [houseHotspots]);
@@ -301,8 +292,12 @@ function WorldScene({
   const onHotspot = (h: Hotspot): void => {
     if (h.action.type === 'scene') navigateScene(h.action.scene);
     else if (h.action.type === 'project') {
-      // 项目房 → 既有项目视图（不破既有路由；G2 换 houses 表后改为进房）。
-      navigate({ kind: 'project', projectId: h.action.projectId, category: 'tasks', sessionId: null });
+      // 项目房 → 进房协同棋盘（G2）：house 存在即进房间场景；没建房的项目
+      // 回落既有项目视图（不破既有路由，URL 唯一真源）。
+      const projectId = h.action.type === 'project' ? h.action.projectId : 0;
+      const house = houses.data?.houses.find((x) => x.coreProjectId === projectId);
+      if (house) navigateScene(roomSceneKey(house.id));
+      else navigate({ kind: 'project', projectId, category: 'tasks', sessionId: null });
     } else {
       show('info', t('rpg.trainingTbd'));
     }

@@ -35,6 +35,8 @@ export const TILE_TYPES: Record<string, TileType> = {
   '#': { code: '#', color: 'steelDeep', alt: 'slate', solid: true },
   D: { code: 'D', color: 'flameDeep', alt: 'ember' },
   c: { code: 'c', color: 'rose', alt: 'roseDeep' },
+  // 房间内地毯（协同棋盘席位区视觉锚，G2 RoomScene）
+  R: { code: 'R', color: 'rose', alt: 'roseDeep' },
 };
 
 export type TileMap = readonly string[];
@@ -136,6 +138,43 @@ export const TRAINING_HOTSPOT: Hotspot = {
 };
 
 export const WORLD_HOTSPOTS: readonly Hotspot[] = [HOMESTEAD_HOTSPOT, TRAINING_HOTSPOT];
+
+/** 进房协同棋盘（G2 RoomScene，20×14）：木地板 + 四面墙 + 南墙一门（出室外回
+ *  世界地图）+ 中部一条地毯长席（席位纵排，TFT 可读性口径：最重要信息最高）。 */
+export const ROOM_MAP: TileMap = [
+  '####################',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#FFFFFFFFFFFFFFFFFF#',
+  '#########DD#########',
+];
+
+/** 房间席位槽位（纯函数，可单测）：第 i 个席位的 1×2 sprite 左上角——席位纵排
+ *  （TFT 口径），从地毯顶行向下；超出行界返回 null（调用方截断展示）。 */
+export function roomSeatSpot(i: number): { x: number; y: number } | null {
+  if (!Number.isInteger(i) || i < 0) return null;
+  const x = 9;
+  const y = 4 + i * 2;
+  if (y + 2 > 12) return null;
+  return { x, y };
+}
+
+/** 上帝化身在房间的自由走动语义（G2 先静态摆位）：席位列左侧一格。 */
+export const ROOM_GOD_SPOT = { x: 6, y: 5 } as const;
+
+/** 房间门热点：点击回世界地图。 */
+export const ROOM_HOTSPOTS: readonly Hotspot[] = [
+  { id: 'room-door', x: 9, y: 13, w: 2, h: 1, labelKey: 'rpg.doorExit', action: { type: 'scene', scene: 'world' } },
+];
 
 /** 项目房沿南路边一字排开的槽位（纯函数，可单测）：第 i 座房的左上角。
  *  从 (2,7) 起每座占 2×2、间隔 1 格，放不下（超出地图）返回 null——调用方

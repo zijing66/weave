@@ -14,6 +14,8 @@ import {
   HEXAGON_DIMS,
   type Hexagon,
 } from './roles.js';
+import { RpgHouseRepository } from './houses.js';
+import { MergeLadderRepository } from './merge-ladder.js';
 import { provisionRole, scaffoldCoordinator } from './provisioning.js';
 import { readPlaybookFile, renderPlaybook, type PlaybookBindings } from './playbook.js';
 import { cultivate, currentHexagonOf, expedition, formTeam, transmit } from './verbs.js';
@@ -460,8 +462,179 @@ export async function handleRpgRoutes(
     return true;
   }
 
+  // ---- 房子域（G2）：CRUD + 组建流（选核心 + 辅助项目 + team 入住）----
+  const houses = new RpgHouseRepository(roles.db);
+
+  // POST /rpg/houses — 建房（核心项目必填；同名核心项目已有房 = 409 幂等闸；
+  // 分身随房建，人设可随请求给，缺省空——分身编辑走 PATCH）。
+  if (pathname === '/rpg/houses' && req.method === 'POST') {
+    let body: { name?: unknown; coreProjectId?: unknown; coordinatorPersona?: unknown; auxProjectIds?: unknown; roleIds?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.name !== 'string' || body.name.trim() === '' || typeof body.coreProjectId !== 'number') {
+      sendJson(res, 400, { error: '"name" and numeric "coreProjectId" are required' });
+      return true;
+    }
+    if (!deps.projects.getById(body.coreProjectId)) {
+      sendJson(res, 404, { error: 'Core project not found' });
+      return true;
+    }
+    if (houses.getByCoreProjectId(body.coreProjectId)) {
+      sendJson(res, 409, { error: 'This project already has a house' });
+      return true;
+    }
+    const house = houses.create({
+      name: body.name.trim(),
+      coreProjectId: body.coreProjectId,
+      coordinatorPersona: typeof body.coordinatorPersona === 'string' ? body.coordinatorPersona : undefined,
+    });
+    const auxIds = Array.isArray(body.auxProjectIds) ? (body.auxProjectIds as unknown[]) : [];
+    const roleIds = Array.isArray(body.roleIds) ? (body.roleIds as unknown[]) : [];
+    for (const pid of auxIds) {
+      if (typeof pid === 'number' && deps.projects.getById(pid)) houses.addMember({ houseId: house.id, kind: 'aux', projectId: pid });
+    }
+    for (const rid of roleIds) {
+      if (typeof rid === 'number' && roles.getById(rid)) houses.addMember({ houseId: house.id, kind: 'role', roleId: rid });
+    }
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 201, houseWithMembers(houses, house.id));
+    return true;
+  }
+
+  // GET /rpg/houses — 全部房（成员行随行；web 据此渲染入住房与名册）。
+  if (pathname === '/rpg/houses' && req.method === 'GET') {
+    sendJson(res, 200, {
+      houses: houses.list().map((h) => houseWithMembers(houses, h.id)),
+    });
+    return true;
+  }
+
+  // GET /rpg/houses/:id — 单房详情。
+  const houseGet = pathname.match(/^\/rpg\/houses\/(\d+)$/);
+  if (houseGet && req.method === 'GET') {
+    const house = houses.getById(Number(houseGet[1]));
+    if (!house) {
+      sendJson(res, 404, { error: 'House not found' });
+      return true;
+    }
+    sendJson(res, 200, houseWithMembers(houses, house.id));
+    return true;
+  }
+
+  // PATCH /rpg/houses/:id — 房名 / 分身人设（Home 统一控制台的「分身编辑」落点）。
+  const housePatch = pathname.match(/^\/rpg\/houses\/(\d+)$/);
+  if (housePatch && req.method === 'PATCH') {
+    let body: { name?: unknown; coordinatorPersona?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const house = houses.update(Number(housePatch[1]), {
+      ...(typeof body.name === 'string' && body.name.trim() !== '' ? { name: body.name.trim() } : {}),
+      ...(body.coordinatorPersona !== undefined
+        ? { coordinatorPersona: typeof body.coordinatorPersona === 'string' ? body.coordinatorPersona : null }
+        : {}),
+    });
+    if (!house) {
+      sendJson(res, 404, { error: 'House not found' });
+      return true;
+    }
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 200, houseWithMembers(houses, house.id));
+    return true;
+  }
+
+  // DELETE /rpg/houses/:id — 拆房（成员行级联删；项目/角色本体不动）。
+  const houseDelete = pathname.match(/^\/rpg\/houses\/(\d+)$/);
+  if (houseDelete && req.method === 'DELETE') {
+    if (!houses.delete(Number(houseDelete[1]))) {
+      sendJson(res, 404, { error: 'House not found' });
+      return true;
+    }
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // POST /rpg/houses/:id/members — 入住（aux=辅助项目 / role=角色或 team 名册成员）。
+  const houseMemberPost = pathname.match(/^\/rpg\/houses\/(\d+)\/members$/);
+  if (houseMemberPost && req.method === 'POST') {
+    let body: { kind?: unknown; projectId?: unknown; roleId?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (body.kind !== 'aux' && body.kind !== 'role') {
+      sendJson(res, 400, { error: '"kind" must be "aux" or "role"' });
+      return true;
+    }
+    const house = houses.getById(Number(houseMemberPost[1]));
+    if (!house) {
+      sendJson(res, 404, { error: 'House not found' });
+      return true;
+    }
+    if (body.kind === 'aux' && (typeof body.projectId !== 'number' || !deps.projects.getById(body.projectId))) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    if (body.kind === 'role' && (typeof body.roleId !== 'number' || !roles.getById(body.roleId))) {
+      sendJson(res, 404, { error: 'Role not found' });
+      return true;
+    }
+    houses.addMember({
+      houseId: house.id,
+      kind: body.kind,
+      ...(body.kind === 'aux' ? { projectId: body.projectId as number } : {}),
+      ...(body.kind === 'role' ? { roleId: body.roleId as number } : {}),
+    });
+    sendJson(res, 201, houseWithMembers(houses, house.id));
+    return true;
+  }
+
+  // DELETE /rpg/houses/:id/members/:mid — 退住。
+  const houseMemberDelete = pathname.match(/^\/rpg\/houses\/(\d+)\/members\/(\d+)$/);
+  if (houseMemberDelete && req.method === 'DELETE') {
+    const house = houses.getById(Number(houseMemberDelete[1]));
+    if (!house) {
+      sendJson(res, 404, { error: 'House not found' });
+      return true;
+    }
+    if (!houses.removeMember(house.id, Number(houseMemberDelete[2]))) {
+      sendJson(res, 404, { error: 'Member not found' });
+      return true;
+    }
+    sendJson(res, 200, houseWithMembers(houses, house.id));
+    return true;
+  }
+
+  // GET /rpg/merge-ladder?projectId= — 合并梯账只读面（合并链路卡的数据源）。
+  if (pathname === '/rpg/merge-ladder' && req.method === 'GET') {
+    const ladder = new MergeLadderRepository(roles.db);
+    const projectId = Number(new URL(req.url ?? '/rpg/merge-ladder', 'http://x').searchParams.get('projectId') ?? 0);
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      sendJson(res, 400, { error: '"projectId" query param is required' });
+      return true;
+    }
+    sendJson(res, 200, { entries: ladder.listByProject(projectId) });
+    return true;
+  }
+
   sendJson(res, 404, { error: 'Not found' });
   return true;
+}
+
+/** 房详情 = 房行 + 成员行（team 名册 live 展开的数据面：成员行随库现读，不拍快照）。 */
+function houseWithMembers(houses: RpgHouseRepository, houseId: number) {
+  const house = houses.getById(houseId)!;
+  return { ...house, members: houses.listMembers(houseId) };
 }
 
 /** 团队名 → kebab-case 文件名（formTeam 的词法闸复用口径；非法字符压 '-'）。 */
