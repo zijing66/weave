@@ -6,6 +6,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  Columns3,
   Copy,
   Globe,
   Link2,
@@ -80,6 +81,7 @@ import { useOrchOverview } from './use-orch-overview';
 import { useOrchFlow } from './use-orch-flow';
 import { OrchestrationSessionPicker } from './OrchestrationSessionPicker';
 import { OrchestrationCronDialog } from './OrchestrationCronDialog';
+import { OrchestrationRunBoard } from './OrchestrationRunBoard';
 
 /**
  * 编排画布（session-orchestration 重做版）：默认是**跨编排合并总览**——所有编排
@@ -223,6 +225,8 @@ export function OrchestrationCanvas({
   const [groupTouched, setGroupTouched] = useState<Set<number> | null>(null);
   /** 总览 LR 自动布局模式（卡片内视图态，不进 URL）：拓扑分列从左往右 + 边条件标注。 */
   const [lrMode, setLrMode] = useState(false);
+  /** 运行日志看板模式（卡片内视图态，不进 URL）：run 卡按状态分列的只读镜子。 */
+  const [runBoardMode, setRunBoardMode] = useState(false);
 
   /** 换一份编排：分组的「翻动」记录回到未动过。 */
   useEffect(() => setGroupTouched(null), [order]);
@@ -1613,6 +1617,22 @@ export function OrchestrationCanvas({
             placeholder={t('orch.runFilterName')}
             className="w-32 rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
           />
+          <Tooltip label={t(runBoardMode ? 'orch.boardOff' : 'orch.boardMode')}>
+            <button
+              type="button"
+              aria-pressed={runBoardMode}
+              onClick={() => setRunBoardMode((v) => !v)}
+              className={cn(
+                'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-11 transition-colors',
+                runBoardMode
+                  ? 'border-teal-400/40 bg-teal-500/10 text-teal-200'
+                  : 'border-edge/[0.1] text-neutral-300 hover:bg-edge/[0.06]',
+              )}
+            >
+              <Columns3 className="h-3 w-3" />
+              {t('orch.boardMode')}
+            </button>
+          </Tooltip>
           <div className="ml-auto flex items-center gap-1">
             <button
               type="button"
@@ -1637,7 +1657,17 @@ export function OrchestrationCanvas({
             {t('orch.runDetailFailed', { error: runDetailError })}
           </p>
         )}
-        {runs === null ? (
+        {runBoardMode && runs != null && runs.length > 0 ? (
+          <OrchestrationRunBoard
+            runs={runs}
+            projects={projects}
+            projectName={projectName}
+            nodeLabel={nodeLabel}
+            expandedRunId={expandedRunId}
+            runDetail={runDetail}
+            onToggleRun={toggleRun}
+          />
+        ) : runs === null ? (
           <p className="text-xs text-neutral-600">{t('hooks.loading')}</p>
         ) : runs.length === 0 ? (
           <p className="text-xs text-neutral-600">{t('orch.runsEmpty')}</p>

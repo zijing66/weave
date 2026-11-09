@@ -153,6 +153,24 @@ export type HookBusMessage =
       deliveries: number;
       pendingCounts: Record<string, number>;
       at: string;
+    }
+  // ---- 会话扩展点域（L1 绑定域）：一拍一行的执行落定（会话详情日志页就地刷新） ----
+  | {
+      kind: 'extension.execution';
+      bindingId: number;
+      sessionId: string | null;
+      stage: string;
+      ok: boolean;
+      error?: string;
+      at: string;
+    }
+  /** 同绑定连续 N 次执行失败：提醒三腿（toast / 浏览器通知 / Web Push）共用的帧。 */
+  | {
+      kind: 'extension.failed';
+      bindingId: number;
+      bindingName: string;
+      sessionId: string | null;
+      at: string;
     };
 
 export class HookEventBus {

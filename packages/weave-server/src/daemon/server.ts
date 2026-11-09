@@ -60,6 +60,7 @@ import { handleSettingsRoutes } from './routes/settings-statusline.js';
 import { handleNotifyChannelRoutes } from './routes/notify-channels.js';
 import { handleSearchRoutes } from './routes/search.js';
 import { handleProjectFileRoutes } from './routes/project-files.js';
+import { handleRpgRoutes } from '../rpg/routes.js';
 import type { ToolkitService } from '../hooks/toolkit.js';
 import type { ProjectOpener } from './opener.js';
 import type { WorktreeGitExec } from './worktree.js';
@@ -175,6 +176,15 @@ export interface WeaveServerDeps {
   orchestrationRuns?: OrchestrationRunRepository;
   /** 编排引擎；触发 / 取消 / webhook 入口依赖它。 */
   orchestrationEngine?: Pick<OrchestrationEngine, 'start' | 'cancel'>;
+  /** 会话扩展点绑定存储；/extensions/bindings 与删会话/归档级联依赖它。 */
+  extensionBindings?: import('../repositories/extension-bindings.js').ExtensionBindingRepository;
+  /** 会话扩展点执行日志；/extensions/executions 与级联清理依赖它。 */
+  extensionExecutions?: import('../repositories/extension-bindings.js').ExtensionExecutionRepository;
+  /** 会话扩展点引擎；绑定 CRUD 后 reload 依赖它（缺省 = 绑定变更要重启才生效）。 */
+  extensionEngine?: Pick<
+    import('../hooks/extension-engine.js').ExtensionEngine,
+    'reload' | 'dryRun'
+  >;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
   /** D3 插件全局开关行；GET /hooks/plugins?projectId= 的 effective 回落源。 */
@@ -195,6 +205,25 @@ export interface WeaveServerDeps {
   aiKeyPath?: string;
   /** Decision-model key file override (tests); default `<local>/decision.json`. */
   decisionKeyPath?: string;
+  // ---- RPG 域（RPG-1，整体可启停：不挂 = /rpg/* 恒 503，缺省不装零开销）----
+  /** 角色域仓储（rpg_roles 表）；缺省不挂 = RPG 关。 */
+  rpgRoles?: import('../rpg/roles.js').RpgRoleRepository;
+  /** 成长记录仓储（rpg_growth 表）；缺省由路由自建（同库连接）。 */
+  rpgGrowth?: import('../rpg/roles.js').RpgGrowthRepository;
+  /** 技巧评分仓储（rpg_scores 表）；缺省由路由自建（同库连接）。 */
+  rpgScores?: import('../rpg/roles.js').RpgScoreRepository;
+  /** 六维快照仓储（rpg_hexagram 表）；缺省由路由自建（同库连接）。 */
+  rpgHexagram?: import('../rpg/roles.js').RpgHexagramRepository;
+  /** 角色仓库根覆盖（settings rpg.rolesRoot 的注入缝；缺省 `<data>/rpg/roles/`）。 */
+  rpgRolesRoot?: string;
+  /** 仪表盘速率快照（GET /dashboard 一次性读；ingest 侧累加，缺省 = 503）。 */
+  dashboardRate?: { record(): void } & {
+    readonly isSeeded: boolean;
+    readonly totals: { events: number; today: number };
+    recentBuckets(steps: number, now?: number): Array<{ at: string; n: number }>;
+    seed(series: readonly { at: string; n: number }[]): void;
+    seedTotals(events: number, today: number): void;
+  };
 }
 
 /**
@@ -394,6 +423,9 @@ async function handleRequest(
 
   // --- 项目域 → routes/projects.ts（开目录/终端、新会话、归档/恢复、排序、pane 枚举）---
   if (await handleProjectRoutes(req, res, deps, pathname)) return;
+
+  // --- RPG 域 → rpg/routes.ts（建角色/协调者脚手架/剧本渲染；缺省不装 = 恒 503）---
+  if (await handleRpgRoutes(req, res, deps, pathname)) return;
 
   // Static SPA hosting (GET only, unauthenticated). Non-file paths fall back
   // to index.html so client-side routing works on deep links.

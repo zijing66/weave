@@ -63,6 +63,8 @@ export interface DaemonSettings {
   events?: EventsSettings;
   /** 会话闲置移除策略（无操作 n 天后自动移除）——缺省走默认值（读时归一化）。 */
   sessions?: SessionsSettings;
+  /** 会话扩展点（陈旧闸窗）——缺省走默认值（读时归一化）。 */
+  extensions?: ExtensionsSettings;
   /** 开机自启动 daemon（系统级自启动项；缺省关闭——读时归一化）。 */
   startup?: StartupSettings;
   /** 监听面（绑定地址；缺省放开 0.0.0.0——读时归一化）。 */
@@ -89,6 +91,11 @@ export interface EventsSettings {
 /** 会话闲置移除保留天数（= lastSeenAt 起算的无操作窗，到期自动移除会话行）。 */
 export interface SessionsSettings {
   idleDays: number;
+}
+
+/** 会话扩展点：陈旧闸窗（毫秒；回放中超龄事件记 skipped:stale 不执行）。 */
+export interface ExtensionsSettings {
+  staleMs: number;
 }
 
 /** daemon 是否随系统登录自启（默认关）。 */
@@ -156,6 +163,10 @@ export const DEFAULT_SESSIONS_SETTINGS: SessionsSettings = {
   idleDays: DEFAULT_SESSION_IDLE_DAYS,
 };
 
+export const DEFAULT_EXTENSION_STALE_MS = 10 * 60_000;
+
+export const DEFAULT_EXTENSIONS_SETTINGS: ExtensionsSettings = { staleMs: DEFAULT_EXTENSION_STALE_MS };
+
 export const DEFAULT_STARTUP_SETTINGS: StartupSettings = { launchOnLogin: false };
 
 /** 默认放开绑定（局域网可达）：dashboard 密码认证是这层的兜底。HTTPS 与 HTTP 并存（见 daemon/tls.ts）。 */
@@ -202,6 +213,7 @@ export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   decision: DEFAULT_DECISION_SETTINGS,
   events: DEFAULT_EVENTS_SETTINGS,
   sessions: DEFAULT_SESSIONS_SETTINGS,
+  extensions: DEFAULT_EXTENSIONS_SETTINGS,
   startup: DEFAULT_STARTUP_SETTINGS,
   server: DEFAULT_SERVER_SETTINGS,
   ai: DEFAULT_AI_SETTINGS,
@@ -337,6 +349,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
   const hooks = (obj.hooks ?? {}) as Partial<HooksSettings>;
   const events = (obj.events ?? {}) as Partial<EventsSettings>;
   const sessions = (obj.sessions ?? {}) as Partial<SessionsSettings>;
+  const extensions = (obj.extensions ?? {}) as Partial<ExtensionsSettings>;
   const startup = (obj.startup ?? {}) as Partial<StartupSettings>;
   const server = (obj.server ?? {}) as Partial<ServerSettings>;
   const ai = (obj.ai ?? {}) as Partial<AiSettings>;
@@ -364,6 +377,12 @@ function mergeDefaults(raw: unknown): DaemonSettings {
     },
     events: { retentionDays: retention },
     sessions: { idleDays },
+    extensions: {
+      staleMs:
+        Number.isFinite(extensions.staleMs) && (extensions.staleMs as number) > 0
+          ? (extensions.staleMs as number)
+          : DEFAULT_EXTENSIONS_SETTINGS.staleMs,
+    },
     startup: {
       launchOnLogin:
         typeof startup.launchOnLogin === 'boolean'
@@ -402,6 +421,7 @@ const KEYS = {
   hooksEnabled: 'hooks.enabled',
   eventRetentionDays: 'events.retentionDays',
   sessionIdleDays: 'sessions.idleDays',
+  extensionStaleMs: 'extensions.staleMs',
   startupLaunchOnLogin: 'startup.launchOnLogin',
   serverBindHost: 'server.bindHost',
   serverTlsPort: 'server.tlsPort',
@@ -466,6 +486,9 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.sessionIdleDays)
       ? { sessions: { idleDays: Number(map.get(KEYS.sessionIdleDays)) } }
       : {}),
+    ...(map.has(KEYS.extensionStaleMs)
+      ? { extensions: { staleMs: Number(map.get(KEYS.extensionStaleMs)) } }
+      : {}),
     ...(map.has(KEYS.startupLaunchOnLogin)
       ? { startup: { launchOnLogin: map.get(KEYS.startupLaunchOnLogin) === 'true' } }
       : {}),
@@ -523,6 +546,10 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     [
       KEYS.sessionIdleDays,
       String(settings.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS),
+    ],
+    [
+      KEYS.extensionStaleMs,
+      String(settings.extensions?.staleMs ?? DEFAULT_EXTENSIONS_SETTINGS.staleMs),
     ],
     [KEYS.startupLaunchOnLogin, String(settings.startup?.launchOnLogin ?? false)],
     [KEYS.serverBindHost, settings.server?.bindHost ?? DEFAULT_BIND_HOST],

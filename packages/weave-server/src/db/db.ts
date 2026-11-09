@@ -224,12 +224,103 @@ CREATE TABLE IF NOT EXISTS uploads (
   dir        TEXT
 );
 
+-- 会话扩展点（L1 绑定域）：绑定 = 「哪个作用域的哪个扩展点 → 什么决策 →
+-- 扇出到哪些端点」的常驻接线。session_id NULL = 项目级（对全部会话生效）、
+-- 非空 = 会话级（叠加求值：项目级与会话级各自独立、互不抑制）。endpoints 是
+-- JSON [{kind:'session'|'webhook', ...}]（扁平列表、并行扇出、无屏障）。
+CREATE TABLE IF NOT EXISTS extension_bindings (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL,
+  project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  session_id     TEXT,
+  point          TEXT NOT NULL,
+  when_text      TEXT,
+  condition_text TEXT,
+  summarize      TEXT,
+  endpoints      TEXT NOT NULL,
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_extension_bindings_project ON extension_bindings(project_id);
+
+-- 执行日志：一拍一行（按端点展开则一拍多行），激进修剪（每绑定 200 条 + 7 天）。
+-- 幂等去重靠 partial 唯一索引（只盖 delivered 行）：执行日志含 when-blocked 等
+-- 非投递 stage，全行唯一索引会让回放期的同事件 blocked 行插不进去。
+CREATE TABLE IF NOT EXISTS extension_executions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  binding_id      INTEGER NOT NULL REFERENCES extension_bindings(id) ON DELETE CASCADE,
+  session_id      TEXT,
+  event_id        INTEGER,
+  trigger         TEXT NOT NULL DEFAULT 'event',
+  stage           TEXT NOT NULL,
+  endpoint_kind   TEXT,
+  endpoint_target TEXT,
+  ok              INTEGER,
+  error           TEXT,
+  source          TEXT,
+  detail          TEXT,
+  at              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_extension_exec_binding ON extension_executions(binding_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_extension_exec_delivered
+  ON extension_executions(binding_id, event_id, endpoint_kind, endpoint_target)
+  WHERE stage = 'delivered' AND event_id IS NOT NULL;
+
 -- 消息随附的图（对话气泡的缩略图）：挂在**开轮事件**上——消息域不落库，
 -- 图的归宿是会话自己的转录事件，这里只存指针。随 hook_events 级联删。
 CREATE TABLE IF NOT EXISTS event_images (
   event_id  INTEGER NOT NULL REFERENCES hook_events(id) ON DELETE CASCADE,
   upload_id TEXT NOT NULL,
   PRIMARY KEY (event_id, upload_id)
+);
+
+-- RPG 域（RPG-1 最小 DDL，RPG 稿 §5.3.6 + §三）：角色 = 项目（角色仓库）的登记行，
+-- 团队/剧本 = 协调者仓库文件的登记行——**这里只存游戏自己的事实，观察态零冗余**
+-- （角色状态/模型/事件统计仍从既有表派生）。仓库落盘是文件层（rpg/roles/），本表
+-- 只做「项目 id → 角色」的映射与元数据。
+CREATE TABLE IF NOT EXISTS rpg_roles (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id  INTEGER NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  archetype   TEXT,                      -- 七型模板（能量/思考/创造/连接/审核/执行/适配；NULL = 自定义）
+  persona     TEXT,                      -- 提示词人设（角色插件 manifest 素材实例化时的快照）
+  hexagon     TEXT,                      -- JSON 六维基线 {力量:5,...}
+  created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rpg_teams (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  goal        TEXT,
+  roles       TEXT NOT NULL DEFAULT '[]', -- JSON [{role: <角色仓库名>, module?}]
+  playbook    TEXT,                       -- playbook://<name>（渲染后建编排）
+  project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL, -- 协调者项目（NULL = 未建）
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+-- 修炼/成长记录（行动态：动词门面写入；观察态与游戏态的唯一分界）
+CREATE TABLE IF NOT EXISTS rpg_growth (
+  id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  role   INTEGER NOT NULL REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  verb   TEXT NOT NULL,                  -- cultivate | equip | ...
+  target TEXT NOT NULL,                  -- skill / plugin 名
+  detail TEXT,
+  at     TEXT NOT NULL
+);
+-- 六维快照（修炼/修正后落，历史可回放成长曲线）
+CREATE TABLE IF NOT EXISTS rpg_hexagram (
+  role  INTEGER NOT NULL REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  dims  TEXT NOT NULL,                   -- JSON {力量:5, 智慧:2, ...}
+  reason TEXT,                           -- 触发来源（哪次修炼/修正）
+  at    TEXT NOT NULL,
+  PRIMARY KEY (role, at)
+);
+-- 技巧维度评分（修炼产出，RPG 稿 §5.2）：角色 → 当前技巧分 + 派生依据；一行一角色
+CREATE TABLE IF NOT EXISTS rpg_scores (
+  role  INTEGER PRIMARY KEY REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  score INTEGER NOT NULL,                -- 0..100
+  basis TEXT,                            -- 派生依据说明（基线/实战）
+  at    TEXT NOT NULL
 );
 `;
 

@@ -60,6 +60,14 @@ export function getVisualizationsDir(dir?: string): string {
   return path.join(dataRoots(dir).data, 'visualizations');
 }
 
+/**
+ * 角色仓库默认根（`<data>/rpg/roles/<role>/`；对齐市场副本先例、随数据迁移）。
+ * 自定义根 = settings 键 `rpg.rolesRoot`（RPG 稿 §三），缺省走这里。
+ */
+export function getRpgRolesRoot(dir?: string): string {
+  return path.join(dataRoots(dir).data, 'rpg', 'roles');
+}
+
 /** Absolute path to the daemon auth file (password hash + secrets, 0600). */
 export function getAuthPath(dir?: string): string {
   return path.join(dataRoots(dir).local, 'auth.json');

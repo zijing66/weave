@@ -5,6 +5,8 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { readBody, sendJson } from '../http.js';
 import { TOOLS, callTool } from './orchestration.js';
 import * as sessionsNs from './sessions.js';
+import * as projectsNs from './projects.js';
+import * as eventsNs from './events.js';
 
 /**
  * 内置 MCP 注册表（Streamable HTTP，daemon 托管）：`serverName → 服务定义`。
@@ -65,6 +67,20 @@ export const MCP_SERVERS: readonly McpServerDef[] = [
     path: '/mcp/sessions',
     tools: sessionsNs.SESSIONS_TOOLS,
     callTool: sessionsNs.callTool,
+  },
+  {
+    name: 'weave-projects',
+    version: '0.1.0',
+    path: '/mcp/projects',
+    tools: projectsNs.PROJECTS_TOOLS,
+    callTool: projectsNs.callTool,
+  },
+  {
+    name: 'weave-events',
+    version: '0.1.0',
+    path: '/mcp/events',
+    tools: eventsNs.EVENTS_TOOLS,
+    callTool: eventsNs.callTool,
   },
 ];
 export function mcpServerForPath(pathname: string): McpServerDef | null {

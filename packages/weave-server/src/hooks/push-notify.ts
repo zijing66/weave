@@ -44,6 +44,14 @@ export function notifyPayloadFor(
       url: '/',
     };
   }
+  if (message.kind === 'extension.failed') {
+    return {
+      title: 'weave',
+      body: `Extension binding "${message.bindingName}" keeps failing (3 in a row)`,
+      tag: `weave-extension-failed-${message.bindingId}`,
+      url: '/',
+    };
+  }
   return null;
 }
 

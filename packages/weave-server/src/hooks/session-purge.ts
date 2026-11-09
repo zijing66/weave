@@ -26,6 +26,9 @@ export interface SessionPurgeDeps {
   probe?: { forget(sessionId: string): void };
   /** 旁路会话历史：该会话的侧问行一并清（不计数；这是会话的附属品）。 */
   sideQuestions?: Pick<SideQuestionRepository, 'deleteBySession'>;
+  /** 会话扩展点：该会话的会话级绑定 + 执行行一并清（不计数；项目级绑定不动）。 */
+  extensionBindings?: Pick<import('../repositories/extension-bindings.js').ExtensionBindingRepository, 'deleteSessionScoped'>;
+  extensionExecutions?: Pick<import('../repositories/extension-bindings.js').ExtensionExecutionRepository, 'deleteBySession'>;
   /** 上传件（不计数）：事件清完顺带回收再没有人引用的图（文件 + 行）。 */
   uploads?: { pruneUnreferenced(): number };
 }
@@ -48,6 +51,8 @@ export function purgeSession(
   deps.questions?.forgetSession(sessionId);
   deps.activity?.forgetSession(sessionId);
   deps.sideQuestions?.deleteBySession(sessionId);
+  deps.extensionExecutions?.deleteBySession(sessionId);
+  deps.extensionBindings?.deleteSessionScoped(sessionId);
   deps.probe?.forget(sessionId);
   deps.sessions.remove(sessionId);
   return { events, dispatches, messages };

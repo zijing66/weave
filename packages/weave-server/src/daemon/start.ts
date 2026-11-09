@@ -40,8 +40,20 @@ import { PushNotifier } from '../hooks/push-notify.js';
 import { NotifyFanout } from '../hooks/notify-fanout.js';
 import { NotifyChannelRepository } from '../repositories/notify-channels.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
+import {
+  RpgGrowthRepository,
+  RpgHexagramRepository,
+  RpgRoleRepository,
+  RpgScoreRepository,
+} from '../rpg/roles.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
+import { createDecisionKernel } from '../hooks/decision-kernel.js';
+import { ExtensionEngine } from '../hooks/extension-engine.js';
+import {
+  ExtensionBindingRepository,
+  ExtensionExecutionRepository,
+} from '../repositories/extension-bindings.js';
 import { createDecisionConditionJudge } from '../hooks/decision-judge.js';
 import { readDecisionKey } from './decision-config.js';
 import { createEnsureOpen } from './session-open.js';
@@ -259,6 +271,11 @@ export function startDaemon(): void {
   // 跨会话编排：定义 + 运行日志（统一视图），引擎的权威态在内存、日志落行。
   const orchestrations = new OrchestrationRepository(db);
   const orchestrationRuns = new OrchestrationRunRepository(db);
+  // RPG 域（RPG-1）：角色/成长两行挂上即「已装」——/rpg/* 通，缺省随 daemon 开。
+  const rpgRoles = new RpgRoleRepository(db);
+  const rpgGrowth = new RpgGrowthRepository(db);
+  const rpgScores = new RpgScoreRepository(db);
+  const rpgHexagram = new RpgHexagramRepository(db);
   // 会话转录探测（中断态）：hook 事件旁路带上转录路径 → 只留内存，按需读尾部。
   const sessionProbe = new SessionProbe(
     dbTranscriptPathResolver(hookEvents),
@@ -456,6 +473,20 @@ export function startDaemon(): void {
     onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
   });
   classifyRef.run = (input) => edgeExtract.run(input);
+  // 扩展域的 fork 池（独立实例，同样 4 槽）：满载回落 null（evaluate 内如实降级），
+  // 与编排/classify 的既有三域互不挤占（设计稿 §1.4 落地评审定案）。
+  const extensionEdgeExtract = createEdgeExtract({
+    sessions: hookSessions,
+    projects,
+    harnessOf: (sessionId) => {
+      const latest = hookEvents.listBySession(sessionId, 1);
+      const src = latest[latest.length - 1]?.source;
+      return isHarness(src) ? src : null;
+    },
+    surfaceFor: messagingSurfaceFor,
+    headless: headlessRunner,
+    onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
+  });
   // 条件边判断链：配了决策模型（settings decision 段 + key）先问它（Jev 兼容
   // noul，强 yes/no 出结论、判不准与失败回落），没配/回落都到 fork 子 Agent。
   // 配置每次判断现读——设置页改完即时生效，不用重启 daemon。
@@ -501,6 +532,27 @@ export function startDaemon(): void {
     channelById: (id) => notifyChannels.getById(id),
   });
   orchestrationEngine.rearm();
+  // 会话扩展点引擎（L1 绑定域）：turn-end/idle 两点 × session/webhook 两端点。
+  // fork 池独立实例（同样 4 槽）——与编排的 edgeExtract / classify 互不挤占。
+  const extensionBindings = new ExtensionBindingRepository(db);
+  const extensionExecutions = new ExtensionExecutionRepository(db);
+  const extensionKernel = createDecisionKernel({
+    fork: {
+      supports: (sessionId) => extensionEdgeExtract.supports(sessionId),
+      extract: (input) => extensionEdgeExtract.run(input),
+    },
+  });
+  const extensionEngine = new ExtensionEngine({
+    bindings: extensionBindings,
+    executions: extensionExecutions,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    hookEvents,
+    bus: hookBus,
+    kernel: extensionKernel,
+    supportsExtract: (sessionId) => extensionEdgeExtract.supports(sessionId),
+    staleMs: readDaemonSettingsSync().extensions?.staleMs,
+  });
   // 定时触发：30s 一枪（同分钟只 fire 一次、跑着的跳过）。
   const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
   cronTimer.unref();
@@ -518,6 +570,8 @@ export function startDaemon(): void {
     questions: questionTracker,
     activity: activityTracker,
     sideQuestions,
+    extensionBindings,
+    extensionExecutions,
     probe: sessionProbe,
     uploads,
     uploadSessions: defaultUploadSessions,
@@ -556,6 +610,7 @@ export function startDaemon(): void {
         claimSideAnswer(sideQuestionDeps, input);
       },
     },
+    extensionEngine,
     sessionProbe,
     uploads,
     dashboardRate,
@@ -604,9 +659,16 @@ export function startDaemon(): void {
     orchestrations,
     orchestrationRuns,
     orchestrationEngine,
+    extensionBindings,
+    extensionExecutions,
+    extensionEngine,
     pushSubscriptions,
     pushNotifier,
     notifyChannels,
+    rpgRoles,
+    rpgGrowth,
+    rpgScores,
+    rpgHexagram,
     onAttach: dashboardPusher.attach,
     dashboardRefresh: dashboardPusher.attach,
     hookPlugins: pluginManager,

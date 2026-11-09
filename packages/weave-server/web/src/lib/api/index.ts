@@ -23,6 +23,8 @@ import { searchApi } from './search';
 import { visualizationApi } from './visualizations';
 import { petApi } from './pets';
 import { notifyApi } from './notify';
+import { extensionApi } from './extensions';
+import { rpgApi } from './rpg';
 import { refreshDashboard, eventsUrl } from './client';
 
 export const api = {
@@ -42,6 +44,8 @@ export const api = {
   ...visualizationApi,
   ...petApi,
   ...notifyApi,
+  ...extensionApi,
+  ...rpgApi,
   refreshDashboard,
   eventsUrl,
 };
@@ -209,3 +213,20 @@ export type {
   NotifySendResult,
 } from './notify';
 export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';
+export type {
+  ExtensionEndpointKind,
+  ExtensionPoint,
+  ExtensionEndpoint,
+  ExtensionStage,
+  ExtensionBindingRow,
+  ExtensionExecutionRow,
+  ExtensionBindingInput,
+  ExtensionHarnessCapability,
+} from './extensions';
+export type {
+  RpgHexagon,
+  RpgRoleView,
+  RpgGrowthRow,
+  RpgHexagonView,
+  CultivateResultView,
+} from './rpg';

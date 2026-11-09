@@ -447,6 +447,8 @@ export interface IngestedHandlerDeps {
   activityTracker?: Pick<ActivityTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = `/btw`）：判据归 harness 能力面；缺省不认领。 */
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
+  /** 会话扩展点引擎（第五消费者）：onEvent 带 payload——tool-failed 的错误摘要只在 payload 里。 */
+  extensionEngine?: Pick<import('./extension-engine.js').ExtensionEngine, 'onEvent'>;
   /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）+ 换模型落定 + 推理档位。 */
   sessionProbe?: {
     noteTranscript(sessionId: string, path: string | null): void;
@@ -524,6 +526,19 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         eventType: record.input.eventType,
         source: record.input.source,
       });
+      // 会话扩展点（第五消费者，与 watch/orchestration 平行）：onEvent 带 payload
+      // （工具错误摘要只在 payload 里），fire-and-forget、内部全吞。
+      if (isHarness(record.input.source)) {
+        deps.extensionEngine?.onEvent({
+          sessionId: record.input.sessionId,
+          source: record.input.source,
+          eventType: record.input.eventType,
+          eventId: record.eventId,
+          projectId: record.projectId,
+          payload,
+          ...(record.input.createdAt ? { at: record.input.createdAt } : {}),
+        });
+      }
       if (record.messaging) deps.messagePipe?.noteInboxSocket?.(record.input.sessionId, record.messaging);
       // 转录路径（中断态探测）：与 pane env 同口径——每次事件覆盖刷新、只留内存。
       deps.sessionProbe?.noteTranscript(record.input.sessionId, payload?.transcriptPath ?? null);

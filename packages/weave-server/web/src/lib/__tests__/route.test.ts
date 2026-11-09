@@ -41,11 +41,18 @@ describe('parseRoute', () => {
       category: 'personalization',
     });
   });
+
+  it('RPG 视图：场景段缺省办公区', () => {
+    expect(parseRoute('/rpg')).toEqual({ kind: 'rpg', scene: 'office' });
+    expect(parseRoute('/rpg/office')).toEqual({ kind: 'rpg', scene: 'office' });
+    expect(parseRoute('/rpg/classroom')).toEqual({ kind: 'rpg', scene: 'classroom' });
+  });
 });
 
 describe('routeToPath', () => {
   it('三种形态各自拼得回去', () => {
     expect(routeToPath({ kind: 'none' })).toBe('/');
+    expect(routeToPath({ kind: 'rpg', scene: 'office' })).toBe('/rpg/office');
     expect(routeToPath({ kind: 'global', category: 'tasks' })).toBe('/g/tasks');
     expect(
       routeToPath({ kind: 'project', projectId: 3, category: 'weave', sessionId: null }),
@@ -56,7 +63,7 @@ describe('routeToPath', () => {
   });
 
   it('往返不丢信息', () => {
-    for (const path of ['/', '/g/files', '/p/1/tasks', '/p/1/tasks/s-1', '/p/42/orchestrate']) {
+    for (const path of ['/', '/g/files', '/rpg/office', '/p/1/tasks', '/p/1/tasks/s-1', '/p/42/orchestrate']) {
       expect(routeToPath(parseRoute(path))).toBe(path);
     }
   });

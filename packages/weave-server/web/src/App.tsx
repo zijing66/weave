@@ -28,6 +28,7 @@ import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
+import { RpgView } from '@/rpg/RpgView';
 import { DashboardOverview } from '@/components/DashboardOverview';
 import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { MarketModal } from '@/components/MarketModal';
@@ -43,7 +44,7 @@ import { navigate, parseRoute, useRoutePath } from '@/lib/route';
 import { setThemePreference, useThemePreference } from '@/lib/theme';
 import { useT } from '@/i18n/I18nProvider';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { ChevronDown, FolderTree, Github, Library, LogOut, Moon, PanelLeft, Search, Settings, Sun, SunMoon, X } from 'lucide-react';
+import { ChevronDown, FolderTree, Gamepad2, Github, Library, LogOut, Moon, PanelLeft, Search, Settings, Sun, SunMoon, X } from 'lucide-react';
 import type { MessageKey } from '@/i18n/dict';
 import { useToast } from '@/components/Toast';
 import { CopyPathButton } from '@/components/ui/copy-button';
@@ -166,6 +167,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const stars = useRepoStars();
   const [selected, setSelected] = useState<ProjectRow | null>(null);
   const [globalMode, setGlobalMode] = useState(false);
+  // RPG 游戏视图模式（/rpg/<scene>）：顶掉常规卡片面，整块主区交给 RpgView。
+  const [rpgMode, setRpgMode] = useState(false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
   // Machine-level harness files (~/.claude, ~/.codex) — fetched lazily, only
   // when the global 资源管理 page is opened.
@@ -414,6 +417,13 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     if (!shellReady) return;
     const route = parseRoute(path);
     if (route.kind === 'none') return;
+    if (route.kind === 'rpg') {
+      setRpgMode(true);
+      setGlobalMode(false);
+      setInitialSessionId(null);
+      return;
+    }
+    setRpgMode(false);
     if (route.kind === 'global') {
       if (!globalMode) selectGlobal();
       setMainCategory(route.category);
@@ -897,6 +907,16 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 <Search className="h-4 w-4" />
               </button>
             </Tooltip>
+            {/* RPG 游戏视图（D1）：路由化入口，/rpg/office 办公区俯视。 */}
+            <Tooltip label={t('rpg.entry')} side="top">
+              <button
+                onClick={() => navigate({ kind: 'rpg', scene: 'office' })}
+                className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
+                aria-label={t('rpg.entry')}
+              >
+                <Gamepad2 className="h-4 w-4" />
+              </button>
+            </Tooltip>
             {/* GitHub 访问链接（含 star 数；取不到就只显示图标）——设置按钮左边。
                 不挂 title：图标语义自明，悬停提示属噪音（保留 aria-label 供读屏）。 */}
             <a
@@ -984,7 +1004,27 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
 
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
-              {showMain ? (
+              {rpgMode ? (
+                // RPG 游戏视图整块接管主区（场景框架 + 俯视 + 看板/有向图）。
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-edge/[0.06]">
+                    <h2 className="text-sm font-semibold">{t('rpg.entry')}</h2>
+                    <button
+                      onClick={() => navigate({ kind: 'global', category: 'tasks' })}
+                      className="rounded px-2 py-1 text-xs text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60"
+                    >
+                      {t('rpg.back')}
+                    </button>
+                  </div>
+                  <RpgView
+                    sceneKey={(() => {
+                      const r = parseRoute(path);
+                      return r.kind === 'rpg' ? r.scene : 'office';
+                    })()}
+                    onOpenSession={openSessionInProject}
+                  />
+                </div>
+              ) : showMain ? (
                 <>
                   <div className="relative px-4 py-2 border-b border-edge/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
                     <div className="min-w-0 flex-1">

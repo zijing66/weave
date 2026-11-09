@@ -14,6 +14,8 @@ import { authZh, authEn } from './auth';
 import { aiZh, aiEn } from './ai';
 import { configZh, configEn } from './config';
 import { searchZh, searchEn } from './search';
+import { extensionsZh, extensionsEn } from './extensions';
+import { rpgZh, rpgEn } from './rpg';
 
 /** 扁平 dotted key 词典：按领域分 chunk，chunk 内 zh/en 成对、文件级强制
  * key 对齐（漏译编译失败），合并后这里再兜一层类型。 */
@@ -33,6 +35,8 @@ export const zh = {
   ...aiZh,
   ...configZh,
   ...searchZh,
+  ...extensionsZh,
+  ...rpgZh,
 };
 
 export const en: Record<keyof typeof zh, string> = {
@@ -51,6 +55,8 @@ export const en: Record<keyof typeof zh, string> = {
   ...aiEn,
   ...configEn,
   ...searchEn,
+  ...extensionsEn,
+  ...rpgEn,
 };
 
 export type MessageKey = keyof typeof zh;

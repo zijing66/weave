@@ -110,6 +110,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       ai: { baseUrl: '', model: '', apiKey: null, apiKeySet: false }, // AI 助手（归一化补默认，默认未配置；key 回显 null）
       decision: { baseUrl: '', model: '', apiKey: null, apiKeySet: false }, // 决策模型（同上）
       htmlExport: { activeId: null, profiles: [] }, // 导出 HTML 的自定义头（默认没有）
+      extensions: { staleMs: 600000 }, // 会话扩展点陈旧窗（归一化补默认 10min）
       pet: { enabled: false, petId: 'weave-spider', notifications: true, size: 'small' }, // 桌面宠物（归一化补默认，默认关+小号）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）

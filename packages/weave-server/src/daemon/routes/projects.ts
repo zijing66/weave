@@ -302,6 +302,9 @@ export async function handleProjectRoutes(
     deps.sessionWatches?.deleteByProject(project.id);
     deps.orchestrations?.deleteByProject(project.id);
     deps.orchestrationRuns?.clear('all', project.id);
+    // 会话扩展点级联：绑定先删（执行行按 binding_id 引用它），再清执行行
+    deps.extensionBindings?.deleteByProject(project.id);
+    deps.extensionExecutions?.deleteByProject(project.id);
     deps.sideQuestions?.repo.deleteByProject(project.id);
     const sessions = deps.hookSessions?.removeByProject(project.id) ?? 0;
     deps.projects.setArchived(project.id, true);

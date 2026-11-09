@@ -24,6 +24,7 @@ import { readDaemonSettingsSync, readHooksEnabled } from './settings.js';
 import { readWorktreeRegistry } from './worktree.js';
 import { hooksRoot } from '../hooks/mirror.js';
 import { handleOrchestrationRoutes } from './routes/orchestration.js';
+import { handleExtensionRoutes } from './routes/extension.js';
 import { handleHookAdminRoutes } from './routes/hooks-admin.js';
 import { handleUploadRoutes } from './routes/uploads.js';
 import { handleSessionControlRoutes } from './routes/session-control.js';
@@ -118,6 +119,7 @@ export async function handleHooksRoutes(
   // /images 就是这么死的——分支写好了却没进这张表，一律 404 Not found）。
   const isOwnedPath =
     pathname.startsWith('/hooks/') ||
+    pathname === '/dashboard' ||
     pathname === '/dashboard/refresh' ||
     pathname === '/sessions' ||
     pathname.startsWith('/sessions/') ||
@@ -127,6 +129,7 @@ export async function handleHooksRoutes(
     pathname.startsWith('/uploads/') ||
     pathname.startsWith('/images/') ||
     pathname.startsWith('/visualizations/') ||
+    pathname.startsWith('/extensions/') ||
     pathname === '/daemon/shutdown' ||
     pathname === '/pets' ||
     pathname.startsWith('/pets/');
@@ -153,6 +156,32 @@ export async function handleHooksRoutes(
   if (pathname === '/dashboard/refresh' && req.method === 'POST') {
     deps.dashboardRefresh?.();
     sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // GET /dashboard — 总量 + 速率快照的一次性 REST 读（MCP weave-events 与调试用；
+  // 前端不用它——仪表盘数据仍走 /events 的 dashboard.* 帧，绝不按请求扫库）。
+  if (pathname === '/dashboard' && req.method === 'GET') {
+    if (!deps.dashboardRate) {
+      sendJson(res, 503, { error: 'Dashboard unavailable' });
+      return true;
+    }
+    const rate = deps.dashboardRate;
+    if (!rate.isSeeded && deps.hookEvents) {
+      // 首读回填与推送器同口径：从库拉最近一小时的逐秒分布折进桶 + 补种总量。
+      const start = new Date(Date.now() - 3_600_000).toISOString();
+      const projectIds = deps.projects.list().map((p) => p.id);
+      rate.seed(deps.hookEvents.seriesBySecond(projectIds, start));
+      rate.seedTotals(
+        deps.hookEvents.countAll(),
+        deps.hookEvents.countSince(projectIds, new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
+      );
+    }
+    const steps = 360; // 1 小时 × 10 秒（RATE_BUCKET_MS），与首页仪表盘同窗
+    sendJson(res, 200, {
+      totals: { ...{ projects: deps.projects.list().length, sessions: deps.hookSessions?.countAll() ?? 0 }, ...rate.totals },
+      series: rate.recentBuckets(steps),
+    });
     return true;
   }
 
@@ -309,6 +338,8 @@ export async function handleHooksRoutes(
         orchestrations: deps.orchestrations,
         questions: deps.questionTracker,
         sideQuestions: deps.sideQuestions?.repo,
+        extensionBindings: deps.extensionBindings,
+        extensionExecutions: deps.extensionExecutions,
         probe: deps.sessionProbe,
         uploads: deps.uploads,
       },
@@ -522,6 +553,9 @@ export async function handleHooksRoutes(
 
   // ---- 编排域 → routes/orchestration.ts（定义/触发/运行日志/公开 webhook）----
   if (await handleOrchestrationRoutes(req, res, deps, pathname, url)) return true;
+
+  // ---- 会话扩展点域 → routes/extension.ts（绑定 CRUD / 执行日志）----
+  if (await handleExtensionRoutes(req, res, deps, pathname, url)) return true;
 
   // ---- 能力矩阵：纯派生自 MessagingSurface + 终端通道装配态（无第二事实源） ----
   if (pathname === '/messaging/capabilities' && req.method === 'GET') {

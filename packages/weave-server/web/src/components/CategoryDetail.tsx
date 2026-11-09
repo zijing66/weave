@@ -31,6 +31,7 @@ import { AgentBadge } from '@/components/AgentBadge';
 import { FileAssetTree } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { HooksPanel } from '@/components/HooksPanel';
+import { ExtensionBindingsPanel } from '@/components/extensions/ExtensionBindingsPanel';
 import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
 import { HarnessConfigPanel } from '@/components/config/HarnessConfigPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
@@ -415,7 +416,13 @@ export function CategoryDetail({
         </>
       )}
 
-      {category === 'weave' && <HooksPanel projectId={projectId} mode={mode} />}
+      {category === 'weave' && (
+        <>
+          <HooksPanel projectId={projectId} mode={mode} />
+          {/* 会话扩展绑定（批 3）：项目设置内嵌 section——与规则面板同区从属，不立第三套平级面 */}
+          {!isGlobal && <ExtensionBindingsPanel projectId={projectId} />}
+        </>
+      )}
 
       {/* 任务：项目级 = 分组事件链视图；全局级 = 跨项目只读总览 */}
       {category === 'tasks' &&

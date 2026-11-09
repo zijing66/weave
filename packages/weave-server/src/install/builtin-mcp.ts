@@ -28,4 +28,16 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
       '活会话的观察/投递/问答/中断/订阅/改动汇总（daemon 托管的 Streamable HTTP MCP；仅本机）',
     path: '/mcp/sessions',
   },
+  {
+    name: 'weave-projects',
+    description:
+      '项目/harness 配置（词表粒度读写）/weave 插件装卸/skill 清单/资源市场（daemon 托管的 Streamable HTTP MCP；仅本机）',
+    path: '/mcp/projects',
+  },
+  {
+    name: 'weave-events',
+    description:
+      '事件流查询/仪表盘总量与速率/接口日志/会话用量（daemon 托管的 Streamable HTTP MCP；仅本机）',
+    path: '/mcp/events',
+  },
 ];

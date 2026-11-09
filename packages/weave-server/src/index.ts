@@ -250,3 +250,33 @@ export {
   isGitSource,
 } from './hooks/plugin-installer.js';
 export type { InstallResult, PluginIndexEntry } from './hooks/plugin-installer.js';
+
+// RPG 域（RPG-1）：角色 provisioning / 剧本模板（渲染 = 协调者侧纯函数）/ 角色插件 manifest。
+export {
+  RpgRoleRepository,
+  RpgGrowthRepository,
+  HEXAGON_DIMS,
+  ARCHETYPE_BASELINES,
+  archetypeBaseline,
+} from './rpg/roles.js';
+export type { RpgRoleRow, Hexagon, HexagonDim } from './rpg/roles.js';
+export {
+  parsePlaybookYaml,
+  readPlaybookFile,
+  graphsOf,
+  renderPlaybook,
+  PLAYBOOK_KINDS,
+} from './rpg/playbook.js';
+export type {
+  PlaybookFile,
+  PlaybookBindings,
+  RenderedOrchestration,
+} from './rpg/playbook.js';
+export { provisionRole, provisionRoleFromTemplate, scaffoldCoordinator, COORDINATOR_DIRS } from './rpg/provisioning.js';
+export type { ProvisionRoleResult } from './rpg/provisioning.js';
+export { BUILTIN_ROLE_TEMPLATES, COORDINATOR_PERSONA } from './install/role-manifests.js';
+export type { BuiltinRoleTemplate } from './install/role-manifests.js';
+export { readRoleManifest, readRolePlugin, readPersonaFile, ROLE_MANIFEST_KEY } from './rpg/role-plugin.js';
+export { RoleManifestSchema } from './rpg/role-plugin.js';
+export type { RoleManifest } from './rpg/role-plugin.js';
+export { handleRpgRoutes } from './rpg/routes.js';

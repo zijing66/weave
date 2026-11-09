@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, Workflow, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -31,6 +31,7 @@ import { FilePicker, type PickTarget } from './FilePicker';
 import { SessionShuttlePicker } from './SessionShuttlePicker';
 import { SessionEditsDialog } from './SessionEditsDialog';
 import { SessionUsageDialog } from './SessionUsageDialog';
+import { SessionExtensionExecutionsDialog } from '@/components/extensions/SessionExtensionExecutionsDialog';
 import { SideQuestionDialog } from './SideQuestionDialog';
 import { RewindPicker } from './RewindPicker';
 import { StatuslineBar } from './StatuslineBar';
@@ -179,6 +180,8 @@ export function SessionMessages({
   const theme = useTheme();
   /** 旁路会话弹窗（旁路历史与提问都在这扇里）。 */
   const [sideOpen, setSideOpen] = useState(false);
+  /** 扩展执行日志弹窗（该会话生效的绑定 + 逐拍执行，SSE extension.execution 驱动）。 */
+  const [extExecOpen, setExtExecOpen] = useState(false);
   /** 回退选择器（输入框敲 `/rewind` 开）：宿主面板由服务端驱动，这扇只做选择。 */
   const [rewindOpen, setRewindOpen] = useState(false);
   const { sessions, statuses, refresh, modelCatalog, questions } = useSessionStatus();
@@ -772,6 +775,18 @@ export function SessionMessages({
                 >
                   <Activity className="h-3 w-3 text-rose-400" />
                   <span className="max-lg:hidden">{t('tasks.chainTitle')}</span>
+                </button>
+                </Tooltip>
+                {/* 扩展执行日志（该会话生效的绑定 + 逐拍记录；SSE 帧驱动） */}
+                <Tooltip label={t('ext.execTitle')} side="top">
+                  <button
+                    type="button"
+                    aria-label={t('ext.execTitle')}
+                  onClick={() => setExtExecOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                >
+                  <Workflow className="h-3 w-3 text-cyan-400" />
+                  <span className="max-lg:hidden">{t('ext.execTitle')}</span>
                 </button>
                 </Tooltip>
               </>
@@ -2419,6 +2434,14 @@ export function SessionMessages({
 
         {/* 会话用量：各轮 token 计量（取数归 harness 能力面，纯只读） */}
         <SessionUsageDialog sessionId={sessionId} open={usageOpen} onClose={() => setUsageOpen(false)} />
+
+        {/* 扩展执行日志：生效绑定（叠加）+ 逐拍记录；SSE extension.execution 驱动刷新 */}
+        <SessionExtensionExecutionsDialog
+          sessionId={sessionId}
+          projectId={projectId}
+          open={extExecOpen}
+          onClose={() => setExtExecOpen(false)}
+        />
 
         {/* 回退选择器（`/rewind`）：列表与范围都在这里选，服务端读屏驱动宿主面板 */}
         {rewindOpen && (

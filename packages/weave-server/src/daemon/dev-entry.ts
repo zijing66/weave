@@ -44,6 +44,12 @@ import { NotifyChannelRepository } from '../repositories/notify-channels.js';
 import { OrchestrationRepository, OrchestrationRunRepository } from '../repositories/orchestrations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
+import { createDecisionKernel } from '../hooks/decision-kernel.js';
+import { ExtensionEngine } from '../hooks/extension-engine.js';
+import {
+  ExtensionBindingRepository,
+  ExtensionExecutionRepository,
+} from '../repositories/extension-bindings.js';
 import { createDecisionConditionJudge } from '../hooks/decision-judge.js';
 import { readDecisionKey } from './decision-config.js';
 import { createEnsureOpen } from './session-open.js';
@@ -423,6 +429,19 @@ async function main(): Promise<void> {
     onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
   });
   classifyRef.run = (input) => edgeExtract.run(input);
+  // 扩展域 fork 池（独立实例，与 start.ts 同装配）。
+  const extensionEdgeExtract = createEdgeExtract({
+    sessions: hookSessions,
+    projects,
+    harnessOf: (sessionId) => {
+      const latest = hookEvents.listBySession(sessionId, 1);
+      const src = latest[latest.length - 1]?.source;
+      return isHarness(src) ? src : null;
+    },
+    surfaceFor: messagingSurfaceFor,
+    headless: headlessRunner,
+    onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
+  });
   // 条件边判断链（与 start.ts 同装配）：决策模型优先、fork 回落。
   const conditionJudge = createDecisionConditionJudge({
     config: async () => {
@@ -465,6 +484,25 @@ async function main(): Promise<void> {
   orchestrationEngine.rearm();
   const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
   cronTimer.unref();
+  // 会话扩展点引擎（与 start.ts 同装配）：turn-end/idle 两点 × session/webhook 两端点。
+  const extensionBindings = new ExtensionBindingRepository(db);
+  const extensionExecutions = new ExtensionExecutionRepository(db);
+  const extensionEngine = new ExtensionEngine({
+    bindings: extensionBindings,
+    executions: extensionExecutions,
+    deliverer: messageDeliverer,
+    sessions: hookSessions,
+    hookEvents,
+    bus: hookBus,
+    kernel: createDecisionKernel({
+      fork: {
+        supports: (sessionId) => extensionEdgeExtract.supports(sessionId),
+        extract: (input) => extensionEdgeExtract.run(input),
+      },
+    }),
+    supportsExtract: (sessionId) => extensionEdgeExtract.supports(sessionId),
+    staleMs: readDaemonSettingsSync().extensions?.staleMs,
+  });
   // 项目行「有更新待同步」角标：项目插件根变更（plugin.reloaded）重算、值变才推。
   // dev 入口没有 SyncScheduler（自动同步不在此跑），故只有事件与新客户端两个触发源。
   const updatesFingerprints = new FingerprintCache();
@@ -488,6 +526,8 @@ async function main(): Promise<void> {
     questions: questionTracker,
     activity: activityTracker,
     sideQuestions,
+    extensionBindings,
+    extensionExecutions,
     probe: sessionProbe,
     uploads,
     uploadSessions: defaultUploadSessions,
@@ -526,6 +566,7 @@ async function main(): Promise<void> {
         claimSideAnswer(sideQuestionDeps, input);
       },
     },
+    extensionEngine,
     sessionProbe,
     uploads,
     dashboardRate,
@@ -572,6 +613,9 @@ async function main(): Promise<void> {
     orchestrations,
     orchestrationRuns,
     orchestrationEngine,
+    extensionBindings,
+    extensionExecutions,
+    extensionEngine,
     pushSubscriptions,
     pushNotifier,
     notifyChannels,
@@ -580,6 +624,7 @@ async function main(): Promise<void> {
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
+    dashboardRate,
     toolkit,
     auth,
     requestShutdown: () => shutdownRef.fn?.(),
