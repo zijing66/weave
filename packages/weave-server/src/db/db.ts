@@ -383,6 +383,30 @@ CREATE TABLE IF NOT EXISTS rpg_expeditions (
 );
 CREATE INDEX IF NOT EXISTS idx_rpg_expeditions_project ON rpg_expeditions(project_id, id);
 
+-- 修炼产物账（G3 修炼玩法，G线设计 §七）：一株作物 = 一次真实构建/生成回合，
+-- 产物落角色仓库（字段 = 相对角色仓根的路径）。质量档 = 修真品阶，**度量列是
+-- 评定的唯一信号源**（档位不自封——tests/lint/docs 三布尔 + has_artifact 由
+-- 上游真实验收判定，宁可判凡不可虚高）。status 词表封闭：
+-- growing | harvested（收菜）| discarded（放回）| promoted（已晋升）。
+CREATE TABLE IF NOT EXISTS rpg_crops (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id       INTEGER NOT NULL REFERENCES rpg_roles(id) ON DELETE CASCADE,
+  project_id    INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  kind          TEXT NOT NULL,             -- farming（种田=skill）| fishing（钓鱼=插件）
+  name          TEXT NOT NULL,             -- 作物名（= skill/插件名）
+  artifact_path TEXT,                      -- 产物在角色仓内的相对路径
+  has_artifact  INTEGER NOT NULL DEFAULT 0,
+  has_tests     INTEGER NOT NULL DEFAULT 0,
+  lint_ok       INTEGER NOT NULL DEFAULT 0,
+  docs_ok       INTEGER NOT NULL DEFAULT 0,
+  grade         TEXT,                      -- 凡 | 灵 | 仙 | 天（NULL = 未评定）
+  status        TEXT NOT NULL DEFAULT 'growing',
+  note          TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rpg_crops_role ON rpg_crops(role_id, id);
+
 -- 合并梯账（G2 段3）：一次并回的每一层动作一行（机械/rerere/mergiraf/AI 修补/
 -- 打回），人机共读同一份底账（G线设计 §三 合并链路卡的数据源）。
 CREATE TABLE IF NOT EXISTS rpg_merge_ladder (

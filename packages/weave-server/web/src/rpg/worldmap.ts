@@ -44,6 +44,7 @@ export type TileMap = readonly string[];
 export type HotspotAction =
   | { type: 'scene'; scene: string }
   | { type: 'project'; projectId: number }
+  | { type: 'training' }
   | { type: 'toast' };
 
 export interface Hotspot {
@@ -126,7 +127,7 @@ export const HOMESTEAD_HOTSPOT: Hotspot = {
   action: { type: 'scene', scene: 'home' },
 };
 
-/** 修炼点槽位（G3 占位热点）：点击只给「敬请期待」。 */
+/** 修炼点（G3 点亮）：点击开修炼动作面板（种田/钓鱼/锻造三入口）。 */
 export const TRAINING_HOTSPOT: Hotspot = {
   id: 'training',
   x: 18,
@@ -134,7 +135,7 @@ export const TRAINING_HOTSPOT: Hotspot = {
   w: 2,
   h: 2,
   labelKey: 'rpg.worldTraining',
-  action: { type: 'toast' },
+  action: { type: 'training' },
 };
 
 export const WORLD_HOTSPOTS: readonly Hotspot[] = [HOMESTEAD_HOTSPOT, TRAINING_HOTSPOT];

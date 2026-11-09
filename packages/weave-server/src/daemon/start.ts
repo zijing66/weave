@@ -52,6 +52,7 @@ import {
   RpgScoreRepository,
 } from '../rpg/roles.js';
 import { RpgAchievementRepository, RpgXpRepository } from '../rpg/progress-store.js';
+import { RpgExpeditionRepository } from '../rpg/expedition-repo.js';
 import { RpgInvitationRepository } from '../rpg/invitations.js';
 import { WatchEngine } from '../hooks/watch-engine.js';
 import { OrchestrationEngine, createForkConditionJudge } from '../hooks/orchestration-engine.js';
@@ -631,6 +632,9 @@ export function startDaemon(): void {
         .map((e) => ({ sessionId: e.sessionId, payload: e.payload })),
     hooksDir: hooksRoot(),
     onChange: () => dataBus.emit({ key: 'sessions' }),
+    // 出征账本同一拍改绑（G3）：占位键 → 真实会话 id（rpg_expeditions.session_key）。
+    onClaim: (pendingKey, sessionId) =>
+      new RpgExpeditionRepository(db).rebindSessionKey(pendingKey, sessionId),
   });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 dev-entry 共用同一装配
   const hookPipeline = wireHookFilePipeline({

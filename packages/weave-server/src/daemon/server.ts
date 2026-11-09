@@ -231,6 +231,8 @@ export interface WeaveServerDeps {
   rpgXp?: import('../rpg/progress-store.js').RpgXpRepository;
   /** 角色仓库根覆盖（settings rpg.rolesRoot 的注入缝；缺省 `<data>/rpg/roles/`）。 */
   rpgRolesRoot?: string;
+  /** 晋升第②档（内建仓库）的根覆盖（测试注入；缺省 `<data>/market/weave/`）。 */
+  rpgBuiltinRoot?: string;
   /** 跨机邀请存储（rpg_invitations 表，F2）；缺省不挂 = /federation/invitations 503。 */
   rpgInvitations?: import('../rpg/invitations.js').RpgInvitationRepository;
   /** 邀请选角的决策内核（A3 内核 evaluate 档；缺省不挂 = 选角 503，前端回落手选）。 */

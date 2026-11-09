@@ -369,6 +369,8 @@ export interface WorktreeMergeScanDeps {
   exec?: WorktreeGitExec;
   /** 每次登记变化后的回调（web 的合并状态展示走既有 sessions 失效帧）。 */
   onChange?: () => void;
+  /** 占位认领完成后的钩（出征账本同一拍改写 session_key；G3）。 */
+  onClaim?: (pendingKey: string, sessionId: string) => void;
 }
 
 /**
@@ -394,6 +396,7 @@ export async function sweepWorktreeMerges(deps: WorktreeMergeScanDeps): Promise<
           delete entries[key];
           entries[ev.sessionId] = { ...entry, sessionId: ev.sessionId };
           writeWorktreeRegistry(deps.hooksDir, entries);
+          deps.onClaim?.(key, ev.sessionId);
           deps.onChange?.();
           break;
         }

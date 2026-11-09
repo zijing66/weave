@@ -78,7 +78,7 @@ export interface InstallKitInput {
   /** skill 源目录：键 = skill 名，值 = 源目录绝对路径。 */
   skills: Record<string, string>;
   /** tracked 查重缝（缺省无查重 = 信任调用方已查；显式给即可断言）。 */
-  trackedCheck?: (worktreePath: string, relPaths: string[]) => string[];
+  trackedCheck?: (worktreePath: string, relPaths: string[]) => string[] | Promise<string[]>;
 }
 
 export type InstallKitResult =
@@ -92,7 +92,7 @@ export async function installKit(input: InstallKitInput): Promise<InstallKitResu
   const marker = kitExcludeMarker(role, role);
   const root = kitSkillsRoot(worktreePath);
   const relPaths = names.map((n) => path.join('.claude', 'skills', kitSkillName(role, n)).replace(/\\/g, '/'));
-  const conflicts = input.trackedCheck?.(worktreePath, relPaths) ?? [];
+  const conflicts = (await input.trackedCheck?.(worktreePath, relPaths)) ?? [];
   if (conflicts.length > 0) {
     return { ok: false, error: 'kit paths collide with tracked files', conflicts };
   }

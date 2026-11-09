@@ -91,6 +91,26 @@ export interface RpgHouseMemberView {
   addedAt: string;
 }
 
+/** 修炼产物行（G3，/rpg/roles/:id/crops）。 */
+export interface RpgCropView {
+  id: number;
+  roleId: number;
+  projectId: number | null;
+  kind: 'farming' | 'fishing';
+  name: string;
+  artifactPath: string | null;
+  hasArtifact: boolean;
+  hasTests: boolean;
+  lintOk: boolean;
+  docsOk: boolean;
+  /** 凡 | 灵 | 仙 | 天（null = 未评定）。 */
+  grade: string | null;
+  status: 'growing' | 'harvested' | 'discarded' | 'promoted';
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RpgHouseView {
   id: number;
   name: string;
@@ -141,6 +161,19 @@ export const rpgApi = {
   /** 传音：给目标会话送一条消息。 */
   transmit: (roleId: number, toSessionId: string, text: string) =>
     post<{ ok: true; messageId: string; status: string }>(`/rpg/roles/${roleId}/message`, { toSessionId, text }),
+  // ---- 修炼域（G3）：种田/钓鱼产物账 + 品阶 + 晋升三档 ----
+  listCrops: (roleId: number) => apiFetch<{ crops: RpgCropView[] }>(`/rpg/roles/${roleId}/crops`),
+  /** 下种（kind: farming=种田 | fishing=钓鱼）：角色仓 crops/<名>/ 落一块田。 */
+  plantCrop: (roleId: number, kind: 'farming' | 'fishing', name: string) =>
+    post<{ cropId: number; fieldPath: string }>(`/rpg/roles/${roleId}/crops`, { kind, name }),
+  /** 收菜验收（钓鱼的「咬钩」同此收口）：度量落列 + 品阶即评定（服务端按盘上事实重算）。 */
+  assessCrop: (cropId: number, metrics?: Partial<{ hasArtifact: boolean; hasTests: boolean; lintOk: boolean; docsOk: boolean }>) =>
+    post<{ crop: RpgCropView }>(`/rpg/crops/${cropId}/assess`, metrics ?? {}),
+  /** 收菜装进角色仓 `.claude/skills/`（灵品+ 闸）。 */
+  harvestCrop: (cropId: number) => post<{ ok: boolean; installedAt: string }>(`/rpg/crops/${cropId}/harvest`, {}),
+  /** 晋升三档（tier 1=项目档 2=内建仓库 3=全局用户级；级2 确认闸在 web 呈 ConfirmDialog）。 */
+  promoteCrop: (cropId: number, tier: 1 | 2 | 3) =>
+    post<{ ok: boolean; tier: number; installedAt: string; grade: string | null }>(`/rpg/crops/${cropId}/promote`, { tier }),
   /** 邀请选角（F2，A3 决策内核消费）：推荐角色子集 + 理由；ok:false = 回落手选。 */
   castInvitation: (invitationId: number) =>
     post<{ ok: true; source: string; picks: Array<{ roleId: number; name: string; reason: string }> } | { ok: false; reason: string; fallback: 'manual' }>(

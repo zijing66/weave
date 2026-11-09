@@ -10,6 +10,7 @@ import { ClassroomScene } from './ClassroomScene';
 import { MeetingScene } from './MeetingScene';
 import { RoleProgressPanel } from './RoleProgressPanel';
 import { HomeConsole } from './HomeConsole';
+import { TrainingPanel } from './TrainingPanel';
 import { RoomScene } from './RoomScene';
 import { PixelScene, RpgBootBar, rpgRetryHandlers } from './PixelScene';
 import {
@@ -24,7 +25,6 @@ import {
 import { rpgBoot, type RpgBootKey } from './rpg-boot';
 import { api } from '@/lib/api';
 import { PROJECTS_QUERY } from '@/hooks/use-projects';
-import { useToast } from '@/components/Toast';
 import { STATUS_BADGE } from '@/components/tasks/session-status';
 import { navigate } from '@/lib/route';
 import type { ProjectRow, SessionRow } from '@/lib/api';
@@ -282,9 +282,9 @@ function WorldScene({
   onOpenSession: (projectId: number, sessionId: string) => void;
 }) {
   const t = useT();
-  const { show } = useToast();
   void onOpenSession;
   const data = useRpgData();
+  const [trainingOpen, setTrainingOpen] = useState(false);
   const houses = useQuery({ queryKey: ['rpg-houses'], queryFn: () => api.listHouses(), staleTime: 15_000 });
   const activeProjects = useMemo(() => projects.filter((p) => !p.archivedAt), [projects]);
   const houseHotspots = useMemo(() => projectHouseHotspots(activeProjects), [activeProjects]);
@@ -299,8 +299,9 @@ function WorldScene({
       const house = houses.data?.houses.find((x) => x.coreProjectId === projectId);
       if (house) navigateScene(roomSceneKey(house.id));
       else navigate({ kind: 'project', projectId, category: 'tasks', sessionId: null });
-    } else {
-      show('info', t('rpg.trainingTbd'));
+    } else if (h.action.type === 'training') {
+      // 修炼点（G3 点亮）：开修炼动作面板（种田/钓鱼/锻造三入口）
+      setTrainingOpen((cur) => !cur);
     }
   };
 
@@ -332,6 +333,9 @@ function WorldScene({
       </PixelScene>
       {activeProjects.length === 0 && (
         <p className="text-xs text-[var(--w-text-dim)]">{t('rpg.worldNoProjects')}</p>
+      )}
+      {trainingOpen && data.roles != null && (
+        <TrainingPanel roles={data.roles} onClose={() => setTrainingOpen(false)} />
       )}
     </div>
   );

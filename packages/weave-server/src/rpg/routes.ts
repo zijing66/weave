@@ -6,6 +6,8 @@ import type { WeaveServerDeps } from '../daemon/server.js';
 import { readJson, sendJson } from '../daemon/http.js';
 import { readDaemonSettingsSync } from '../daemon/settings.js';
 import { readAiKey } from '../daemon/ai-config.js';
+import { defaultProjectOpener } from '../daemon/opener.js';
+import { defaultWorktreeGitExec } from '../daemon/worktree.js';
 import {
   RpgGrowthRepository,
   RpgHexagramRepository,
@@ -16,6 +18,11 @@ import {
 } from './roles.js';
 import { RpgHouseRepository } from './houses.js';
 import { MergeLadderRepository } from './merge-ladder.js';
+import { RpgExpeditionRepository } from './expedition-repo.js';
+import { mergeExpeditionViaLadder, startExpeditionSession } from './expedition-session.js';
+import { RpgCropRepository, type CropKind } from './grade.js';
+import { plantCrop, assessCropFromField, harvestCropToSkill } from './training.js';
+import { promoteCrop, type PromotionTier } from './promotion.js';
 import { provisionRole, scaffoldCoordinator } from './provisioning.js';
 import { readPlaybookFile, renderPlaybook, type PlaybookBindings } from './playbook.js';
 import { cultivate, currentHexagonOf, expedition, formTeam, transmit } from './verbs.js';
@@ -627,9 +634,200 @@ export async function handleRpgRoutes(
     return true;
   }
 
+  // ---- 出征会话域（G3 段0 接钉）：新路由（旧 /expedition = 编排触发语义，不复用）----
+  const expeditions = new RpgExpeditionRepository(roles.db);
+  const ladder = new MergeLadderRepository(roles.db);
+
+  // POST /rpg/roles/:id/expeditions — 出征起手（worktree 挂载 + 锚定 + kit + 起会话）。
+  const expeditionPost = pathname.match(/^\/rpg\/roles\/(\d+)\/expeditions$/);
+  if (expeditionPost && req.method === 'POST') {
+    if (!deps.opener) {
+      sendJson(res, 503, { error: 'Terminal opener unavailable' });
+      return true;
+    }
+    let body: { projectId?: unknown; title?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.projectId !== 'number') {
+      sendJson(res, 400, { error: 'numeric "projectId" is required' });
+      return true;
+    }
+    const result = await startExpeditionSession(
+      {
+        projects: deps.projects,
+        roles,
+        expeditions,
+        growth,
+        ladder,
+        opener: deps.opener,
+        harnesses: deps.harnesses,
+        exec: deps.worktreeGitExec ?? defaultWorktreeGitExec,
+        hooksDir: deps.hooksDir,
+      },
+      Number(expeditionPost[1]),
+      { projectId: body.projectId, title: typeof body.title === 'string' ? body.title : undefined },
+    );
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 201, result);
+    return true;
+  }
+
+  // GET /rpg/roles/:id/expeditions — 该角色的出征账；GET /rpg/expeditions?projectId= — 项目维度。
+  if (expeditionPost && req.method === 'GET') {
+    sendJson(res, 200, { expeditions: expeditions.listByRole(Number(expeditionPost[1])) });
+    return true;
+  }
+  if (pathname === '/rpg/expeditions' && req.method === 'GET') {
+    const projectId = Number(new URL(req.url ?? '/rpg/expeditions', 'http://x').searchParams.get('projectId') ?? 0);
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      sendJson(res, 400, { error: '"projectId" query param is required' });
+      return true;
+    }
+    sendJson(res, 200, { expeditions: expeditions.listByProject(projectId) });
+    return true;
+  }
+
+  // POST /rpg/expeditions/:id/merge — 并回（合并梯，每层一行账）。
+  const expeditionMerge = pathname.match(/^\/rpg\/expeditions\/(\d+)\/merge$/);
+  if (expeditionMerge && req.method === 'POST') {
+    const result = await mergeExpeditionViaLadder(
+      {
+        projects: deps.projects,
+        roles,
+        expeditions,
+        growth,
+        ladder,
+        opener: deps.opener ?? defaultProjectOpener,
+        exec: deps.worktreeGitExec ?? defaultWorktreeGitExec,
+        hooksDir: deps.hooksDir,
+      },
+      Number(expeditionMerge[1]),
+    );
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error, ...(result.layer ? { layer: result.layer } : {}) });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  // ---- 修炼域（G3，G线设计 §七）：种田/钓鱼产物账 + 品阶 + 晋升三档 ----
+  const crops = new RpgCropRepository(roles.db);
+  const trainingDeps = { projects: deps.projects, roles, crops, growth };
+
+  // POST /rpg/roles/:id/crops — 下种（kind: farming | fishing）。
+  const cropPost = pathname.match(/^\/rpg\/roles\/(\d+)\/crops$/);
+  if (cropPost && req.method === 'POST') {
+    let body: { kind?: unknown; name?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (body.kind !== 'farming' && body.kind !== 'fishing') {
+      sendJson(res, 400, { error: '"kind" must be "farming" or "fishing"' });
+      return true;
+    }
+    if (typeof body.name !== 'string' || body.name.trim() === '') {
+      sendJson(res, 400, { error: '"name" is required' });
+      return true;
+    }
+    const result = await plantCrop(trainingDeps, Number(cropPost[1]), {
+      kind: body.kind as CropKind,
+      name: body.name,
+    });
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 201, result);
+    return true;
+  }
+
+  // GET /rpg/roles/:id/crops — 该角色的产物账。
+  if (cropPost && req.method === 'GET') {
+    sendJson(res, 200, { crops: crops.listByRole(Number(cropPost[1])) });
+    return true;
+  }
+
+  // POST /rpg/crops/:id/assess — 收菜验收（度量落列 + 品阶即评定；钓鱼的「咬钩」
+  // 交互同此收口）。度量布尔由上游真实验收给（保守：缺席 = 未达标）。
+  const cropAssess = pathname.match(/^\/rpg\/crops\/(\d+)\/assess$/);
+  if (cropAssess && req.method === 'POST') {
+    let body: { hasArtifact?: unknown; hasTests?: unknown; lintOk?: unknown; docsOk?: unknown; note?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const result = await assessCropFromField(trainingDeps, Number(cropAssess[1]), {
+      hasArtifact: body.hasArtifact === true,
+      hasTests: body.hasTests === true,
+      lintOk: body.lintOk === true,
+      docsOk: body.docsOk === true,
+      ...(typeof body.note === 'string' ? { note: body.note } : {}),
+    });
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, { crop: result.crop });
+    return true;
+  }
+
+  // POST /rpg/crops/:id/harvest — 收菜装进角色仓 `.claude/skills/`（灵品+ 闸）。
+  const cropHarvest = pathname.match(/^\/rpg\/crops\/(\d+)\/harvest$/);
+  if (cropHarvest && req.method === 'POST') {
+    const result = await harvestCropToSkill(trainingDeps, Number(cropHarvest[1]));
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  // POST /rpg/crops/:id/promote — 晋升三档（tier 1..3）。级2 人工裁决：确认闸在
+  // web（ConfirmDialog 呈确认后调用）；本端点不做二次确认、只做机械件与闸校验。
+  const cropPromote = pathname.match(/^\/rpg\/crops\/(\d+)\/promote$/);
+  if (cropPromote && req.method === 'POST') {
+    let body: { tier?: unknown; targetProjectId?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (body.tier !== 1 && body.tier !== 2 && body.tier !== 3) {
+      sendJson(res, 400, { error: '"tier" must be 1, 2 or 3' });
+      return true;
+    }
+    const result = await promoteCrop(
+      { projects: deps.projects, roles, crops, growth, builtinRoot: deps.rpgBuiltinRoot },
+      Number(cropPromote[1]),
+      body.tier as PromotionTier,
+      { targetProjectId: typeof body.targetProjectId === 'number' ? body.targetProjectId : undefined },
+    );
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
   // 非 API 的 /rpg/<scene> 深链（前端 SPA 路由）放行给静态托管 fallback——
   // API 404 只对未知 /rpg/* 接口生效。
-  if (!pathname.startsWith('/rpg/api-') && !pathname.startsWith('/rpg/roles') && !pathname.startsWith('/rpg/houses') && !pathname.startsWith('/rpg/merge-ladder') && !pathname.startsWith('/rpg/coordinator') && !pathname.startsWith('/rpg/board') && !pathname.startsWith('/rpg/playbook') && !pathname.startsWith('/rpg/expedition') && !pathname.startsWith('/rpg/kit') && !pathname.startsWith('/rpg/progress')) {
+  if (!pathname.startsWith('/rpg/api-') && !pathname.startsWith('/rpg/roles') && !pathname.startsWith('/rpg/houses') && !pathname.startsWith('/rpg/merge-ladder') && !pathname.startsWith('/rpg/coordinator') && !pathname.startsWith('/rpg/board') && !pathname.startsWith('/rpg/playbook') && !pathname.startsWith('/rpg/expedition') && !pathname.startsWith('/rpg/expeditions') && !pathname.startsWith('/rpg/crops') && !pathname.startsWith('/rpg/kit') && !pathname.startsWith('/rpg/progress')) {
     return false;
   }
   sendJson(res, 404, { error: 'Not found' });
