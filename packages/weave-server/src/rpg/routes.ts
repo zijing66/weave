@@ -627,6 +627,11 @@ export async function handleRpgRoutes(
     return true;
   }
 
+  // 非 API 的 /rpg/<scene> 深链（前端 SPA 路由）放行给静态托管 fallback——
+  // API 404 只对未知 /rpg/* 接口生效。
+  if (!pathname.startsWith('/rpg/api-') && !pathname.startsWith('/rpg/roles') && !pathname.startsWith('/rpg/houses') && !pathname.startsWith('/rpg/merge-ladder') && !pathname.startsWith('/rpg/coordinator') && !pathname.startsWith('/rpg/board') && !pathname.startsWith('/rpg/playbook') && !pathname.startsWith('/rpg/expedition') && !pathname.startsWith('/rpg/kit') && !pathname.startsWith('/rpg/progress')) {
+    return false;
+  }
   sendJson(res, 404, { error: 'Not found' });
   return true;
 }

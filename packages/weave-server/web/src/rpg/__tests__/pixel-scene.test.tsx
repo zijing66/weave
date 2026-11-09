@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { I18nProvider } from '@/i18n/I18nProvider';
 import { PixelScene, RpgBootBar } from '../PixelScene';
-import { HOME_MAP, HOME_HOTSPOTS, WORLD_MAP, WORLD_HOTSPOTS, GOD_SPOT } from '../worldmap';
+import { HOME_MAP, HOME_HOTSPOTS, WORLD_MAP, WORLD_HOTSPOTS, GOD_SPOT, ROOM_MAP, ROOM_HOTSPOTS, ROOM_GOD_SPOT } from '../worldmap';
 
 /**
  * PixelScene 冒烟（同 character-sprite.test.tsx 先例）：renderToString 防守
- * 「样式对象当裸子节点」与「tilemap 逐格渲染不炸」两条不变式；RpgBootBar
- * 判据⑥的同一条（进度条渲染不炸、格数 = 清单项数）。
+ * 「样式对象当裸子节点」与「tilemap 逐格渲染不炸」两条不变式；G4 行走态
+ * （god 化身 + 静态席位共存、三场景全给化身）渲染不炸。
  */
 describe('PixelScene', () => {
   it('Home 室内渲染不炸（tile 格数 = 行×列）', () => {
@@ -20,22 +20,31 @@ describe('PixelScene', () => {
     expect(html.match(/rpg-hotspot/g)?.length).toBe(HOME_HOTSPOTS.length);
   });
 
-  it('世界地图 + 静态摆位 sprite 渲染不炸（cell 只进 style）', () => {
+  it('世界地图 + 行走态上帝化身渲染不炸（化身 transform 落在初始格）', () => {
+    const html = renderToString(
+      <I18nProvider>
+        <PixelScene
+          map={WORLD_MAP}
+          hotspots={WORLD_HOTSPOTS}
+          onHotspot={() => {}}
+          god={{ start: GOD_SPOT, node: <div style={{ width: 24, height: 48 }} /> }}
+        />
+      </I18nProvider>,
+    );
+    expect(html).toContain('rpg-god-sprite');
+    expect(html).toContain(`translate(${GOD_SPOT.x * 24}px, ${GOD_SPOT.y * 24}px)`);
+  });
+
+  it('Room 协同棋盘：上帝化身与静态席位共存渲染不炸', () => {
     expect(() =>
       renderToString(
         <I18nProvider>
           <PixelScene
-            map={WORLD_MAP}
-            hotspots={WORLD_HOTSPOTS}
+            map={ROOM_MAP}
+            hotspots={ROOM_HOTSPOTS}
             onHotspot={() => {}}
-            sprites={[
-              {
-                key: 'god',
-                x: GOD_SPOT.x,
-                y: GOD_SPOT.y,
-                node: <div style={{ width: 24, height: 48 }} />,
-              },
-            ]}
+            sprites={[{ key: 'seat', x: 9, y: 4, node: <div style={{ width: 24, height: 48 }} /> }]}
+            god={{ start: ROOM_GOD_SPOT, node: <div style={{ width: 24, height: 48 }} /> }}
           />
         </I18nProvider>,
       ),

@@ -76,8 +76,8 @@ export function RpgView({
           )}
         </div>
       )}
-      {/* 场景注册表切换条 */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* 场景注册表切换条（触屏态触控面放大到 ≥44px，桌面观感不动——§11） */}
+      <div className="rpg-scene-switch flex flex-wrap items-center gap-2">
         <span className="text-xs uppercase tracking-wide text-[var(--w-text-dim)]">{t('rpg.sceneRegistry')}</span>
         {RPG_SCENES.map((s) => (
           <button
@@ -170,7 +170,12 @@ function HomeIndoorScene({ projects }: { projects: ProjectRow[] }) {
   if (data.roles == null) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <PixelScene map={HOME_MAP} hotspots={HOME_HOTSPOTS} onHotspot={onHotspot} />
+        <PixelScene
+          map={HOME_MAP}
+          hotspots={HOME_HOTSPOTS}
+          onHotspot={onHotspot}
+          god={{ start: GOD_SPOT, node: <CharacterSprite archetype={null} status="idle" size={0.5} /> }}
+        />
         <div className="p-8 text-sm text-[var(--w-text-dim)]">…</div>
       </div>
     );
@@ -182,18 +187,14 @@ function HomeIndoorScene({ projects }: { projects: ProjectRow[] }) {
         map={HOME_MAP}
         hotspots={HOME_HOTSPOTS}
         onHotspot={onHotspot}
-        sprites={[
-          {
-            key: 'god',
-            x: GOD_SPOT.x,
-            y: GOD_SPOT.y,
-            node: (
-              <div title={t('rpg.godAvatar')}>
-                <CharacterSprite archetype={null} status="idle" size={0.5} />
-              </div>
-            ),
-          },
-        ]}
+        god={{
+          start: GOD_SPOT,
+          node: (
+            <div title={t('rpg.godAvatar')}>
+              <CharacterSprite archetype={null} status="idle" size={0.5} />
+            </div>
+          ),
+        }}
       >
         {/* 门牌 */}
         <span
@@ -234,7 +235,7 @@ function HomeIndoorScene({ projects }: { projects: ProjectRow[] }) {
                 }
                 title={t('rpg.roleProgress')}
               >
-                <div className={game === 'gone' ? 'opacity-40' : undefined}>
+                <div className={(game === 'gone' ? 'opacity-40 ' : '') + 'pointer-events-none'}>
                   <CharacterSprite archetype={role.archetype} status={game} size={3} />
                 </div>
                 <span className="truncate text-sm font-medium">{role.name}</span>
@@ -309,16 +310,13 @@ function WorldScene({
         map={WORLD_MAP}
         hotspots={hotspots}
         onHotspot={onHotspot}
-        sprites={
+        sprites={undefined}
+        god={
           data.roles?.length
-            ? [
-                {
-                  key: `god-${data.roles[0]!.id}`,
-                  x: GOD_SPOT.x,
-                  y: GOD_SPOT.y,
-                  node: <CharacterSprite archetype={data.roles[0]!.archetype} status="idle" size={0.5} />,
-                },
-              ]
+            ? {
+                start: GOD_SPOT,
+                node: <CharacterSprite archetype={data.roles[0]!.archetype} status="idle" size={0.5} />,
+              }
             : undefined
         }
       >

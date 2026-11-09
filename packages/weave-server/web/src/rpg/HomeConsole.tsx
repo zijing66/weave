@@ -26,7 +26,7 @@ export function HomeConsole({ projects }: { projects: ProjectRow[] }) {
     <section className="rpg-tile min-h-0 flex-1 overflow-auto rounded border border-[var(--w-border)] p-4">
       <div className="mb-3 flex items-center gap-2">
         <span className="text-xs uppercase tracking-wide text-[var(--w-text-dim)]">{t('rpg.consoleTitle')}</span>
-        <div className="flex gap-1">
+        <div className="rpg-console-tabs flex gap-1">
           {tabs.map((x) => (
             <button
               key={x.key}

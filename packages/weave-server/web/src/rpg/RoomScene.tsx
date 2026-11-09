@@ -84,18 +84,16 @@ export function RoomScene({ houseId }: { houseId: number }) {
               </div>
             ),
           },
-          {
-            key: 'god',
-            x: ROOM_GOD_SPOT.x,
-            y: ROOM_GOD_SPOT.y,
-            node: (
-              <div title={t('rpg.godAvatar')}>
-                <CharacterSprite archetype={null} status="idle" size={0.5} />
-              </div>
-            ),
-          },
           ...sprites.filter((s): s is NonNullable<typeof s> => s != null),
         ]}
+        god={{
+          start: ROOM_GOD_SPOT,
+          node: (
+            <div title={t('rpg.godAvatar')}>
+              <CharacterSprite archetype={null} status="idle" size={0.5} />
+            </div>
+          ),
+        }}
       >
         <span
           className="absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"

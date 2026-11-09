@@ -1019,7 +1019,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                           ? navigate({ kind: 'project', projectId: selected.id, category: 'tasks', sessionId: null })
                           : navigate({ kind: 'global', category: 'tasks' })
                       }
-                      className="rounded px-2 py-1 text-xs text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60"
+                      className="rpg-back-btn rounded px-2 py-1 text-xs text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60"
                     >
                       {t('rpg.back')}
                     </button>

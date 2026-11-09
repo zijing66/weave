@@ -763,3 +763,34 @@
   color: var(--w-text-dim, #8b8598);
   image-rendering: pixelated;
 }
+
+/* ---- G4 tile 行走 ---- */
+/* 上帝化身：离散格步进（transform 整格 translate，无插值——CSS 引擎裁决） */
+.rpg-god-sprite {
+  transition: transform 120ms steps(3);
+  z-index: 5;
+  pointer-events: none;
+}
+/* 虚拟方向键（触屏）：触控面 ≥44px（52px 格）、按住高亮——桌面不渲染该层 */
+.rpg-dpad-btn {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  border-radius: 10px;
+  border: 1px solid var(--w-border, #2c2735);
+  background: var(--w-surface-2, #262130);
+  transition: background 80ms steps(2);
+}
+.rpg-dpad-btn:active {
+  background: var(--w-surface-3, #332c40);
+}
+/* 场景切换条触屏态：按钮触控面放大到 ≥44px（媒体态放大，桌面观感不动） */
+@media (hover: none), (pointer: coarse) {
+  .rpg-scene-switch button,
+  .rpg-console-tabs button,
+  .rpg-back-btn {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 8px 12px;
+  }
+}
