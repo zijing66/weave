@@ -22,7 +22,15 @@ import { STATUS_KEY, type SessionStatus } from './session-status';
  *
  * 移动端一屏一列（同 FilePicker）：项目列表 ⇄ 会话列表两屏下钻，头部返回箭头 +
  * 系统返回手势都归「回项目列表」，退无可退才关弹窗；触屏单击会话行直接落定。
+ *
+ * 内建仓库（RPG 角色仓/协调者仓，`hidden:true`）不进候选：项目行与会话行（层级
+ * 桶与搜索平铺两路）都在渲染层滤——唯一判据 = shuttleVisibleProjects（纯函数）。
  */
+
+/** 隐藏过滤的唯一判据（纯函数供单测；与 ProjectList.visibleProjectsOf 同口径）。 */
+export function shuttleVisibleProjects(projects: readonly ProjectRow[]): ProjectRow[] {
+  return projects.filter((p) => !p.hidden);
+}
 
 export function SessionShuttlePicker({
   sessions,
@@ -45,6 +53,12 @@ export function SessionShuttlePicker({
 }) {
   const t = useT();
   const isDesktop = useMediaQuery('(min-width: 1024px)');
+  // 内建仓库（RPG 角色仓/协调者仓）不进候选：行集与会话分组都在渲染层滤（use-projects 注）。
+  const visibleProjects = useMemo(() => shuttleVisibleProjects(projects), [projects]);
+  const hiddenProjectIds = useMemo(
+    () => new Set(projects.filter((p) => p.hidden).map((p) => p.id)),
+    [projects],
+  );
   const [query, setQuery] = useState('');
   /** 桌面两栏的焦点在哪一栏（窄屏没有「两栏焦点」，跟下钻的屏走——见 focusCol）。 */
   const [col, setCol] = useState<'projects' | 'sessions'>('sessions');
@@ -64,11 +78,13 @@ export function SessionShuttlePicker({
     return m;
   }, [projects]);
 
-  /** 项目桶：projectId → 该项目的会话（最近活跃在前）。无名项目垫底成「未归属」。 */
+  /** 项目桶：projectId → 该项目的会话（最近活跃在前）。无名项目垫底成「未归属」。
+   *  隐藏项目（内建仓库）的会话整桶不进候选。 */
   const groups = useMemo(() => {
     const byProject = new Map<number | null, SessionRow[]>();
     for (const s of sessions) {
       const key = s.projectId ?? null;
+      if (key != null && hiddenProjectIds.has(key)) continue;
       const list = byProject.get(key) ?? [];
       list.push(s);
       byProject.set(key, list);
@@ -80,29 +96,30 @@ export function SessionShuttlePicker({
     const keys = [...byProject.keys()].sort((a, b) => {
       if (a === null) return 1;
       if (b === null) return -1;
-      return projects.findIndex((p) => p.id === a) - projects.findIndex((p) => p.id === b);
+      return visibleProjects.findIndex((p) => p.id === a) - visibleProjects.findIndex((p) => p.id === b);
     });
     return keys.map((id) => ({
       projectId: id,
       name: id === null ? t('tasks.sessionPickerNoProject') : (projectName.get(id) ?? `#${id}`),
       rows: byProject.get(id)!,
     }));
-  }, [sessions, projects, projectName, t]);
+  }, [sessions, visibleProjects, hiddenProjectIds, projectName, t]);
 
   // 打开那拍落在当前会话所属的项目上（惰性初始化：首算即定，之后不随数据刷新漂）
   const [projIdx, setProjIdx] = useState(() =>
     Math.max(0, groups.findIndex((g) => g.projectId === currentProjectId)),
   );
 
-  /** 搜索态：非空 = 跨全部项目平铺（层级两栏让位给单一结果列表）。 */
+  /** 搜索态：非空 = 跨全部项目平铺（层级两栏让位给单一结果列表）。隐藏项目的会话不进候选。 */
   const flat = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return null;
     return sessions.filter((s) => {
+      if (s.projectId != null && hiddenProjectIds.has(s.projectId)) return false;
       const label = sessionLabel(s.title, s.sessionId).toLowerCase();
       return label.includes(q) || s.sessionId.toLowerCase().includes(q);
     });
-  }, [sessions, query]);
+  }, [sessions, hiddenProjectIds, query]);
 
   /** 焦点列：搜索态恒在会话栏；桌面由 ←→ 切，窄屏跟着下钻的屏走（两态合一，
    *  不再用一个 effect 把 col 同步成 screen）。 */

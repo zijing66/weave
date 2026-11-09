@@ -275,23 +275,9 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
     [selected, projects, refreshGlobalSkills, refreshPluginRows],
   );
 
-  // 直连 fire-and-forget 调用点（抽屉卸载 / 内置 MCP 安装）没有按钮本体可挂
-  // 三态反馈，就地兜一条错误 toast：失败必有一条提示、也不产生 unhandled
-  // rejection；成功维持无 toast（由 SSE 刷新与 ✓ 标呈现）。
-  const installBuiltinMcpSafely = useCallback(
-    (name: string, agent?: AssetAgent) => {
-      const projectId = selected?.id;
-      if (!projectId) return;
-      void api
-        .installBuiltinMcp(projectId, name, agent)
-        .then(() => {
-          show('success', t('mcp.installed', { name }));
-          refreshMcp(selected.id);
-        })
-        .catch((e) => show('error', t('errors.mcpInstallFailed', { error: errorText(e) })));
-    },
-    [selected, show, t, refreshMcp],
-  );
+  // 直连 fire-and-forget 调用点（抽屉卸载）没有按钮本体可挂三态反馈，就地兜
+  // 一条错误 toast：失败必有一条提示、也不产生 unhandled rejection；成功维持
+  // 无 toast（由 SSE 刷新与 ✓ 标呈现）。
   const uninstallSkillSafely = useCallback(
     (name: string, scope: AssetScope, agent?: AssetAgent) => {
       void handleUninstallSkill(name, scope, agent).catch((e) =>
@@ -306,7 +292,7 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
     handleInstallSkill, handleInstallFileAsset, handleInstallMcp, handleInstallPlugin,
     handleUninstallSkill, handleUninstallMcp, handleCycleMcpEnable,
     handleSyncAll, handleCyclePluginState, handleUninstallPlugin,
-    installBuiltinMcpSafely, uninstallSkillSafely,
+    uninstallSkillSafely,
     pluginEffective,
   };
 }

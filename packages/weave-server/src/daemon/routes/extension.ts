@@ -115,7 +115,7 @@ export async function handleExtensionRoutes(
     }
   }
 
-  const bindingMatch = pathname.match(/^\/extensions\/bindings\/(\d+)(\/dry-run)?$/);
+  const bindingMatch = pathname.match(/^\/extensions\/bindings\/(\d+)(\/dry-run|\/webhook-token)?$/);
   if (bindingMatch) {
     const id = Number(bindingMatch[1]);
     if (!deps.extensionBindings) return unavailable();
@@ -195,6 +195,17 @@ export async function handleExtensionRoutes(
       deps.extensionBindings.deleteById(id);
       deps.extensionEngine?.reload();
       sendJson(res, 200, { ok: true, bindingId: id });
+      return true;
+    }
+    // POST /extensions/bindings/:id/webhook-token — 外部 webhook 扇入（F1 复活）
+    // 的 token 三件套之一（生成/轮换合一；全库查重靠生成侧随机性 + 唯一索引）。
+    if (bindingMatch[2] === '/webhook-token' && req.method === 'POST') {
+      if (!deps.extensionBindings.getById(id)) {
+        sendJson(res, 404, { error: 'Binding not found' });
+        return true;
+      }
+      const token = deps.extensionBindings.rotateWebhookToken(id);
+      sendJson(res, 200, { ok: true, webhookToken: token });
       return true;
     }
   }

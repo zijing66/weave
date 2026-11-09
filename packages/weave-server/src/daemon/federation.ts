@@ -7,8 +7,12 @@ import { X509Certificate } from 'node:crypto';
  * 本层做 caps 握手与路由，接口从这里拿准。
  */
 
-/** mDNS 服务类型（RPG 稿 §六：`_weave-mcp._tcp`）。 */
-export const MDNS_SERVICE_TYPE = 'weave-mcp';
+/**
+ * mDNS 服务类型（RPG 稿 §六，2026-11-08 更名裁决：`_weave-fed._tcp`）——MCP 范围
+ * 已收口内建仓库，这处广播实为联邦发现面，原名 `_weave-mcp._tcp` 误导（仿佛广播
+ * MCP 端点）。RFC 6763 标签 15 字符上限排除了 `weave-federation`。
+ */
+export const MDNS_SERVICE_TYPE = 'weave-fed';
 export const MDNS_SERVICE_DOMAIN = 'tcp';
 
 /** 心跳节奏（裁决 15⑥）：30s 心跳、90s 判离线。 */
@@ -24,7 +28,7 @@ export const PAIRING_CODE_TTL_MS = 10 * 60_000;
 export interface WeaveMdnsTxt {
   /** weave 版本（语义版本字符串）。 */
   ver: string;
-  /** capabilities 摘要：本批恒 'mcp'；F1 握手后扩为注册表外露行的哈希短码。 */
+  /** capabilities 摘要：F1 起为外露服务表行的哈希短码（capsSummary）。 */
   caps: string;
   /** 可读机器名（os.hostname，截 60 字符）。 */
   name: string;
@@ -53,7 +57,7 @@ export function mdnsTxt(input: {
 }): WeaveMdnsTxt {
   return {
     ver: input.version,
-    caps: 'mcp',
+    caps: capsSummary(),
     name: input.hostname.slice(0, 60),
     fp: (certFingerprint(input.certPem) ?? '').slice(0, 16),
   };
@@ -168,3 +172,57 @@ export function consumeOffer(
 
 /** 错误形状（裁决 15③ 的本地侧映射：pairing 阶段只用到 unreachable/refused）。 */
 export type PairingError = 'unreachable' | 'refused' | 'timeout';
+
+// ---- 外露服务表（F1）----
+
+/**
+ * 本机对外露的服务行（`GET /federation/caps` 的固定枚举——**默认拒绝**：表里
+ * 没有的 service 一律 404，路由层不许变成任意远程执行通道）。副作用标注照
+ * 裁决：只读可自由路由远程；副作用类一期只放开投递（inject-only）。
+ * **红线（2026-11-08 裁决 15③）**：raw MCP HTTP 端点（/mcp*，localToken 门）
+ * 永不进这张表——跨机工具语义一律经 /federation/call 转发，防绕过 per-peer token。
+ */
+export interface FederationServiceRow {
+  service: string;
+  /** 只读 = 无副作用；副作用行一期只放投递类。 */
+  effect: 'readonly' | 'delivering';
+  description: string;
+}
+
+export const FEDERATION_SERVICES: readonly FederationServiceRow[] = [
+  {
+    service: 'sessions.list',
+    effect: 'readonly',
+    description: 'Federated subset of the local session list (id/title/harness/turnOpen/lastSeenAt).',
+  },
+  {
+    service: 'sessions.events',
+    effect: 'readonly',
+    description: 'Read-side query of recent hook events for one session (federated subset).',
+  },
+  {
+    service: 'inject',
+    effect: 'delivering',
+    description: 'Deliver a prompt into one local session via the messaging pipe (inject-only per D8).',
+  },
+] as const;
+
+/** caps 响应形状（互报端点的载荷；对端 pairing 后即可取）。 */
+export interface CapsPayload {
+  hostname: string;
+  fingerprint: string | null;
+  version: string;
+  services: readonly FederationServiceRow[];
+}
+
+/**
+ * mDNS TXT `caps` 升格（E3 预留注释落点）：服务表摘要 = 服务名拼接的 SHA-256
+ * 前 16 hex。保持 ≤255 字节约束（完整表仍走 /federation/caps——摘要只答
+ * 「表变没变」，对端比对哈希发现变了才重拉）。
+ */
+export function capsSummary(services: readonly FederationServiceRow[] = FEDERATION_SERVICES): string {
+  return createHash('sha256')
+    .update(services.map((s) => `${s.service}:${s.effect}`).join('|'))
+    .digest('hex')
+    .slice(0, 16);
+}

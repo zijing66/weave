@@ -734,7 +734,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     handleInstallSkill, handleInstallFileAsset, handleInstallMcp, handleInstallPlugin,
     handleUninstallSkill, handleUninstallMcp,
     handleCycleMcpEnable, handleSyncAll, handleCyclePluginState, handleUninstallPlugin,
-    installBuiltinMcpSafely, uninstallSkillSafely,
+    uninstallSkillSafely,
   } = useAssetMutations({
     t, show, selected, projects, globalMode, installCaps,
     refreshAssets, refreshMcp, refreshGlobalSkills, refreshPluginRows, refreshUpdates, ensureUpdates,
@@ -862,6 +862,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           25%），html/body/#root 已钉 100%（index.css），百分比链不溢出。 */}
       <div className="h-full p-0 lg:p-4 bg-neutral-950">
         <div className="h-full flex flex-col rounded-none lg:rounded-2xl border border-edge/[0.08] bg-neutral-900/40 shadow-mac overflow-hidden">
+          {/* E4 验收③：游戏视图进入即全屏——顶栏与左侧项目栏隐藏，唯一退出在视图内。 */}
+          {!rpgMode && (
           <div className="h-11 shrink-0 flex items-center gap-2 lg:gap-3 px-4 border-b border-edge/[0.06] frosted">
             {/* <lg：左右栏收进滑出抽屉，顶栏放两个入口 */}
             <Tooltip label={t('app.mobileProjects')} side="top">
@@ -907,10 +909,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 <Search className="h-4 w-4" />
               </button>
             </Tooltip>
-            {/* RPG 游戏视图（D1）：路由化入口，/rpg/office 办公区俯视。 */}
+            {/* RPG 游戏视图（D1/E4）：路由化入口，/rpg 默认落 Home 准备视图。 */}
             <Tooltip label={t('rpg.entry')} side="top">
               <button
-                onClick={() => navigate({ kind: 'rpg', scene: 'office' })}
+                onClick={() => navigate({ kind: 'rpg', scene: 'home' })}
                 className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
                 aria-label={t('rpg.entry')}
               >
@@ -986,11 +988,12 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
               </button>
             </Tooltip>
           </div>
+          )}
 
           <div className="flex flex-1 overflow-hidden">
             {/* Level 1 — global config (pseudo-project) + projects。
-                <lg 收进滑出抽屉（见底部 mobilePanel overlay）。 */}
-            {isDesktop && (
+                <lg 收进滑出抽屉（见底部 mobilePanel overlay）。rpgMode 整屏接管时隐藏。 */}
+            {!rpgMode && isDesktop && (
               <>
                 <aside
                   style={{ width: leftW }}
@@ -1005,12 +1008,17 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
               {rpgMode ? (
-                // RPG 游戏视图整块接管主区（场景框架 + 俯视 + 看板/有向图）。
+                // RPG 游戏视图整屏接管（E4 验收③）：顶栏与左栏已隐藏，唯一退出 =
+                // 回项目视图（当前选中项目；没有选中回落全局任务页）。
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div className="flex items-center justify-between px-4 py-2 border-b border-edge/[0.06]">
                     <h2 className="text-sm font-semibold">{t('rpg.entry')}</h2>
                     <button
-                      onClick={() => navigate({ kind: 'global', category: 'tasks' })}
+                      onClick={() =>
+                        selected
+                          ? navigate({ kind: 'project', projectId: selected.id, category: 'tasks', sessionId: null })
+                          : navigate({ kind: 'global', category: 'tasks' })
+                      }
                       className="rounded px-2 py-1 text-xs text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60"
                     >
                       {t('rpg.back')}
@@ -1019,7 +1027,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                   <RpgView
                     sceneKey={(() => {
                       const r = parseRoute(path);
-                      return r.kind === 'rpg' ? r.scene : 'office';
+                      return r.kind === 'rpg' ? r.scene : 'home';
                     })()}
                     onOpenSession={openSessionInProject}
                   />
@@ -1174,7 +1182,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         statuslineSource={statuslineSource}
                         onUninstallSkill={handleUninstallSkill}
                         onUninstallMcp={handleUninstallMcp}
-                        onInstallBuiltinMcp={installBuiltinMcpSafely}
                         onCycleMcpEnable={handleCycleMcpEnable}
                         onCyclePluginState={handleCyclePluginState}
                         onUninstallPlugin={handleUninstallPlugin}

@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS projects (
   last_seen_at  TEXT,
   meta          TEXT,
   sort_order    INTEGER,
-  archived_at   TEXT
+  archived_at   TEXT,
+  hidden        INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS hook_events (
@@ -239,6 +240,7 @@ CREATE TABLE IF NOT EXISTS extension_bindings (
   summarize      TEXT,
   endpoints      TEXT NOT NULL,
   enabled        INTEGER NOT NULL DEFAULT 1,
+  webhook_token  TEXT,               -- 外部 webhook 扇入（F1 复活）：token 即凭证，null = 未开
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL
 );
@@ -492,6 +494,7 @@ function openAndMigrate(dbPath: string): DatabaseSync {
     migrateProjectPaths(db);
     migrateSessionWatchesColumns(db);
     migrateUploadsColumns(db);
+    migrateExtensionBindingsColumns(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     return db;
   } catch (err) {
@@ -565,6 +568,9 @@ function migrateProjectsColumns(db: DatabaseSync): void {
   if (!cols.has('archived_at')) {
     db.exec('ALTER TABLE projects ADD COLUMN archived_at TEXT');
   }
+  if (!cols.has('hidden')) {
+    db.exec('ALTER TABLE projects ADD COLUMN hidden INTEGER');
+  }
 }
 
 /**
@@ -596,6 +602,23 @@ function rebuildOrchestrations(db: DatabaseSync): void {
     .all() as Array<{ name: string }>;
   if (cols.length === 0 || cols.some((c) => c.name === 'enabled')) return;
   db.exec('DROP TABLE orchestrations');
+}
+
+/**
+ * 扩展绑定列级兜底：`webhook_token`（F1 外部 webhook 扇入复活）对旧库补列。
+ * 索引先例同 `migrateHookRulesColumns`：SCHEMA 里建在补前列上会炸旧库，
+ * 故 `idx_extension_bindings_webhook_token` 在此、列补齐后创建。
+ */
+function migrateExtensionBindingsColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(extension_bindings)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return;
+  if (!cols.has('webhook_token')) db.exec('ALTER TABLE extension_bindings ADD COLUMN webhook_token TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_extension_bindings_webhook_token ON extension_bindings(webhook_token)');
 }
 
 /**

@@ -28,6 +28,8 @@ import { HookEventBus } from '../hooks/bus.js';
 import { ResumeRunner } from '../hooks/resume-runner.js';
 import { HeadlessRunner } from '../hooks/headless-runner.js';
 import { MessageDeliverer } from '../hooks/message-deliverer.js';
+import { readPeerToken } from './peer-tokens.js';
+import { tokenFileOf } from '../repositories/peers.js';
 import { QuestionTracker } from '../hooks/question-tracker.js';
 import { ActivityTracker } from '../hooks/activity-tracker.js';
 import { SideQuestionRepository } from '../repositories/side-questions.js';
@@ -95,6 +97,7 @@ import { PeerRepository } from '../repositories/peers.js';
 import { getPeerTokensDir } from '../db/paths.js';
 import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
 import { certFingerprint } from './federation.js';
+import { startFederationHeartbeat, type FederationHeartbeat } from './federation-heartbeat.js';
 
 // 同 dev-entry：入口剥离 Claude Code child-session 标记与继承来的终端 pane
 // 定位键，防污染派生物（后者留着会让新会话把自己报成活在别人的 pane 里）。
@@ -249,6 +252,18 @@ export function startDaemon(): void {
     },
     // 回退点列表从转录生成（探针在下面构造，闭包惰性取）。
     transcriptPathOf: (sessionId) => sessionProbe.transcriptPathOf(sessionId),
+    // 联邦跨机分流（F1，闭包惰性取——peers 在下面构造）：peer 目标 → 按名查
+    // peer 表 + 本机签发侧 token（readPeerToken 读的是「对端签给我们」的文件，
+    // 同一文件两用：对端打我们用 token 字段，我们打对端也用它——pairing 交换
+    // 后两端各持同一份）。
+    peerRoute: (peerName) => {
+      const tokenDir = getPeerTokensDir();
+      const row = peers.list().find((p) => p.name === peerName && p.enabled);
+      if (!row || row.port <= 0) return null;
+      const token = readPeerToken(tokenDir, row.id, tokenFileOf)?.token;
+      if (!token) return null;
+      return { peerId: row.id, host: row.host, port: row.port, fingerprint: row.fingerprint, token };
+    },
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2：空闲订阅引擎（ingest 即时 fire + sweeper 补射）
@@ -641,6 +656,7 @@ export function startDaemon(): void {
     // 证书未生成（TLS 没开过）：pairing 侧如实 503
   }
   let mdnsAdvertiser: MdnsAdvertiser | null = null;
+  let federationHeartbeat: FederationHeartbeat | null = null;
   const ownFingerprint = ownCert ? certFingerprint(ownCert) : null;
   // shutdown 定义在下方（要等各子系统都建好）：路由经这个容器拿到它
   const shutdownRef: { fn?: () => void } = {};
@@ -725,6 +741,13 @@ export function startDaemon(): void {
         hostname: os.hostname(),
       });
     }
+    // 心跳出站（F1）：联邦总闸开着才跑（关联邦 = 零网络活动，裁决红线）。
+    if (fed?.enabled) {
+      federationHeartbeat = startFederationHeartbeat({
+        peers,
+        tokenDir: getPeerTokensDir(),
+      });
+    }
   });
 
   const shutdown = (): void => {
@@ -741,6 +764,7 @@ export function startDaemon(): void {
     narrationWatcher.stop();
     dashboardPusher.stop();
     mdnsAdvertiser?.stop();
+    federationHeartbeat?.stop();
     server.close();
     tls?.server.close();
     // 等 inbox worker 真停（terminate 是异步的，worker 的 DB 连接/WAL 锁要

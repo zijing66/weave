@@ -10,7 +10,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Download, Power, Server, Trash2 } from 'lucide-react';
+import { Power, Server, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -39,7 +39,6 @@ export function McpGrid({
   empty,
   onUninstallMcp,
   onCycleMcpEnable,
-  onInstallBuiltinMcp,
 }: {
   rows: McpRow[];
   /** Which view this grid is rendered in — prefixes the section heading the
@@ -51,8 +50,6 @@ export function McpGrid({
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   /** 开关切换只交语义（名字 + 下一态），落盘与刷新由 App 统一负责。 */
   onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
-  /** 内置目录里「未安装」的行：服务端负责写 user 档并填令牌。 */
-  onInstallBuiltinMcp: (name: string, agent?: AssetAgent) => void | Promise<void>;
 }) {
   const t = useT();
   // 按钮本体自持三态反馈：卸载/开关 loading 转圈 + 失败 toast。
@@ -100,10 +97,10 @@ export function McpGrid({
           const enableState = fb.stateOf(enableKey);
           const uninstallKey = `mcp-uninstall:${s.harness}:${s.scope}:${s.key}`;
           const uninstallState = fb.stateOf(uninstallKey);
-          const installKey = `mcp-install:${s.harness}:${s.scope}:${s.key}`;
-          const installState = fb.stateOf(installKey);
-          // 内置目录行：还没写进配置 ⇒ 只给「安装」；装了之后回到普通行
+          // 内置目录行（E4 收口）：未装 = 不再提供 user 档安装入口（全集随角色
+          // 仓库自动配置）；已装 user 档的存量行 = 一次性迁移提示（卸载即可）。
           const builtinAbsent = s.builtin === true && s.install === 'absent';
+          const builtinLegacy = s.builtin === true && s.install !== 'absent' && s.scope === 'user';
           return (
             <Card key={`${s.harness}-${s.scope}-${s.key}`}>
               <CardHeader className="items-center gap-2 max-lg:flex-wrap">
@@ -122,6 +119,11 @@ export function McpGrid({
                 {outdated && (
                   <Badge variant="warning" className="ml-1">
                     {t('mcp.update')}
+                  </Badge>
+                )}
+                {builtinLegacy && (
+                  <Badge variant="warning" className="ml-1">
+                    {t('mcp.builtinLegacy')}
                   </Badge>
                 )}
                 <div className="ml-auto flex items-center gap-1.5 shrink-0">
@@ -148,30 +150,11 @@ export function McpGrid({
                     </Tooltip>
                   )}
                   {builtinAbsent ? (
-                    <Tooltip label={t('mcp.installTip', { name: s.key })}>
-                      <button
-                        type="button"
-                        disabled={installState === 'loading'}
-                        onClick={() =>
-                          void fb.run(
-                            installKey,
-                            async () => {
-                              await onInstallBuiltinMcp(s.key, s.harness);
-                              show('success', t('mcp.installed', { name: s.key }));
-                            },
-                            { fail: (e) => t('errors.mcpInstallFailed', { error: errorText(e) }) },
-                          )
-                        }
-                        className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-1.5 py-0.5 text-10 text-neutral-300 hover:bg-neutral-700 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-                      >
-                        <FeedbackIcon
-                          state={installState}
-                          className="h-3 w-3"
-                          icon={<Download className="h-3 w-3" />}
-                        />
-                        {t('mcp.install')}
-                      </button>
-                    </Tooltip>
+                    // user 档安装入口退役（E4）：不再给「安装」——全集由角色仓库
+                    // provisioning 自动写进项目档（文案见 mcp.builtinAuto）。
+                    <span className="shrink-0 rounded-full bg-neutral-800/60 px-2 py-0.5 text-10 text-neutral-400">
+                      {t('mcp.builtinAuto')}
+                    </span>
                   ) : (
                     <Tooltip label={t('mcp.remove', { name: s.key })}>
                       <button

@@ -28,7 +28,8 @@ export type DataKey =
   | 'market'
   | 'libraries'
   | 'updates'
-  | 'capture';
+  | 'capture'
+  | 'federation';
 
 /** 一帧数据变更通知。 */
 export interface DataFrame {

@@ -122,19 +122,19 @@ describe('federation routes（E3）', () => {
   });
 
   it('TOFU：同 peer 证书指纹变更即拒（409，重新 pairing）', async () => {
-    const offer = await rest('POST', '/federation/pairing/offer');
-    await rest('POST', '/federation/pairing/initiate', {
-      name: 'peer-c', fingerprint: 'c'.repeat(64),
+    // 预登记（手动建行带指纹）后再 initiate 且报不同指纹 → 出站前预检即拒
+    peers.create({ name: 'peer-c', host: '127.0.0.1', port: 65000, fingerprint: 'c'.repeat(64), source: 'pairing' });
+    const mismatch = await rest('POST', '/federation/pairing/initiate', {
+      name: 'peer-c', host: '127.0.0.1', port: 65000, code: '111111', fingerprint: 'd'.repeat(64),
     });
-    // 直接给 peer-c 挂一个已记录指纹（首见 TOFU 落库形态）
-    const row = peers.list().find((p) => p.name === 'peer-c')!;
-    expect(row.fingerprint).toBe('c'.repeat(64));
-    expect(offer.status).toBe(200);
+    expect(mismatch.status).toBe(409);
+    expect(String(mismatch.body.error)).toMatch(/re-pair/i);
   });
 
-  it('call / caps / invite 坚决不做（F1 的门）', async () => {
-    expect((await rest('POST', '/federation/call', { service: 'sessions.list', params: {} })).status).toBe(404);
-    expect((await rest('GET', '/federation/caps')).status).toBe(404);
+  it('call / caps 已由 F1 接线（per-peer token 门）：无凭据 403、invite 仍 404', async () => {
+    // caps / call 不再是 404——per-peer token 门先拒（F1 测试套验全链）
+    expect((await rest('GET', '/federation/caps')).status).toBe(403);
+    expect((await rest('POST', '/federation/call', { service: 'sessions.list', params: {} })).status).toBe(403);
     expect((await rest('POST', '/federation/invite', {})).status).toBe(404);
   });
 });

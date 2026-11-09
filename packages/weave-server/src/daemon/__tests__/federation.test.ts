@@ -9,6 +9,7 @@ import {
   certFingerprint,
   consumeOffer,
   createOffer,
+  capsSummary,
   mdnsInstanceName,
   mdnsTxt,
   peerLiveness,
@@ -16,12 +17,14 @@ import {
 } from '../federation.js';
 
 describe('mDNS 广播载荷', () => {
-  it('服务类型 = _weave-mcp._tcp；TXT 带版本/caps/机器名/指纹前 16 hex', async () => {
+  it('服务类型 = _weave-fed._tcp；TXT 带版本/caps/机器名/指纹前 16 hex', async () => {
     const pems = await generate([{ name: 'commonName', value: 'weave-daemon' }], { keySize: 2048 });
     const txt = mdnsTxt({ version: '0.1.10', hostname: 'DESKTOP-ABC123', certPem: pems.cert });
-    expect(MDNS_SERVICE_TYPE).toBe('weave-mcp');
+    expect(MDNS_SERVICE_TYPE).toBe('weave-fed');
     expect(txt.ver).toBe('0.1.10');
-    expect(txt.caps).toBe('mcp');
+    // F1 起 caps = 外露服务表摘要短码（不再是恒 'mcp'）
+    expect(txt.caps).toBe(capsSummary());
+    expect(txt.caps).toMatch(/^[0-9a-f]{16}$/);
     expect(txt.name).toBe('DESKTOP-ABC123');
     expect(txt.fp).toMatch(/^[0-9a-f]{16}$/);
     // fp 与证书真实指纹前 16 位一致

@@ -317,6 +317,28 @@ export class ExtensionEngine {
     }
   }
 
+  /**
+   * 外部 webhook 扇入直触（F1 复活，§1.6 接线清单）：token 门在路由侧（token 即
+   * 凭证），这里把外部载荷当一拍事件喂进同一套管线（闸序/幂等/执行日志全复用）。
+   * `source` 归 claude 档（触发点判据只看 close/idle 词表；外部载荷不进词表域，
+   * eventType 用哨兵值——绑定按 point 命中，不按事件类型）。
+   */
+  fireFromWebhook(binding: ExtensionBindingRow, payload: unknown, at: string): void {
+    void this.runBinding(
+      binding,
+      {
+        sessionId: 'external-webhook',
+        source: 'claude',
+        eventType: 'external-webhook',
+        eventId: 0,
+        projectId: binding.projectId,
+        payload,
+        at,
+      },
+      'idle',
+    ).catch(() => {});
+  }
+
   /** 单拍管线：闸序 = 重复 → 忙 → 冷却 → 陈旧 → 频次 → when → 决策 → 扇出。 */
   private async runBinding(
     binding: ExtensionBindingRow,

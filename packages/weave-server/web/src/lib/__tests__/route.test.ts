@@ -42,10 +42,11 @@ describe('parseRoute', () => {
     });
   });
 
-  it('RPG 视图：场景段缺省办公区', () => {
-    expect(parseRoute('/rpg')).toEqual({ kind: 'rpg', scene: 'office' });
+  it('RPG 视图：场景段缺省 Home（E4 准备视图）', () => {
+    expect(parseRoute('/rpg')).toEqual({ kind: 'rpg', scene: 'home' });
     expect(parseRoute('/rpg/office')).toEqual({ kind: 'rpg', scene: 'office' });
     expect(parseRoute('/rpg/classroom')).toEqual({ kind: 'rpg', scene: 'classroom' });
+    expect(parseRoute('/rpg/home')).toEqual({ kind: 'rpg', scene: 'home' });
   });
 });
 

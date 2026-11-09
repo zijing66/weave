@@ -194,7 +194,7 @@ export interface WeaveServerDeps {
   /** 会话扩展点引擎；绑定 CRUD 后 reload 依赖它（缺省 = 绑定变更要重启才生效）。 */
   extensionEngine?: Pick<
     import('../hooks/extension-engine.js').ExtensionEngine,
-    'reload' | 'dryRun'
+    'reload' | 'dryRun' | 'fireFromWebhook'
   >;
   /** 插件管理面；GET /hooks/plugins 与 toggle 依赖它（loader 异步就绪前返回空表）。 */
   hookPlugins?: PluginManager;
@@ -531,9 +531,19 @@ function isPublicRequest(
   // 编排的公开触发端点：token 即凭证（外部 webhook 无法带 dashboard 凭据）。
   // 必须在 GET-only 早退之前——它是 POST。
   if (pathname.startsWith('/webhooks/orchestrate/')) return true;
-  // 联邦的对端通道（pairing 交换 / 心跳）：per-peer token 是自己的门（认证豁免段
-  // 模式同上）；其余 /federation/*（管理面）仍在既有认证门内。
-  if (pathname === '/federation/pair' || pathname === '/federation/heartbeat') return true;
+  // 扩展点的外部 webhook 扇入（F1 复活）：同样 token 即凭证（§1.6 接线清单）。
+  if (pathname.startsWith('/webhooks/extensions/')) return true;
+  // 联邦的对端通道（pairing 交换 / 心跳 / caps 互报 / call 服务门）：per-peer
+  // token 是自己的门（认证豁免段模式同上）；其余 /federation/*（管理面）仍在
+  // 既有认证门内。
+  if (
+    pathname === '/federation/pair' ||
+    pathname === '/federation/heartbeat' ||
+    pathname === '/federation/caps' ||
+    pathname === '/federation/call'
+  ) {
+    return true;
+  }
   if (req.method !== 'GET') return false;
   if ((req.headers.accept ?? '').includes('text/html')) return true;
   if (!deps.staticDir) return false;

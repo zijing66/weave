@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -40,6 +41,8 @@ export interface ExtensionBindingRow {
   summarize: string | null;
   endpoints: ExtensionEndpoint[];
   enabled: boolean;
+  /** 外部 webhook 扇入（F1 复活）的入站 token：null = 未开公开入口。 */
+  webhookToken: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,6 +130,7 @@ function toBinding(row: Record<string, unknown>): ExtensionBindingRow {
     summarize: row.summarize == null ? null : String(row.summarize),
     endpoints: parseEndpoints(row.endpoints),
     enabled: Number(row.enabled ?? 1) !== 0,
+    webhookToken: row.webhook_token == null ? null : String(row.webhook_token),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -190,6 +194,25 @@ export class ExtensionBindingRepository {
 
   getById(id: number): ExtensionBindingRow | undefined {
     const row = this.db.prepare('SELECT * FROM extension_bindings WHERE id = ?').get(id);
+    return row ? toBinding(row) : undefined;
+  }
+
+  /** 外部 webhook 扇入（F1 复活）：token 生成/轮换（一次性写，随 PATCH 语义独立）。 */
+  rotateWebhookToken(id: number): string | null {
+    const row = this.getById(id);
+    if (!row) return null;
+    const token = randomBytes(18).toString('base64url');
+    this.db
+      .prepare('UPDATE extension_bindings SET webhook_token = ?, updated_at = ? WHERE id = ?')
+      .run(token, new Date().toISOString(), id);
+    return token;
+  }
+
+  getByWebhookToken(token: string): ExtensionBindingRow | undefined {
+    if (!token) return undefined;
+    const row = this.db
+      .prepare('SELECT * FROM extension_bindings WHERE webhook_token = ?')
+      .get(token);
     return row ? toBinding(row) : undefined;
   }
 

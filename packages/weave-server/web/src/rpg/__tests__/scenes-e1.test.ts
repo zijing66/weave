@@ -31,13 +31,17 @@ const sessionRow = (over: Partial<SessionRow>): SessionRow => ({
   ...over,
 });
 
-describe('E1 场景注册表', () => {
-  it('教室与会议室从 placeholder 换成实装 kind，路由键不变', () => {
+describe('E1 场景注册表（E4 收敛后）', () => {
+  it('Home 排首位且是默认回落；三协同场景 kind 不变', () => {
+    expect(sceneOf('home').kind).toBe('home');
+    expect(RPG_SCENES[0]!.key).toBe('home');
+    // /rpg（无场景段）→ 注册表首位
+    expect(sceneOf(undefined).key).toBe('home');
+    expect(sceneOf('unknown').key).toBe('home');
     expect(sceneOf('classroom').kind).toBe('classroom');
     expect(sceneOf('meeting').kind).toBe('meeting');
     expect(sceneOf('office').kind).toBe('office');
-    expect(sceneOf('unknown').key).toBe('office');
-    expect(RPG_SCENES).toHaveLength(3);
+    expect(RPG_SCENES).toHaveLength(4);
   });
 });
 

@@ -1,8 +1,9 @@
 import { apiFetch } from './client';
 
 /**
- * 联邦数据面（E3 最小面）：peer 注册表 + pairing + 局域网发现。
- * `/federation/call`、`/federation/caps`、`/federation/invite` 是 F1 的门——本批没有。
+ * 联邦数据面（F1 全量）：peer 注册表 + pairing 全链（含出站 initiate）+ caps 互报
+ * 读取（管理侧凭证）+ 局域网发现。call 的服务门只对 per-peer token 开放——
+ * 那是对端机器间的事，web 管理面不经它。
  */
 export interface PeerRow {
   id: string;
@@ -48,6 +49,26 @@ export const federationApi = {
   /** 生成本批短码要约（人工把短码交给对端 / 在对端 dashboard 输入）。 */
   createPairingOffer: () =>
     apiFetch<PairingOfferResult>('/federation/pairing/offer', { method: 'POST' }),
+  /**
+   * 出站 pairing（F1）：拿对端给的短码打对端 /federation/pair，收对端签发的
+   * per-peer token 落本机 peer-tokens。对端 403（短码无效）→ 403；指纹 mismatch → 409。
+   */
+  initiatePairing: (input: { name: string; host: string; port: number; code: string; fingerprint?: string }) =>
+    apiFetch<{ peer: PeerRow }>('/federation/pairing/initiate', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   /** LAN mDNS 浏览快照（发现 ≠ 可用，仍须 pairing）。 */
   discover: () => apiFetch<{ peers: DiscoveredPeer[] }>('/federation/discover'),
+};
+
+export interface FederationCaps {
+  hostname: string;
+  fingerprint: string | null;
+  services: Array<{ service: string; effect: 'readonly' | 'delivering'; description: string }>;
+}
+
+/** 本机外露服务表（对端经 per-peer token 读同一形状；管理面直读作展示用）。 */
+export const capsApi = {
+  own: () => apiFetch<FederationCaps>('/federation/caps'),
 };

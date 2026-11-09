@@ -45,8 +45,9 @@ export async function readMcpRows(projectPath: string): Promise<McpToolRow[]> {
     }
   }
   // weave 自带目录（daemon 托管的 HTTP MCP）：未配置时补一行「未安装」。
-  // **只允许 user 档**——配置里要带本机令牌，项目档会跟着仓库走。
-  // 端点用 daemon 当前端口（令牌不回显，安装时才由服务端填）。
+  // **user 档安装入口已退役（E4）**——全集改由 provisionRole/scaffoldCoordinator
+  // 写进内建仓库项目档；这里只为 web 的「随角色仓库自动配置 / 存量迁移」文案标记
+  // 行身份（已装 user 档的存量行也带 builtin 标记）。端点用 daemon 当前端口。
   const port = readDaemonState()?.port;
   for (const surface of assetSurfaces()) {
     for (const builtin of BUILTIN_MCP_SERVERS) {
@@ -64,6 +65,16 @@ export async function readMcpRows(projectPath: string): Promise<McpToolRow[]> {
         detail: { url: `http://127.0.0.1:${port ?? 6420}${builtin.path}` },
         builtin: true,
       });
+    }
+  }
+  // 存量已装 user 档的内置行带 builtin 标记（web 据此给一次性迁移提示）。
+  for (const row of rows) {
+    if (
+      row.harness === 'claude' &&
+      row.scope === 'user' &&
+      BUILTIN_MCP_SERVERS.some((b) => b.name === row.key)
+    ) {
+      row.builtin = true;
     }
   }
   return rows;

@@ -3,10 +3,13 @@ import path from 'node:path';
 import { generateToken } from '../daemon/auth.js';
 import type { ProjectRepository } from '../repositories/projects.js';
 import { projectKey } from '../repositories/projects.js';
-import { getRpgRolesRoot } from '../db/paths.js';
+import { getAuthPath, getRpgRolesRoot } from '../db/paths.js';
+import { readDaemonState } from '../daemon/state.js';
+import type { McpServerConfig } from '@weavecode/harness';
 import { RpgRoleRepository, archetypeBaseline, type Hexagon } from './roles.js';
 import { ROLE_MANIFEST_KEY, readRoleManifest, type RoleManifest } from './role-plugin.js';
 import { BUILTIN_ROLE_TEMPLATES, COORDINATOR_PERSONA } from '../install/role-manifests.js';
+import { BUILTIN_MCP_SERVERS } from '../install/builtin-mcp.js';
 
 /**
  * 角色 provisioning（RPG 稿 §三 / RPG-1）：建角色 = 建角色仓库（独立 project）+
@@ -25,6 +28,70 @@ export interface ProvisionDeps {
   roles: RpgRoleRepository;
   /** 角色仓库根（缺省 `<data>/rpg/roles/`；测试注入临时目录）。 */
   rolesRoot?: string;
+  /** 测试注入缝：内置 MCP 的 daemon 端口与本机令牌（缺省读 daemon state + auth.json）。 */
+  mcpEndpoint?: { port: number; token: string | null };
+}
+
+// ---- 内建仓库项目档 MCP + 托管 ignore（E4 验收⑥）----
+
+/**
+ * 内建仓库的 `.mcp.json`：四枚内置服务按 Streamable HTTP 形态写进项目档——
+ * url 用 daemon 当前端口（安装面 mcp-rows 同口径），令牌进 `x-weave-local` 头
+ * （值读 `<local>/auth.json`，与 market 路由装 user 档时的既有取数一致）。
+ * 幂等合并：已有的键不覆盖（用户的），只补缺的四键。
+ */
+async function ensureBuiltinMcp(dir: string, endpoint?: ProvisionDeps['mcpEndpoint']): Promise<void> {
+  const port = endpoint?.port ?? readDaemonState()?.port ?? 6420;
+  let token = endpoint?.token ?? null;
+  if (token == null) {
+    try {
+      const auth = JSON.parse(await readFile(getAuthPath(), 'utf-8')) as { localToken?: unknown };
+      token = typeof auth.localToken === 'string' ? auth.localToken : null;
+    } catch {
+      token = null;
+    }
+  }
+  const file = path.join(dir, '.mcp.json');
+  let json: { mcpServers?: Record<string, unknown> };
+  try {
+    json = JSON.parse(await readFile(file, 'utf-8')) as { mcpServers?: Record<string, unknown> };
+    if (json == null || typeof json !== 'object' || Array.isArray(json)) json = {};
+  } catch {
+    json = {};
+  }
+  const servers = { ...(json.mcpServers ?? {}) };
+  for (const builtin of BUILTIN_MCP_SERVERS) {
+    if (builtin.name in servers) continue;
+    const config: McpServerConfig = {
+      type: 'http',
+      url: `http://127.0.0.1:${port}/api${builtin.path}`,
+      ...(token ? { headers: { 'x-weave-local': token } } : {}),
+    };
+    servers[builtin.name] = config;
+  }
+  if (Object.keys(servers).length > 0) json.mcpServers = servers;
+  await writeFile(file, `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
+}
+
+/**
+ * 托管 `.gitignore`：`.mcp.json` 带着本机令牌，不该进版本历史——内建仓库的根
+ * ignore 追加一行（已有该行 = no-op；没有文件 = 创建）。只追加、不覆写用户内容。
+ */
+async function ensureMcpJsonIgnored(dir: string): Promise<void> {
+  const file = path.join(dir, '.gitignore');
+  let existing = '';
+  try {
+    existing = await readFile(file, 'utf-8');
+  } catch {
+    /* 无文件 = 新建 */
+  }
+  const lines = existing.split(/\r?\n/);
+  if (lines.some((l) => l.trim() === '.mcp.json')) return;
+  const joined =
+    existing === ''
+      ? '.mcp.json\n'
+      : (existing.endsWith('\n') ? existing : `${existing}\n`) + '.mcp.json\n';
+  await writeFile(file, joined, 'utf-8');
 }
 
 export type ProvisionRoleResult =
@@ -102,8 +169,13 @@ export async function provisionRole(
       'utf-8',
     );
   }
-  // 项目注册 = 既有域唯一实现（与 weave init/scan 同一份 registerProject 的仓储层）。
-  const row = deps.projects.register({ path: dir, name, token: generateToken(), source: 'init' });
+  // 内置 MCP 收口（E4 验收⑥）：编排/协调链的消费者只有角色仓库的会话——全集写
+  // 项目档（token 不进版本历史），任意项目不再每会话背一万+ token 的 schema 税。
+  await ensureBuiltinMcp(dir, deps.mcpEndpoint).catch(() => {});
+  await ensureMcpJsonIgnored(dir).catch(() => {});
+  // 项目注册 = 既有域唯一实现（与 weave init/scan 同一份 registerProject 的仓储层）；
+  // hidden = 起源头标记内建仓库（GET /projects 原样带出，过滤在 web 消费点）。
+  const row = deps.projects.register({ path: dir, name, token: generateToken(), source: 'init', hidden: true });
   const role = deps.roles.create({
     projectId: row.id,
     name,
@@ -204,8 +276,11 @@ export async function scaffoldCoordinator(
       name: 'coordinator',
       token: generateToken(),
       source: 'init',
+      hidden: true,
     });
   }
+  await ensureBuiltinMcp(dir, deps.mcpEndpoint).catch(() => {});
+  await ensureMcpJsonIgnored(dir).catch(() => {});
   try {
     await writeFile(
       path.join(dir, 'CLAUDE.md'),

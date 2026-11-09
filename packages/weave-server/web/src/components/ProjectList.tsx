@@ -103,6 +103,14 @@ interface ProjectMenu {
 const LONG_PRESS_MS = 450;
 const LONG_PRESS_SLOP = 8;
 
+/**
+ * 侧栏可见项目（隐藏过滤的唯一判据，纯函数供单测）：内建仓库（RPG 角色仓/
+ * 协调者仓，`hidden:true`）不进列表——过滤在渲染层，缓存仍全量（use-projects 注）。
+ */
+export function visibleProjectsOf(projects: readonly ProjectRow[]): ProjectRow[] {
+  return projects.filter((p) => !p.hidden);
+}
+
 export function ProjectList({
   projects,
   selectedId,
@@ -130,6 +138,7 @@ export function ProjectList({
 }: ProjectListProps) {
   const t = useT();
   const { show } = useToast();
+  const visibleProjects = visibleProjectsOf(projects);
   // 传感器按指针能力分流（同 App）：鼠标 5px 位移激活；触屏 200ms 长按激活
   // （容差 8px——长按期间手指微动不误触、不吞列表滚动）。
   const finePointer = useMediaQuery('(pointer: fine)');
@@ -386,13 +395,13 @@ export function ProjectList({
           </Tooltip>
         )}
       </div>
-      {projects.length === 0 && (
+      {visibleProjects.length === 0 && (
         <p className="p-3 text-xs text-neutral-500">{t('project.noneRegistered')}</p>
       )}
       <ul className="p-2 space-y-1">
         <DndContext sensors={sortSensors} onDragEnd={onSortEnd}>
-          <SortableContext items={projects.map((p) => p.id)} strategy={verticalListSortingStrategy}>
-        {projects.map((p) => {
+          <SortableContext items={visibleProjects.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+        {visibleProjects.map((p) => {
           const pending = updatesOf?.(p.id);
           const needsInit = needsInitOf?.(p.id);
           const stats = sessionStatsOf?.(p.id) ?? [];

@@ -98,6 +98,9 @@ import { PeerRepository } from '../repositories/peers.js';
 import { getPeerTokensDir, getCertsDir } from '../db/paths.js';
 import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
 import { certFingerprint } from './federation.js';
+import { startFederationHeartbeat, type FederationHeartbeat } from './federation-heartbeat.js';
+import { readPeerToken } from './peer-tokens.js';
+import { tokenFileOf } from '../repositories/peers.js';
 import { openPetWindow, shutdownPetWindow } from './pet-window.js';
 import { seedBuiltinPets } from './pet-seed.js';
 import { resolveStaticDir } from './static.js';
@@ -240,6 +243,15 @@ async function main(): Promise<void> {
     },
     // 回退点列表从转录生成（探针在下面构造，闭包惰性取）。
     transcriptPathOf: (sessionId) => sessionProbe.transcriptPathOf(sessionId),
+    // 联邦跨机分流（F1，与 start.ts 同装配；peers 在下面构造，闭包惰性取）。
+    peerRoute: (peerName) => {
+      const tokenDir = getPeerTokensDir();
+      const row = peers.list().find((p) => p.name === peerName && p.enabled);
+      if (!row || row.port <= 0) return null;
+      const token = readPeerToken(tokenDir, row.id, tokenFileOf)?.token;
+      if (!token) return null;
+      return { peerId: row.id, host: row.host, port: row.port, fingerprint: row.fingerprint, token };
+    },
   });
   startPromptFlusher(messageDeliverer);
   // session-orchestration 批 2（与 start.ts 同装配）：空闲订阅引擎。
@@ -447,6 +459,7 @@ async function main(): Promise<void> {
     // 证书未生成（TLS 没开过）：pairing 侧如实 503
   }
   let mdnsAdvertiser: MdnsAdvertiser | null = null;
+  let federationHeartbeat: FederationHeartbeat | null = null;
   const ownFingerprint = ownCert ? certFingerprint(ownCert) : null;
   // 编排边级提取（fork 无头回合）：与 start.ts 同装配，pipeline 引用占位后赋值。
   let hookPipelineRef: ReturnType<typeof wireHookFilePipeline> | null = null;
@@ -692,6 +705,13 @@ async function main(): Promise<void> {
         hostname: os.hostname(),
       });
     }
+    // 心跳出站（F1，与 start.ts 同装配）：联邦总闸开着才跑（关联邦 = 零网络活动）。
+    if (fed?.enabled) {
+      federationHeartbeat = startFederationHeartbeat({
+        peers,
+        tokenDir: getPeerTokensDir(),
+      });
+    }
   });
 
   const shutdown = (): void => {
@@ -705,6 +725,7 @@ async function main(): Promise<void> {
     narrationWatcher.stop();
     dashboardPusher.stop();
     mdnsAdvertiser?.stop();
+    federationHeartbeat?.stop();
     server.close();
     tls?.server.close();
     // WAL 并回主库再退（与生产入口同口径）：升级/重启后不必回放孤儿 -wal

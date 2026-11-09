@@ -8,7 +8,7 @@ import { MAIN_CATEGORIES, type MainCategory } from '@/components/CategoryBar';
  * `/p/<projectId>/<category>`        项目 + 卡片
  * `/p/<projectId>/<category>/<sid>`  再带会话
  * `/g/<category>`                    全局模式（机器级 pseudo 项目，没有会话级）
- * `/rpg/<scene>`                     游戏视图（场景段；缺省 = 办公区）
+ * `/rpg/<scene>`                     游戏视图（场景段；缺省 = Home 准备视图）
  *
  * 只做**位置**：卡片内的开关（资源管理的视图、claude/codex 页签、文件预览、
  * 移动端抽屉）是页面内状态，不进 URL。深链能直接打开靠 daemon 的 SPA 兜底
@@ -32,7 +32,7 @@ function categoryOf(raw: string | undefined): MainCategory {
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean);
   if (parts[0] === 'g') return { kind: 'global', category: categoryOf(parts[1]) };
-  if (parts[0] === 'rpg') return { kind: 'rpg', scene: parts[1] ?? 'office' };
+  if (parts[0] === 'rpg') return { kind: 'rpg', scene: parts[1] ?? 'home' };
   if (parts[0] === 'p') {
     const projectId = Number(parts[1]);
     if (!Number.isInteger(projectId) || projectId <= 0) return { kind: 'none' };

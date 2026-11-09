@@ -10,8 +10,9 @@ import {
 } from './federation.js';
 
 /**
- * mDNS 广播（E3）：`_weave-mcp._tcp` 服务类型，实例名带机器标识，TXT 带版本与
- * capabilities 摘要。**只广播、不接收执行**——安全面不变（对端仍要令牌），发现
+ * mDNS 广播（E3）：`_weave-fed._tcp` 服务类型（2026-11-08 更名：联邦发现面，
+ * 不再叫 _weave-mcp），实例名带机器标识，TXT 带版本与 capabilities 摘要。
+ * **只广播、不接收执行**——安全面不变（对端仍要令牌），发现
  * 列表落 peer 注册表仍须 pairing。选型 `bonjour-service`：纯 JS（multicast-dns
  * 之上），零原生依赖，对齐伞包 tgz 自包含分发硬约束。
  */

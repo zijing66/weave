@@ -44,7 +44,12 @@ const ORIGIN_VALUES = new Set(['user', 'mcp', 'webhook', 'peer', 'cli']);
 export function originOf(req: IncomingMessage): ApiLogOrigin {
   const header = req.headers['x-weave-origin'];
   if (typeof header === 'string' && ORIGIN_VALUES.has(header)) return header as ApiLogOrigin;
-  if ((req.url ?? '').startsWith('/webhooks/orchestrate/')) return 'webhook';
+  const url = req.url ?? '';
+  if (url.startsWith('/webhooks/orchestrate/')) return 'webhook';
+  // 联邦门（F1）：对端来的 pair/heartbeat/caps/call 都是 per-peer token 门内的
+  // 机器请求（管理面 /federation/peers、pairing/offer、discover 是用户在 web
+  // 操作，仍归 user 档）。
+  if (/^\/federation\/(pair|heartbeat|caps|call)(\/|$|\?)/.test(url)) return 'peer';
   return 'user';
 }
 
@@ -107,7 +112,9 @@ function shapeBody(captured: string, totalBytes: number): unknown {
 
 /** 路径里的凭据段脱敏：webhook token 就是一条可直接重放的凭证，绝不落盘。 */
 export function maskPath(url: string): string {
-  return url.replace(/^(\/webhooks\/orchestrate\/)[^?]+/, '$1[redacted]');
+  return url
+    .replace(/^(\/webhooks\/orchestrate\/)[^?]+/, '$1[redacted]')
+    .replace(/^(\/webhooks\/extensions\/)[^?]+/, '$1[redacted]');
 }
 
 /** 本地小时戳文件名：`api-YYYY-MM-DDTHH.jsonl`。 */

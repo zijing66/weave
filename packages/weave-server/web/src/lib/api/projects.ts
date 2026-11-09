@@ -30,6 +30,8 @@ export interface ProjectRow {
   meta: string | null;
   /** 归档时间（null/undefined = 活跃项目）。 */
   archivedAt?: string | null;
+  /** 内建仓库标记（RPG 角色仓/协调者仓）：过滤只在渲染层（ProjectList / # 选择器）。 */
+  hidden?: boolean;
   /** 已接入的 harness（init 选择结果）；缺省 = 服务端未带（旧响应）。 */
   harnesses?: ProjectHarness[];
 }

@@ -8,6 +8,12 @@ import { registerInvalidator, subscribeFrame } from '@/lib/sse';
 /**
  * 项目列表的查询配置（缓存域 + 拉取节奏）：列表页、对话页的 `#` 选择器、状态栏
  * 共用这一份——同一 key 彼此命中同一份缓存，策略演进不必三处各抄一遍。
+ *
+ * 内建仓库（RPG 角色仓/协调者仓，`hidden:true`）也在这份缓存里：过滤只发生在
+ * 渲染层两个消费点——项目列表侧栏（ProjectList）与 `#` 会话引用选择器
+ * （SessionShuttlePicker）。`/p/<id>` 深链解析（App 从同一份列表 find）与仓储层
+ * sweeper/文件索引/updates 消费全量，服务端不过滤——服务端过滤会断「RPG 点角色
+ * 进会话」主路径。
  */
 export const PROJECTS_QUERY = {
   queryKey: ['projects'],

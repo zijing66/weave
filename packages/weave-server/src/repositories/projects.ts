@@ -14,6 +14,8 @@ export interface ProjectRow {
   sortOrder: number | null;
   /** 归档时间（NULL = 活跃）。归档项目不参与 server 任何消费面，仅保留基础信息待恢复。 */
   archivedAt: string | null;
+  /** 内建仓库标记（RPG 角色仓/协调者仓）：GET /projects 原样返回，过滤只在 web 消费点。 */
+  hidden: boolean;
 }
 
 export interface RegisterProjectInput {
@@ -21,6 +23,8 @@ export interface RegisterProjectInput {
   name: string;
   token: string;
   source: 'init' | 'scan';
+  /** 起源头标记内建仓库（provisionRole / scaffoldCoordinator 传 true）。 */
+  hidden?: boolean;
 }
 
 /**
@@ -46,11 +50,11 @@ export class ProjectRepository {
     const key = projectKey(input.path);
     this.db
       .prepare(
-        `INSERT INTO projects (path, name, token, source, registered_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO projects (path, name, token, source, registered_at, last_seen_at, hidden)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(path) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
       )
-      .run(key, input.name, input.token, input.source, now, now);
+      .run(key, input.name, input.token, input.source, now, now, input.hidden ? 1 : 0);
     return this.getByPath(key)!;
   }
 
@@ -172,5 +176,6 @@ function toProject(row: Record<string, unknown>): ProjectRow {
     meta: row.meta == null ? null : String(row.meta),
     sortOrder: row.sort_order == null ? null : Number(row.sort_order),
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
+    hidden: row.hidden === 1,
   };
 }

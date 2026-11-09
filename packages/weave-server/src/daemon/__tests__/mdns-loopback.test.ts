@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generate } from 'selfsigned';
 import { startMdnsAdvertiser, browseMdnsPeers } from '../mdns-advertiser.js';
+import { capsSummary } from '../federation.js';
 
 /**
  * 本机回环可见性验证（E3 验收②）：同机起两个「广播端」（不同端口/身份），
@@ -24,7 +25,7 @@ describe('mTCP 发现回环可见性', () => {
       expect(self).toBeDefined();
       expect(self!.name).toBe('weave-loopback-test-b');
       expect(self!.txt.ver).toBeTruthy();
-      expect(self!.txt.caps).toBe('mcp');
+      expect(self!.txt.caps).toBe(capsSummary());
       expect(self!.txt.name).toBe('loopback-test-b');
       expect(self!.txt.fp).toMatch(/^[0-9a-f]{16}$/);
     } finally {

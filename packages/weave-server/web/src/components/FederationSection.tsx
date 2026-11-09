@@ -2,15 +2,26 @@ import { useCallback, useEffect, useState } from 'react';
 import { Globe, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, type DiscoveredPeer, type PeerRow } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
+import { registerInvalidator } from '@/lib/sse';
 import { Switch } from '@/components/ui/switch';
 import { FieldHint } from '@/components/ui/field-hint';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText } from '@/lib/action-feedback';
 
+/** 在线态派生（与 server 的 peerLiveness 同判据）：90s 内有心跳 = online。 */
+const OFFLINE_AFTER_MS = 90_000;
+function livenessOf(lastSeenAt: string | null): 'online' | 'offline' | 'never-seen' {
+  if (!lastSeenAt) return 'never-seen';
+  const at = Date.parse(lastSeenAt);
+  if (!Number.isFinite(at)) return 'never-seen';
+  return Date.now() - at <= OFFLINE_AFTER_MS ? 'online' : 'offline';
+}
+
 /**
- * 联邦最小面（E3）：两个开关（联邦 / mDNS 发现，走统一 PUT /settings 保存）+
- * 已配对 peer 列表（手动添加 host:port + 删除）+ 短码要约 + LAN 扫描。
- * call / caps / invite 是 F1 的门，本批不出现。
+ * 联邦管理面（F1）：两个开关（联邦 / mDNS 发现）+ 已配对 peer 列表（在线态 +
+ * 手动添加 + 删除即吊销 token）+ 双向 pairing（出短码 / 输对端短码发起出站）+
+ * LAN 扫描。SSE 单通道：hook 域任一帧与 settings invalidate 都触发 peers 重拉
+ * （不新开 EventSource、不轮询）。
  */
 export function FederationSection(props: {
   enabled: boolean;
@@ -24,9 +35,15 @@ export function FederationSection(props: {
   const [offerExpiresAt, setOfferExpiresAt] = useState<number | null>(null);
   const [addName, setAddName] = useState('');
   const [addPort, setAddPort] = useState('');
+  const [peerCodeName, setPeerCodeName] = useState('');
+  const [peerCodeHost, setPeerCodeHost] = useState('');
+  const [peerCodePort, setPeerCodePort] = useState('');
+  const [peerCode, setPeerCode] = useState('');
+  const [initiateBusy, setInitiateBusy] = useState(false);
   const [deleting, setDeleting] = useState<PeerRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initiateError, setInitiateError] = useState<string | null>(null);
 
   const reloadPeers = useCallback(() => {
     api
@@ -37,6 +54,15 @@ export function FederationSection(props: {
 
   useEffect(() => {
     reloadPeers();
+  }, [reloadPeers]);
+
+  // SSE 单通道：服务端 peers 变更/心跳落地推 `{type:'invalidate', key:'federation'}`
+  // 帧，这里接它重拉——在线态与列表变更不靠轮询。
+  useEffect(() => {
+    const offInv = registerInvalidator('federation', reloadPeers);
+    return () => {
+      offInv();
+    };
   }, [reloadPeers]);
 
   const scan = useCallback(() => {
@@ -106,6 +132,37 @@ export function FederationSection(props: {
         setDeleting(null);
       });
   }, [deleting, reloadPeers]);
+
+  // 出站 pairing（F1）：拿对端给的短码打对端。成功即 peer 行 + token 落盘。
+  const initiatePairing = useCallback(() => {
+    const port = Number(peerCodePort);
+    if (!peerCodeName.trim() || !peerCodeHost.trim() || !Number.isInteger(port) || port <= 0 || port > 65_535) {
+      setInitiateError(t('settings.fedAddInvalid'));
+      return;
+    }
+    if (!/^\d{6}$/.test(peerCode)) {
+      setInitiateError(t('settings.fedInitiateCodeInvalid'));
+      return;
+    }
+    setInitiateBusy(true);
+    setInitiateError(null);
+    api
+      .initiatePairing({
+        name: peerCodeName.trim(),
+        host: peerCodeHost.trim(),
+        port,
+        code: peerCode,
+      })
+      .then(() => {
+        setPeerCodeName('');
+        setPeerCodeHost('');
+        setPeerCodePort('');
+        setPeerCode('');
+        reloadPeers();
+      })
+      .catch((e) => setInitiateError(errorText(e)))
+      .finally(() => setInitiateBusy(false));
+  }, [peerCodeName, peerCodeHost, peerCodePort, peerCode, reloadPeers, t]);
 
   const inputCls =
     'rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500';
@@ -186,30 +243,37 @@ export function FederationSection(props: {
           <p className="text-11 text-neutral-500">{t('settings.fedPeersEmpty')}</p>
         ) : (
           <ul className="space-y-1">
-            {peers.map((p) => (
-              <li
-                key={p.id}
-                className="flex items-center gap-2 rounded-lg bg-neutral-800/60 px-2.5 py-1.5 text-11 text-neutral-300"
-              >
-                <span className="truncate">{p.name}</span>
-                <span className="text-neutral-500">
-                  {p.host}
-                  {p.port > 0 ? `:${p.port}` : ''}
-                </span>
-                <span className="text-neutral-600">
-                  {p.source === 'manual' ? t('settings.fedSrcManual') : p.source === 'pairing' ? t('settings.fedSrcPairing') : t('settings.fedSrcMdns')}
-                </span>
-                <span className="ml-auto" />
-                <button
-                  type="button"
-                  onClick={() => setDeleting(p)}
-                  className="text-neutral-500 hover:text-red-400"
-                  aria-label={t('settings.fedDelete')}
+            {peers.map((p) => {
+              const state = livenessOf(p.lastSeenAt);
+              return (
+                <li
+                  key={p.id}
+                  className="flex items-center gap-2 rounded-lg bg-neutral-800/60 px-2.5 py-1.5 text-11 text-neutral-300"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </li>
-            ))}
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${state === 'online' ? 'bg-blue-400' : 'bg-neutral-600'}`}
+                    title={t(state === 'online' ? 'settings.fedOnline' : state === 'offline' ? 'settings.fedOffline' : 'settings.fedNeverSeen')}
+                  />
+                  <span className="truncate">{p.name}</span>
+                  <span className="text-neutral-500">
+                    {p.host}
+                    {p.port > 0 ? `:${p.port}` : ''}
+                  </span>
+                  <span className="text-neutral-600">
+                    {p.source === 'manual' ? t('settings.fedSrcManual') : p.source === 'pairing' ? t('settings.fedSrcPairing') : t('settings.fedSrcMdns')}
+                  </span>
+                  <span className="ml-auto" />
+                  <button
+                    type="button"
+                    onClick={() => setDeleting(p)}
+                    className="text-neutral-500 hover:text-red-400"
+                    aria-label={t('settings.fedDelete')}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -267,6 +331,53 @@ export function FederationSection(props: {
           <Plus className="h-3 w-3" />
           {t('settings.fedAdd')}
         </button>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+          {t('settings.fedInitiate')}
+          <FieldHint>{t('settings.fedInitiateHint')}</FieldHint>
+        </label>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <input
+            type="text"
+            value={peerCodeName}
+            onChange={(e) => setPeerCodeName(e.target.value)}
+            placeholder={t('settings.fedInitiateName')}
+            className={`${inputCls} w-28`}
+          />
+          <input
+            type="text"
+            value={peerCodeHost}
+            onChange={(e) => setPeerCodeHost(e.target.value)}
+            placeholder="10.0.0.2"
+            className={`${inputCls} w-32`}
+          />
+          <input
+            type="text"
+            value={peerCodePort}
+            onChange={(e) => setPeerCodePort(e.target.value)}
+            placeholder="6443"
+            className={`${inputCls} w-16`}
+          />
+          <input
+            type="text"
+            value={peerCode}
+            onChange={(e) => setPeerCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            placeholder="000000"
+            className={`${inputCls} w-20 tracking-widest`}
+          />
+          <button
+            type="button"
+            onClick={initiatePairing}
+            disabled={initiateBusy}
+            className="flex items-center gap-1 rounded-lg bg-neutral-800 px-2 py-1.5 text-11 text-neutral-300 hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {initiateBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+            {t('settings.fedInitiateGo')}
+          </button>
+        </div>
+        {initiateError && <p className="text-11 text-red-400">{initiateError}</p>}
       </div>
 
       {error && <p className="text-11 text-red-400">{error}</p>}

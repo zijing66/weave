@@ -55,6 +55,8 @@ import {
   sessionJudgedDead as sessionJudgedDeadIn,
 } from './delivery/queue.js';
 import { runRelay as runRelayIn, type RelayDeps } from './delivery/relay.js';
+import type { PeerRequestLike } from './delivery/peer.js';
+import { parsePeerTarget } from './delivery/peer.js';
 import {
   RewindPanels,
   type RewindCommitResult,
@@ -264,6 +266,20 @@ export interface MessageDelivererDeps {
   sideAnswerStore?: { answerById(sessionId: string, question: string, answer: string): void };
   /** 会话转录路径（`SessionProbe` 答）；回退点列表从转录生成，缺省 = 只能读屏。 */
   transcriptPathOf?: (sessionId: string) => string | null;
+  /**
+   * 联邦跨机分流（F1）：`peer:<name>/<sessionId>` 目标的路由表——按 peer 名解析
+   * 出对端端点与 per-peer token；返回 null = 没这台 peer（404）。缺省 = 无联邦
+   * 装配（peer 目标一律 404）。
+   */
+  peerRoute?: (peerName: string) => {
+    peerId: string;
+    host: string;
+    port: number;
+    fingerprint: string | null;
+    token: string;
+  } | null;
+  /** 联邦出站实现（测试注入）；缺省 daemon/federation-client 的 https+TOFU 通道。 */
+  peerRequestImpl?: PeerRequestLike;
 }
 
 /** send() 入参（路由层已做 zod 形状校验）。 */
@@ -284,10 +300,11 @@ export interface SendInput {
   attachments?: readonly MessageAttachment[];
 }
 
-/** send() 返回：ok 由路由映射 200，否则 status 即 HTTP 码。 */
+/** send() 返回：ok 由路由映射 200，否则 status 即 HTTP 码（502/503 = 跨机分支
+ *  的对端不可达 / 本机无传输层；本地分支不出这两档）。 */
 export type SendResult =
   | { ok: true; messageId: string; status: PipeStatus; message: PipeMessage }
-  | { ok: false; status: 400 | 404 | 409; error: string };
+  | { ok: false; status: 400 | 404 | 409 | 502 | 503; error: string };
 
 /** answer() 返回（作答不建消息条目，无 messageId）。 */
 export type AnswerResult = { ok: true } | { ok: false; status: 400 | 404 | 409; error: string };
@@ -572,6 +589,12 @@ export class MessageDeliverer {
    * headless 被占 409。通过后发号、广播 message.created 并立即投递。
    */
   async send(input: SendInput): Promise<SendResult> {
+    // 跨机分流（D8 MessageRouter 特例，F1）：目标形如 `peer:<peerName>/<sessionId>`
+    // 且不在本地 sessions → 查 peer 表按名解析 → 转发对端 /federation/call inject。
+    // 只在明确给出 peer 目标时走远程，不做模糊匹配；对端拒绝/不可达如实报错。
+    if (input.toSessionId.startsWith('peer:')) {
+      return this.sendToPeer(input);
+    }
     const session = this.deps.sessions.getBySessionId(input.toSessionId);
     if (!session) return { ok: false, status: 404, error: 'Session not found' };
 
@@ -658,6 +681,58 @@ export class MessageDeliverer {
   /** 管道消息现查（内存态；sequence 引擎 / 路由回显用）。 */
   getMessage(id: string): PipeMessage | null {
     return this.memory.get(id) ?? null;
+  }
+
+  /**
+   * 跨机分支（F1）：peer 目标 → 对端 /federation/call inject（inject-only，D8）。
+   * 路由表查不到 = 404；对端拒绝按 HTTP 映射（403→409 拒绝、502 前缺省）。
+   * 远程消息不进本地管道（没有本地会话行可挂），同步等对端回执——202 算送达。
+   */
+  private async sendToPeer(input: SendInput): Promise<SendResult> {
+    const parsed = parsePeerTarget(input.toSessionId);
+    if (!parsed) return { ok: false, status: 400, error: 'Malformed peer target (expect peer:<name>/<sessionId>)' };
+    const route = this.deps.peerRoute?.(parsed.peerName);
+    if (!route) return { ok: false, status: 404, error: `Unknown peer: ${parsed.peerName}` };
+    const request = this.deps.peerRequestImpl;
+    if (!request) return { ok: false, status: 503, error: 'Federation transport unavailable' };
+    try {
+      const res = await request(
+        { host: route.host, port: route.port, fingerprint: route.fingerprint },
+        {
+          method: 'POST',
+          path: '/federation/call',
+          token: route.token,
+          body: {
+            service: 'inject',
+            params: {
+              sessionId: parsed.sessionId,
+              text: input.text,
+              fromPeerName: parsed.peerName,
+            },
+          },
+        },
+      );
+      if (res.status === 404) return { ok: false, status: 404, error: 'Peer rejected the call (unknown service)' };
+      if (res.status === 403) return { ok: false, status: 409, error: 'Peer refused the call (token invalid — re-pair)' };
+      if (res.status >= 400) return { ok: false, status: 502, error: `Peer call failed: HTTP ${res.status}` };
+      return {
+        ok: true,
+        messageId: randomUUID(),
+        status: 'delivered',
+        message: {
+          id: randomUUID(),
+          sessionId: input.toSessionId,
+          text: input.text,
+          mode: 'inject',
+          channel: 'inject',
+          status: 'delivered',
+          settledAt: new Date().toISOString(),
+          at: new Date().toISOString(),
+        },
+      };
+    } catch (err) {
+      return { ok: false, status: 502, error: `Peer unreachable: ${err instanceof Error ? err.message : String(err)}` };
+    }
   }
 
   /**

@@ -125,6 +125,7 @@ export async function handleHooksRoutes(
     pathname.startsWith('/sessions/') ||
     pathname.startsWith('/messaging') ||
     pathname.startsWith('/webhooks/orchestrate/') ||
+    pathname.startsWith('/webhooks/extensions/') ||
     pathname === '/uploads' ||
     pathname.startsWith('/uploads/') ||
     pathname.startsWith('/images/') ||
@@ -137,6 +138,31 @@ export async function handleHooksRoutes(
 
   // ---- hooks 管理域 → routes/hooks-admin.ts（规则 CRUD/插件面/派发/指令池）----
   if (await handleHookAdminRoutes(req, res, deps, pathname, url)) return true;
+
+  // ---- 外部 webhook 扇入（F1 复活，§1.6 接线清单）：token 即凭证 ----
+  // POST /webhooks/extensions/<token> —— 载荷直触该绑定的管线（闸序/幂等/执行
+  // 日志全复用）；认证豁免段在 server.ts 的 isPublicRequest。
+  const extWebhookMatch = pathname.match(/^\/webhooks\/extensions\/([A-Za-z0-9_-]+)$/);
+  if (extWebhookMatch && req.method === 'POST') {
+    if (!deps.extensionBindings || !deps.extensionEngine) {
+      sendJson(res, 503, { error: 'Extensions subsystem unavailable' });
+      return true;
+    }
+    const binding = deps.extensionBindings.getByWebhookToken(extWebhookMatch[1]!);
+    if (!binding) {
+      sendJson(res, 404, { error: 'Unknown webhook token' });
+      return true;
+    }
+    if (!binding.enabled) {
+      sendJson(res, 409, { error: 'Binding is disabled' });
+      return true;
+    }
+    const payload = (await readJson(req).catch(() => '') as string | unknown) ?? '';
+    const payloadText = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    deps.extensionEngine.fireFromWebhook(binding, payloadText.slice(0, 20_000), new Date().toISOString());
+    sendJson(res, 202, { ok: true, bindingId: binding.id });
+    return true;
+  }
 
   // ---- 会话列表 / 改名 ----
   // POST /dashboard/refresh — 空载荷的「重推一次」触发：SSE 连接早于仪表盘挂载，

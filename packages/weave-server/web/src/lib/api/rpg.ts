@@ -84,6 +84,9 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 export const rpgApi = {
   listRoles: () => apiFetch<{ roles: RpgRoleView[] }>('/rpg/roles'),
+  /** 建角色（E4 验收④）：游戏视图内建角色入口，落 `<data>/rpg/roles/`。 */
+  createRole: (input: { name: string; archetype?: string; persona?: string }) =>
+    post<RpgRoleView>('/rpg/roles', input),
   listGrowth: (roleId: number) => apiFetch<{ growth: RpgGrowthRow[] }>(`/rpg/roles/${roleId}/growth`),
   hexagonOf: (roleId: number) => apiFetch<RpgHexagonView>(`/rpg/roles/${roleId}/hexagon`),
   /** 成长派生（XP/等级/境界/成就/六维修正；读侧派生 + 解锁事实落库）。 */

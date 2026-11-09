@@ -260,6 +260,7 @@ function postProcess(name: string, data: unknown, args: Args): unknown {
           registeredAt: p.registeredAt,
           lastSeenAt: p.lastSeenAt,
           archivedAt: p.archivedAt,
+          hidden: p.hidden,
           harnesses: p.harnesses,
         })),
       };
