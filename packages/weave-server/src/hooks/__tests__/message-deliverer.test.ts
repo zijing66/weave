@@ -18,6 +18,8 @@ import { HookEventBus, type HookBusMessage } from '../bus.js';
 import { HeadlessRunner, type SpawnLike } from '../headless-runner.js';
 import {
   MessageDeliverer,
+  promptTailOf,
+  screenTailMatches,
   type MessageDelivererDeps,
   type PromptTerminal,
   type SendResult,
@@ -4322,6 +4324,32 @@ describe('诱导回合登记（outbox 写入单点 + 一次性核销）', () => 
       origin: 'orchestration',
     });
     expect(deliverer.consumeInduction('sess-unknown')).toBe(false);
+  });
+});
+
+describe('提交确认探针判据（promptTailOf / screenTailMatches）', () => {
+  it('尾片段：归一空白后取尾部 40 字符', () => {
+    const long = 'ab '.repeat(30) + 'END';
+    // 归一等值：仅空白差异的等长文本尾片段一致；且取的是尾部（以 END 收尾）
+    const spaced = long.replace(/ /g, '  ').trim() + ' ';
+    expect(promptTailOf(long)).toBe(promptTailOf(spaced));
+    expect(promptTailOf(long).endsWith('END')).toBe(true);
+    expect(promptTailOf('short')).toBe('short');
+    expect(promptTailOf('   ')).toBe('');
+  });
+
+  it('挂着：片段贴在 ❯ 行（含折行拼接）→ 命中', () => {
+    const screen = ['对话流……', '❯ 帮我看看这个图', '然后给出方案'];
+    expect(screenTailMatches(screen.join('\n'), promptTailOf('帮我看看这个图 然后给出方案'))).toBe(true);
+  });
+
+  it('已提交（片段只在屏上方回显、❯ 行是空的）→ 不命中', () => {
+    const screen = ['> 帮我看看这个图 然后给出方案', '好的，我来分析。', '❯'];
+    expect(screenTailMatches(screen.join('\n'), promptTailOf('帮我看看这个图 然后给出方案'))).toBe(false);
+  });
+
+  it('屏上没有 ❯ 行（模态框/面板开着）→ 不命中', () => {
+    expect(screenTailMatches('Choose an option\n1. yes\n2. no', 'yes')).toBe(false);
   });
 });
 

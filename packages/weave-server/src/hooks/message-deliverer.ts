@@ -377,6 +377,29 @@ const SCREEN_TAIL_LINES = 12;
 const INTERRUPT_KEYS: readonly string[] = [ESC_KITTY, ESC, CTRL_B];
 /** 兜底那几记的读屏等待（首记用 `interruptVerifyMs`）：它们只是补刀，快一点试。 */
 const INTERRUPT_FALLBACK_VERIFY_MS = 600;
+/** 提交确认探针：层② 贴完正文等这么久再读屏（宿主消化 paste/附件要一两拍），
+ *  CR 被吞时正文尾片段还挂在输入行。 */
+const SUBMIT_PROBE_DELAY_MS = 2_000;
+/** 补键后的复读确认等待（宿主消化 CR、把正文挪出输入行要一两拍）。 */
+const SUBMIT_PROBE_VERIFY_MS = 1_200;
+/** 探针判据用正文尾的多少个字符（屏宽折行会让长正文对不上全量，尾部片段足够认）。 */
+const SUBMIT_PROBE_TAIL_CHARS = 40;
+/** 输入行前缀（宿主 TUI 的 prompt 符）：探针只认挂在这行上的正文。 */
+const SUBMIT_PROMPT_PREFIX = '❯';
+
+/** 探针判据用尾片段：归一空白后取尾部（屏上折行/装饰只差空白，比对不受影响）。 */
+export function promptTailOf(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(-SUBMIT_PROBE_TAIL_CHARS);
+}
+
+/** 输入行判据：`❯` 行起至屏底拼接、归一空白后认结尾——片段贴着输入行才算挂着。 */
+export function screenTailMatches(screen: string, tail: string): boolean {
+  const lines = screen.split('\n');
+  const start = lines.findIndex((l) => l.includes(SUBMIT_PROMPT_PREFIX));
+  if (start < 0) return false;
+  const joined = lines.slice(start).join(' ').replace(/\s+/g, ' ').trimEnd();
+  return joined.endsWith(tail);
+}
 
 /** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
 const INBOX_READY_POLL_MS = 250;
@@ -2163,7 +2186,7 @@ export class MessageDeliverer {
 
   /** 层② 终端注入终态（语义同中继：成功 delivered / 失败 failed 可见）。 */
   private async runTerminalPrompt(messageId: string, paneId: string, text: string): Promise<void> {
-    await this.runTerminal(messageId, (terminal) => terminal.sendText(paneId, text));
+    await this.runTerminal(messageId, (terminal) => terminal.sendText(paneId, text), paneId);
   }
 
   /**
@@ -2178,6 +2201,8 @@ export class MessageDeliverer {
   private async runTerminal(
     messageId: string,
     write: (terminal: PromptTerminal) => Promise<void>,
+    /** prompt 落点（层② 正文投递才有）：提交确认探针读屏用。 */
+    promptPaneId?: string,
   ): Promise<void> {
     const msg = this.memory.get(messageId);
     if (!msg) return;
@@ -2189,6 +2214,19 @@ export class MessageDeliverer {
       // 行没了 = 期间被强制移除（投递卡死时人工清队头）：不写回，删了就是删了。
       const current = this.memory.get(messageId);
       if (!current) return;
+      // 提交确认探针（带图/超长才布防）：paste 与末尾 CR 同拍写入时，宿主消化
+      // 图片附件常把那记 CR 吞掉——正文留在输入框、气泡却已「已发出」，只能人工
+      // 点 enter（2026-11-09 实测）。探针等 2s 读屏，正文尾片段仍挂在输入行 = CR
+      // 没生效，补一记（等价于人手那一下）；屏上没有 = 已提交，照常收尾。
+      const text = this.wireTextOfEntry(current);
+      if (
+        promptPaneId &&
+        (hasImages(current) || isLongPrompt(text)) &&
+        terminal.getPaneText &&
+        current.acked !== true
+      ) {
+        void this.confirmPromptSubmit(messageId, promptPaneId, text);
+      }
       const done: PipeMessage = { ...current, status: 'delivered', settledAt: new Date().toISOString() };
       this.memory.set(messageId, done);
       if (this.commandModeOf(current.sessionId, current.text)) this.armCommandAck(messageId);
@@ -2224,6 +2262,41 @@ export class MessageDeliverer {
         status: 'failed',
         at: new Date().toISOString(),
       });
+    }
+  }
+
+  /**
+   * 提交确认探针：层② 贴完正文 2s 后读屏，该消息的**正文尾片段**仍挂在输入行
+   * （屏上末尾紧跟提示框的 `❯ <正文尾…>`）= 末尾那记 CR 被吞——补一记（等价于
+   * 人手那一下 enter；2026-11-09 实测带图消息 paste 与 CR 同拍写入时常被宿主
+   * 消化附件吞掉，正文滞留输入框、只能人工提交）。判据只认正面证据、且要求
+   * **片段贴着输入行前缀**：正文出现在对话流里（已提交成功的回显）不算；`❯` 行
+   * 起至屏底拼接后认**结尾**（长正文被终端折成多行时不漏判）。补一记后复读一次
+   * 确认片段已从输入行消失才算数——没消失不重试，交给既有未回执闸（ackStallMs）
+   * 与人工重发。所有读不到/对不上/歧义一律不动作（漏补 = 现状人工，绝不误补）。
+   */
+  private async confirmPromptSubmit(messageId: string, paneId: string, text: string): Promise<void> {
+    await sleep(SUBMIT_PROBE_DELAY_MS);
+    // 探针窗口里行可能已被 UPS 认领（正常送达）或被人工移除：都别再补。
+    const current = this.memory.get(messageId);
+    if (!current || current.acked === true || current.status !== 'delivered') return;
+    const terminal = this.terminalChannel();
+    if (!terminal?.getPaneText) return;
+    const tail = promptTailOf(text);
+    if (!tail) return;
+    const screen = await terminal.getPaneText(paneId).catch(() => null);
+    if (screen === null) return;
+    if (!screenTailMatches(screen, tail)) return;
+    try {
+      await terminal.sendKeys(paneId, '\r');
+    } catch {
+      return; // 补打失败不落 failed：文本已在框里，未回执闸会接手（人工重发只补回车）
+    }
+    // 复读确认：片段从输入行消失 = 补键生效；还在 = 没补上，如实交给既有闸。
+    await sleep(SUBMIT_PROBE_VERIFY_MS);
+    const after = await terminal.getPaneText(paneId).catch(() => null);
+    if (after !== null && !screenTailMatches(after, tail)) {
+      this.memory.set(messageId, { ...this.memory.get(messageId)!, settledAt: new Date().toISOString() });
     }
   }
 
