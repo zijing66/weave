@@ -1582,13 +1582,9 @@ export function FileBrowserModal({
             </button>
           </Tooltip>
           {/* 面包屑恒显（首屏=高亮项目的绝对路径）：搜索范围就是它指的这棵子树，
-              它本身就是范围说明。超宽跑马灯来回滚，右侧复制按钮同右键菜单口径
-              （含空格包引号）。 */}
+              它本身就是范围说明。超宽跑马灯来回滚；复制/历史按钮在行头（路径前方），
+              复制按钮同右键菜单口径（含空格包引号）。 */}
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            <MarqueeText
-              text={headerPath}
-              className="font-mono text-11 text-neutral-400"
-            />
             <Tooltip label={t('tasks.fileCopyAbsPath')} side="top">
               <button
                 type="button"
@@ -1638,6 +1634,11 @@ export function FileBrowserModal({
                 }}
               />
             </div>
+            <MarqueeText
+              text={headerPath}
+              grow={false}
+              className="font-mono text-11 text-neutral-400"
+            />
           </div>
           {/* 搜索框：窄屏收成图标（点图标展开聚焦），桌面恒 224px 全宽。
               容器宽度随展开态切换——展开后 176px 收在头部 flex 里（标题 truncate 让位），

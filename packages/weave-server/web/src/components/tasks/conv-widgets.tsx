@@ -169,9 +169,12 @@ export function EventTicker({ text }: { text: string }) {
 export function MarqueeText({
   text,
   className,
+  grow = true,
 }: {
   text: string;
   className?: string;
+  /** false = 不占满整行（flex-1 换收缩宽度）：后续元素贴着文字排，路径短时不再被推到最右。 */
+  grow?: boolean;
 }) {
   const boxRef = useRef<HTMLSpanElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
@@ -188,7 +191,7 @@ export function MarqueeText({
     return () => ro.disconnect();
   }, [text]);
   return (
-    <span ref={boxRef} className={cn('relative min-w-0 flex-1 overflow-hidden', className)}>
+    <span ref={boxRef} className={cn('relative min-w-0 overflow-hidden', grow && 'flex-1', className)}>
       <span
         ref={textRef}
         className={cn('block whitespace-nowrap', dist > 0 && 'weave-marquee-run')}
