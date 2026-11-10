@@ -68,7 +68,7 @@ export class HookEventRepository {
   insertMany(inputs: readonly HookEventInput[]): number[] {
     this.pruneExpired();
     const ids: number[] = [];
-    this.db.exec('BEGIN');
+    this.db.exec('BEGIN IMMEDIATE'); // deferred 升级写锁时 busy_timeout 不重试，见 settings.ts writeMap
     try {
       for (const input of inputs) {
         const result = this.insertEvent.run(

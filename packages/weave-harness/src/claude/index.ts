@@ -66,6 +66,7 @@ export {
   pidAlive,
   pidAliveOf,
   CLAUDE_REG_GRACE_MS,
+  LivenessMap,
   type ClaudeSessionReg,
 } from './liveness.js';
 export { modelAliasTargets, aliasOfModel, bareModelName, defaultModelOf, startedModelOf, switchedModelOf, effortLevelOf, permissionModeOf, type ModelAliasTarget, type ModelSwitchFact } from './model-aliases.js';

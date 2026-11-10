@@ -1801,6 +1801,7 @@ export function SessionMessages({
                       <EnumSlider
                         levels={effortLevels}
                         value={sessionRow?.effort ?? null}
+                        disabled={sessionRow?.pidAlive === false}
                         title={t('tasks.effortLastKnown')}
                         onCommit={applyEffort}
                       />

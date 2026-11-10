@@ -265,7 +265,18 @@ export function weaveRequestHandler(
   const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache, apiLog, sseHub };
   return (req, res) => {
     apiLog.begin(req, res);
-    void handleRequest(req, res, serverDeps);
+    // 兜底闸：路由层任何抛错（readJson 的坏 JSON、zod parse 失败等）都落 500——
+    // 不接住就是 unhandledRejection，Node 直接崩进程（2026-11-10 实测 effort 路由
+    // 收到非法 body 把 daemon 打死）。
+    void handleRequest(req, res, serverDeps).catch((err: unknown) => {
+      if (!res.headersSent) {
+        sendJson(res, 500, {
+          error: err instanceof Error ? err.message : 'Internal server error',
+        });
+      } else {
+        res.end();
+      }
+    });
   };
 }
 

@@ -27,7 +27,8 @@ import {
 } from 'lucide-react';
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
-import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { useActionFeedback } from '@/lib/action-feedback';
 import { copyText } from '@/lib/clipboard';
 import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
@@ -161,7 +162,8 @@ export function FileBrowserModal({
   onClose: () => void;
 }) {
   const t = useT();
-  const { show } = useToast();
+  /** 复制绝对路径的按钮三态：成功打勾 2s 后还原。 */
+  const fb = useActionFeedback();
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   /** 长按只在粗指针下挂（鼠标不该有长按，§11 同款口径）。 */
   const finePointer = useMediaQuery('(pointer: fine)');
@@ -1547,13 +1549,22 @@ export function FileBrowserModal({
                 type="button"
                 aria-label={t('tasks.fileCopyAbsPath')}
                 onClick={() => {
-                  void copyText(headerPath).then((ok) => {
-                    if (!ok) show('error', t('common.copyFailed'));
-                  });
+                  void fb.run(
+                    'copy-header',
+                    async () => {
+                      const ok = await copyText(headerPath);
+                      if (!ok) throw new Error('copy failed');
+                    },
+                    { fail: () => t('common.copyFailed') },
+                  );
                 }}
-                className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                className="flex shrink-0 items-center gap-1 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
               >
-                <Copy className="h-3 w-3" />
+                <FeedbackIcon
+                  state={fb.stateOf('copy-header')}
+                  className="h-3 w-3"
+                  icon={<Copy className="h-3 w-3" />}
+                />
               </button>
             </Tooltip>
           </div>
@@ -1780,14 +1791,24 @@ export function FileBrowserModal({
               <button
                 type="button"
                 onClick={() => {
-                  void copyText(joinAbsPath(root, rowMenu.entry.path)).then((ok) => {
-                    if (!ok) show('error', t('common.copyFailed'));
-                  });
+                  void fb.run(
+                    'copy-row',
+                    async () => {
+                      const ok = await copyText(joinAbsPath(root, rowMenu.entry.path));
+                      if (!ok) throw new Error('copy failed');
+                    },
+                    { fail: () => t('common.copyFailed') },
+                  );
                   setRowMenu(null);
                 }}
-                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-edge/[0.06] hover:text-neutral-100"
+                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-edge/[0.06] hover:text-neutral-100"
               >
                 {t('tasks.fileCopyAbsPath')}
+                <FeedbackIcon
+                  state={fb.stateOf('copy-row')}
+                  className="h-3 w-3"
+                  icon={<Copy className="h-3 w-3" />}
+                />
               </button>
               {rowMenu.entry.kind === 'file' && (
                 <a

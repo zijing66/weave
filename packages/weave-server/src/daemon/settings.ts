@@ -618,7 +618,10 @@ function writeMap(db: DatabaseSync, entries: [string, string][]): void {
     `INSERT INTO settings (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   );
-  db.exec('BEGIN');
+  // IMMEDIATE 而非裸 BEGIN：deferred 事务在写升级那一刻才取写锁，busy_timeout
+  // 对该场景不重试（实测 SQLITE_BUSY 直接抛）；IMMEDIATE 把取锁挪到事务开头，
+  // 由 busy_timeout 正常等待重试。
+  db.exec('BEGIN IMMEDIATE');
   try {
     for (const [key, value] of entries) stmt.run(key, value);
     db.exec('COMMIT');

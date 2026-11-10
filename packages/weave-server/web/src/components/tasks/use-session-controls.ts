@@ -24,6 +24,8 @@ const MODE_PENDING_MS = 60_000;
 
 /** 会话行（状态总线）：控制面只读它的最后已知。 */
 interface SessionRowLike {
+  /** 判活三态：false = 已死（控制面只读项——死了的会话不再接受击键类操作）。 */
+  pidAlive?: boolean | null;
   mode?: string | null;
   model?: string | null;
   modelAlias?: string | null;

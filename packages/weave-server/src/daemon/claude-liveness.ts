@@ -11,4 +11,5 @@ export {
   pidAliveOf,
   shellDiscardedByHost,
   claudeLivenessById,
+  LivenessMap,
 } from '@weavecode/harness';

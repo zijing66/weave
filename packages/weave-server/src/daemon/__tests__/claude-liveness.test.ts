@@ -8,6 +8,7 @@ import {
   parseClaudeSessionReg,
   pidAlive,
   pidAliveOf,
+  LivenessMap,
 } from '../claude-liveness.js';
 
 /** 拿一个「刚才确定死过」的 pid：spawn 后立刻等它退出。 */
@@ -74,6 +75,19 @@ describe('claudeLivenessById', () => {
   it('目录不存在 → 空图（查不到登记不判死）', () => {
     expect(claudeLivenessById(join(dir, 'nope')).size).toBe(0);
   });
+
+  it('目录读挂（readdir 失败）→ readable:false；ENOENT = 可靠空图', () => {
+    // 目录路径挂一个普通文件：readdir 对文件路径报 ENOTDIR（非 ENOENT）→ 读挂
+    const asFile = join(dir, 'occupied');
+    writeFileSync(asFile, 'x');
+    const broken = claudeLivenessById(asFile);
+    expect(broken.readable).toBe(false);
+    expect(broken.size).toBe(0);
+    // 目录真不存在 = ENOENT = 「claude 没装」的可靠空图，兜底照常
+    const absent = claudeLivenessById(join(dir, 'nope'));
+    expect(absent.readable).toBe(true);
+    expect(absent.size).toBe(0);
+  });
 });
 
 describe('pidAliveOf（三态合成）', () => {
@@ -130,5 +144,16 @@ describe('pidAliveOf（三态合成）', () => {
   it('查无登记且非 claude → null（codex/未知 harness 不猜）', () => {
     expect(pidAliveOf(row({ harness: 'codex' }), new Map(), NOW)).toBeNull();
     expect(pidAliveOf(row({ harness: null }), new Map(), NOW)).toBeNull();
+  });
+
+  it('注册表读挂（readable:false）→ 兜底整拍降级 null，不集体判死', () => {
+    // 2026-11-09 晚实机：一次目录读挂让所有过豁免窗的 claude 会话同拍「已终止」。
+    const unreadable = new LivenessMap([], false);
+    expect(pidAliveOf(row({}), unreadable, NOW)).toBeNull();
+    // 登记命中的仍照常输出（那部分不依赖兜底）
+    const partial = new LivenessMap([['s1', true]], false);
+    expect(pidAliveOf(row({}), partial, NOW)).toBe(true);
+    // 可读空图（真没装/真查无）兜底照常判死
+    expect(pidAliveOf(row({}), new LivenessMap(), NOW)).toBe(false);
   });
 });

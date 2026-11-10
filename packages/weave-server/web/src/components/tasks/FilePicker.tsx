@@ -35,7 +35,8 @@ import { api, type ProjectFileEntry } from '@/lib/api';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
 import { FieldHint } from '@/components/ui/field-hint';
-import { useToast } from '@/components/Toast';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { useActionFeedback } from '@/lib/action-feedback';
 import { copyText } from '@/lib/clipboard';
 import { MarqueeText } from './conv-widgets';
 import { cn } from '@/lib/utils';
@@ -446,7 +447,8 @@ export function FilePicker({
   onClose: () => void;
 }) {
   const t = useT();
-  const { show } = useToast();
+  /** 复制绝对路径的按钮三态：成功打勾 2s 后还原。 */
+  const fb = useActionFeedback();
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   /** 三栏拖宽（只桌面）：会话级记忆，重开弹窗还在。 */
   const { leftW, setLeftW, previewW, setPreviewW } = useColumnWidths(SPLIT_KEY);
@@ -1416,13 +1418,22 @@ export function FilePicker({
                 type="button"
                 aria-label={t('tasks.fileCopyAbsPath')}
                 onClick={() => {
-                  void copyText(joinAbsPath(rootPath, dir)).then((ok) => {
-                    if (!ok) show('error', t('common.copyFailed'));
-                  });
+                  void fb.run(
+                    'copy-header',
+                    async () => {
+                      const ok = await copyText(joinAbsPath(rootPath, dir));
+                      if (!ok) throw new Error('copy failed');
+                    },
+                    { fail: () => t('common.copyFailed') },
+                  );
                 }}
-                className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                className="flex shrink-0 items-center gap-1 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
               >
-                <Copy className="h-3 w-3" />
+                <FeedbackIcon
+                  state={fb.stateOf('copy-header')}
+                  className="h-3 w-3"
+                  icon={<Copy className="h-3 w-3" />}
+                />
               </button>
             </Tooltip>
           </div>

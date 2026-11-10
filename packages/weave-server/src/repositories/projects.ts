@@ -102,7 +102,7 @@ export class ProjectRepository {
    * 未知 id（并发删除）静默跳过，缺席的 id 回到未排序块。
    */
   setOrder(ids: number[]): void {
-    this.db.exec('BEGIN');
+    this.db.exec('BEGIN IMMEDIATE'); // deferred 升级写锁时 busy_timeout 不重试，见 settings.ts writeMap
     try {
       this.db.exec('UPDATE projects SET sort_order = NULL');
       const stmt = this.db.prepare('UPDATE projects SET sort_order = ? WHERE id = ?');
