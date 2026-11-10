@@ -1397,6 +1397,12 @@ export class MessageDeliverer {
    * 思考强度调整：往会话的输入行打宿主自己的 `/effort <档位>` 并提交。档位过
    * **词表白名单**（core 表该 harness 的 `effortLevels`）——封闭枚举，表外 400
    * 不打键；模型能力差异宿主自己降档并回报（事件自带 `effort.level` 纠正显示）。
+   *
+   * **不为确认框发作答键**（2026-11-10 修正）：claude 对升档**可能**弹
+   * `Change effort level?`（1=Yes / 2=No）——实测弹与不弹不纯由方向决定
+   * （high→max 弹过、xhigh→max 没弹，随宿主对会话缓存成本的内部判定），
+   * 按方向预测会过发：无框时那记 `1` 落进输入框成字面字符。弹框场景留用户
+   * 在 TUI 作答，返显由 5s 快照拍在 stdout 落地后跟上（不猜、不污染输入）。
    */
   async setEffort(sessionId: string, level: string): Promise<AnswerResult> {
     const trimmed = level.trim();

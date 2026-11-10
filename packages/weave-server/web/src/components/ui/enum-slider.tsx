@@ -18,7 +18,7 @@ const CURRENT_TINT = '#bb9af7';
  * 浮层结构照参考实现：自绘轨道（渐变底 + 已走过的紫色 fill）+ 刻度点均分在
  * 轨道上 + thumb 骑在 fill 头上；原生 range 只当透明输入层（拖动/触屏/方向键
  * 全免费）。档名一排摆在轨道下方（浮层里放得下，全显示）。Esc / 点外面 =
- * 关闭并提交；拖动中直接关 = 预览作废。
+ * 关闭并提交；滚轮 = 滚页面路过，关闭并作废预览；拖动中直接关 = 预览作废。
  */
 export function EnumSlider({
   levels,
@@ -68,12 +68,14 @@ export function EnumSlider({
     const key = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') close(true);
     };
+    // 滚轮 = 只是滚页面路过：关浮层并**作废预览**（不提交）——滚轮即提交会把
+    // 「随手滚动对话」变成一次真打给宿主的 /effort（2026-11-10 用户实机误触发）。
     window.addEventListener('pointerdown', dismiss, true);
-    window.addEventListener('wheel', () => close(true), { capture: true, passive: true });
+    window.addEventListener('wheel', () => close(false), { capture: true, passive: true });
     window.addEventListener('keydown', key);
     return () => {
       window.removeEventListener('pointerdown', dismiss, true);
-      window.removeEventListener('wheel', () => close(true), { capture: true } as EventListenerOptions);
+      window.removeEventListener('wheel', () => close(false), { capture: true } as EventListenerOptions);
       window.removeEventListener('keydown', key);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

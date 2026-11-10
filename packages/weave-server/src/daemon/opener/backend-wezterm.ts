@@ -3,6 +3,7 @@ import {
   MAX_PANES_PER_SCREEN,
   countWindowsByDir,
   listAttachTargets,
+  maximizeWeztermWindow,
   openInWezterm,
   parseAttachTargetId,
   planWeztermGrid,
@@ -80,7 +81,13 @@ export class WeztermBackend extends TerminalBackend {
    * 另一套窗口/实例，跟用户日常那个 wezterm 不是一回事。
    */
   override async open(dir: string): Promise<void> {
-    if (await openInWezterm(dir)) return;
+    const paneId = await openInWezterm(dir);
+    if (paneId !== null) {
+      const { muxes } = await weztermLiveMuxes(true);
+      const mux = muxes[0];
+      if (mux && this.platform === 'win32') await maximizeWeztermWindow(mux.socket, paneId);
+      return;
+    }
     await super.open(dir);
   }
 

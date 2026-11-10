@@ -10,6 +10,9 @@ export interface WinRaiseRequest {
   exe?: string;
   /** 认窗口用的标题候选，**按可信度排序**（OS 窗口标题 = 该窗口某个 pane 的标题）。 */
   titles?: readonly string[];
+  /** 顺手最大化认中的窗口（wezterm 新窗用：`gui-startup` 的 maximize 不吃
+   *  `cli spawn --new-window`——事件只在 GUI 冷启动时触发一次）。 */
+  alsoMaximize?: boolean;
 }
 
 /**
@@ -35,6 +38,16 @@ export async function winRaiseTerminalWindow(req: WinRaiseRequest): Promise<void
   throw new Error(`Could not bring the terminal to the front: ${r.err || 'unknown error'}`);
 }
 
+/**
+ * 只最大化不抬前台（wezterm 新窗收尾用）：同一套认窗脚本，`WEAVE_RAISE_MAX=1`
+ * 且不给 raise 动作时脚本在 maximize 后跳过前台争抢。找不到窗/歧义 = 静默返回
+ * （锦上添花的动作不值得报错），与 `winRaiseTerminalWindow` 的 throw 口径不同。
+ */
+export async function winMaximizeTerminalWindow(req: WinRaiseRequest): Promise<void> {
+  const titles = (req.titles ?? []).filter((t) => t && !t.includes('|'));
+  await winRaiseOnce({ ...req, alsoMaximize: true }, titles);
+}
+
 export async function winRaiseOnce(
   req: WinRaiseRequest,
   titles: readonly string[],
@@ -48,6 +61,7 @@ export async function winRaiseOnce(
       WEAVE_RAISE_PANE_PIDS: (req.panePids ?? []).join(','),
       WEAVE_RAISE_EXE: req.exe ?? '',
       WEAVE_RAISE_TITLES: titles.join('|'),
+      WEAVE_RAISE_MAX: req.alsoMaximize ? '1' : '',
     },
     15000,
   );
@@ -108,6 +122,7 @@ if ($pick -eq $null) {
 }
 $res = [WeaveRaise]::Raise([int64]$pick.Handle)
 if ($res -ne 'ok') { [Console]::Error.WriteLine('raise:' + $res); exit 5 }
+if ($env:WEAVE_RAISE_MAX -eq '1') { [void][WeaveRaise]::ShowZoomed([int64]$pick.Handle) }
 'exactly ' + [int64]$pick.Handle
 exit 0
 `;
@@ -184,6 +199,9 @@ public static class WeaveRaise
         }, IntPtr.Zero);
         return list;
     }
+
+    /** SW_MAXIMIZE（3）对已最大化的窗口是幂等的。 */
+    public static void ShowZoomed(long hwnd) { ShowWindow(new IntPtr(hwnd), 3); }
 
     static string ExeOf(uint pid)
     {

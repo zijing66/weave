@@ -5,6 +5,7 @@ import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
 import type { LaunchOrigin } from '../opener.js';
 import { joinCmd } from './shared.js';
+import { winMaximizeTerminalWindow } from './win-raise.js';
 
 export interface WeztermPaneInfo {
   windowId: number;
@@ -722,15 +723,15 @@ export async function weztermMuxForId(muxKey: string): Promise<WeztermMux | null
 
 /**
  * 开终端（不带命令）的 mux 通道：有活实例 → 最活跃那个开新窗口；一个都没有
- * → false（调用方回落 legacy `start` 起新 GUI）。某步失败一律 throw——跟着
- * `run` 的口径，不静默落到另起一个 GUI 进程。
+ * → null（调用方回落 legacy `start` 起新 GUI）。某步失败一律 throw——跟着
+ * `run` 的口径，不静默落到另起一个 GUI 进程。成功回新 pane id（新窗最大化
+ * 的收尾要用）。
  */
-export async function openInWezterm(dir: string): Promise<boolean> {
+export async function openInWezterm(dir: string): Promise<string | null> {
   const { muxes } = await weztermLiveMuxes();
-  if (muxes.length === 0) return false;
+  if (muxes.length === 0) return null;
   const chosen = muxes.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
-  await weztermSpawnPane(chosen.socket, dir, null, chosen.workspace);
-  return true;
+  return weztermSpawnPane(chosen.socket, dir, null, chosen.workspace);
 }
 
 /**
@@ -806,6 +807,32 @@ export async function weztermSpawnAndSend(
   ];
   const sent = await weztermCli(sendArgs, socket);
   if (!sent?.ok) throw new Error(weztermStepError(sendArgs, socket, sent));
+  if (!split && platform === 'win32') await maximizeWeztermWindow(socket, paneId);
   const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
   return { env: { [paneKey]: paneId, [socketKey]: socket } };
+}
+
+/**
+ * 新窗最大化收尾（win32）：`gui-startup` 的 maximize 钩子只在 GUI 冷启动时触发、
+ * 吃不到 `cli spawn --new-window`，只能事后按 HWND 补一刀。认窗 = 「OS 窗口标题 =
+ * 该窗口某个 pane 的标题」（与 win-raise 同一关系），等 pane 标题上报（shell 起
+ * 来要一两拍）→ 标题在该 GUI 进程的顶层窗口里唯一命中才 maximize；歧义/等不到
+ * 静默放弃（最大化是锦上添花，不值得为它猜窗）。
+ */
+export async function maximizeWeztermWindow(socket: string, paneId: string): Promise<void> {
+  try {
+    const guiPid = weztermGuiPidOf(socket);
+    if (guiPid === null) return;
+    let title: string | null = null;
+    for (let i = 0; i < 10 && !title; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      const panes = await weztermCli(['cli', 'list', '--format', 'json'], socket);
+      const found = parseWeztermPanes(panes?.ok ? panes.out : null).find((p) => String(p.paneId) === paneId);
+      title = found?.title ?? null;
+    }
+    if (!title) return;
+    await winMaximizeTerminalWindow({ guiPid, titles: [title] });
+  } catch {
+    // 尽力而为： maximize 失败不影响落子结果
+  }
 }

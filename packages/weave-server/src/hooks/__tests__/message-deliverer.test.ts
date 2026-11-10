@@ -3770,6 +3770,17 @@ describe('MessageDeliverer 裁决表', () => {
       await expect(deliverer.setEffort('sess-ghost', 'high')).resolves.toMatchObject({ ok: false, status: 404 });
       await expect(deliverer.setEffort(SESSION_ID, 'high')).resolves.toMatchObject({ ok: false, status: 409 });
     });
+
+    it('setEffort 不为确认框发作答键（弹框条件随宿主内部判定，方向预测会过发污染输入框）', async () => {
+      const { terminal, sendText, sendKeys } = paneFixture();
+      const deliverer = new MessageDeliverer(makeDeps({ terminal }));
+      pushEvent(SESSION_ID, 'Stop');
+
+      // 升档方向也只打命令本身：弹不弹框宿主定，'1' 过发会落输入框成字面字符
+      await deliverer.setEffort(SESSION_ID, 'max');
+      expect(sendText.mock.calls.at(-1)).toEqual(['pane-1', '/effort max']);
+      expect(sendKeys).not.toHaveBeenCalled();
+    });
   });
 
   // ---- 附件随 prompt（harness `attach` 对齐面）：投递文本现合成、回执放宽 ----

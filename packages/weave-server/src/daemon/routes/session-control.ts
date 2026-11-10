@@ -180,10 +180,13 @@ export async function handleSessionControlRoutes(
       return true;
     }
     // `/effort` 是内建命令：hook 域零事件（无 UPS / 无 Stop），「已切换」的真相只在
-    // 转录里这一拍才落——补两拍档位快照，让 slider 的「最后已知」与对话面板的
-    // 命令回显（/effort 行 + stdout）尽快跟上（不补则要等 15s 周期拍）。
-    setTimeout(() => deps.effortRefresher?.tick(), 1_500);
-    setTimeout(() => deps.effortRefresher?.tick(), 10_000);
+    // 转录 stdout 落地那一刻——**返显只认确认到的事实**（用户裁决：与真实情况尽量
+    // 一致，不做乐观帧）。忙会话命令排队、stdout 要等回合收尾才落，固定两拍可能
+    // 都落空——改成 1.5s 起步的短间隔重试窗（最多 20 拍 / 30s，命中即停由
+    // SnapshotRefresher 的指纹闸兜着：没读到新值不推帧）。
+    for (let i = 0; i < 20; i++) {
+      setTimeout(() => deps.effortRefresher?.tick(), 1_500 + i * 1_500);
+    }
     sendJson(res, 200, { ok: true, sessionId });
     return true;
   }

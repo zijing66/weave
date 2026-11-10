@@ -455,7 +455,7 @@ export function startDaemon(): void {
       return { efforts };
     },
     dataBus,
-    { key: 'sessionEffort', intervalMs: 15_000, shouldRun: () => dataBus.hasSubscribers() },
+    { key: 'sessionEffort', intervalMs: 5_000, shouldRun: () => dataBus.hasSubscribers() },
   );
   effortRefresher.start();
   // 会话活动（子 agent/shell/任务）：事件账已在 ingest 时就地更新，这里只兜「SubagentStop

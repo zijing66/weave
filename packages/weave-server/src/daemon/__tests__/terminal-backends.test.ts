@@ -928,4 +928,11 @@ describe('唤出终端 — 抬窗口脚本', () => {
     expect(decoded).toContain('foreach ($c in ($env:WEAVE_RAISE_TITLES');
     expect(decoded).toContain('if ($hit.Count -eq 1) { $pick = $hit[0]; break }');
   });
+
+  it('最大化收尾在 Raise 之后（SW_RESTORE 会压掉先行的 SW_MAXIMIZE，实测踩过）', () => {
+    const raiseAt = decoded.indexOf('$res = [WeaveRaise]::Raise');
+    const maxAt = decoded.indexOf('if ($env:WEAVE_RAISE_MAX -eq');
+    expect(raiseAt).toBeGreaterThan(-1);
+    expect(maxAt).toBeGreaterThan(raiseAt);
+  });
 });
