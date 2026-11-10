@@ -16,6 +16,7 @@ import {
   FileCode,
   Folder,
   Hash,
+  History,
   Loader2,
   Maximize,
   Minimize,
@@ -26,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
+import { loadFileHistory, pushFileHistory, type FileHistoryEntry } from '@/lib/file-history';
 import { Tooltip } from '@/components/ui/tooltip';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useActionFeedback } from '@/lib/action-feedback';
@@ -189,6 +191,11 @@ export function FileBrowserModal({
    *  窄屏「到底」态：点了文件，中栏整个切进文件预览（路径/渲染⇄原始/查找/
    *  跳行/正文满宽可用）；进目录或返回列表即清。桌面不用（右栏本就满宽）。 */
   const [viewing, setViewing] = useState<ProjectFileEntry | null>(null);
+  /** 最近打开的文件（到底态才算）：面板打开时惰性校验存在性。 */
+  const [history, setHistory] = useState<FileHistoryEntry[]>([]);
+  /** 历史下拉面板开着时逐条校验中的结果（null = 还没查完）。 */
+  const [historyAlive, setHistoryAlive] = useState<Set<string> | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   /** 预览里那条小工具条：查找 / 跳到行（同一格，不会同时开）。 */
   const [bar, setBar] = useState<'find' | 'line' | null>(null);
   const [find, setFind] = useState('');
@@ -261,6 +268,30 @@ export function FileBrowserModal({
   /** 数据面生效的 projectId/projectName：进项目跟 picked，首屏跟 focused。 */
   const activeProjectId = picked?.id ?? focused?.id ?? projectId;
   const activeProjectName = picked?.name ?? focused?.name ?? projectName;
+  /** 切项目（含弹窗初开）重读该项目的最近打开账；校验态一并作废。 */
+  useEffect(() => {
+    setHistory(activeProjectId ? loadFileHistory(activeProjectId) : []);
+    setHistoryAlive(null);
+  }, [activeProjectId]);
+  /** 面板开着才惰性校验：按各条目的父目录子树现查（一次拉 200 条够覆盖），
+   *  全部回来才亮出死活（查完前按钮都可点——不因校验在途卡住跳转）。 */
+  useEffect(() => {
+    if (!historyOpen || !activeProjectId || history.length === 0) return;
+    const ctrl = new AbortController();
+    const dirs = [...new Set(history.map((e) => (e.path.includes('/') ? e.path.slice(0, e.path.lastIndexOf('/')) : '')))];
+    void Promise.all(
+      dirs.map((d) =>
+        api
+          .listProjectFiles(activeProjectId, { dir: d, limit: 200, signal: ctrl.signal })
+          .then((r) => r.entries.filter((x) => x.kind === 'file').map((x) => x.path))
+          .catch(() => [] as string[]),
+      ),
+    ).then((lists) => {
+      if (ctrl.signal.aborted) return;
+      setHistoryAlive(new Set(lists.flat()));
+    });
+    return () => ctrl.abort();
+  }, [historyOpen, activeProjectId, history]);
   /** 路过每一层的账（层级递进本身）：父级列的数据源，键 = `projectId:path`。
    *  切项目清账——上一个项目的层对下一个项目没有意义。 */
   const visited = useRef(new Map<string, { entries: ProjectFileEntry[]; total: number }>());
@@ -717,7 +748,10 @@ export function FileBrowserModal({
       return;
     }
     // 文件 = 到底态：中栏整个切进预览、右栏摆元信息（窄屏与桌面同构）
-    if (entry.kind === 'file') setViewing(entry);
+    if (entry.kind === 'file') {
+      setViewing(entry);
+      if (activeProjectId) setHistory(pushFileHistory(activeProjectId, entry));
+    }
   };
 
   /** 全项目模式点一条项目：就地切进该项目（从根开始浏览）。
@@ -1567,6 +1601,32 @@ export function FileBrowserModal({
                 />
               </button>
             </Tooltip>
+            <div className="relative shrink-0">
+              <Tooltip label={t('tasks.fileHistoryTitle')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('tasks.fileHistoryTitle')}
+                  onClick={() => setHistoryOpen((v) => !v)}
+                  className={cn(
+                    'flex items-center rounded p-0.5 transition-colors',
+                    historyOpen ? 'text-neutral-200' : 'text-neutral-500 hover:text-neutral-200',
+                  )}
+                >
+                  <History className="h-3 w-3" />
+                </button>
+              </Tooltip>
+              <HistoryPanel
+                open={historyOpen}
+                history={history}
+                alive={historyAlive}
+                onClose={() => setHistoryOpen(false)}
+                onOpen={(e) => {
+                  setHistoryOpen(false);
+                  if (historyAlive?.has(e.path))
+                    enter({ path: e.path, name: e.name, kind: 'file' });
+                }}
+              />
+            </div>
           </div>
           {/* 搜索框：窄屏收成图标（点图标展开聚焦），桌面恒 224px 全宽。
               容器宽度随展开态切换——展开后 176px 收在头部 flex 里（标题 truncate 让位），
@@ -1827,5 +1887,81 @@ export function FileBrowserModal({
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** 「最近打开」下拉面板：头部 History 图标点开。打开那一拍对每条路径惰性
+ *  校验（按其父目录子树现查），失效条目置灰标「已失效」不可点——不自动剔除，
+ *  账还留着（目录改回来还能用）。 */
+function HistoryPanel({
+  open,
+  history,
+  alive,
+  onOpen,
+  onClose,
+}: {
+  open: boolean;
+  history: FileHistoryEntry[];
+  alive: Set<string> | null;
+  onOpen: (e: FileHistoryEntry) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement>(null);
+  // 点外面收面板（Esc 归弹窗自己的退层链管，面板不抢）。
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent): void => {
+      if (!(e.target as HTMLElement | null)?.closest?.('[data-history-panel]')) {
+        onClose();
+      }
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div
+      ref={ref}
+      data-history-panel
+      className="absolute right-0 top-full z-[60] mt-1 w-80 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
+    >
+      <p className="px-3 pb-1 pt-1 text-10 font-medium uppercase tracking-wide text-neutral-500">
+        {t('tasks.fileHistoryTitle')}
+      </p>
+      {history.length === 0 && (
+        <p className="px-3 py-3 text-11 text-neutral-600">{t('tasks.fileHistoryEmpty')}</p>
+      )}
+      {history.map((e) => {
+        const dead = alive !== null && !alive.has(e.path);
+        return (
+          <button
+            key={e.path}
+            type="button"
+            disabled={dead}
+            title={dead ? t('tasks.fileHistoryDead') : e.path}
+            onClick={() => onOpen(e)}
+            className={cn(
+              'flex w-full items-center gap-2 px-3 py-1.5 text-left text-11',
+              dead
+                ? 'text-neutral-600'
+                : 'text-neutral-300 hover:bg-edge/[0.06] hover:text-neutral-100',
+            )}
+          >
+            <FileCode className="h-3 w-3 shrink-0 text-neutral-500" />
+            <span className="min-w-0 flex-1 truncate">{e.name}</span>
+            <span className="shrink-0 text-10 text-neutral-600">
+              {new Date(e.at).toLocaleDateString()}
+            </span>
+            {dead && (
+              <span className="shrink-0 text-10 text-neutral-600">
+                {t('tasks.fileHistoryDead')}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }

@@ -233,6 +233,9 @@ export const tasksZh = {
   'tasks.fileVisibilityHint':
     '未跟踪的文件与 .git/info/exclude（个人排除）里的文件都在列表中；.gitignore 与全局排除的不在。',
   'tasks.fileCopyAbsPath': '复制绝对路径',
+  'tasks.fileHistoryTitle': '最近打开',
+  'tasks.fileHistoryEmpty': '还没有打开过文件',
+  'tasks.fileHistoryDead': '已失效',
   'tasks.fileBack': '返回列表',
   'tasks.fileFind': '查找（Ctrl+F）',
   'tasks.fileMatchCase': '区分大小写',
@@ -879,6 +882,9 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.fileVisibilityHint':
     'Untracked files and files in .git/info/exclude (personal excludes) are listed; .gitignore and global excludes are not.',
   'tasks.fileCopyAbsPath': 'Copy absolute path',
+  'tasks.fileHistoryTitle': 'Recent files',
+  'tasks.fileHistoryEmpty': 'No files opened yet',
+  'tasks.fileHistoryDead': 'Missing',
   'tasks.fileBack': 'Back to list',
   'tasks.fileFind': 'Find (Ctrl+F)',
   'tasks.fileMatchCase': 'Match case',
