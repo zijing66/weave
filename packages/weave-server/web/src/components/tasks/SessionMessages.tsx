@@ -836,7 +836,7 @@ export function SessionMessages({
             </button>
           ))}
           <span className="ml-auto text-10 text-neutral-600">
-            {t('tasks.convCount', { n: thread.length })}
+            {t('tasks.convCount', { n: convUnits(visible, selecting).filter((u) => u.kind !== 'rewind').length })}
           </span>
         </div>
 
@@ -869,6 +869,10 @@ export function SessionMessages({
           // 气泡区用满宽度，右边与控制行（模式/模型）对齐。
           className={cn(
             'relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain',
+            // overflow-anchor:none：向上翻页的滚动补偿由 scrollFix 手动做（Safari 无
+            // 原生锚定、必须保留）；Chrome 的原生滚动锚定会再调一次 scrollTop，
+            // 两套叠加 = 补两遍、视口跳走（用户报「加载历史后对话跳转异常」）。
+            '[overflow-anchor:none]',
             embedded ? 'rounded border border-edge/[0.1] bg-neutral-950 p-2' : 'pr-1',
           )}
           // 渲染块的高度上限按这个容器算（见 lib/visualization 的 CONV_SCROLLER_ATTR）
@@ -1861,11 +1865,13 @@ export function SessionMessages({
                   </Tooltip>
                 </div>
                 {draft === '' && (
-                  /* 触发符提示拼在文案尾部，窄屏一行摆不下会被 truncate 整段截掉
-                     ⇒ 移动端放开换行（两行装得进两行的输入框），桌面维持单行截断。
-                     top 要跨过上面的拖拽手柄（h-2/h-4 减 -mb-1 净占 4px/12px）再落
-                     到编辑器内边距位（py-1.5=6px）：桌面 10px、窄屏 18px。 */
-                  <span className="pointer-events-none absolute left-2 right-2 top-2.5 truncate text-xs text-neutral-600 max-lg:top-[18px] max-lg:whitespace-normal max-lg:break-words">
+                  /* 触发符提示拼在文案尾部，窄屏一行摆不下 ⇒ 移动端两行封顶换行
+                     （line-clamp 自带省略号，真机字号/缩放偏大需要第三行时不会
+                     被半行裁掉——truncate 的 overflow:hidden 是整行隐藏无示警），
+                     桌面维持单行截断。top 要跨过上面的拖拽手柄（h-2/h-4 减 -mb-1
+                     净占 4px/12px）再落到编辑器内边距位（py-1.5=6px）：
+                     桌面 10px、窄屏 18px。 */
+                  <span className="pointer-events-none absolute left-2 right-2 top-2.5 truncate text-xs text-neutral-600 max-lg:top-[18px] max-lg:line-clamp-2 max-lg:whitespace-normal max-lg:break-words">
                     {asking
                       ? t('tasks.msgBlockedByQuestion')
                       : t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}

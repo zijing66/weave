@@ -123,6 +123,19 @@ describe('claude 阻塞问答面', () => {
     expect(byMessage.options).toHaveLength(2);
   });
 
+  it('bypass 模式仍会弹危险命令确认：2 行 Yes/No（别再问行在 bypass 下无意义）', () => {
+    const bypass = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
+      toolName: 'Bash',
+      toolInput: { command: "cat > /tmp/x.js <<'EOF' … rm" },
+      message: 'Dangerous rm operation not ruled out',
+      permissionMode: 'bypassPermissions',
+    });
+    expect(bypass.header).toBe('Permission (bypass mode)');
+    expect(bypass.options.map((o) => o.keys)).toEqual([['1'], ['2']]);
+    expect(bypass.options[0]!.label).toBe('Yes');
+    expect(bypass.options[1]!.label).toBe('No');
+  });
+
   it('权限确认的正文：宿主原文 + 工具摘要各占一行', () => {
     const face = CLAUDE_BLOCKING_PROMPT.permissionQuestion({
       toolName: 'Bash',

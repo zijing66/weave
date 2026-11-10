@@ -207,7 +207,7 @@ describe('QuestionTracker 状态机', () => {
     expect(entry.questions[0]!.question).toContain('PowerShell');
   });
 
-  it('bypassPermissions 模式下 permission_prompt 恒为噪声（该模式不弹权限对话框）', () => {
+  it('bypassPermissions 的 permission_prompt 是真对话框（危险命令确认仍弹，2026-11-10 实测）→ 摆 2 行面', () => {
     const pre = (tool: string): NormalizedHookPayload =>
       payload({
         eventType: 'PreToolUse',
@@ -216,7 +216,10 @@ describe('QuestionTracker 状态机', () => {
       });
     feed(SESSION, pre('PowerShell'));
     feed(SESSION, notification('permission_prompt'));
-    expect(tracker.get(SESSION)).toBeNull();
+    const entry = tracker.get(SESSION);
+    expect(entry).not.toBeNull();
+    expect(entry!.kind).toBe('permission');
+    expect(entry!.questions[0]!.options.map((o) => o.keys)).toEqual([['1'], ['2']]);
 
     feed(SESSION, pre('AskUserQuestion'));
     feed(SESSION, notification('permission_prompt'));
@@ -295,7 +298,8 @@ describe('QuestionTracker 状态机', () => {
       'codex',
     );
     expect(tracker.get(CODEX)).not.toBeNull();
-    // 对话框了结必有下文：任意后续事件（PostToolUse）即清
+    // 对话框了结必有下文：codex 审批框阻塞回合，PostToolUse 即清（与 claude 的
+    // switch 不同——那个只阻塞输入框，回合事件不清）
     feed(CODEX, postTool('Bash'), 'codex');
     expect(tracker.get(CODEX)).toBeNull();
   });
@@ -436,7 +440,7 @@ describe('QuestionTracker 状态机', () => {
     expect(tracker.get(SESSION)).toBeNull();
   });
 
-  it('switch 态落定：PostModelSwitch / UserPromptSubmit / Stop 任意动静即清', () => {
+  it('switch 态落定：只认 PostModelSwitch / UserPromptSubmit（回合中间的工具/Stop 事件不清——切模型确认只阻塞输入框）', () => {
     feed(SESSION, switchPre());
     feed(SESSION, payload({ eventType: 'PostModelSwitch' }));
     expect(tracker.get(SESSION)).toBeNull();
@@ -445,9 +449,13 @@ describe('QuestionTracker 状态机', () => {
     feed(SESSION, payload({ eventType: 'UserPromptSubmit' }));
     expect(tracker.get(SESSION)).toBeNull();
 
+    // 回合仍在跑：工具收尾 / 回合收尾不说明框已了结（2026-11-10 用户实测：
+    // 下一条会话消息的事件一到面就被清、TUI 框还在）
     feed(SESSION, switchPre());
-    feed(SESSION, payload({ eventType: 'Stop' }));
-    expect(tracker.get(SESSION)).toBeNull();
+    feed(SESSION, payload({ eventType: 'PostToolUse', toolName: 'Bash', raw: {} }));
+    expect(tracker.get(SESSION)).not.toBeNull();
+    feed(SESSION, payload({ eventType: 'Stop', raw: {} }));
+    expect(tracker.get(SESSION)).not.toBeNull();
   });
 
   it('其他 Notification 不清 switch 态（idle 等与对话框无关）', () => {

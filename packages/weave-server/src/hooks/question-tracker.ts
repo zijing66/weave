@@ -37,6 +37,9 @@ export interface PendingQuestionEntry {
   harness: Harness;
   /** question = 阻塞工具（问答/计划确认）；permission = 权限确认；switch = 模型切换确认。 */
   kind: 'question' | 'permission' | 'switch';
+  /** switch 态的清除口径：true = 只阻塞输入框（回合事件不清，只认落定/UPS）。
+   *  缺省 = 阻塞回合，任意后续事件即清。 */
+  sticky?: boolean;
   questions: BlockingQuestion[];
   at: string;
 }
@@ -165,17 +168,36 @@ export class QuestionTracker {
         harness: this.harnessOf(input.source),
         kind: 'switch',
         questions: [face],
+        // 清除判据随框型走：claude 的切模型确认只阻塞输入框（回合继续跑、工具
+        // 事件照发，「任意事件清」会提前摘面——2026-11-10 用户实测），只认
+        // PostModelSwitch/UPS；其余事件弹框（codex 审批框）阻塞回合，任意
+        // 后续事件即了结。
+        sticky: payload.eventType === 'PreModelSwitch',
         at: new Date().toISOString(),
       };
       this.pending.set(sessionId, entry);
       if (!this.seeding && prev?.kind !== 'switch') this.deps.onPending?.(entry);
       return;
     }
-    // 其余事件：待答面落定的信号。permission / switch 态任何动静都说明对话框已了结
-    // （switch 的落定笔 = PostModelSwitch；答「No, go back」宿主不发事件，留待下文清）；
+    // 其余事件：待答面落定的信号。permission 态任何动静都说明对话框已了结
+    // （权限框阻塞整个回合，回合在走 = 框已不在）；switch 态**只阻塞输入框、
+    // 不阻塞 agent**——回合继续跑、工具事件照发，按「任意事件清」会提前摘面
+    // （2026-11-10 用户实测：切模型确认弹着、下一条会话消息的事件一到面就消失、
+    // TUI 框还在）⇒ 只认两个真信号：PostModelSwitch（答 Yes 落定；答 No 宿主
+    // 不发事件，留待下文清）与 UPS（输入框解锁 = 框已不在，用户已接管）。
     // question 态只认阻塞工具的 PostToolUse（答完）或用户接管（UPS/Stop）。
     const entry = this.pending.get(sessionId);
     if (!entry) return;
+    if (entry.kind === 'switch') {
+      const sticky = entry.sticky === true;
+      const settled =
+        payload.eventType === 'PostModelSwitch' || payload.eventType === 'UserPromptSubmit';
+      if (sticky ? settled : true) {
+        this.pending.delete(sessionId);
+        this.lastPreTool.delete(sessionId);
+      }
+      return;
+    }
     if (entry.kind !== 'question') {
       this.pending.delete(sessionId);
       this.lastPreTool.delete(sessionId);

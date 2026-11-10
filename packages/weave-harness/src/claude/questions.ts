@@ -124,6 +124,15 @@ const AUTO_PERMISSION_OPTIONS: readonly BlockingQuestionOption[] = [
   { keys: ['1'], label: 'Yes, and tell Claude what to do next' },
   { keys: ['2'], label: 'No' },
 ];
+/**
+ * bypassPermissions 下仍会弹的确认框（危险命令确认等）也是 2 行 Yes/No——
+ * 「don't ask again」行在 bypass 下无意义（2026-11-10 实测：bypass 会话弹
+ * 「Dangerous rm operation not ruled out」确认框，weave 按静默名单吞面导致无返显）。
+ */
+const BYPASS_PERMISSION_OPTIONS: readonly BlockingQuestionOption[] = [
+  { keys: ['1'], label: 'Yes' },
+  { keys: ['2'], label: 'No' },
+];
 
 /** 解析不出来的兜底问题面：看得见阻塞、没有远程作答（诚实缺席）。 */
 const OPAQUE_QUESTION: BlockingQuestion = {
@@ -299,25 +308,32 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
   plan: CLAUDE_PLAN,
   blockingTools: HARNESS_LIFECYCLE.claude.questionTools,
   permissionNotificationType: 'permission_prompt',
-  // 宿主自身模式表（`claude --help` 的 permission mode 说明）里只有这两个
-  // 结构上不弹权限框：bypassPermissions = 跳过全部检查；dontAsk = 不提示、
-  // 未预批准直接拒。acceptEdits 只自动放行文件编辑（命令仍弹，实测有真对话框）、
-  // auto 由分类器裁决但仍可能落到用户、plan 的计划批准就是从这来的——都不进名单。
-  silentPermissionModes: ['bypassPermissions', 'dontAsk'],
+  // dontAsk = 不提示、未预批准直接拒，真不弹框。bypassPermissions **不进名单**：
+  // 普通审批被跳过，但危险命令确认（如「Dangerous rm operation not ruled out」）
+  // 仍会弹、仍阻塞（2026-11-10 实测）——Notification 真到达就说明宿主在等人。
+  silentPermissionModes: ['dontAsk'],
   permissionQuestion(ctx) {
     const detail = ctx.toolName
       ? `${ctx.toolName}${ctx.toolInput ? ` ${previewOf(ctx.toolInput)}` : ''}`
       : '';
     // 形态判据：auto 模式把人叫起来的一定是分类器升级（2 行）；原文提到 classifier
-    // 也算。认不出来按经典 3 行走——那是不带 auto 时的默认对话框。
+    // 也算。bypass 下到达的只有危险命令类确认（2 行 Yes/No）。认不出来按经典
+    // 3 行走——那是不带 auto 时的默认对话框。
     const autoFace = ctx.permissionMode === 'auto' || /classifier/i.test(ctx.message ?? '');
+    const bypassFace = ctx.permissionMode === 'bypassPermissions';
     const head = ctx.message?.trim() || 'Claude needs your permission';
     return {
       key: 'permission:confirm',
-      header: autoFace ? 'Permission (auto mode)' : 'Permission',
+      header: bypassFace ? 'Permission (bypass mode)' : autoFace ? 'Permission (auto mode)' : 'Permission',
       question: detail ? `${head}\n${detail}` : head,
       multiSelect: false,
-      options: [...(autoFace ? AUTO_PERMISSION_OPTIONS : CLASSIC_PERMISSION_OPTIONS)],
+      options: [
+        ...(bypassFace
+          ? BYPASS_PERMISSION_OPTIONS
+          : autoFace
+            ? AUTO_PERMISSION_OPTIONS
+            : CLASSIC_PERMISSION_OPTIONS),
+      ],
     };
   },
   parseQuestions(toolName, toolInput) {

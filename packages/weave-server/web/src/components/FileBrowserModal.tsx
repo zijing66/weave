@@ -355,6 +355,10 @@ export function FileBrowserModal({
   useEffect(() => {
     if (!picked && !focused && projects) return; // 全项目第一屏还没聚焦：无数据面可拉
     const timer = setTimeout(() => {
+      // 同参跳过：父组件重渲会换 projects 引用 → 防抖 effect 同参重跑，不闸的话
+      // 同一份数据反复走 load、loading 蒙版跟着反复闪（用户看到的「频繁 loading」）。
+      const key = `${activeProjectId}:${dir}:${query.trim()}`;
+      if (lastLoadKeyRef.current === key) return;
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
@@ -378,7 +382,7 @@ export function FileBrowserModal({
       });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [query, dir, load, activeProjectId, picked, projects]);
+  }, [query, dir, load, activeProjectId]);
 
   useEffect(() => () => ctrlRef.current?.abort(), []);
 
@@ -1112,12 +1116,6 @@ export function FileBrowserModal({
       }}
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
     >
-      {loading && entries.length === 0 && (
-        <li className="flex items-center gap-2 px-3 py-6 text-11 text-neutral-500">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          {t('tasks.fileLoading')}
-        </li>
-      )}
       {!loading && entries.length === 0 && (
         <li className="px-3 py-6 text-11 text-neutral-500">
           {error ? t('tasks.fileLoadFailed', { error }) : t('tasks.fileEmpty')}
@@ -1214,6 +1212,19 @@ export function FileBrowserModal({
         );
       })}
     </ul>
+  );
+
+  // 中栏（目录列表）加载蒙版：半透明遮罩盖住整栏 + 居中 spinner——旧内容透出来
+  // 保持上下文，但整栏不可点（点行会把旧清单的选中当新目录的进入，落点错乱）。
+  const listPane = (
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {list}
+      {loading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-neutral-950/50">
+          <Loader2 className="h-4 w-4 animate-spin text-neutral-400" />
+        </div>
+      )}
+    </div>
   );
 
   const previewPane = (
@@ -1746,7 +1757,7 @@ export function FileBrowserModal({
                   )
                 }
                 parentRootLabel={t('app.openFileBrowser')}
-                middleCol={viewing ? previewPane : list}
+                middleCol={viewing ? previewPane : listPane}
                 previewCol={viewing ? mobileMetaPane : previewPane}
                 leftW={leftW}
                 onLeftResize={(d) => setLeftW(leftW + d)}
@@ -1795,7 +1806,7 @@ export function FileBrowserModal({
                   {viewing ? (
                     previewPane
                   ) : picked ? (
-                    list
+                    listPane
                   ) : (
                     projectList
                   )}

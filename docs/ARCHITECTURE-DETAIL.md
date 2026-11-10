@@ -508,7 +508,7 @@ Web Push 细节：
 
 - 阻塞工具清单。
 - 权限 Notification 类型。
-- 静默权限模式名单：该模式下宿主结构上不弹对话框，其 permission_prompt 恒为噪声；名单是「宿主是否可能问人」的事实，只放结构上不可能弹框的模式；模式名是 harness 知识，不得散写进 server。
+- 静默权限模式名单：该模式下宿主结构上不弹对话框，其 permission_prompt 恒为噪声；名单是「宿主是否可能问人」的事实，只放结构上不可能弹框的模式（claude = 只剩 `dontAsk`——`bypassPermissions` 会弹危险命令确认，见 DECISIONS 2026-11-10，permission_prompt 真到达即摆 2 行 Yes/No 面）；模式名是 harness 知识，不得散写进 server。
 - 事件弹框判据（`eventQuestion`）：不是工具、也非权限提醒的对话框（claude 的「Switch model?」、codex 的审批框）——事件到达且**对话框确实要弹**才给问题面；弹不弹是 harness 知识，猜错即幽灵问题。claude 的采集面 = 可裁剪开关 `hooks.preModelSwitch`（Pre 置位 / Post 落定成对登记，存量项目须重跑 `weave init`）；载荷 = 归一化视图（`toolName`/`toolInput` 已提升顶层——raw 里的同名键被 `compactRaw` 折叠成 `<$.…>` 引用，读工具面必须走顶层）。
 - 问题面解析：AskUserQuestion 的 toolInput 全量解析；ExitPlanMode toolInput 恒空 → 合成固定两选项（`1` = 批准并切会话默认模式、`2` = 拒绝，文案取宿主模态框原文）；解析不出 → OPAQUE 兜底「看得见阻塞、无远程作答面」。
 - **预览形态** = 单选 && 任一选项带 preview（多选即使带预览也落旧形态）——每选项归一化出 `preview` 文案（超 2000 字符或含不可见/双向字符 → withhold 文案、无可见内容 → 「No preview available」、缺省 → null 且不计入判据）+ `previewMode`。
@@ -532,7 +532,7 @@ codex 的审批对话框本身是 transient EventMsg——不落 rollout、不�
 内存态，挂 `handleIngestedRecords`——hookBus 帧不带 toolName，挂点必须在解析后的 payload 上。
 
 - 置位：PreToolUse(阻塞工具) / Notification(permission_prompt) / 事件弹框（`spec.eventQuestion` 认出来的，kind = `switch`）。
-- 清除：PostToolUse(同名) / UserPromptSubmit / Stop（question 态）；任意非 Notification 事件（permission 与 switch 态；switch 的落定笔 = PostModelSwitch，答「No, go back」宿主不发事件、留待下文清）。
+- 清除：PostToolUse(同名) / UserPromptSubmit / Stop（question 态）；任意非 Notification 事件（permission 态；switch 态分两档 = `sticky`：claude 的切模型确认只阻塞输入框、回合照跑，只认 PostModelSwitch（答 Yes 落定）与 UPS（输入框解锁），工具/Stop 事件不清——2026-11-10 实测提前摘面后改；codex 审批框等阻塞回合的照旧任意事件清。答「No, go back」宿主不发事件、留待下文清）。
 - **已中断也是一条清除**：用户手动了结掉那个对话框之后，ESC 打断多半连 Stop 都不发、没有事件可等 ⇒ 摘除在**读路惰性**做，`snapshot` / `get` 顺手删掉，不另起定时器。
 - 权限确认不带工具面，由 tracker 补最近 PreToolUse 上下文。
 - **置位前的噪声闸**：静默权限模式下的 permission_prompt、以及阻塞工具自己 PreToolUse 后 ~6s 补发的那条（claude 对 AskUserQuestion/ExitPlanMode 恒发，归属 = lastPreTool）一律丢；真对话框归属待批的非阻塞工具、照常置位。

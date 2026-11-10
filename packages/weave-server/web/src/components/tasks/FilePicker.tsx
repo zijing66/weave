@@ -567,6 +567,10 @@ export function FilePicker({
   // 的子树（dir 照传，服务端按它收窄）——换目录时搜索结果跟着换范围。
   useEffect(() => {
     const timer = setTimeout(() => {
+      // 同参跳过（同 FileBrowserModal）：父组件重渲换引用导致 effect 同参重跑，
+      // 不闸会反复走 load、loading 蒙版跟着闪。
+      const key = `${projectId}:${dir}:${query.trim()}`;
+      if (lastLoadKeyRef.current === key) return;
       ctrlRef.current?.abort();
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
@@ -1030,12 +1034,6 @@ export function FilePicker({
       }}
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1"
     >
-      {loading && entries.length === 0 && (
-        <li className="flex items-center gap-2 px-3 py-6 text-11 text-neutral-500">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          {t('tasks.fileLoading')}
-        </li>
-      )}
       {!loading && entries.length === 0 && (
         <li className="px-3 py-6 text-11 text-neutral-500">
           {error ? t('tasks.fileLoadFailed', { error }) : t('tasks.fileEmpty')}
@@ -1144,6 +1142,18 @@ export function FilePicker({
         );
       })}
     </ul>
+  );
+
+  // 中栏（目录列表）加载蒙版（同 FileBrowserModal）：旧内容透出、整栏不可点。
+  const listPane = (
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {list}
+      {loading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-neutral-950/50">
+          <Loader2 className="h-4 w-4 animate-spin text-neutral-400" />
+        </div>
+      )}
+    </div>
   );
 
   const previewPane = (
@@ -1490,7 +1500,7 @@ export function FilePicker({
                   ) : null
                 }
                 parentRootLabel={rootLabel}
-                middleCol={list}
+                middleCol={listPane}
                 previewCol={previewPane}
                 leftW={leftW}
                 onLeftResize={(d) => setLeftW(leftW + d)}
@@ -1519,7 +1529,7 @@ export function FilePicker({
                     list
                   )}
                 </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">{listPane}</div>
                 {previewPane}
               </MobileFadePanels>
             )}
