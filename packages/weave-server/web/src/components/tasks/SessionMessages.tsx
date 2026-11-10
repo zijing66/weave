@@ -258,6 +258,8 @@ export function SessionMessages({
     since: null,
     until: null,
   });
+  /** token 用量弹窗的轮窗口（与改动汇总同一条 `editsWindowOf` 轮界；null = 无锚，弹窗回落灰态）。 */
+  const [usageRange, setUsageRange] = useState<{ since: string | null; until: string | null } | null>(null);
   /** 队列气泡里展开看全文的那一行（多条时每行一句，点开才完整）。 */
   const [openQueued, setOpenQueued] = useState<string | null>(null);
   const isDesktop = useMediaQuery('(min-width: 1024px)');
@@ -2289,6 +2291,7 @@ export function SessionMessages({
                     type="button"
                     onClick={() => {
                       setMenu(null);
+                      setUsageRange(editsWindowOf(thread, menu.key));
                       setUsageOpen(true);
                     }}
                     className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
@@ -2424,8 +2427,14 @@ export function SessionMessages({
           onClose={() => setEditsOpen(false)}
         />
 
-        {/* 会话用量：各轮 token 计量（取数归 harness 能力面，纯只读） */}
-        <SessionUsageDialog sessionId={sessionId} open={usageOpen} onClose={() => setUsageOpen(false)} />
+        {/* 会话用量：各轮 token 计量（取数归 harness 能力面，纯只读）；
+            默认只看右键那一轮（与改动汇总同一条轮界），「全部」在弹窗里切。 */}
+        <SessionUsageDialog
+          sessionId={sessionId}
+          open={usageOpen}
+          onClose={() => setUsageOpen(false)}
+          scope={usageRange}
+        />
 
         {/* 扩展执行日志：生效绑定（叠加）+ 逐拍记录；SSE extension.execution 驱动刷新 */}
         <SessionExtensionExecutionsDialog

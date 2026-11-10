@@ -21,15 +21,20 @@ export function SessionUsageDialog({
   sessionId,
   open,
   onClose,
+  scope,
 }: {
   sessionId: string;
   open: boolean;
   onClose: () => void;
+  /** 右键锚的轮窗口（与改动汇总同一条 `editsWindowOf` 判据）；null = 无锚，只摆全部。 */
+  scope?: { since: string | null; until: string | null } | null;
 }) {
   const t = useT();
   const [data, setData] = useState<SessionUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  /** 默认只这一轮（用户裁决）；无锚（scope null / 双 null）时只有全部可看。 */
+  const [mode, setMode] = useState<'turn' | 'all'>('turn');
 
   useEffect(() => {
     if (!open) return;
@@ -37,6 +42,7 @@ export function SessionUsageDialog({
     setLoading(true);
     setError(null);
     setData(null);
+    setMode('turn');
     api
       .sessionUsage(sessionId)
       .then((r) => live && setData(r))
@@ -53,7 +59,19 @@ export function SessionUsageDialog({
     return true;
   });
 
-  const turns = data?.usage ?? [];
+  const allTurns = data?.usage ?? [];
+  // 轮窗口（语义 (since, until]，与改动汇总同口径）：无锚（null）或窗口解不出
+  // 边界（双 null = 退化为全部）时禁掉「这一轮」，不猜。
+  const scopedTurns = useMemo(() => {
+    if (!scope || (scope.since === null && scope.until === null)) return null;
+    return allTurns.filter((u) => {
+      if (!u.at) return false;
+      if (scope.since !== null && u.at <= scope.since) return false;
+      if (scope.until !== null && u.at > scope.until) return false;
+      return true;
+    });
+  }, [allTurns, scope]);
+  const turns = mode === 'turn' && scopedTurns ? scopedTurns : allTurns;
 
   const total = useMemo(
     () =>
@@ -93,7 +111,32 @@ export function SessionUsageDialog({
               {t('tasks.usageOut', { n: compact(total.output) })}
             </span>
           )}
-          <Tooltip label={t('common.close')} className="ml-auto">
+          {/* 这一轮 / 全部（默认这一轮，用户裁决；无锚时禁——灰态比瞎猜诚实）。
+              形态对齐改动汇总弹窗的切换组：ml-auto 居右、edge 底色。 */}
+          {(turns.length > 0 || scopedTurns !== null) && (
+            <div className="ml-auto flex items-center rounded-md border border-edge/[0.08] p-0.5 text-11">
+              {(['turn', 'all'] as const).map((m) => {
+                const disabled = m === 'turn' && scopedTurns === null;
+                const active = mode === m && !disabled;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setMode(m)}
+                    className={
+                      active
+                        ? 'rounded px-2 py-0.5 bg-edge/[0.12] text-neutral-100'
+                        : 'rounded px-2 py-0.5 text-neutral-400 hover:text-neutral-200'
+                    }
+                  >
+                    {m === 'turn' ? t('tasks.usageScopeTurn') : t('tasks.usageScopeAll')}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <Tooltip label={t('common.close')} className={turns.length > 0 || scopedTurns !== null ? undefined : 'ml-auto'}>
             <button
               onClick={onClose}
               className="p-1 rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
