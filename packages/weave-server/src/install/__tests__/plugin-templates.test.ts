@@ -114,8 +114,22 @@ describe('更新报告 / 同步面接入', () => {
         new FingerprintCache(),
       );
       expect(counts).toEqual({
-        1: { available: 2, needsInit: false },
-        2: { available: 0, needsInit: false },
+        1: {
+          available: 2,
+          needsInit: false,
+          initVersionBehind: false,
+          cats: { skills: 0, mcp: 0, files: 0, templates: 2, init: 0 },
+          initVersion: null,
+          weaveVersion: expect.any(String),
+        },
+        2: {
+          available: 0,
+          needsInit: false,
+          initVersionBehind: false,
+          cats: { skills: 0, mcp: 0, files: 0, templates: 0, init: 0 },
+          initVersion: null,
+          weaveVersion: expect.any(String),
+        },
       });
     } finally {
       rmSync(empty, { recursive: true, force: true });

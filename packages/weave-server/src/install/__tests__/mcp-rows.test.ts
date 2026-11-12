@@ -27,6 +27,16 @@ beforeAll(() => {
     join(projectDir, '.claude', 'settings.json'),
     JSON.stringify({ disabledMcpjsonServers: ['denied'] }),
   );
+  writeFileSync(
+    join(fakeHome, '.claude.json'),
+    JSON.stringify({
+      mcpServers: { userLevel: { command: 'u' } },
+      projects: {
+        // 键形 = 项目路径 posix 正斜杠（宿主写法）
+        [projectDir.replace(/\\/g, '/')]: { mcpServers: { localOne: { command: 'l' } } },
+      },
+    }),
+  );
   mkdirSync(join(fakeHome, '.codex'), { recursive: true });
   writeFileSync(
     join(fakeHome, '.codex', 'config.toml'),
@@ -53,13 +63,20 @@ describe('readMcpRows — 工具行装配（模型协议 ToolStateRow）', () =>
     // claude 项目面：.mcp.json
     const alpha = pick('claude', 'alpha');
     expect(alpha?.scope).toBe('project');
-    expect(alpha?.installScopes).toEqual(['project', 'user']);
+    expect(alpha?.installScopes).toEqual(['project', 'local', 'user']);
     expect(alpha?.detail).toEqual({ command: 'npx' });
 
-    // claude user 面：~/.claude.json 不存在 → 只剩内置目录（四枚内置服务）
-    expect(
-      rows.filter((r) => r.harness === 'claude' && r.scope === 'user').map((r) => r.key),
-    ).toEqual(['weave-orchestration', 'weave-sessions', 'weave-projects', 'weave-events']);
+    // claude user 面：~/.claude.json 顶层 mcpServers
+    const userLevel = pick('claude', 'userLevel');
+    expect(userLevel?.scope).toBe('user');
+    expect(userLevel?.detail).toEqual({ command: 'u' });
+
+    // claude local 面：~/.claude.json projects 段（宿主 `claude mcp add` 落点）
+    const localOne = pick('claude', 'localOne');
+    expect(localOne?.scope).toBe('local');
+    expect(localOne?.enable).toBeNull();
+    expect(localOne?.effective).toBe(true);
+    expect(localOne?.detail).toEqual({ command: 'l' });
 
     // codex user 面：config.toml
     const zeta = pick('codex', 'zeta');
@@ -80,19 +97,9 @@ describe('readMcpRows — 工具行装配（模型协议 ToolStateRow）', () =>
     expect(pick('denied').effective).toBe(false);
   });
 
-  it('内置目录：未配置时以「未安装」行出现（不自动写用户配置）', async () => {
+  it('内置目录：未配置不出现占位行（不自动写用户配置，存量已装才带 builtin 标记）', async () => {
     const rows = await readMcpRows(projectDir);
-    const builtin = rows.filter((r) => r.key === 'weave-orchestration');
-    expect(builtin.length).toBeGreaterThan(0);
-    for (const row of builtin) {
-      expect(row.builtin).toBe(true);
-      expect(row.install).toBe('absent');
-      expect(row.effective).toBe(false);
-      expect(row.detail).toMatchObject({ url: expect.stringContaining('/mcp') });
-    }
-    // 只允许 user 档（配置里带本机令牌，项目档会跟着仓库走）
-    expect(builtin.map((r) => r.scope)).toEqual(['user']);
-    expect(builtin[0]!.installScopes).toEqual(['user']);
+    expect(rows.filter((r) => r.key.startsWith('weave-'))).toEqual([]);
   });
 
   it('user 面行无启停语义（enable = null，effective 恒 true）', async () => {

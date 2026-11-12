@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { checkHarness, isHarness, type Harness } from '@weavecode/core';
+import { checkHarness, isHarness, type Harness, type ToolScope } from '@weavecode/core';
 import type { WeaveServerDeps } from '../server.js';
 import { readBody, sendJson } from '../http.js';
 import { FingerprintCache } from '../../install/fingerprint.js';
@@ -34,7 +34,8 @@ import { applyUpdate, syncAll } from '../../install/apply-update.js';
 import { buildLibraryIndex } from '../../install/library-index.js';
 import { detectUpdates } from '../../install/updates.js';
 import { detectPluginTemplateUpdates } from '../../install/plugin-templates.js';
-import { detectInitFileUpdates, needsInit } from '../../install/init-files.js';
+import { detectInitFileUpdates, detectInitVersionLag, needsInit } from '../../install/init-files.js';
+import { WEAVE_VERSION } from '../../version.js';
 import { getLibraryScan, invalidateScan } from '../../install/scan-cache.js';
 import { installCapabilities } from '../../install/capabilities.js';
 import { BUILTIN_MCP_SERVERS } from '../../install/builtin-mcp.js';
@@ -58,7 +59,7 @@ interface InstallBody {
   sourceFile?: string;
   mcpConfig?: McpServerConfig;
   /** 'project' (default) writes into the project; 'user' writes ~/.claude / ~/.codex. */
-  scope?: 'project' | 'user';
+  scope?: ToolScope;
   /** Which coding agent's surface to target (default: claude). */
   agent?: InstallAgent;
   /** plugin 类别：无 manifest 包合成最小 plugin.json 用（版本/描述）。 */
@@ -514,6 +515,10 @@ export async function handleMarketRoutes(
           sendJson(res, 400, { error: 'Missing "name" or "sourceDir"' });
           return true;
         }
+        if (body.scope === 'local') {
+          sendJson(res, 400, { error: 'Skills have no "local" scope — use "project" or "user"' });
+          return true;
+        }
         const agent = body.agent ?? 'claude';
         const target =
           body.scope === 'user'
@@ -523,6 +528,10 @@ export async function handleMarketRoutes(
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name || !body.sourceFile) {
           sendJson(res, 400, { error: 'Missing "name" or "sourceFile"' });
+          return true;
+        }
+        if (body.scope === 'local') {
+          sendJson(res, 400, { error: 'File assets have no "local" scope — use "project" or "user"' });
           return true;
         }
         const agent = body.agent ?? 'claude';
@@ -658,7 +667,7 @@ export async function handleMarketRoutes(
     let body: {
       category?: string;
       name?: string;
-      scope?: 'project' | 'user';
+      scope?: ToolScope;
       agent?: Harness;
     };
     try {
@@ -684,6 +693,10 @@ export async function handleMarketRoutes(
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name) {
           sendJson(res, 400, { error: 'Missing "name"' });
+          return true;
+        }
+        if (body.scope === 'local') {
+          sendJson(res, 400, { error: 'File assets have no "local" scope — use "project" or "user"' });
           return true;
         }
         await uninstallFileAsset(
@@ -993,6 +1006,7 @@ export async function handleMarketRoutes(
       // ——无库时照样报漂移（init 那半边是「待 init」提醒的唯一数据源）。
       const pluginTemplates = await detectPluginTemplateUpdates(project.path, cache);
       const initFiles = await detectInitFileUpdates(project.path);
+      const versionLag = await detectInitVersionLag(project.path);
       sendJson(res, 200, {
         skills: [],
         mcp: [],
@@ -1003,6 +1017,9 @@ export async function handleMarketRoutes(
           pluginTemplates.filter((t) => t.outdated).length
           + initFiles.filter((f) => f.outdated && f.syncClass === 'auto').length,
         needsInit: needsInit(initFiles),
+        initVersionBehind: versionLag.behind,
+        initVersion: versionLag.initVersion,
+        weaveVersion: WEAVE_VERSION,
       });
       return true;
     }
@@ -1026,7 +1043,7 @@ export async function handleMarketRoutes(
     let body: {
       category?: string;
       name?: string;
-      scope?: 'project' | 'user';
+      scope?: ToolScope;
       agent?: Harness;
     };
     try {
@@ -1042,6 +1059,10 @@ export async function handleMarketRoutes(
     const validCategories = ['skill', 'mcp', 'command', 'agent', 'workflow', 'rule', 'output-style'];
     if (!validCategories.includes(body.category)) {
       sendJson(res, 400, { error: 'Invalid "category"' });
+      return true;
+    }
+    if (body.scope === 'local' && body.category !== 'mcp') {
+      sendJson(res, 400, { error: 'Only MCP supports the "local" scope' });
       return true;
     }
     try {

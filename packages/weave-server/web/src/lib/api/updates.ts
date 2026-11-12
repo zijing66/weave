@@ -60,12 +60,34 @@ export interface UpdateReport {
   available: number;
   /** 会进 git 的 init 文件有漂移 → 提醒用户去终端跑 `weave init`（不代写）。 */
   needsInit: boolean;
+  /** init 落档版本落后于当前 weave → 提醒重跑 `weave init`（与文件漂移互补的口径）。 */
+  initVersionBehind: boolean;
+  /** `.weave/config.yaml` 的 `initVersion`（展示用；null = 无版本戳的极旧 init）。 */
+  initVersion: string | null;
+  /** 当前 weave 版本（展示用，行文案 `旧 → 新`）。 */
+  weaveVersion: string;
 }
 
-/** 项目行推送面的一行摘要（与 UpdateReport 的同名两字同源）。 */
+/** 过期项的分类计数（同步按钮 tooltip 的红字明细用）。 */
+export interface ProjectUpdateCats {
+  skills: number;
+  mcp: number;
+  files: number;
+  templates: number;
+  init: number;
+}
+
+/** 项目行推送面的一行摘要（与 UpdateReport 的同名字段同源）。 */
 export interface ProjectUpdateSummary {
   available: number;
   needsInit: boolean;
+  initVersionBehind: boolean;
+  /** 分类计数（hover 懒拉 / 推送帧都带；旧帧容缺）。 */
+  cats?: ProjectUpdateCats;
+  /** `.weave/config.yaml` 的 `initVersion`（tooltip 展示；null = 无版本戳的极旧 init）。 */
+  initVersion?: string | null;
+  /** 当前 weave 版本（tooltip 展示）。 */
+  weaveVersion?: string;
 }
 
 /** Where a global skill was resolved from (grouping key in the global view).
@@ -105,7 +127,7 @@ export type PluginRow = ToolStateRow;
 
 export type PluginRuntime = Harness;
 
-export type AssetScope = 'project' | 'user';
+export type AssetScope = 'project' | 'local' | 'user';
 
 export const updatesApi = {
   // --- updates / sync / global scope ---

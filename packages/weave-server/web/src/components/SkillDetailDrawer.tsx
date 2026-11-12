@@ -25,7 +25,7 @@ import {
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, tildePath } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { splitFrontmatter } from '@/lib/markdown';
 import { subscribeFrame } from '@/lib/sse';
@@ -102,6 +102,7 @@ function FileTreeNode({
   onSelect,
   collapsed,
   onToggle,
+  home,
 }: {
   node: TreeNode;
   depth: number;
@@ -109,13 +110,15 @@ function FileTreeNode({
   onSelect: (f: AssetEntry) => void;
   collapsed: Set<string>;
   onToggle: (path: string) => void;
+  /** 用户家目录：tooltip 的 absPath 显示成 `~/…` 形；null = 原样。 */
+  home: string | null;
 }) {
   const pad = 8 + depth * 12;
   if (node.type === 'file') {
     const active = selectedRel === node.file.relPath;
     const isMd = node.file.relPath.endsWith('/SKILL.md');
     return (
-      <Tooltip label={node.file.absPath} className="w-full">
+      <Tooltip label={tildePath(node.file.absPath, home)} className="w-full">
         <button
           onClick={() => onSelect(node.file)}
           style={{ paddingLeft: pad }}
@@ -162,6 +165,7 @@ function FileTreeNode({
             onSelect={onSelect}
             collapsed={collapsed}
             onToggle={onToggle}
+            home={home}
           />
         ))}
     </div>
@@ -186,10 +190,13 @@ export function SkillDetailDrawer({
   custom,
   onUninstall,
   onClose,
+  home,
 }: {
   projectId: number;
   name: string;
   scope: AssetScope;
+  /** 用户家目录：文件树 tooltip 的 `~/…` 显示形；null = 原样。 */
+  home: string | null;
   /** Global-skill origin (required to fetch global files). */
   source?: GlobalSkillSource;
   /** `plugin@marketplace` for plugin-sourced global skills. */
@@ -414,6 +421,7 @@ export function SkillDetailDrawer({
               onSelect={setSelected}
               collapsed={collapsed}
               onToggle={toggle}
+              home={home}
             />
           ))}
         </aside>

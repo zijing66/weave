@@ -34,6 +34,8 @@ const SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
   get_run: { id: 1 },
   cancel_run: { id: 1 },
   list_sessions: {},
+  get_decision_model: {},
+  judge_condition: { condition: 'does the output mention deployment?' },
 };
 
 const SESSION_SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
@@ -47,13 +49,21 @@ const SESSION_SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
   watch_session: { sessionId: 's1', on: ['idle'] },
   get_session_edits: { sessionId: 's1' },
   get_session_activity: { sessionId: 's1' },
+  set_model: { sessionId: 's1', model: 'sonnet' },
+  set_effort: { sessionId: 's1', level: 'high' },
+  resend_message: { sessionId: 's1', messageId: 'm-1' },
+  dismiss_message: { sessionId: 's1', messageId: 'm-1' },
+  send_side_question: { sessionId: 's1', question: 'hi' },
+  list_side_questions: { sessionId: 's1' },
+  get_plan: { sessionId: 's1' },
+  list_commands: { sessionId: 's1' },
 };
 
 describe('MCP 注册表', () => {
   it('/mcp 裸路径指向编排（存量已装配置不断）', () => {
     const def = mcpServerForPath('/mcp');
     expect(def?.name).toBe('weave-orchestration');
-    expect(def?.tools.length).toBe(10);
+    expect(def?.tools.length).toBe(12);
     expect(MCP_SERVERS.map((s) => s.path)).toContain('/mcp');
   });
 
@@ -61,7 +71,7 @@ describe('MCP 注册表', () => {
     expect(mcpServerForPath('/mcp/nope')).toBeNull();
   });
 
-  it('/mcp/sessions 指向 weave-sessions；工具面 = 10 个、各自带 outputSchema', () => {
+  it('/mcp/sessions 指向 weave-sessions；工具面全量、各自带 outputSchema', () => {
     const def = mcpServerForPath('/mcp/sessions');
     expect(def?.name).toBe('weave-sessions');
     expect(def?.tools).toHaveLength(SESSIONS_TOOLS.length);
@@ -76,13 +86,21 @@ describe('MCP 注册表', () => {
       'watch_session',
       'get_session_edits',
       'get_session_activity',
+      'set_model',
+      'set_effort',
+      'resend_message',
+      'dismiss_message',
+      'send_side_question',
+      'list_side_questions',
+      'get_plan',
+      'list_commands',
     ]);
     for (const tool of SESSIONS_TOOLS) {
       expect(tool.outputSchema.type, `${tool.name} outputSchema`).toBeTruthy();
     }
   });
 
-  it('weave-sessions e2e：tools/list 出 10 工具、list_sessions/get_session 走通真返回', { timeout: 30_000 }, async () => {
+  it('weave-sessions e2e：tools/list 出全量工具、list_sessions/get_session 走通真返回', { timeout: 30_000 }, async () => {
     const { openDatabase } = await import('../../../db/db.js');
     const { ProjectRepository } = await import('../../../repositories/projects.js');
     const { createWeaveServer } = await import('../../../daemon/server.js');
@@ -119,7 +137,7 @@ describe('MCP 注册表', () => {
       const listed = await call('tools/list');
       expect(listed.status).toBe(200);
       const names = (listed.body.result.tools as Array<{ name: string }>).map((t) => t.name);
-      expect(names).toHaveLength(10);
+      expect(names).toHaveLength(SESSIONS_TOOLS.length);
       expect(names).toContain('send_message');
 
       const list = await call('tools/call', { name: 'list_sessions', arguments: {} });
@@ -224,7 +242,7 @@ describe('MCP 注册表', () => {
       expect(listed.status).toBe(200);
       const names = (listed.body.result.tools as Array<{ name: string }>).map((t) => t.name);
       expect(names).toContain('list_orchestrations');
-      expect(names).toHaveLength(10);
+      expect(names).toHaveLength(12); // 编排面 12 工具（10 既有 + decision 两枚）
 
       const created = await call('tools/call', {
         name: 'create_orchestration',
@@ -286,7 +304,7 @@ describe('MCP 注册表', () => {
     }
   });
 
-  it('/mcp/projects 指向 weave-projects；工具面 = 10 个、各自带 outputSchema', () => {
+  it('/mcp/projects 指向 weave-projects；工具面全量、各自带 outputSchema', () => {
     const def = mcpServerForPath('/mcp/projects');
     expect(def?.name).toBe('weave-projects');
     expect(def?.tools).toHaveLength(PROJECTS_TOOLS.length);
@@ -301,13 +319,18 @@ describe('MCP 注册表', () => {
       'uninstall_plugin',
       'list_skills',
       'list_market_items',
+      'new_session',
+      'list_terminals',
+      'set_terminal_visibility',
+      'check_updates',
+      'install_asset',
     ]);
     for (const tool of PROJECTS_TOOLS) {
       expect(tool.outputSchema.type, `${tool.name} outputSchema`).toBeTruthy();
     }
   });
 
-  it('/mcp/events 指向 weave-events；工具面 = 4 个、各自带 outputSchema', () => {
+  it('/mcp/events 指向 weave-events；工具面全量、各自带 outputSchema', () => {
     const def = mcpServerForPath('/mcp/events');
     expect(def?.name).toBe('weave-events');
     expect(def?.tools).toHaveLength(EVENTS_TOOLS.length);
@@ -316,6 +339,8 @@ describe('MCP 注册表', () => {
       'get_dashboard',
       'query_api_logs',
       'get_session_usage',
+      'get_backup_status',
+      'run_backup',
     ]);
     for (const tool of EVENTS_TOOLS) {
       expect(tool.outputSchema.type, `${tool.name} outputSchema`).toBeTruthy();
@@ -369,7 +394,7 @@ describe('MCP 注册表', () => {
       const listed = await call('tools/list');
       expect(listed.status).toBe(200);
       const names = (listed.body.result.tools as Array<{ name: string }>).map((t) => t.name);
-      expect(names).toHaveLength(10);
+      expect(names).toHaveLength(PROJECTS_TOOLS.length);
       expect(names).toContain('set_config');
 
       const list = await call('tools/call', { name: 'list_projects', arguments: {} });
@@ -448,7 +473,7 @@ describe('MCP 注册表', () => {
       const listed = await call('tools/list');
       expect(listed.status).toBe(200);
       const tools = listed.body.result.tools as Array<{ name: string; outputSchema: Record<string, unknown> }>;
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(EVENTS_TOOLS.length);
       for (const t of tools) expect(t.outputSchema.type).toBeTruthy();
 
       const dash = await call('tools/call', { name: 'get_dashboard', arguments: {} });
@@ -503,12 +528,19 @@ describe('MCP 注册表', () => {
       uninstall_plugin: { pluginId: 'p' },
       list_skills: { projectId },
       list_market_items: {},
+      new_session: { projectId, harness: 'claude' },
+      list_terminals: { projectId },
+      set_terminal_visibility: { projectId, visibility: 'show' },
+      check_updates: { projectId },
+      install_asset: { projectId, category: 'skill', name: 'x', scope: 'project', source: 'x' },
     };
     const EVENT_SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
       list_events: { projectId },
       get_dashboard: {},
       query_api_logs: {},
       get_session_usage: { sessionId: 's1' },
+      get_backup_status: {},
+      run_backup: { includeHistory: false },
     };
     try {
       for (const [toolRequest, sample, tools] of [

@@ -40,10 +40,12 @@ export interface PluginExecResult {
 /**
  * CLI 执行器：args 数组传参（默认实现 POSIX 直连；win32 上 `claude` 是 .cmd
  * shim、无 shell 会 EINVAL/ENOENT，经 ComSpec 转发并自行拼命令行）。失败 reject。
+ * `cwd` 可选——project-scope 的 install/uninstall 按 cwd 匹配 installed_plugins
+ * 记录的 projectPath，cwd 不在该项目内时宿主报 not_installed_at_scope。
  */
 export type PluginExecutor = (
   args: string[],
-  opts: { timeoutMs: number },
+  opts: { timeoutMs: number; cwd?: string },
 ) => Promise<PluginExecResult>;
 
 /**
@@ -102,6 +104,7 @@ export const execCli: PluginExecutor = (args, opts) =>
         windowsHide: true,
         windowsVerbatimArguments: win,
         stdio: ['ignore', 'pipe', 'pipe'],
+        ...(opts.cwd ? { cwd: opts.cwd } : {}),
       },
     );
     const label = `claude ${args.join(' ')}`;
@@ -143,8 +146,8 @@ export const execCli: PluginExecutor = (args, opts) =>
 
 export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}): PluginSurface {
   const exec = deps.exec ?? execCli;
-  const run = (args: string[]): Promise<PluginExecResult> =>
-    exec(args, { timeoutMs: CLI_TIMEOUT_MS });
+  const run = (args: string[], cwd?: string): Promise<PluginExecResult> =>
+    exec(args, { timeoutMs: CLI_TIMEOUT_MS, ...(cwd ? { cwd } : {}) });
 
   const globalSettingsFile = (): string => CLAUDE_ASSETS.userConfigFile(homedir());
   const installedFile = (): string =>
@@ -383,12 +386,14 @@ export function createClaudePluginSurface(deps: { exec?: PluginExecutor } = {}):
       // 幂等：未安装直接返回（marketplace 源保留——卸载≠移除市场，可重装）
       const existing = (await readInstalled())[key];
       if (!existing || existing.length === 0) return;
-      // 逐 scope 卸，每条记录按**它自己的** scope 删（全局记录 --scope user、项目
-      // 记录 --scope project）：同一键可能同时挂两条（装过两次、scope 不同），漏删
-      // 任何一条宿主都会继续把插件列为"已安装"。
-      const scopes = [...new Set(existing.map((r) => r.scope ?? 'user'))];
-      for (const scope of scopes) {
-        const { stdout } = await run(['plugin', 'uninstall', key, '--scope', scope, '--json']);
+      // 逐记录卸，每条按**它自己的** scope 与 projectPath 删（全局记录 --scope
+      // user 任意 cwd、项目记录 --scope project 须以记录里的 projectPath 为 cwd——
+      // 宿主按 cwd 匹配项目，daemon 从数据目录起 cwd 不在项目内会被判
+      // not_installed_at_scope）。
+      for (const rec of existing) {
+        const scope = rec.scope ?? 'user';
+        const cwd = scope === 'project' ? rec.projectPath : undefined;
+        const { stdout } = await run(['plugin', 'uninstall', key, '--scope', scope, '--json'], cwd);
         const outcome = safeJson(stdout);
         if (outcome?.['outcome'] === 'failed') {
           throw new Error(truncate(String(outcome['message'] ?? 'plugin uninstall failed')));

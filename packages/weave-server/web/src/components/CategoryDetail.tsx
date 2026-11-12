@@ -4,6 +4,8 @@ import {
   type AssetEntry,
   type AssetAgent,
   type McpRow,
+  type McpUpdate,
+  type SkillUpdate,
   type UpdateReport,
   type AssetScope,
   type StatuslineSource,
@@ -32,12 +34,13 @@ import { FileAssetTree } from '@/components/FileAssetTree';
 import { StatuslinePanel } from '@/components/StatuslinePanel';
 import { HooksPanel } from '@/components/HooksPanel';
 import { ExtensionBindingsPanel } from '@/components/extensions/ExtensionBindingsPanel';
-import { PluginAssetsPanel } from '@/components/PluginAssetsPanel';
+import { ToolkitSection } from '@/components/ToolkitSection';
 import { HarnessConfigPanel } from '@/components/config/HarnessConfigPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
 import { GlobalTasksOverview } from '@/components/tasks/GlobalTasksOverview';
 import { OrchestrationCanvas } from '@/components/tasks/OrchestrationCanvas';
 import { type MainCategory } from '@/components/CategoryBar';
+import { CategorySection, ScopeSection } from '@/components/assets/ScopeSection';
 import type { MessageKey } from '@/i18n/dict';
 import { Code2, PackageX } from 'lucide-react';
 
@@ -84,6 +87,7 @@ export function CategoryDetail({
   statuslineNonce,
   assets,
   globalAssets,
+  homeDir,
   mcpRows,
   updates,
   globalSkillGroups,
@@ -113,6 +117,8 @@ export function CategoryDetail({
   assets: AssetEntry[];
   /** Machine-level harness files for the global 资源管理 tree. */
   globalAssets: AssetEntry[];
+  /** 用户家目录（资产路由随行）：文件树 tooltip 的 `~/…` 显示形；null = 原样。 */
+  homeDir: string | null;
   mcpRows: McpRow[];
   updates: UpdateReport | null;
   globalSkillGroups: GlobalSkillGroup[];
@@ -216,19 +222,16 @@ export function CategoryDetail({
     });
   }, [mode, globalSkillGroups, pluginRows, runtimeTab]);
 
-  // MCP rows for the active runtime tab. 行自带 (harness, scope) 面与
-  // installScopes：视图规则 = 卡面取 installScopes 含当前 scope 的那档，否则
-  // 回落首档（codex 无 project 档 → 项目视图展示其 user 档）。'all' 合并全部。
-  const mcp = useMemo<McpRow[]>(() => {
-    const rowsFor = (h: Harness): McpRow[] => {
-      const ofH = mcpRows.filter((r) => r.harness === h);
-      if (ofH.length === 0) return [];
-      const card = ofH[0].installScopes.includes(scope) ? scope : ofH[0].installScopes[0];
-      return ofH.filter((r) => r.scope === card);
+  // MCP rows for the active runtime tab，按范围段分组（三级折叠口径）：
+  // project / local（宿主项目私有段，~/.claude.json）/ user 各一段。'all' 合并全部。
+  const mcpOfTab = useMemo(() => {
+    const ofTab = mcpRows.filter((r) => runtimeTab === 'all' || r.harness === runtimeTab);
+    return {
+      project: ofTab.filter((r) => r.scope === 'project'),
+      local: ofTab.filter((r) => r.scope === 'local'),
+      user: ofTab.filter((r) => r.scope === 'user'),
     };
-    if (runtimeTab === 'all') return HARNESS_ORDER.flatMap(rowsFor);
-    return rowsFor(runtimeTab);
-  }, [mcpRows, scope, runtimeTab]);
+  }, [mcpRows, runtimeTab]);
 
   const skillUpdates = updates?.skills.filter((u) => u.scope === scope);
   // Non-claude harness MCP servers are user-level (scope-agnostic), so their
@@ -253,6 +256,12 @@ export function CategoryDetail({
     () => globalAssets.filter((a) => runtimeTab === 'all' || a.agent === runtimeTab),
     [globalAssets, runtimeTab],
   );
+
+  // 三个范围段折叠条上的总结数（包行数由段内 ToolkitSection 自持，不进此数）。
+  const userSkillCount = externalGroups(groups).reduce((n, g) => n + g.skills.length, 0);
+  const projectCount = skills.length + mcpOfTab.project.length;
+  const localCount = mcpOfTab.local.length;
+  const userCount = userSkillCount + mcpOfTab.user.length;
 
   return (
     <div
@@ -336,6 +345,7 @@ export function CategoryDetail({
             assets={treeAssets}
             updates={fileUpdates}
             onOpenFile={onOpenFile}
+            home={homeDir}
           />
         ))}
 
@@ -358,6 +368,7 @@ export function CategoryDetail({
             assets={globalTreeAssets}
             updates={fileUpdates}
             onOpenFile={onOpenFile}
+            home={homeDir}
           />
         ))}
 
@@ -371,46 +382,84 @@ export function CategoryDetail({
       )}
 
       {category === 'files' && resourceView === 'packs' && (
-        <>
-          {/* 插件包（包内技能/MCP 随包启停，不另行露面） */}
-          <PluginAssetsPanel projectId={projectId} mode={mode} runtimeTab={runtimeTab} />
-
-          {/* 外置 skills / MCP（不属于任何包；包内的随包启停、由上方包行代表）：
-              与包行同清单直铺，不再藏折叠块 */}
-          <SkillGrid
-            skills={skills}
-            groups={isGlobal ? externalGroups(groups) : undefined}
-            globalGroupsReadOnly={isGlobal ? undefined : externalGroups(groups)}
-            updates={skillUpdates}
-            empty={
-              runtimeTab === 'codex'
-                ? isGlobal
-                  ? t('category.emptySkillsGlobalCodex')
-                  : t('category.emptySkillsProjectCodex')
-                : isGlobal
-                  ? t('category.emptySkillsGlobal')
-                  : t('category.emptySkillsProject')
-            }
-            onUninstallSkill={onUninstallSkill}
-            onOpenDetail={onOpenSkillDetail}
-            onCyclePluginState={onCyclePluginState}
-            onUninstallPlugin={onUninstallPlugin}
-          />
-          <McpGrid
-            rows={mcp}
-            scope={scope}
-            updates={mcpUpdates}
-            empty={
-              runtimeTab === 'codex'
-                ? t('category.emptyMcpCodex')
-                : isGlobal
-                  ? t('category.emptyMcpGlobal')
-                  : t('category.emptyMcpProject')
-            }
-            onUninstallMcp={onUninstallMcp}
-            onCycleMcpEnable={onCycleMcpEnable}
-          />
-        </>
+        <div className="space-y-3">
+          {isGlobal ? (
+            /* 全局模式：只有用户一段，不套第一级折叠条 */
+            <AssetScopeBody
+              projectId={projectId}
+              runtimeTab={runtimeTab}
+              section="user"
+              skills={[]}
+              skillGroups={externalGroups(groups)}
+              skillUpdates={skillUpdates}
+              mcp={mcpOfTab.user}
+              mcpUpdates={mcpUpdates}
+              onUninstallSkill={onUninstallSkill}
+              onUninstallMcp={onUninstallMcp}
+              onCycleMcpEnable={onCycleMcpEnable}
+              onCyclePluginState={onCyclePluginState}
+              onUninstallPlugin={onUninstallPlugin}
+              onOpenSkillDetail={onOpenSkillDetail}
+            />
+          ) : (
+            <>
+              <ScopeSection label={t('packs.groupProject')} count={projectCount}>
+                <AssetScopeBody
+                  projectId={projectId}
+                  runtimeTab={runtimeTab}
+                  section="project"
+                  skills={skills}
+                  skillGroups={[]}
+                  skillUpdates={skillUpdates}
+                  mcp={mcpOfTab.project}
+                  mcpUpdates={mcpUpdates}
+                  onUninstallSkill={onUninstallSkill}
+                  onUninstallMcp={onUninstallMcp}
+                  onCycleMcpEnable={onCycleMcpEnable}
+                  onCyclePluginState={onCyclePluginState}
+                  onUninstallPlugin={onUninstallPlugin}
+                  onOpenSkillDetail={onOpenSkillDetail}
+                />
+              </ScopeSection>
+              <ScopeSection label={t('packs.groupLocal')} count={localCount} defaultCollapsed>
+                <AssetScopeBody
+                  projectId={projectId}
+                  runtimeTab={runtimeTab}
+                  section="local"
+                  skills={[]}
+                  skillGroups={[]}
+                  skillUpdates={skillUpdates}
+                  mcp={mcpOfTab.local}
+                  mcpUpdates={mcpUpdates}
+                  onUninstallSkill={onUninstallSkill}
+                  onUninstallMcp={onUninstallMcp}
+                  onCycleMcpEnable={onCycleMcpEnable}
+                  onCyclePluginState={onCyclePluginState}
+                  onUninstallPlugin={onUninstallPlugin}
+                  onOpenSkillDetail={onOpenSkillDetail}
+                />
+              </ScopeSection>
+              <ScopeSection label={t('packs.groupUser')} count={userCount} defaultCollapsed>
+                <AssetScopeBody
+                  projectId={projectId}
+                  runtimeTab={runtimeTab}
+                  section="user"
+                  skills={[]}
+                  skillGroups={externalGroups(groups)}
+                  skillUpdates={skillUpdates}
+                  mcp={mcpOfTab.user}
+                  mcpUpdates={mcpUpdates}
+                  onUninstallSkill={onUninstallSkill}
+                  onUninstallMcp={onUninstallMcp}
+                  onCycleMcpEnable={onCycleMcpEnable}
+                  onCyclePluginState={onCyclePluginState}
+                  onUninstallPlugin={onUninstallPlugin}
+                  onOpenSkillDetail={onOpenSkillDetail}
+                />
+              </ScopeSection>
+            </>
+          )}
+        </div>
       )}
 
       {category === 'weave' && (
@@ -480,6 +529,97 @@ export function CategoryDetail({
         />
       )}
     </div>
+  );
+}
+
+/** 一个范围段（项目/用户）的类别折叠体：Plugins（ToolkitSection，自带仓库级折叠）→
+ *  Skills（外置）→ MCP。数据由调用方按段选好，这里只管类别折叠条与渲染。 */
+function AssetScopeBody({
+  projectId,
+  runtimeTab,
+  section,
+  skills,
+  skillGroups,
+  skillUpdates,
+  mcp,
+  mcpUpdates,
+  onUninstallSkill,
+  onUninstallMcp,
+  onCycleMcpEnable,
+  onCyclePluginState,
+  onUninstallPlugin,
+  onOpenSkillDetail,
+}: {
+  projectId: number;
+  runtimeTab: RuntimeTab;
+  section: AssetScope;
+  skills: SkillRow[];
+  skillGroups: SkillGroup[];
+  skillUpdates?: SkillUpdate[];
+  mcp: McpRow[];
+  mcpUpdates?: McpUpdate[];
+  onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
+  onCycleMcpEnable: (name: string, next: EnableOverride) => void | Promise<void>;
+  onCyclePluginState: (
+    runtime: PluginRuntime,
+    key: string,
+    scope: ToolScope,
+    state: EnableOverride,
+  ) => void | Promise<void>;
+  onUninstallPlugin: (runtime: PluginRuntime, key: string) => void | Promise<void>;
+  onOpenSkillDetail: OpenDetailFn;
+}) {
+  const t = useT();
+  // local 段只有 MCP（该档目前无 skills/plugins 面）——只渲染一块，不摆空壳。
+  const mcpOnly = section === 'local';
+  return (
+    <>
+      {!mcpOnly && (
+      <CategorySection label={t('packs.sectionPlugins')}>
+        <ToolkitSection
+          projectId={projectId}
+          runtimeTab={runtimeTab}
+          scope={section}
+        />
+      </CategorySection>
+      )}
+      {!mcpOnly && (
+      <CategorySection label={t('packs.sectionSkills')} count={section === 'project' ? skills.length : skillGroups.reduce((n, g) => n + g.skills.length, 0)}>
+        {section === 'project' ? (
+          <SkillGrid
+            skills={skills}
+            updates={skillUpdates}
+            empty={runtimeTab === 'codex' ? t('category.emptySkillsProjectCodex') : t('category.emptySkillsProject')}
+            onUninstallSkill={onUninstallSkill}
+            onOpenDetail={onOpenSkillDetail}
+            onCyclePluginState={onCyclePluginState}
+            onUninstallPlugin={onUninstallPlugin}
+          />
+        ) : (
+          <SkillGrid
+            groups={skillGroups}
+            updates={skillUpdates}
+            empty={runtimeTab === 'codex' ? t('category.emptySkillsGlobalCodex') : t('category.emptySkillsGlobal')}
+            onUninstallSkill={onUninstallSkill}
+            onOpenDetail={onOpenSkillDetail}
+            onCyclePluginState={onCyclePluginState}
+            onUninstallPlugin={onUninstallPlugin}
+          />
+        )}
+      </CategorySection>
+      )}
+      <CategorySection label={t('packs.sectionMcp')} count={mcp.length}>
+        <McpGrid
+          rows={mcp}
+          scope={section}
+          updates={mcpUpdates}
+          empty={runtimeTab === 'codex' ? t('category.emptyMcpCodex') : section === 'project' ? t('category.emptyMcpProject') : section === 'local' ? t('category.emptyMcpLocal') : t('category.emptyMcpGlobal')}
+          onUninstallMcp={onUninstallMcp}
+          onCycleMcpEnable={onCycleMcpEnable}
+        />
+      </CategorySection>
+    </>
   );
 }
 

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { CLAUDE_ASSETS } from '../claude/assets';
 import { CODEX_ASSETS } from '../codex/assets';
 import { FILE_ASSET_SPECS } from '../shared/file-specs';
@@ -65,9 +67,61 @@ describe('skills / 配置路径', () => {
     expect(CODEX_ASSETS.userConfigFile(HOME)).toBe(join(HOME, '.codex', 'config.toml'));
   });
 
-  it('mcp 范围：Claude 双面（.mcp.json / 用户级）；Codex 仅用户级', () => {
-    expect(CLAUDE_ASSETS.mcpScopes()).toEqual(['project', 'user']);
+  it('mcp 范围：Claude 三面（.mcp.json / ~/.claude.json projects 段 / 顶层）；Codex 仅用户级', () => {
+    expect(CLAUDE_ASSETS.mcpScopes()).toEqual(['project', 'local', 'user']);
     expect(CODEX_ASSETS.mcpScopes()).toEqual(['user']);
+  });
+
+  it('mcp 落点：local 与 user 同住 ~/.claude.json', () => {
+    expect(CLAUDE_ASSETS.mcpDest('local', HOME)).toBe(join(HOME, '.claude.json'));
+    expect(CLAUDE_ASSETS.mcpDest('user', HOME)).toBe(join(HOME, '.claude.json'));
+    expect(CLAUDE_ASSETS.mcpDest('project', HOME)).toBe('.mcp.json');
+  });
+
+  it('local 档 round-trip：读写 ~/.claude.json 的 projects 段，不碰其他键', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'weave-claude-local-'));
+    try {
+      const file = join(home, '.claude.json');
+      writeFileSync(
+        file,
+        JSON.stringify({
+          mcpServers: { globalOne: { command: 'g' } },
+          projects: { 'D:/some/other': { trustLevel: 'trusted' } },
+        }),
+      );
+      const projectPath = 'D:/GitRepo/AIWork';
+      await CLAUDE_ASSETS.mcpWrite('local', projectPath, home, 'atlassian-jira', {
+        command: 'npx',
+      });
+      const read: Record<string, { command: string }> = await CLAUDE_ASSETS.mcpRead(
+        'local',
+        projectPath,
+        home,
+      );
+      expect(read['atlassian-jira']).toEqual({ command: 'npx' });
+      // 其他档与别的项目键不受影响
+      expect(Object.keys(await CLAUDE_ASSETS.mcpRead('user', projectPath, home))).toEqual([
+        'globalOne',
+      ]);
+      expect(Object.keys(await CLAUDE_ASSETS.mcpRead('local', 'D:/some/other', home))).toEqual([]);
+      const onDisk = JSON.parse(readFileSync(file, 'utf-8'));
+      expect(onDisk.projects['D:/some/other'].trustLevel).toBe('trusted');
+      // 反斜杠路径归一成同一键
+      expect(
+        Object.keys(await CLAUDE_ASSETS.mcpRead('local', 'D:\\GitRepo\\AIWork', home)),
+      ).toEqual(['atlassian-jira']);
+      // 删除
+      expect(await CLAUDE_ASSETS.mcpRemove('local', projectPath, home, 'atlassian-jira')).toBe(
+        true,
+      );
+      expect(await CLAUDE_ASSETS.mcpRemove('local', projectPath, home, 'atlassian-jira')).toBe(
+        false,
+      );
+      expect(Object.keys(await CLAUDE_ASSETS.mcpRead('local', projectPath, home))).toEqual([]);
+      expect(JSON.parse(readFileSync(file, 'utf-8')).mcpServers.globalOne).toBeDefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

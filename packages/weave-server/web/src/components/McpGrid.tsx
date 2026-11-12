@@ -29,8 +29,8 @@ const STATE_LABEL: Record<EnableOverride, 'mcp.enableDefault' | 'mcp.enableOn' |
   off: 'mcp.enableOff',
 };
 
-/** 能力面 mcpScopes 只有 project/user 两档，行 scope 即卡面。 */
-const cardScope = (r: McpRow): AssetScope => (r.scope === 'user' ? 'user' : 'project');
+/** 行 scope 即卡面（local/user 档卸载都走 user 语义的 handler 入参）。 */
+const cardScope = (r: McpRow): AssetScope => (r.scope === 'project' ? 'project' : 'user');
 
 export function McpGrid({
   rows,
@@ -81,7 +81,11 @@ export function McpGrid({
     <section className="space-y-2">
       <div className="flex items-center gap-2">
         <h2 className="text-xs font-semibold text-neutral-400 uppercase">
-          {scope === 'user' ? t('mcp.headingGlobal') : t('mcp.headingProject')}
+          {scope === 'project'
+            ? t('mcp.headingProject')
+            : scope === 'local'
+              ? t('mcp.headingLocal')
+              : t('mcp.headingGlobal')}
         </h2>
         <span className="ml-auto rounded-full bg-neutral-800/60 text-neutral-400 px-1.5 py-0.5 text-10 font-medium tabular-nums">
           {rows.length}
@@ -97,10 +101,9 @@ export function McpGrid({
           const enableState = fb.stateOf(enableKey);
           const uninstallKey = `mcp-uninstall:${s.harness}:${s.scope}:${s.key}`;
           const uninstallState = fb.stateOf(uninstallKey);
-          // 内置目录行（E4 收口）：未装 = 不再提供 user 档安装入口（全集随角色
-          // 仓库自动配置）；已装 user 档的存量行 = 一次性迁移提示（卸载即可）。
-          const builtinAbsent = s.builtin === true && s.install === 'absent';
-          const builtinLegacy = s.builtin === true && s.install !== 'absent' && s.scope === 'user';
+          // 内置目录行（E4 收口）：只有真实已装的存量行会出现（user 档 =
+          // 一次性迁移提示，卸载即可）；未装不再补占位行。
+          const builtinLegacy = s.builtin === true && s.scope === 'user';
           return (
             <Card key={`${s.harness}-${s.scope}-${s.key}`}>
               <CardHeader className="items-center gap-2 max-lg:flex-wrap">
@@ -109,7 +112,13 @@ export function McpGrid({
                 <AgentBadge agent={s.harness} />
                 {/* 档位由行自己说（只有 user 档的 harness 恒落 user 行），不看 harness。 */}
                 <Badge variant="settings" className="ml-1">
-                  {t(s.scope === 'user' ? 'library.scopeGlobal' : 'library.scopeProject')}
+                  {t(
+                    s.scope === 'user'
+                      ? 'library.scopeGlobal'
+                      : s.scope === 'local'
+                        ? 'skillGrid.scopeLocal'
+                        : 'library.scopeProject',
+                  )}
                 </Badge>
                 {s.builtin && (
                   <Badge variant="default" className="ml-1">
@@ -149,37 +158,29 @@ export function McpGrid({
                       </button>
                     </Tooltip>
                   )}
-                  {builtinAbsent ? (
-                    // user 档安装入口退役（E4）：不再给「安装」——全集由角色仓库
-                    // provisioning 自动写进项目档（文案见 mcp.builtinAuto）。
-                    <span className="shrink-0 rounded-full bg-neutral-800/60 px-2 py-0.5 text-10 text-neutral-400">
-                      {t('mcp.builtinAuto')}
-                    </span>
-                  ) : (
-                    <Tooltip label={t('mcp.remove', { name: s.key })}>
-                      <button
-                        type="button"
-                        disabled={uninstallState === 'loading'}
-                        onClick={() =>
-                          void fb.run(
-                            uninstallKey,
-                            async () => {
-                              await onUninstallMcp(s.key, cardScope(s), s.harness);
-                              show('success', t('mcp.uninstalled', { name: s.key }));
-                            },
-                            { fail: (e) => t('errors.mcpUninstallFailed', { error: errorText(e) }) },
-                          )
-                        }
-                        className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
-                      >
-                        <FeedbackIcon
-                          state={uninstallState}
-                          className="h-3.5 w-3.5"
-                          icon={<Trash2 className="h-3.5 w-3.5" />}
-                        />
-                      </button>
-                    </Tooltip>
-                  )}
+                  <Tooltip label={t('mcp.remove', { name: s.key })}>
+                    <button
+                      type="button"
+                      disabled={uninstallState === 'loading'}
+                      onClick={() =>
+                        void fb.run(
+                          uninstallKey,
+                          async () => {
+                            await onUninstallMcp(s.key, cardScope(s), s.harness);
+                            show('success', t('mcp.uninstalled', { name: s.key }));
+                          },
+                          { fail: (e) => t('errors.mcpUninstallFailed', { error: errorText(e) }) },
+                        )
+                      }
+                      className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                    >
+                      <FeedbackIcon
+                        state={uninstallState}
+                        className="h-3.5 w-3.5"
+                        icon={<Trash2 className="h-3.5 w-3.5" />}
+                      />
+                    </button>
+                  </Tooltip>
                 </div>
               </CardHeader>
               <CardContent className="pt-0 text-xs font-mono text-neutral-400 break-all">

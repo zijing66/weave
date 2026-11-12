@@ -116,6 +116,23 @@ export const EVENTS_TOOLS = [
     inputSchema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } },
     outputSchema: { type: 'object', additionalProperties: true },
   },
+  {
+    name: 'get_backup_status',
+    description:
+      'Daily-backup subsystem: enabled/hour settings, last run result (or error), running progress (phase/ratio/etaSeconds), and the list of backup packages on disk. Returns { status, settings, packages }; 503 when the backup engine is unavailable.',
+    inputSchema: { type: 'object', properties: {} },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'run_backup',
+    description:
+      'Trigger a backup run now. includeHistory=true additionally packs the history domain (transcripts/sessions/events) and uploads — off by default (default pack = settings, projects, market git-tracked files, plugins). Returns { ok, result } when finished; 409 when a run is already in progress.',
+    inputSchema: {
+      type: 'object',
+      properties: { includeHistory: { type: 'boolean' } },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
 ] as const satisfies readonly McpToolDef[];
 
 type Args = Record<string, unknown>;
@@ -152,6 +169,14 @@ export function toolRequest(name: string, args: Args): McpToolRequest {
       };
     case 'get_session_usage':
       return { method: 'GET', path: `/sessions/${encodeURIComponent(str(args.sessionId) ?? '')}/usage` };
+    case 'get_backup_status':
+      return { method: 'GET', path: '/backup/status' };
+    case 'run_backup':
+      return {
+        method: 'POST',
+        path: '/backup/run',
+        body: { ...(args.includeHistory === undefined ? {} : { includeHistory: args.includeHistory }) },
+      };
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

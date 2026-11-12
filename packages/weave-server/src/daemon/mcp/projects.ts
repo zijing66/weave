@@ -176,6 +176,75 @@ export const PROJECTS_TOOLS = [
       required: ['items'],
     },
   },
+  {
+    name: 'new_session',
+    description:
+      "Start a new harness session in the project's terminal (bin from the resume surface; no resume args). Opens a terminal itself if none exists; optional worktree=true isolates the session in a fresh git worktree. Returns { ok, command, cwd, worktree? }; 501 when the harness cannot start, 409 when not integrated.",
+    inputSchema: {
+      type: 'object',
+      required: ['projectId', 'harness'],
+      properties: {
+        projectId: { type: 'number' },
+        harness: { type: 'string', enum: ['claude', 'codex'] },
+        worktree: { type: 'boolean' },
+      },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'list_terminals',
+    description:
+      "Attachable terminal targets of a project across all enumerable backends (wezterm tabs, wt named windows), with per-tab pane counts and titles. all=true also lists tabs of OTHER projects (each row carries cwd) — those targets work as split destinations for cross-project side-by-side sessions. Returns { projectId, terminals: AttachTarget[] } — empty when none open or the preset cannot enumerate.",
+    inputSchema: {
+      type: 'object',
+      required: ['projectId'],
+      properties: { projectId: { type: 'number' }, all: { type: 'boolean' } },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'set_terminal_visibility',
+    description:
+      "System-level hide/show (SW_HIDE/SW_SHOW — gone from taskbar and Alt+Tab too) of a project's terminal windows: either one target (targetId) or all of the project's open windows (omit targetId). win32 only. Returns { ok, changed, failed } for the bulk form, { ok, visibility } for the single-target form.",
+    inputSchema: {
+      type: 'object',
+      required: ['projectId', 'visibility'],
+      properties: {
+        projectId: { type: 'number' },
+        targetId: { type: 'string', description: 'omit to toggle ALL of the project\'s open terminal windows' },
+        visibility: { type: 'string', enum: ['hide', 'show'] },
+      },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'check_updates',
+    description:
+      "Detect drift between the project's installed assets and their market/init sources: skills, mcp, file assets, plugin templates, init files. Returns { skills, mcp, files, pluginTemplates, initFiles, available, needsInit, initVersionBehind, initVersion, weaveVersion } — available counts auto-syncable outdated items; initVersionBehind means the recorded weave init version predates the current weave (suggest re-running weave init).",
+    inputSchema: { type: 'object', required: ['projectId'], properties: { projectId: { type: 'number' } } },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'install_asset',
+    description:
+      "Install one asset from a market library into a project (scope=project) or the global host location (scope=user): skills, commands, agents, rules, mcp, workflows, output-styles. Returns 201 { category, name, scope, agent, path }.",
+    inputSchema: {
+      type: 'object',
+      required: ['projectId', 'category', 'name', 'scope', 'source'],
+      properties: {
+        projectId: { type: 'number' },
+        category: {
+          type: 'string',
+          enum: ['skill', 'mcp', 'command', 'agent', 'workflow', 'rule', 'output-style'],
+        },
+        name: { type: 'string' },
+        scope: { type: 'string', enum: ['project', 'user'] },
+        agent: { type: 'string', enum: ['claude', 'codex'] },
+        source: { type: 'string', description: 'sourceDir (dir assets) / sourceFile (file assets) / mcpConfig JSON (mcp)' },
+      },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
 ] as const satisfies readonly McpToolDef[];
 
 type Args = Record<string, unknown>;
@@ -241,6 +310,52 @@ export function toolRequest(name: string, args: Args): McpToolRequest {
       return { method: 'GET', path: `/projects/${idOf(args)}/skills/global` };
     case 'list_market_items':
       return { method: 'GET', path: '/market' };
+    case 'new_session':
+      return {
+        method: 'POST',
+        path: `/projects/${idOf(args)}/new-session`,
+        body: {
+          harness: args.harness,
+          ...(args.worktree === undefined ? {} : { worktree: args.worktree }),
+        },
+      };
+    case 'list_terminals':
+      return {
+        method: 'GET',
+        path: `/projects/${idOf(args)}/terminals${args.all === true ? '?all=1' : ''}`,
+      };
+    case 'set_terminal_visibility':
+      return {
+        method: 'POST',
+        path: args.targetId
+          ? `/projects/${idOf(args)}/terminal-visibility`
+          : '/terminals/visibility',
+        body: args.targetId
+          ? { targetId: args.targetId, visibility: args.visibility }
+          : { visibility: args.visibility },
+      };
+    case 'check_updates':
+      return { method: 'GET', path: `/projects/${idOf(args)}/updates` };
+    case 'install_asset': {
+      const category = str(args.category) ?? '';
+      const isFileAsset = ['command', 'agent', 'rule', 'workflow', 'output-style'].includes(category);
+      return {
+        method: 'POST',
+        path: `/projects/${idOf(args)}/install`,
+        body: {
+          category,
+          name: args.name,
+          scope: args.scope,
+          ...(args.agent === undefined ? {} : { agent: args.agent }),
+          // 目录资产走 sourceDir，文件资产走 sourceFile，MCP 走 mcpConfig JSON
+          ...(category === 'mcp'
+            ? { mcpConfig: args.source }
+            : isFileAsset
+              ? { sourceFile: args.source }
+              : { sourceDir: args.source }),
+        },
+      };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

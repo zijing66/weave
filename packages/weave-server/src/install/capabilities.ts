@@ -1,11 +1,11 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { HARNESS_KEYS, type Harness } from '@weavecode/core';
+import { HARNESS_KEYS, type Harness, type ToolScope } from '@weavecode/core';
 import { FILE_ASSET_SPECS, FILE_ASSET_CATEGORIES, type FileAssetCategory } from './file-assets.js';
 import { assetSurfaces, configSurfaces, statuslineSurfaces } from '../surfaces.js';
 
-/** 安装范围（与 InstallBody.scope 同形；`user` = 个人全局配置面）。 */
-export type InstallScope = 'project' | 'user';
+/** 安装范围（与 InstallBody.scope 同形；`local` = 宿主项目私有段、`user` = 个人全局配置面）。 */
+export type InstallScope = ToolScope;
 
 /** 可安装资产类别（skill / mcp + 5 类单文件资产）。 */
 export type InstallCategory = 'skill' | 'mcp' | FileAssetCategory;
@@ -94,10 +94,12 @@ export function installCapabilities(): InstallCapabilities {
     surfaces: assetSurfaces()
       .map((s) => {
         const dest: Partial<Record<InstallScope, string>> = {};
-        const project = s.mcpDest('project', home);
-        const user = s.mcpDest('user', home);
-        if (project) dest.project = project;
-        if (user) dest.user = userDest(user, home);
+        for (const scope of s.mcpScopes()) {
+          const d = s.mcpDest(scope, home);
+          if (!d) continue;
+          // project 档 = 项目内相对路径；local/user 档 = 用户级绝对路径（~ 缩写）。
+          dest[scope] = scope === 'project' ? d : userDest(d, home);
+        }
         return { harness: s.harness, scopes: s.mcpScopes(), dest };
       })
       .filter((surface) => surface.scopes.length > 0),

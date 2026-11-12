@@ -30,6 +30,7 @@ export { normalizeHookRuleSource, hookSourceHarness } from './types.js';
 export {
   type Harness,
   type InstructionFile,
+  type WeaveTitleType,
   HARNESS_EVENTS,
   HARNESS_KEYS,
   HARNESS_NAMES,
@@ -45,6 +46,7 @@ export {
   HARNESS_LIFECYCLE,
   HARNESS_SHELL_DISCARD_GRACE_MS,
   HARNESS_COMPACTION,
+  WEAVE_TITLE_TYPES,
   HARNESS_SESSION_CONTROL,
   PROMPT_PASTE_THRESHOLD_CHARS,
   PROMPT_MAX_CHARS,

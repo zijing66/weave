@@ -21,7 +21,12 @@ import { readJson, sendJson } from './http.js';
 import { purgeSession } from '../hooks/session-purge.js';
 import { referencedSessionIds } from '../hooks/session-refs.js';
 import { readDaemonSettingsSync, readHooksEnabled } from './settings.js';
-import { readWorktreeRegistry } from './worktree.js';
+import {
+  readWorktreeRegistry,
+  sweepWorktreeMerges,
+  upsertWorktreeEntry,
+  defaultWorktreeGitExec,
+} from './worktree.js';
 import { hooksRoot } from '../hooks/mirror.js';
 import { handleOrchestrationRoutes } from './routes/orchestration.js';
 import { handleExtensionRoutes } from './routes/extension.js';
@@ -42,6 +47,8 @@ import {
   sessionTitleSurfaceFor,
 } from '../surfaces.js';
 import { getDataDir } from '../db/paths.js';
+import { RpgRoutingDecisionRepository } from '../rpg/routing.js';
+import { existsSync } from 'node:fs';
 import { WEAVE_VERSION } from '../version.js';
 
 /**
@@ -124,6 +131,8 @@ export async function handleHooksRoutes(
     pathname === '/sessions' ||
     pathname.startsWith('/sessions/') ||
     pathname.startsWith('/messaging') ||
+    pathname === '/decision/status' ||
+    pathname === '/decision/judge' ||
     pathname.startsWith('/webhooks/orchestrate/') ||
     pathname.startsWith('/webhooks/extensions/') ||
     pathname === '/uploads' ||
@@ -366,6 +375,7 @@ export async function handleHooksRoutes(
         sideQuestions: deps.sideQuestions?.repo,
         extensionBindings: deps.extensionBindings,
         extensionExecutions: deps.extensionExecutions,
+        routingDecisions: deps.rpgRoles ? new RpgRoutingDecisionRepository(deps.rpgRoles.db) : undefined,
         probe: deps.sessionProbe,
         uploads: deps.uploads,
       },
@@ -521,6 +531,117 @@ export async function handleHooksRoutes(
       }
       return true;
     }
+  }
+
+  // ---- B5 worktree 并回冲突闭环（G6 前置小批；2026-11-10 裁决「冲突闭环恒走 AI」）
+  //      两枚 AI 通道按钮的服务端：重试 = 放回 active 再扫一轮合并梯；修补 = 在
+  //      worktree 原地 resume 该会话 + 投递带冲突现场的修补 prompt。绝不摆人工
+  //      git 操作面（级2 价值冲突呈的也是这两枚）。----
+  const wtRetry = pathname.match(/^\/sessions\/([^/]+)\/worktree\/merge-retry$/);
+  if (wtRetry && req.method === 'POST') {
+    if (!deps.hookSessions || !deps.hookEvents || !deps.mergeViaLadder) {
+      sendJson(res, 503, { error: 'Worktree merge subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(wtRetry[1]!);
+    const hooksDir = deps.hooksDir ?? hooksRoot();
+    const entry = readWorktreeRegistry(hooksDir)[sessionId];
+    if (!entry) {
+      sendJson(res, 404, { error: 'No worktree registered for this session' });
+      return true;
+    }
+    if (entry.status !== 'conflict' && entry.status !== 'error') {
+      sendJson(res, 409, { error: `Worktree is ${entry.status}, nothing to retry` });
+      return true;
+    }
+    // 放回 active 再扫一轮：冲突都发生在会话退出之后（退出才触发并回），最后一条
+    // 事件仍是退出事件 → sweep 立刻接上并回 + 同一套收尾（成功清 worktree/分支/登记）。
+    upsertWorktreeEntry(hooksDir, { ...entry, status: 'active' });
+    await sweepWorktreeMerges({
+      sessions: () => deps.hookSessions!.listWithCounts(),
+      projectPathOf: (projectId) => deps.projects.getById(projectId)?.path,
+      recentEventsOf: (projectId) =>
+        deps.hookEvents!.listByProject(projectId, 50).map((e) => ({ sessionId: e.sessionId, payload: e.payload })),
+      hooksDir,
+      onChange: () => deps.dataBus?.emit({ key: 'sessions' }),
+      mergeViaLadder: deps.mergeViaLadder,
+    });
+    // 登记没了 = 并回成功清账；还在 = 如实报当前态（conflict 原样、error 换文案）。
+    const after = readWorktreeRegistry(hooksDir)[sessionId];
+    if (!after) {
+      sendJson(res, 200, { ok: true, merged: true });
+    } else {
+      sendJson(res, 200, { ok: false, merged: false, status: after.status, message: after.message ?? null });
+    }
+    return true;
+  }
+
+  const wtRepair = pathname.match(/^\/sessions\/([^/]+)\/worktree\/repair$/);
+  if (wtRepair && req.method === 'POST') {
+    if (!deps.messageDeliverer || !deps.ensureOpen) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(wtRepair[1]!);
+    const hooksDir = deps.hooksDir ?? hooksRoot();
+    const entry = readWorktreeRegistry(hooksDir)[sessionId];
+    if (!entry) {
+      sendJson(res, 404, { error: 'No worktree registered for this session' });
+      return true;
+    }
+    if (entry.status !== 'conflict') {
+      sendJson(res, 409, { error: `Worktree is ${entry.status}, nothing to repair` });
+      return true;
+    }
+    if (!existsSync(entry.path)) {
+      sendJson(res, 409, { error: 'Worktree directory no longer exists — retry the merge or resolve manually' });
+      return true;
+    }
+    const project = deps.projects.getById(entry.projectId);
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    // 修补目标 = 主干当下分支（与并回口径一致：并「当下」那支）。
+    const exec = deps.worktreeGitExec ?? defaultWorktreeGitExec;
+    const head = await exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: project.path });
+    if (head.code !== 0) {
+      sendJson(res, 409, { error: 'cannot resolve current branch of the project' });
+      return true;
+    }
+    const target = head.stdout.trim();
+    // 冲突发生在会话退出之后：会话已不在。在 worktree 原地 resume 拉回（同一份
+    // 转录、cwd 即隔离目录），再投修补 prompt（手动面同口径：恒 prompt 通道 +
+    // forceTerminal 队列优先终端兜底）。拉起失败即拒发（不当没看见）。
+    const opened = await deps.ensureOpen(sessionId, { cwd: entry.path });
+    if (!opened.ok) {
+      sendJson(res, 502, { error: `会话未运行，自动打开失败：${opened.error}` });
+      return true;
+    }
+    const text =
+      `[weave 并回修补] 你所在 worktree 的分支 ${entry.branch} 并回主干 ${target} 时出现冲突：` +
+      `${entry.message ?? '(详见合并报告)'}。` +
+      `请在当前 worktree 里把主干并进来（git merge ${target}），按你原本的改动意图解决全部冲突并提交；` +
+      `提交后会话结束时 weave 会自动重试并回主干。`;
+    const result = await deps.messageDeliverer.send({
+      toSessionId: sessionId,
+      text,
+      forceTerminal: true,
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
+      return true;
+    }
+    // 拉起成功 = SessionStart 已落在旧退出事件之后 → 放回 active 不会被 sweeper
+    // 拿旧退出事件误并（退出判据看的是「最后一条事件」）；修补会话再退出时
+    // sweep 自动接续并回。
+    upsertWorktreeEntry(hooksDir, { ...entry, status: 'active' });
+    deps.dataBus?.emit({ key: 'sessions' });
+    sendJson(res, 200, { ok: true, repaired: true });
+    return true;
   }
 
   // ---- 会话洞察域 → routes/session-insights.ts（计划/命令候选/返显/改动汇总）----

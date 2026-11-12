@@ -166,12 +166,28 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
     [t, show, refreshPluginRows, refreshGlobalSkills],
   );
 
+  /** 市场插件包卸载（胶囊「灭」向）= toolkit uninstall：与 handleInstallPlugin
+   *  同一 dir 匹配；找不到 = 扫描没发现该包（刷新源后重试）。 */
+  const handleUninstallPluginMarket = useCallback(
+    async (plugin: MarketPluginAsset, target: ProjectRow) => {
+      const norm = (p: string) => p.replace(/\\/g, '/');
+      const { packs } = await api.listToolkit(target.id);
+      const pack = packs.find((p) => norm(p.dir) === norm(plugin.dirPath));
+      if (!pack) throw new Error(t('market.packNotFound', { name: plugin.name }));
+      const result = await api.uninstallToolkit(target.id, pack.id, pack.sourceRoot);
+      if (result.warnings.length > 0) show('info', result.warnings.join('；'));
+      refreshPluginRows(target.id);
+      refreshGlobalSkills(target.id);
+    },
+    [t, show, refreshPluginRows, refreshGlobalSkills],
+  );
+
   const handleUninstallSkill = useCallback(
-    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
-      const target = selected ?? projects[0];
+    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent, target?: ProjectRow | null) => {
+      const dest = target !== undefined ? target : selected ?? projects[0];
       // user 档落在 home 下、与项目无关：全局面没有项目也照卸（id 只是路由占位）。
-      if (!target && !(globalMode && scope === 'user')) return;
-      const projectId = target?.id ?? 0;
+      if (!dest && !(globalMode && scope === 'user')) return;
+      const projectId = dest?.id ?? 0;
       const res = await api.uninstall(projectId, {
         category: 'skill',
         name,
@@ -179,24 +195,40 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
         ...(agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      if (target) refreshAssets(target);
+      if (dest) refreshAssets(dest);
       refreshGlobalSkills(projectId);
       refreshUpdates(projectId);
     },
     [selected, projects, globalMode, refreshAssets, refreshGlobalSkills, refreshUpdates],
   );
 
-  // 说明：文件类资产的卸载入口随「文件视图降级为只读」一并撤下（资源管理以插件包为准）；
-  // 服务端 POST /projects/:id/uninstall 仍在，日后要恢复入口只需再加回一个 handler。
+  /** 文件类资产卸载（市场胶囊的「灭」向；资源管理树以插件包为准不再给入口，
+   *  但服务端 POST /projects/:id/uninstall 仍在——这里只恢复调用面）。 */
+  const handleUninstallFileAsset = useCallback(
+    async (file: FileAssetTemplate, scope: AssetScope = 'project', target?: ProjectRow | null) => {
+      const dest = target !== undefined ? target : selected ?? projects[0];
+      if (!dest && !(globalMode && scope === 'user')) return;
+      const projectId = dest?.id ?? 0;
+      const res = await api.uninstall(projectId, {
+        category: file.category,
+        name: file.name,
+        scope,
+      });
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      if (dest) refreshAssets(dest);
+      refreshUpdates(projectId);
+    },
+    [selected, projects, globalMode, refreshAssets, refreshUpdates],
+  );
 
   const handleUninstallMcp = useCallback(
-    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent) => {
-      const target = selected ?? projects[0];
+    async (name: string, scope: AssetScope = 'project', agent?: AssetAgent, target?: ProjectRow | null) => {
+      const dest = target !== undefined ? target : selected ?? projects[0];
       // claude 以外 harness 的 MCP 住用户级文件——卸载恒指用户级（同安装侧判定）。
       const effectiveScope: AssetScope = (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'user';
       // 同上：用户级装卸与项目无关，没有项目时 0 号只是形状上的占位。
-      if (!target && !(globalMode && effectiveScope === 'user')) return;
-      const projectId = target?.id ?? 0;
+      if (!dest && !(globalMode && effectiveScope === 'user')) return;
+      const projectId = dest?.id ?? 0;
       const res = await api.uninstall(projectId, {
         category: 'mcp',
         name,
@@ -204,7 +236,7 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
         ...(agent ? { agent } : {}),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      if (target) refreshAssets(target);
+      if (dest) refreshAssets(dest);
       refreshMcp(projectId);
       refreshUpdates(projectId);
     },
@@ -290,7 +322,8 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
   return {
     installCapsState, setInstallCapsState,
     handleInstallSkill, handleInstallFileAsset, handleInstallMcp, handleInstallPlugin,
-    handleUninstallSkill, handleUninstallMcp, handleCycleMcpEnable,
+    handleUninstallSkill, handleUninstallFileAsset, handleUninstallMcp, handleUninstallPluginMarket,
+    handleCycleMcpEnable,
     handleSyncAll, handleCyclePluginState, handleUninstallPlugin,
     uninstallSkillSafely,
     pluginEffective,

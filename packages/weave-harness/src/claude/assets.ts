@@ -59,6 +59,23 @@ export async function readClaudeJson(homedir: string): Promise<Record<string, un
   return parsed as Record<string, unknown>;
 }
 
+/** local 档的 projects 键形：posix 正斜杠 + 保留原大小写（宿主写法，实查样例
+ * `'D:/GitRepo/AIWork'`）。 */
+function localKey(projectPath: string): string {
+  return projectPath.replace(/\\/g, '/');
+}
+
+/** `~/.claude.json` → `projects.<键>.mcpServers`（local 档）；缺键容忍。 */
+function localServersOf(
+  json: Record<string, unknown>,
+  projectPath: string,
+): unknown {
+  const projects = json.projects as Record<string, unknown> | undefined;
+  if (!projects || typeof projects !== 'object') return undefined;
+  const entry = projects[localKey(projectPath)] as Record<string, unknown> | undefined;
+  return entry?.mcpServers;
+}
+
 /**
  * Claude Code 资产表面（批 4a 迁入）：文件资产目标目录、skills 项目/全局根、
  * 用户级配置路径、路径归属与 watch 观测集——原 `install/file-assets.ts`、
@@ -87,9 +104,10 @@ export const CLAUDE_ASSETS: AssetSurface = {
 
   userConfigFile: (homedir) => path.join(homedir, '.claude', 'settings.json'),
 
-  mcpScopes: () => ['project', 'user'],
+  mcpScopes: () => ['project', 'local', 'user'],
 
-  // 项目 = 根级 .mcp.json；用户级 MCP 住在运行时文件 ~/.claude.json（非 settings.json）。
+  // 项目 = 根级 .mcp.json；local = ~/.claude.json 的 projects 段（宿主 `claude
+  // mcp add` 默认落点）；user = 同文件顶层 mcpServers。
   mcpDest: (scope, homedir) =>
     scope === 'project' ? '.mcp.json' : path.join(homedir, '.claude.json'),
 
@@ -100,7 +118,11 @@ export const CLAUDE_ASSETS: AssetSurface = {
       const json = await readProjectMcp(path.join(projectPath, MCP_FILE));
       return (json.mcpServers ?? {}) as Record<string, McpServerConfig>;
     }
-    const servers = (await readClaudeJson(homedir)).mcpServers;
+    const json = await readClaudeJson(homedir);
+    const servers =
+      scope === 'local'
+        ? localServersOf(json, projectPath)
+        : json.mcpServers;
     if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
     return servers as Record<string, McpServerConfig>;
   },
@@ -115,19 +137,51 @@ export const CLAUDE_ASSETS: AssetSurface = {
       return;
     }
     const json = await readClaudeJson(homedir);
-    json.mcpServers = { ...((json.mcpServers as Record<string, unknown>) ?? {}), [name]: config };
+    if (scope === 'local') {
+      const projects = ((json.projects ?? {}) as Record<string, unknown>);
+      const entry = ((projects[localKey(projectPath)] ?? {}) as Record<string, unknown>);
+      const servers = ((entry.mcpServers ?? {}) as Record<string, McpServerConfig>);
+      servers[name] = config;
+      entry.mcpServers = servers;
+      projects[localKey(projectPath)] = entry;
+      json.projects = projects;
+    } else {
+      json.mcpServers = { ...((json.mcpServers as Record<string, unknown>) ?? {}), [name]: config };
+    }
     await writeFile(path.join(homedir, CLAUDE_JSON), `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
   },
 
   async mcpRemove(scope, projectPath, homedir, name) {
     assertSafeName(name);
-    const file = scope === 'project' ? path.join(projectPath, MCP_FILE) : path.join(homedir, CLAUDE_JSON);
-    const json = scope === 'project' ? await readProjectMcp(file) : await readClaudeJson(homedir);
-    const servers = (json.mcpServers ?? {}) as Record<string, unknown>;
-    if (!(name in servers)) return false;
+    if (scope === 'project') {
+      const file = path.join(projectPath, MCP_FILE);
+      const json = await readProjectMcp(file);
+      const servers = (json.mcpServers ?? {}) as Record<string, unknown>;
+      if (!(name in servers)) return false;
+      delete servers[name];
+      json.mcpServers = servers;
+      await writeFile(file, `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
+      return true;
+    }
+    const json = await readClaudeJson(homedir);
+    const servers = (
+      scope === 'local'
+        ? localServersOf(json, projectPath)
+        : json.mcpServers
+    ) as Record<string, unknown> | undefined;
+    if (!servers || !(name in servers)) return false;
     delete servers[name];
-    json.mcpServers = servers;
-    await writeFile(file, `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
+    if (scope === 'local') {
+      const key = localKey(projectPath);
+      const projects = ((json.projects ?? {}) as Record<string, unknown>);
+      const entry = ((projects[key] ?? {}) as Record<string, unknown>);
+      entry.mcpServers = servers;
+      projects[key] = entry;
+      json.projects = projects;
+    } else {
+      json.mcpServers = servers;
+    }
+    await writeFile(path.join(homedir, CLAUDE_JSON), `${JSON.stringify(json, null, 2)}\n`, 'utf-8');
     return true;
   },
 

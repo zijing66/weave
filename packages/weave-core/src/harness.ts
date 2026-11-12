@@ -324,6 +324,17 @@ export const HARNESS_SESSION_CONTROL = {
 } satisfies Record<Harness, HarnessSessionControl>;
 
 /**
+ * weave 自动化动作类型词表（G6 自动化命名铁则，RPG 稿 §八）：weave 自动起的
+ * 会话自留 title 用 `[weave] <类型>·<主体>·<语境>` 语法——项目会话列表里自动化的
+ * 一眼可辨。**词表是唯一权威**（新自动化入口加类型先加行）；拼装唯一拼装点 =
+ * server 侧 `weaveTitle`（rpg 域），不分散拼字符串。
+ */
+export const WEAVE_TITLE_TYPES = ['出征', '协调', '修炼', '决策', '修补'] as const;
+
+/** weave 自动化会话 title 的类型字段（`WEAVE_TITLE_TYPES` 的元素）。 */
+export type WeaveTitleType = (typeof WEAVE_TITLE_TYPES)[number];
+
+/**
  * 渲染块协议——对话内嵌可视化的引用行文法与 fragment 契约（跨 harness 统一，
  * 模型侧由 skill 教；文法与 codex Desktop 的 visualize 引用行兼容）。
  * 识别唯一实现 = web 的 visualizeSegments；服务端只读端点的白名单与大小上限

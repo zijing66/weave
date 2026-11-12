@@ -21,8 +21,14 @@ import {
   detectPluginTemplateUpdates,
   type PluginTemplateUpdate,
 } from './plugin-templates.js';
-import { detectInitFileUpdates, needsInit, type InitFileUpdate } from './init-files.js';
+import {
+  detectInitFileUpdates,
+  detectInitVersionLag,
+  needsInit,
+  type InitFileUpdate,
+} from './init-files.js';
 import type { LibraryRow } from '../repositories/libraries.js';
+import { WEAVE_VERSION } from '../version.js';
 
 /**
  * Update detection — compares installed assets against their library sources.
@@ -94,6 +100,12 @@ export interface UpdateReport {
   available: number;
   /** 会进 git 的 init 文件有漂移 → dashboard 提醒用户跑 `weave init`。 */
   needsInit: boolean;
+  /** init 落档版本落后于当前 weave → 提醒重跑 `weave init`（与文件漂移互补的口径）。 */
+  initVersionBehind: boolean;
+  /** `.weave/config.yaml` 的 `initVersion`（展示用；null = 无版本戳的极旧 init）。 */
+  initVersion: string | null;
+  /** 当前 weave 版本（展示用，行文案 `旧 → 新`）。 */
+  weaveVersion: string;
 }
 
 /**
@@ -110,7 +122,7 @@ export async function detectUpdates(
   const idx = index ?? (await buildLibraryIndex(libraries));
   // 四路各自独立（技能哈希的 stat 往返、init 文件的 git 子进程、配置读取），
   // 串起来就是四段耗时相加；并行后总耗时为最慢那一路。
-  const [skills, mcp, files, pluginTemplates, initFiles] = await Promise.all([
+  const [skills, mcp, files, pluginTemplates, initFiles, versionLag] = await Promise.all([
     detectSkillUpdates(projectPath, cache, idx),
     detectMcpUpdates(projectPath, idx),
     detectFileAssetUpdates(projectPath, cache, idx),
@@ -118,6 +130,8 @@ export async function detectUpdates(
     detectPluginTemplateUpdates(projectPath, cache),
     // init 生成物同样无账本（期望态由 harness 生成器给），按 git 归类分流。
     detectInitFileUpdates(projectPath),
+    // init 版本滞后（提醒口径）：只读 config.yaml，与前几路互不依赖。
+    detectInitVersionLag(projectPath),
   ]);
   // 账本补齐：报告是按盘面枚举的，"账上有、报告里没有"就等于盘上已被删除。
   await mergeMissingFromLedger(projectPath, { skills, mcp, files }, idx);
@@ -134,15 +148,35 @@ export async function detectUpdates(
     initFiles,
     available,
     needsInit: needsInit(initFiles),
+    initVersionBehind: versionLag.behind,
+    initVersion: versionLag.initVersion,
+    weaveVersion: WEAVE_VERSION,
   };
 }
 
-/** 项目行推送面的一行摘要：角标条数 + 「待 init」提醒（同一次检测的两个面）。 */
+/** 过期项的分类计数（同步按钮 tooltip 的红字明细用）。 */
+export interface ProjectUpdateCats {
+  skills: number;
+  mcp: number;
+  files: number;
+  templates: number;
+  init: number;
+}
+
+/** 项目行推送面的一行摘要：角标条数 + 「待 init」+ init 版本滞后提醒（同一次检测的三个面）。 */
 export interface ProjectUpdateSummary {
   /** 可代写同步的过期项数（含 auto 归类的 init 文件）。 */
   available: number;
   /** 会进 git 的 init 文件有漂移 → 提醒用户跑 `weave init`。 */
   needsInit: boolean;
+  /** init 落档版本落后于当前 weave → 提醒重跑 `weave init`。 */
+  initVersionBehind: boolean;
+  /** 分类计数（hover 懒拉 / 推送帧都带；旧客户端容缺）。 */
+  cats?: ProjectUpdateCats;
+  /** `.weave/config.yaml` 的 `initVersion`（tooltip 展示；null = 无版本戳的极旧 init）。 */
+  initVersion?: string | null;
+  /** 当前 weave 版本（tooltip 展示）。 */
+  weaveVersion?: string;
 }
 
 /**
@@ -159,7 +193,20 @@ export async function detectProjectUpdateCounts(
   const out: Record<number, ProjectUpdateSummary> = {};
   for (const project of projects) {
     const report = await detectUpdates(project.path, libraries, cache, index);
-    out[project.id] = { available: report.available, needsInit: report.needsInit };
+    out[project.id] = {
+      available: report.available,
+      needsInit: report.needsInit,
+      initVersionBehind: report.initVersionBehind,
+      cats: {
+        skills: report.skills.filter((s) => !s.custom && s.outdated).length,
+        mcp: report.mcp.filter((s) => !s.custom && s.outdated).length,
+        files: report.files.filter((s) => !s.custom && s.outdated).length,
+        templates: report.pluginTemplates.filter((s) => s.outdated).length,
+        init: report.initFiles.filter((f) => f.outdated && f.syncClass === 'auto').length,
+      },
+      initVersion: report.initVersion,
+      weaveVersion: report.weaveVersion,
+    };
   }
   return out;
 }

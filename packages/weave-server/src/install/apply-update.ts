@@ -1,7 +1,7 @@
 import { rm, cp, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { Harness } from '@weavecode/core';
+import type { Harness, ToolScope } from '@weavecode/core';
 import { applyStatuslineConfig } from '../statusline/manager.js';
 import { readStatuslineConfig } from '../statusline/manager.js';
 import {
@@ -37,7 +37,8 @@ import type { LibraryRow } from '../repositories/libraries.js';
 export interface ApplyUpdateInput {
   category: 'skill' | 'mcp' | 'command' | 'agent' | 'workflow' | 'rule' | 'output-style' | 'init';
   name: string;
-  scope: 'project' | 'user';
+  /** skill/file-asset 内部只问 `=== 'user'`（local 落 project 分支）；MCP 直传 surface。 */
+  scope: ToolScope;
   /** Which agent's surface to refresh (skills + codex MCP matter). */
   agent?: Harness;
 }
@@ -72,7 +73,13 @@ export async function applyUpdate(
   if (isFileAssetCategory(input.category)) {
     const src = findFileAssetSource(idx, input.category, input.name);
     if (!src) throw new Error(`No library source for ${input.category} "${input.name}"`);
-    const targetDir = fileAssetTargetDir(input.category, agent, input.scope, projectPath, homedir());
+    const targetDir = fileAssetTargetDir(
+      input.category,
+      agent,
+      input.scope === 'user' ? 'user' : 'project',
+      projectPath,
+      homedir(),
+    );
     await mkdir(targetDir, { recursive: true });
     const target = path.join(targetDir, `${input.name}${FILE_ASSET_SPECS[input.category].ext}`);
     await rm(target, { force: true });

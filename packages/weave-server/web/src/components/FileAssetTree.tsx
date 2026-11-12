@@ -11,7 +11,7 @@ import { canUninstall } from '@/lib/install-capabilities';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { cn } from '@/lib/utils';
+import { cn, tildePath } from '@/lib/utils';
 import { BUCKET_ORDER, tagsOf, NAMESPACE_TAG, ROW_TAG_BASE, kindColor } from '@/lib/file-tags';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { useT } from '@/i18n/I18nProvider';
@@ -152,10 +152,13 @@ function AssetTreeNode({
   onToggle,
   onOpenFile,
   onUninstall,
+  home,
 }: {
   node: TreeNode;
   depth: number;
   scope: AssetScope;
+  /** 用户家目录（资产路由随行）：tooltip 的 absPath 显示成 `~/…` 形；null = 原样。 */
+  home: string | null;
   /** 安装属性矩阵（卸载门控数据源）；未到 = 回落全放行，服务端硬校验兜底。 */
   capabilities?: InstallCapabilities | null;
   /** key = fileStem + category（构建时一次成 Map，避免每行线性 find）。 */
@@ -191,7 +194,7 @@ function AssetTreeNode({
     return (
       <div className="group/row relative">
         <Tooltip
-          label={a.isSymlink ? t('fileTree.symlinkTitle', { path: a.absPath }) : a.absPath}
+          label={a.isSymlink ? t('fileTree.symlinkTitle', { path: tildePath(a.absPath, home) }) : tildePath(a.absPath, home)}
           className="w-full"
         >
           <button
@@ -301,6 +304,7 @@ function AssetTreeNode({
             onToggle={onToggle}
             onOpenFile={onOpenFile}
             onUninstall={onUninstall}
+            home={home}
           />
         ))}
     </div>
@@ -322,10 +326,13 @@ export function FileAssetTree({
   updates,
   onUninstall,
   onOpenFile,
+  home,
 }: {
   /** Which view this tree is in — prefixes the heading (项目 X / 全局 X). */
   scope: AssetScope;
   assets: AssetEntry[];
+  /** 用户家目录（资产路由随行）：tooltip 的 absPath 显示成 `~/…` 形；null = 原样。 */
+  home: string | null;
   /** 安装属性矩阵——卸载门控数据源（§6-4）。 */
   capabilities?: InstallCapabilities | null;
   /** Update info already filtered to this mode's scope. */
@@ -488,6 +495,7 @@ export function FileAssetTree({
               onToggle={toggle}
               onOpenFile={onOpenFile}
               onUninstall={onUninstall}
+              home={home}
             />
           ))}
         </div>

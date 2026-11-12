@@ -220,6 +220,102 @@ export const SESSIONS_TOOLS = [
     inputSchema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } },
     outputSchema: { type: 'object', additionalProperties: true },
   },
+  {
+    name: 'set_model',
+    description:
+      "Switch the session's model via the host's own `/model <name>` built-in command (session-scoped, not persisted). The model name is typed into the terminal pane. Returns { ok, sessionId }; non-ok when the session is busy or has no terminal channel.",
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'model'],
+      properties: { sessionId: { type: 'string' }, model: { type: 'string' } },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, sessionId: { type: 'string' } },
+      required: ['ok'],
+    },
+  },
+  {
+    name: 'set_effort',
+    description:
+      "Set the session's thinking effort level via `/effort <level>` (closed vocabulary per harness — e.g. claude low/medium/high; an off-list level is rejected 400 without typing keys). Returns { ok, sessionId }.",
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'level'],
+      properties: { sessionId: { type: 'string' }, level: { type: 'string' } },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, sessionId: { type: 'string' } },
+      required: ['ok'],
+    },
+  },
+  {
+    name: 'resend_message',
+    description:
+      'Manually resend a failed or delivered-but-unacked prompt message (also releases the delivery stall gate for that session). Returns { ok, messageId, status }; 409 when the message is not in a resolvable state.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'messageId'],
+      properties: { sessionId: { type: 'string' }, messageId: { type: 'string' } },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: { ok: { type: 'boolean' }, messageId: { type: 'string' }, status: { type: 'string' } },
+      required: ['ok'],
+    },
+  },
+  {
+    name: 'dismiss_message',
+    description:
+      'Remove a message row from the in-flight delivery view (a queued pending row = cancel the send; a stall cause row = removing it releases the gate). Returns { ok }; 404 when already gone.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'messageId'],
+      properties: { sessionId: { type: 'string' }, messageId: { type: 'string' } },
+    },
+    outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+  },
+  {
+    name: 'send_side_question',
+    description:
+      'Ask a quick side question in the host\'s side-conversation panel (/btw for claude): the answer does not enter the main transcript and never interrupts the running turn. Requires the session to be idle (busy → 409). Returns { ok, sideQuestion }.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'question'],
+      properties: { sessionId: { type: 'string' }, question: { type: 'string' } },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'list_side_questions',
+    description:
+      'History of side questions asked in a session (weave\'s own record — the host panel is ephemeral). Newest first, limit default 20 max 100, beforeId for pagination. Returns { sideQuestions: [...] }.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId'],
+      properties: {
+        sessionId: { type: 'string' },
+        limit: { type: 'number' },
+        beforeId: { type: 'number' },
+      },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'get_plan',
+    description:
+      "The plan text the model most recently submitted via ExitPlanMode (waiting for user approval), extracted from events/transcript. Returns { plan: { at, text } | null } — null when no plan is pending or the harness has no plan surface.",
+    inputSchema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
+  {
+    name: 'list_commands',
+    description:
+      "Slash-command candidates of the session's host (built-ins + custom commands + skills, discovery per harness), with the input-mode table (which sigils are host-executed, e.g. claude's `!` bash mode). Returns { supported, commands, inputModes }.",
+    inputSchema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
 ] as const satisfies readonly McpToolDef[];
 
 type Args = Record<string, unknown>;
@@ -272,6 +368,43 @@ export function toolRequest(name: string, args: Args): McpToolRequest {
       };
     case 'get_session_activity':
       return { method: 'GET', path: `/sessions/${idOf(args)}/activity` };
+    case 'set_model':
+      return {
+        method: 'POST',
+        path: `/sessions/${idOf(args)}/model`,
+        body: { model: str(args.model) },
+      };
+    case 'set_effort':
+      return {
+        method: 'POST',
+        path: `/sessions/${idOf(args)}/effort`,
+        body: { level: str(args.level) },
+      };
+    case 'resend_message':
+      return {
+        method: 'POST',
+        path: `/sessions/${idOf(args)}/messages/${encodeURIComponent(String(args.messageId))}/resend`,
+      };
+    case 'dismiss_message':
+      return {
+        method: 'POST',
+        path: `/sessions/${idOf(args)}/messages/${encodeURIComponent(String(args.messageId))}/dismiss`,
+      };
+    case 'send_side_question':
+      return {
+        method: 'POST',
+        path: `/sessions/${idOf(args)}/side-question`,
+        body: { question: args.question },
+      };
+    case 'list_side_questions':
+      return {
+        method: 'GET',
+        path: `/sessions/${idOf(args)}/side-questions${qs({ limit: num(args.limit), beforeId: num(args.beforeId) })}`,
+      };
+    case 'get_plan':
+      return { method: 'GET', path: `/sessions/${idOf(args)}/plan` };
+    case 'list_commands':
+      return { method: 'GET', path: `/sessions/${idOf(args)}/commands` };
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -299,6 +432,13 @@ function postProcess(name: string, data: unknown, args: Args): unknown {
       const r = data as { watchId?: number };
       return { ok: true, watchId: r.watchId };
     }
+    case 'resend_message': {
+      const r = data as { ok?: boolean; messageId?: string; status?: string };
+      return { ok: r.ok ?? true, ...(r.messageId === undefined ? {} : { messageId: r.messageId }), ...(r.status === undefined ? {} : { status: r.status }) };
+    }
+    case 'dismiss_message':
+    case 'set_model':
+    case 'set_effort':
     case 'answer_question':
       return data;
     default:

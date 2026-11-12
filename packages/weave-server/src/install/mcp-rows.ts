@@ -9,7 +9,6 @@ import {
 } from './settings-mcp.js';
 import { assetSurfaces } from '../surfaces.js';
 import { BUILTIN_MCP_SERVERS } from './builtin-mcp.js';
-import { readDaemonState } from '../daemon/state.js';
 
 export type McpToolRow = ToolStateRow<McpServerConfig>;
 
@@ -44,30 +43,10 @@ export async function readMcpRows(projectPath: string): Promise<McpToolRow[]> {
       }
     }
   }
-  // weave 自带目录（daemon 托管的 HTTP MCP）：未配置时补一行「未安装」。
-  // **user 档安装入口已退役（E4）**——全集改由 provisionRole/scaffoldCoordinator
-  // 写进内建仓库项目档；这里只为 web 的「随角色仓库自动配置 / 存量迁移」文案标记
-  // 行身份（已装 user 档的存量行也带 builtin 标记）。端点用 daemon 当前端口。
-  const port = readDaemonState()?.port;
-  for (const surface of assetSurfaces()) {
-    for (const builtin of BUILTIN_MCP_SERVERS) {
-      if (surface.harness !== 'claude') continue;
-      if (rows.some((r) => r.harness === 'claude' && r.key === builtin.name)) continue;
-      rows.push({
-        key: builtin.name,
-        category: 'mcp',
-        harness: 'claude',
-        scope: 'user',
-        installScopes: ['user'],
-        install: 'absent',
-        enable: null,
-        effective: false,
-        detail: { url: `http://127.0.0.1:${port ?? 6420}${builtin.path}` },
-        builtin: true,
-      });
-    }
-  }
-  // 存量已装 user 档的内置行带 builtin 标记（web 据此给一次性迁移提示）。
+  // weave 自带目录（daemon 托管的 HTTP MCP）：**不补「未安装」占位行**——
+  // user 档安装入口已退役（E4），全集由 provisionRole/scaffoldCoordinator 写进
+  // 内建仓库项目档；只有真实存在的配置才成行（存量已装 user 档的行带 builtin
+  // 标记，web 据此给一次性迁移提示）。
   for (const row of rows) {
     if (
       row.harness === 'claude' &&

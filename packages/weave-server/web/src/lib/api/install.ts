@@ -23,14 +23,14 @@ export interface InstallBody {
   /** Template file (library-relative or absolute) for file assets. */
   sourceFile?: string;
   mcpConfig?: McpServerConfig;
-  scope?: 'project' | 'user';
+  scope?: AssetScope;
   agent?: AssetAgent;
   /** plugin 类别：无 manifest 包合成最小 plugin.json 用（版本/描述）。 */
   version?: string;
   description?: string;
 }
 
-export type AssetScope = 'project' | 'user';
+export type AssetScope = 'project' | 'local' | 'user';
 
 /** Mirror of server `install/capabilities.ts`（安装属性矩阵唯一事实源在服务端）。 */
 export type InstallCategory = 'skill' | 'mcp' | FileAssetCategory;

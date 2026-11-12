@@ -43,8 +43,8 @@ describe('installCapabilities', () => {
     expect(scopesOf('skill', 'codex')).toEqual(['project', 'user']);
   });
 
-  it('mcp 面由资产面派生：claude 双范围、codex 仅 user', () => {
-    expect(scopesOf('mcp', 'claude')).toEqual(['project', 'user']);
+  it('mcp 面由资产面派生：claude 三范围（project/local/user）、codex 仅 user', () => {
+    expect(scopesOf('mcp', 'claude')).toEqual(['project', 'local', 'user']);
     expect(scopesOf('mcp', 'codex')).toEqual(['user']);
   });
 

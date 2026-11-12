@@ -12,9 +12,7 @@ export function useProjectUpdates() {
   const [updates, setUpdates] = useState<UpdateReport | null>(null);
   // Per-project update summary — hover-lazy + cached per project id. Carries
   // both the badge count and the 「待 init」 reminder (same fetch, one cache).
-  const [updatesMap, setUpdatesMap] = useState<
-    Record<number, { available: number; needsInit: boolean }>
-  >({});
+  const [updatesMap, setUpdatesMap] = useState<Record<number, ProjectUpdateSummary>>({});
 
   // `listUpdates` 每轮都要在项目里起 git 子进程（Windows 上数百毫秒），而 `asset`
   // 帧是成批到的——同一项目的在飞请求直接复用，别一帧一次。
@@ -43,7 +41,20 @@ export function useProjectUpdates() {
         .then((r) => {
           setUpdatesMap((prev) => ({
             ...prev,
-            [projectId]: { available: r.available, needsInit: r.needsInit },
+            [projectId]: {
+              available: r.available,
+              needsInit: r.needsInit,
+              initVersionBehind: r.initVersionBehind,
+              cats: {
+                skills: r.skills.filter((s) => !s.custom && s.outdated).length,
+                mcp: r.mcp.filter((s) => !s.custom && s.outdated).length,
+                files: r.files.filter((s) => !s.custom && s.outdated).length,
+                templates: (r.pluginTemplates ?? []).filter((s) => s.outdated).length,
+                init: (r.initFiles ?? []).filter((f) => f.outdated && f.syncClass === 'auto').length,
+              },
+              initVersion: r.initVersion,
+              weaveVersion: r.weaveVersion,
+            },
           }));
         })
         .catch(() => {});

@@ -154,10 +154,13 @@ export async function handleInstallationRoutes(
       const harness = pack.targets[0];
       if (!harness) continue;
       const key = pack.key ?? pack.name;
-      if (pack.scopes?.includes('user')) {
-        userRow({ kind: 'plugin', name: pack.name, key, scope: 'user', harness });
+      const asUser = { kind: 'plugin' as const, name: pack.name, key, scope: 'user' as const, harness };
+      const scopes = pack.scopes;
+      if (!scopes || scopes.length === 0) {
+        userRow(asUser);
       } else {
-        pushRow({ ...base, kind: 'plugin', name: pack.name, key, scope: 'project', harness });
+        if (scopes.includes('user')) userRow(asUser);
+        if (scopes.includes('project')) pushRow({ ...base, ...asUser, scope: 'project' });
       }
     }
   }

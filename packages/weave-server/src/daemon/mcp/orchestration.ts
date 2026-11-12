@@ -223,6 +223,32 @@ export const TOOLS = [
       required: ['sessions'],
     },
   },
+  {
+    name: 'get_decision_model',
+    description:
+      'Availability of the condition-edge decision model (Jev-compatible /v1/systemone caller; falls back to fork sub-agents when unconfigured or unsure). Returns { available, reason: string | null } — check this before relying on judge_condition.',
+    inputSchema: { type: 'object', properties: {} },
+    outputSchema: {
+      type: 'object',
+      properties: { available: { type: 'boolean' }, reason: { type: ['string', 'null'] } },
+      required: ['available'],
+    },
+  },
+  {
+    name: 'judge_condition',
+    description:
+      'Run one condition evaluation through the wired judge chain (decision model first, fork sub-agent fallback). Returns { decision: { ok, reason?, source: "decision-model" | "fork", detail? } }. 503 when no judge is wired; 502 surfaces the underlying failure — do not retry blindly.',
+    inputSchema: {
+      type: 'object',
+      required: ['condition'],
+      properties: {
+        condition: { type: 'string', description: 'the yes/no question (edge condition text)' },
+        upstream: { type: 'string', description: 'the upstream turn output ({upstream} source); optional' },
+        sessionId: { type: 'string', description: 'context session for the fork fallback; optional' },
+      },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
 ] as const satisfies readonly McpToolDef[];
 
 type Args = Record<string, unknown>;
@@ -298,6 +324,18 @@ export function toolRequest(name: string, args: Args): McpToolRequest {
       return { method: 'POST', path: `/messaging/orchestration-runs/${num(args.id)}/cancel` };
     case 'list_sessions':
       return { method: 'GET', path: `/sessions${qs({ projectId: num(args.projectId) })}` };
+    case 'get_decision_model':
+      return { method: 'GET', path: '/decision/status' };
+    case 'judge_condition':
+      return {
+        method: 'POST',
+        path: '/decision/judge',
+        body: {
+          condition: args.condition,
+          ...(args.upstream === undefined ? {} : { upstream: args.upstream }),
+          ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
+        },
+      };
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
