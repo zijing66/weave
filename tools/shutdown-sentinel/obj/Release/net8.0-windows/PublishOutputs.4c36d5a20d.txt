@@ -1,5 +1,0 @@
-D:\GitRepo\AIRepo\weave\tools\shutdown-sentinel\publish\weave-shutdown-sentinel.exe
-D:\GitRepo\AIRepo\weave\tools\shutdown-sentinel\publish\weave-shutdown-sentinel.dll
-D:\GitRepo\AIRepo\weave\tools\shutdown-sentinel\publish\weave-shutdown-sentinel.deps.json
-D:\GitRepo\AIRepo\weave\tools\shutdown-sentinel\publish\weave-shutdown-sentinel.runtimeconfig.json
-D:\GitRepo\AIRepo\weave\tools\shutdown-sentinel\publish\weave-shutdown-sentinel.pdb
