@@ -863,7 +863,7 @@ export function ProjectList({
         createPortal(
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 lg:p-6">
             <div className="absolute inset-0 bg-black/60" onClick={() => setArchivedOpen(false)} />
-            <div className="relative w-[680px] max-w-full rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
+            <div className="relative w-[680px] max-w-full max-h-full rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col">
               <header className="h-11 shrink-0 flex items-center gap-2 px-4 border-b border-edge/[0.06] frosted">
                 <Archive className="h-4 w-4 text-neutral-400" />
                 <span className="text-sm font-semibold text-neutral-200">
@@ -879,8 +879,9 @@ export function ProjectList({
                   </button>
                 </Tooltip>
               </header>
-              {/* max-h-[60%] 不用 60vh：根 zoom 下视口单位被二次放大（见 index.css #root 注） */}
-              <div className="p-4 max-h-[60%] overflow-y-auto">
+              {/* 卡片 max-h-full 钉在 fixed 定高遮罩内，滚动区 flex-1 min-h-0 吃剩余高度
+                  ——高度随视口，项目再多也只内部滚（原先 max-h-[60%] 对 auto 父级解析不了）。 */}
+              <div className="p-4 flex-1 min-h-0 overflow-y-auto">
                 <div className="grid grid-cols-3 gap-3">
                   {archivedProjects.map((p) => (
                     <div
