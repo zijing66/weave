@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>weave-shutdown-sentinel</AssemblyName>
+    <RootNamespace>WeaveShutdownSentinel</RootNamespace>
+    <!-- 与宠物窗同一分发口径：框架依赖形态（本机需 .NET 8 Desktop Runtime）。 -->
+    <SelfContained>false</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+</Project>

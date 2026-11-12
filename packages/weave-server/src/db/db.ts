@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { getDbPath } from './paths.js';
 import { projectKey } from '../repositories/projects.js';
@@ -601,6 +602,10 @@ function pruneBackups(dir: string): void {
 /**
  * 损坏的库隔离到旁边、重建空库继续启动。dashboard 起不来等于全部功能消失；
  * 坏文件留在 `.corrupt-<时间戳>` 里（连 -wal/-shm 一起），事后可抢救。
+ *
+ * 隔离后自动抢救一把：sqlite3 CLI 在 PATH 上（或随包的 res/sqlite3）就跑
+ * `.recover` 管道重建——成功则恢复库直接顶上（数据回来多少算多少），失败
+ * 保持空库照常启动。CLI 缺席不打扰，console 提示手动命令。
  */
 function quarantineAndRebuild(dbPath: string, err: unknown): DatabaseSync {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -613,11 +618,66 @@ function quarantineAndRebuild(dbPath: string, err: unknown): DatabaseSync {
     }
   }
   const note = err instanceof Error ? err.message : String(err);
-  console.error(
-    `[weave] database is corrupt (${note}); moved to ${quarantine} and starting with a fresh one. ` +
-      `Recover the old data with: sqlite3 "${quarantine}" ".recover" | sqlite3 "${dbPath}"`,
-  );
+  console.error(`[weave] database is corrupt (${note}); moved to ${quarantine}.`);
+  if (tryAutoRecover(quarantine, dbPath)) {
+    console.log(`[weave] recovered corrupt database from ${quarantine} via sqlite3 .recover.`);
+  } else {
+    console.error(
+      `[weave] starting with a fresh database. Recover the old data with: ` +
+        `sqlite3 "${quarantine}" ".recover" | sqlite3 "${dbPath}"`,
+    );
+  }
   return openAndMigrate(dbPath);
+}
+
+/**
+ * 自动抢救：探测 sqlite3 CLI（PATH → 伞包 res/sqlite3/）→ `.recover` 管道重建
+ * → 重建结果先过一次 openAndMigrate 体检，坏透了不顶上（rename 回去当没发生）。
+ * 全程尽力而为：任何一步失败都回落「空库启动」，绝不因抢救失败挡住 daemon。
+ */
+function tryAutoRecover(quarantine: string, dbPath: string): boolean {
+  const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+  const candidates = [
+    'sqlite3',
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '../../res/sqlite3/sqlite3'),
+  ];
+  for (const cli of candidates) {
+    try {
+      // 探测：CLI 不在会同步抛 ENOENT（几百 ms 内定论，不挡启动多少）
+      execFileSync(cli, ['--version'], { stdio: 'ignore', timeout: 5_000 });
+      const recovered = `${quarantine}.recovered`;
+      const dump = execFileSync(cli, [quarantine, '.recover'], {
+        maxBuffer: 512 * 1024 * 1024,
+        timeout: 120_000,
+      });
+      const probe = new DatabaseSync(recovered);
+      try {
+        probe.exec(dump.toString('utf8'));
+      } finally {
+        probe.close();
+      }
+      // 体检：恢复库必须能走完 openAndMigrate 才配顶上
+      openAndMigrate(recovered).close();
+      for (const suffix of ['', '-wal', '-shm']) {
+        try {
+          if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
+        } catch {
+          return false;
+        }
+      }
+      renameSync(recovered, dbPath);
+      try {
+        if (existsSync(recovered + '-wal')) unlinkSync(recovered + '-wal');
+        if (existsSync(recovered + '-shm')) unlinkSync(recovered + '-shm');
+      } catch {
+        /* 残尾下次启动自动清 */
+      }
+      return true;
+    } catch {
+      continue; // 这个候选不可用 / 恢复失败：换下一个
+    }
+  }
+  return false;
 }
 
 /**

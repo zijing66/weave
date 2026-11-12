@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,6 +96,37 @@ describe('openDatabase 的自我保护', () => {
     const db = openDatabase(dbPath);
     expect(readdirSync(dir).some((n) => n.includes('.corrupt-'))).toBe(true);
     expect((db.prepare('SELECT count(*) AS n FROM projects').get() as { n: number }).n).toBe(0);
+    db.close();
+  });
+
+  it('sqlite3 CLI 在 PATH 上：隔离后自动 .recover，数据搬进新库', () => {
+    // 造一个「有数据但 schema 坏」的库——.recover 能救回可读页
+    const bad = new DatabaseSync(dbPath);
+    bad.exec('CREATE TABLE keep(a INTEGER)');
+    bad.exec("INSERT INTO keep VALUES(42)");
+    bad.enableDefensive(false);
+    bad.exec('PRAGMA writable_schema = ON');
+    bad.exec(
+      "INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql) VALUES('table','broken','broken',0,'CREATE TABLE broken(')",
+    );
+    bad.close();
+
+    let haveCli = true;
+    try {
+      execFileSync('sqlite3', ['--version'], { stdio: 'ignore', timeout: 5_000 });
+    } catch {
+      haveCli = false; // 本机没装 sqlite3：跳过恢复断言，只验隔离路径仍成立
+    }
+
+    const db = openDatabase(dbPath);
+    expect(readdirSync(dir).some((n) => n.includes('.corrupt-'))).toBe(true);
+    if (haveCli) {
+      // 恢复库已顶上：keep 表回来（SCHEMA 之外的旧表被 .recover 原样搬回）
+      const rows = db.prepare('SELECT a FROM keep').all() as Array<{ a: number }>;
+      expect(rows.map((r) => r.a)).toContain(42);
+    } else {
+      expect((db.prepare('SELECT count(*) AS n FROM projects').get() as { n: number }).n).toBe(0);
+    }
     db.close();
   });
 });

@@ -104,6 +104,7 @@ import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } 
 import { AuthService } from './dashboard-auth.js';
 import { getCertsDir } from '../db/paths.js';
 import { syncLaunchOnLogin } from './auto-start.js';
+import { startShutdownSentinel, stopShutdownSentinel } from './shutdown-sentinel.js';
 import { resolveStaticDir } from './static.js';
 import { openPetWindow, shutdownPetWindow } from './pet-window.js';
 import { seedBuiltinPets } from './pet-seed.js';
@@ -869,6 +870,7 @@ export function startDaemon(): void {
     syncScheduler.stop();
     watch.stop();
     shutdownPetWindow();
+    stopShutdownSentinel();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     clearInterval(cronTimer);
@@ -909,6 +911,9 @@ export function startDaemon(): void {
   shutdownRef.fn = shutdown;
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  // 系统关机/注销：Windows 关机路径不给控制台进程送 SIGTERM——哨兵（仅消息
+  // 窗口的 .NET 小进程）代收 WM_ENDSESSION，stdout 一行触发同一条 shutdown 链。
+  startShutdownSentinel(shutdown);
 
   server.listen(state.port, bindHost, () => {
     // Record the real pid + actual bind host now that we are listening.

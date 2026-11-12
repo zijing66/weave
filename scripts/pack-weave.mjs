@@ -140,7 +140,7 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
       if (!versionOf[name]) externals[name] = range;
     }
 
-    for (const entry of ['dist', 'bin', 'web/dist', 'THIRD_PARTY_NOTICES.md']) {
+    for (const entry of ['dist', 'bin', 'web/dist', 'res', 'THIRD_PARTY_NOTICES.md']) {
       await cp(path.join(src, entry), path.join(dest, entry), { recursive: true, force: false })
         .catch((err) => {
           if (err.code !== 'ENOENT' && err.code !== 'ERR_FS_CP_EEXIST') throw err;

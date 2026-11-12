@@ -115,6 +115,7 @@ import { startFederationHeartbeat, type FederationHeartbeat } from './federation
 import { readPeerToken } from './peer-tokens.js';
 import { tokenFileOf } from '../repositories/peers.js';
 import { openPetWindow, shutdownPetWindow } from './pet-window.js';
+import { startShutdownSentinel, stopShutdownSentinel } from './shutdown-sentinel.js';
 import { seedBuiltinPets } from './pet-seed.js';
 import { resolveStaticDir } from './static.js';
 
@@ -820,6 +821,7 @@ async function main(): Promise<void> {
     interruptRefresher.stop();
     effortRefresher.stop();
     shutdownPetWindow();
+    stopShutdownSentinel();
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     clearInterval(cronTimer);
@@ -855,6 +857,7 @@ async function main(): Promise<void> {
   shutdownRef.fn = shutdown;
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  startShutdownSentinel(shutdown);
 
   server.listen(port, bindHost, () => {
     writeDaemonState({ pid: process.pid, port, startedAt: new Date().toISOString(), host: bindHost, tlsPort });

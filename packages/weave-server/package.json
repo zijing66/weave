@@ -17,7 +17,8 @@
   "files": [
     "dist",
     "THIRD_PARTY_NOTICES.md",
-    "web/dist"
+    "web/dist",
+    "res"
   ],
   "sideEffects": false,
   "author": "zijing66",
