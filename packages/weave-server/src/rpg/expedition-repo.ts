@@ -83,6 +83,15 @@ export class RpgExpeditionRepository {
     ).map(toRow);
   }
 
+  /** 全量（G6 角色可见桥的项目行徽章一次拉齐；新→旧封顶）。 */
+  listAll(limit = 500): RpgExpeditionRow[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM rpg_expeditions ORDER BY id DESC LIMIT ?')
+        .all(limit) as Array<Record<string, unknown>>
+    ).map(toRow);
+  }
+
   /** 占位键 → 真实会话 id（pending 认领改绑；没有该占位键 = 静默 no-op）。 */
   rebindSessionKey(oldKey: string, sessionKey: string): void {
     this.db

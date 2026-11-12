@@ -9,6 +9,7 @@ import {
   PENDING_WT_PREFIX,
   createSessionWorktree,
   upsertWorktreeEntry,
+  type MergeOutcome,
   type WorktreeGitExec,
 } from '../daemon/worktree.js';
 import { RpgGrowthRepository, type RpgRoleRepository } from './roles.js';
@@ -16,6 +17,7 @@ import { RpgExpeditionRepository, type RpgExpeditionRow } from './expedition-rep
 import { MergeLadderRepository, runMergeLadder } from './merge-ladder.js';
 import { anchorBranchOf } from './expedition.js';
 import { installKit } from './kit.js';
+import { weaveTitle } from './titles.js';
 
 /**
  * 出征会话编排（G3 段0 接钉，G线设计 §三）：把 B5 的会话 worktree 管线、起手
@@ -157,7 +159,9 @@ export async function startExpeditionSession(
     });
   }
 
-  const title = input.title?.trim() || `[weave] 出征·${role.name}·${project.name}`;
+  // 命名铁则（G6）：出征 title 走唯一拼装点；调用方自带 title 优先（手工定制）。
+  const title =
+    input.title?.trim() || weaveTitle({ type: '出征', subject: role.name, cue: project.name });
   const row = deps.expeditions.insert({
     roleId: role.id,
     projectId: project.id,
@@ -190,6 +194,82 @@ export async function startExpeditionSession(
 export type MergeExpeditionResult =
   | { ok: true; merged: true; layer: string; into: string }
   | { ok: false; status: number; error: string; layer?: string };
+
+/**
+ * B5 会话并回走合并梯（G6 前置小批；2026-11-10 裁决「并回同梯同规」）：
+ * 临时 merge worktree 里跑 runMergeLadder（每层账 expedition=NULL——普通会话
+ * 不挂出征外键），解出 merge commit 后**主干上普通 merge 该 commit**——不在
+ * 主干 update-ref（用户工作区与 index 不能被替写，梯子训出的差异要经 git 正常
+ * 合并落到用户手上：撞上脏文件的路径由 git 自己拒绝、如实报）。跑梯期间用户
+ * 切走分支 = 如实 error 请重试（并回目标恒为起手那一刻的当下分支）。
+ */
+export async function mergeSessionWorktreeViaLadder(
+  deps: { exec: WorktreeGitExec; ladder: MergeLadderRepository },
+  projectPath: string,
+  entry: { sessionId: string; projectId: number; branch: string },
+): Promise<MergeOutcome> {
+  const head = await deps.exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: projectPath });
+  if (head.code !== 0) {
+    return { ok: false, merged: false, conflict: false, error: 'cannot resolve current branch' };
+  }
+  const target = head.stdout.trim();
+  const ancestor = await deps.exec('git', ['merge-base', '--is-ancestor', entry.branch, target], {
+    cwd: projectPath,
+  });
+  if (ancestor.code === 0) {
+    return { ok: true, merged: true, branch: entry.branch };
+  }
+  const verify = await deps.exec('git', ['rev-parse', '--verify', `${entry.branch}^{commit}`], {
+    cwd: projectPath,
+  });
+  if (verify.code !== 0) {
+    return { ok: false, merged: false, conflict: false, error: `branch ${entry.branch} no longer exists` };
+  }
+  const tmpWt = path.join(projectPath, '.weave', 'worktrees', `merge-wt-${entry.sessionId}`);
+  const add = await deps.exec('git', ['worktree', 'add', '--detach', tmpWt, target], { cwd: projectPath });
+  if (add.code !== 0) {
+    return { ok: false, merged: false, conflict: false, error: 'cannot open merge worktree' };
+  }
+  try {
+    const run = await runMergeLadder(
+      { exec: deps.exec, ladder: deps.ladder, projectId: entry.projectId, expeditionId: null },
+      tmpWt,
+      entry.branch,
+      target,
+    );
+    if (!run.ok) {
+      // mechanical 层失败且非冲突（环境/git 问题）= error；其余（梯内冲突打回）= conflict。
+      return { ok: false, merged: false, conflict: run.layer !== 'mechanical', error: run.report ?? run.outcome };
+    }
+    // 解已训出（tmpWt 的 HEAD = merge commit，parent1 = target 旧 tip）→ 主干
+    // 正常并入该 commit：两树差异经 git 三方合并落地，主干脏文件路径撞上由 git
+    // 拒绝（不 stash、不替写）。
+    const headNow = await deps.exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: projectPath });
+    if (headNow.code !== 0 || headNow.stdout.trim() !== target) {
+      return {
+        ok: false,
+        merged: false,
+        conflict: false,
+        error: `target branch switched to ${headNow.stdout.trim() || '?'} during merge — retry to merge into the new current branch`,
+      };
+    }
+    const sha = await deps.exec('git', ['rev-parse', 'HEAD'], { cwd: tmpWt });
+    const apply = sha.code === 0
+      ? await deps.exec('git', ['merge', '--no-edit', '--no-ff', sha.stdout.trim()], { cwd: projectPath })
+      : sha;
+    if (apply.code !== 0) {
+      const output = `${apply.stderr}\n${apply.stdout}`;
+      await deps.exec('git', ['merge', '--abort'], { cwd: projectPath });
+      if (/CONFLICT/i.test(output)) {
+        return { ok: false, merged: false, conflict: true, error: 'merge conflicts on the main worktree — worktree kept for repair' };
+      }
+      return { ok: false, merged: false, conflict: false, error: output.trim().split('\n').slice(-3).join(' | ') || 'git merge failed' };
+    }
+    return { ok: true, merged: true, branch: entry.branch };
+  } finally {
+    await deps.exec('git', ['worktree', 'remove', '--force', tmpWt], { cwd: projectPath });
+  }
+}
 
 /**
  * 并回（合并梯）：验锚分支还活着（悬空 = 落 dangling、不改写历史）→ 临时
@@ -260,11 +340,19 @@ export async function mergeExpeditionViaLadder(
   }
 }
 
-/** sweeper pending 认领的出征行改绑钩（登记与账本同一拍改写）：占位键行改写。 */
+/** sweeper pending 认领的出征行改绑钩（登记与账本同一拍改写）：占位键行改写 +
+ *  命名铁则（G6）——认领这一拍把出征的 [weave] 身份牌落到会话行（只写这一拍，
+ *  手动改名在后、weave 不再覆盖）。 */
 export function rebindExpeditionOnClaim(
-  expeditions: RpgExpeditionRepository,
+  deps: {
+    expeditions: RpgExpeditionRepository;
+    /** 会话行 title 直写（hooks-routes 改名同一通道；hookSessions 的 setTitle）。 */
+    sessions: Pick<import('../repositories/sessions.js').SessionRepository, 'setTitle'>;
+  },
   pendingKey: string,
   sessionId: string,
 ): void {
-  expeditions.rebindSessionKey(pendingKey, sessionId);
+  deps.expeditions.rebindSessionKey(pendingKey, sessionId);
+  const title = deps.expeditions.getBySessionKey(sessionId)?.title;
+  if (title) deps.sessions.setTitle(sessionId, title);
 }
