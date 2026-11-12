@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   createSessionWorktree,
+  defaultWorktreeGitExec,
   mergeSessionWorktree,
   sessionWorktreeBranch,
   sessionWorktreeDir,
@@ -15,6 +16,9 @@ import {
   PENDING_WT_PREFIX,
   type SessionWorktreeEntry,
 } from '../worktree.js';
+import { openDatabase } from '../../db/db.js';
+import { MergeLadderRepository } from '../../rpg/merge-ladder.js';
+import { mergeSessionWorktreeViaLadder } from '../../rpg/expedition-session.js';
 
 const hasGit = (() => {
   try {
@@ -180,6 +184,87 @@ describe('mergeSessionWorktree', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.conflict).toBe(false);
     expect(outcome.error).toContain('no longer exists');
+  });
+});
+
+describe('mergeSessionWorktreeViaLadder（B5 并回走合并梯）', () => {
+  let db: ReturnType<typeof openDatabase>;
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  const viaLadder = (entry: SessionWorktreeEntry) =>
+    mergeSessionWorktreeViaLadder(
+      { exec: defaultWorktreeGitExec, ladder: new MergeLadderRepository(db) },
+      root,
+      entry,
+    );
+
+  it.skipIf(!hasGit)('干净并回：临时 worktree 里走梯 + 主干普通 merge 落地，账落 ladder 行', async () => {
+    const entry = await createAndRegister('sess-lad');
+    write(entry.path, 'b.txt', 'from ladder\n');
+    git(['add', '-A'], entry.path);
+    git(['commit', '-qm', 'wt via ladder'], entry.path);
+    const outcome = await viaLadder(entry);
+    expect(outcome).toMatchObject({ ok: true, merged: true, branch: entry.branch });
+    expect(git(['log', '--oneline'], root)).toContain('wt via ladder');
+    expect(existsSync(path.join(root, 'b.txt'))).toBe(true);
+    // 账：rpg_merge_ladder 一行（expedition=NULL——普通会话不挂出征外键）
+    const rows = new MergeLadderRepository(db).listByProject(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!).toMatchObject({ layer: 'mechanical', outcome: 'ok', expedition: null });
+    // 临时 merge worktree 收干净
+    expect(existsSync(path.join(root, '.weave', 'worktrees', `merge-wt-sess-lad`))).toBe(false);
+  });
+
+  it.skipIf(!hasGit)('冲突打回：conflict=true、主干还原、worktree 现场 + 临时目录都干净', async () => {
+    const entry = await createAndRegister('sess-ladclash');
+    write(root, 'a.txt', 'main side\n');
+    git(['add', '-A'], root);
+    git(['commit', '-qm', 'main change'], root);
+    write(entry.path, 'a.txt', 'wt side\n');
+    git(['add', '-A'], entry.path);
+    git(['commit', '-qm', 'wt change'], entry.path);
+    const outcome = await viaLadder(entry);
+    expect(outcome).toMatchObject({ ok: false, merged: false, conflict: true });
+    // 主干无残留（梯内 abort + 主干 merge --abort）
+    expect(existsSync(path.join(root, '.git', 'MERGE_HEAD'))).toBe(false);
+    expect(git(['status', '--porcelain'], root)).toBe('');
+    // 会话 worktree 现场保留（改派修补的输入）
+    expect(existsSync(entry.path)).toBe(true);
+    expect(existsSync(path.join(root, '.weave', 'worktrees', 'merge-wt-sess-ladclash'))).toBe(false);
+    // 账落打回行
+    const rows = new MergeLadderRepository(db).listByProject(1);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0]!.outcome).toBe('returned');
+  });
+
+  it.skipIf(!hasGit)('sweep 注入 mergeViaLadder：退出事件到 → 走梯并回 + 登记落 merged', async () => {
+    const entry = await createAndRegister('sess-swlad');
+    write(entry.path, 'd.txt', 'done\n');
+    git(['add', '-A'], entry.path);
+    git(['commit', '-qm', 'sweep via ladder'], entry.path);
+    const n = await sweepWorktreeMerges({
+      sessions: [{ sessionId: 'sess-swlad', harness: 'claude', lastEventType: 'SessionEnd' }],
+      projectPathOf: () => root,
+      hooksDir,
+      mergeViaLadder: (projectPath, e) =>
+        mergeSessionWorktreeViaLadder(
+          { exec: defaultWorktreeGitExec, ladder: new MergeLadderRepository(db) },
+          projectPath,
+          e,
+        ),
+    });
+    expect(n).toBe(1);
+    expect(readWorktreeRegistry(hooksDir)['sess-swlad']).toBeUndefined();
+    expect(git(['log', '--oneline', '-3'], root)).toContain('sweep via ladder');
+    // 并回后清 worktree（merged 路径与旧一刀 merge 同一收尾）
+    expect(existsSync(entry.path)).toBe(false);
   });
 });
 

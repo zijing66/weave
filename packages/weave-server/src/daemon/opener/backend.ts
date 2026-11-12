@@ -136,8 +136,9 @@ export abstract class TerminalBackend {
     return new Map();
   }
 
-  /** 可附加目标（窗口内的 tab）；不支持的 preset 走这里。 */
-  async listTargets(_dir: string): Promise<AttachTarget[]> {
+  /** 可附加目标（窗口内的 tab）；不支持的 preset 走这里。includeForeign（opt-in）=
+   *  别的项目的 tab 也进候选（跨项目分屏落点用），默认关、现状不变。 */
+  async listTargets(_dir: string, _includeForeign = false): Promise<AttachTarget[]> {
     return [];
   }
 
@@ -155,6 +156,26 @@ export abstract class TerminalBackend {
     );
   }
 
+  /**
+   * 系统级隐藏/恢复该终端所在的 OS 窗口（SW_HIDE / SW_SHOW，比最小化深一级：
+   * 任务栏与 Alt+Tab 都消失，进程照跑）；win32 之外的平台明确拒绝。
+   * 同时回**目标所在窗口此刻的可见性**——状态探测与切换同源，前端不自己猜。
+   */
+  async setTargetVisibility(
+    _dir: string,
+    _targetId: string,
+    _visibility: 'hide' | 'show',
+  ): Promise<{ visibility: 'visible' | 'hidden' }> {
+    throw new Error(
+      `Terminal preset "${this.preset}" cannot hide or show windows on this platform`,
+    );
+  }
+
+  /** 目标所在 OS 窗口此刻的可见性；拿不到（找不到窗/无通道）null——前端不摆态，不猜。 */
+  async targetVisibility(_dir: string, _targetId: string): Promise<'visible' | 'hidden' | null> {
+    return null;
+  }
+
   /** prompt 层② 兜底：枚举可注入文本的 pane；无通道的后端空表（不谎报）。 */
   async listPromptPanes(): Promise<PromptPaneTarget[]> {
     return [];
@@ -167,6 +188,15 @@ export abstract class TerminalBackend {
 
   /** 这个 pane id 是不是本后端发的（id 表示法归本后端）；默认不是，不抢别人的 id。 */
   ownsPaneId(_paneId: string): boolean {
+    return false;
+  }
+
+  /**
+   * 这个**可附加目标 id** 是不是本后端发的（多终端弹窗/显隐通道的 target）；
+   * 缺省回落 pane id 形（多数后端两形同构），两形分家的后端（wezterm 三段 attach
+   * vs 两段 prompt、wt 命名窗 vs pid）各自覆写。
+   */
+  ownsTargetId(_targetId: string): boolean {
     return false;
   }
 

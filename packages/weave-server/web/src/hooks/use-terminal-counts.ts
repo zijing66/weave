@@ -17,6 +17,7 @@ const OPEN_TERMINAL_COUNT_MS = 8_000;
  */
 export function useTerminalCounts() {
   const [terminalCounts, setTerminalCounts] = useState<Record<number, number>>({});
+  const [hiddenCounts, setHiddenCounts] = useState<Record<number, boolean>>({});
   const countsRef = useRef(terminalCounts);
   countsRef.current = terminalCounts;
   const terminalGate = useRef(createAwaitGate(OPEN_TERMINAL_COUNT_MS));
@@ -28,11 +29,15 @@ export function useTerminalCounts() {
   // 终端数（可见屏幕）：隐藏刷新器推的绝对值快照（会话所在屏幕的另一半在会话状态总线）。
   useEffect(
     () =>
-      subscribePush<{ counts: Record<number, number> }>('terminalTopology', (p) =>
-        setTerminalCounts(p.counts),
+      subscribePush<{ counts: Record<number, number>; hidden?: Record<number, boolean> }>(
+        'terminalTopology',
+        (p) => {
+          setTerminalCounts(p.counts);
+          setHiddenCounts(p.hidden ?? {});
+        },
       ),
     [],
   );
 
-  return { terminalCounts, countsRef, terminalGate };
+  return { terminalCounts, hiddenCounts, countsRef, terminalGate };
 }

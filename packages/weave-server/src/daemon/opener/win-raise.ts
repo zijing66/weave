@@ -10,9 +10,17 @@ export interface WinRaiseRequest {
   exe?: string;
   /** 认窗口用的标题候选，**按可信度排序**（OS 窗口标题 = 该窗口某个 pane 的标题）。 */
   titles?: readonly string[];
+  /** 直接按 HWND 操作（跳过标题认窗）：wezterm 新窗最大化兜底——spawn 前后对
+   *  guiPid 的窗口集合拍快照，新增的那个 HWND 不依赖标题上报时序。 */
+  hwnd?: number;
+  /** 只列 guiPid 名下的顶层窗口 HWND（快照用；`hwnd\n` 逐行输出）。 */
+  listOnly?: boolean;
   /** 顺手最大化认中的窗口（wezterm 新窗用：`gui-startup` 的 maximize 不吃
    *  `cli spawn --new-window`——事件只在 GUI 冷启动时触发一次）。 */
   alsoMaximize?: boolean;
+  /** 可见性动作：hide = SW_HIDE（系统级隐藏，任务栏图标也没了）；show = SW_SHOW
+   *  并解最小化（隐藏窗的找回入口）；query = 只报可见性不动窗口。缺省 = 只抬前台。 */
+  visibility?: 'hide' | 'show' | 'query';
 }
 
 /**
@@ -51,7 +59,7 @@ export async function winMaximizeTerminalWindow(req: WinRaiseRequest): Promise<v
 export async function winRaiseOnce(
   req: WinRaiseRequest,
   titles: readonly string[],
-): Promise<{ ok: boolean; code: number; err: string }> {
+): Promise<{ ok: boolean; code: number; err: string; out: string }> {
   const r = await captureCommand(
     'powershell',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', winRaiseEncodedScript()],
@@ -61,17 +69,51 @@ export async function winRaiseOnce(
       WEAVE_RAISE_PANE_PIDS: (req.panePids ?? []).join(','),
       WEAVE_RAISE_EXE: req.exe ?? '',
       WEAVE_RAISE_TITLES: titles.join('|'),
+      WEAVE_RAISE_HWND: req.hwnd ? String(req.hwnd) : '',
+      WEAVE_RAISE_LIST: req.listOnly ? '1' : '',
       WEAVE_RAISE_MAX: req.alsoMaximize ? '1' : '',
+      WEAVE_RAISE_VIS: req.visibility ?? '',
     },
     15000,
   );
   if (!r) {
-    return { ok: false, code: -1, err: 'powershell is unavailable — cannot bring the terminal to the front' };
+    return { ok: false, code: -1, err: 'powershell is unavailable — cannot bring the terminal to the front', out: '' };
   }
-  if (r.ok) return { ok: true, code: 0, err: '' };
+  if (r.ok) return { ok: true, code: 0, err: '', out: r.out.trim() };
   const err = `${r.err || ''} ${r.out || ''}`.trim();
   const code = r.timedOut ? -2 : /status\|ambiguous/.test(r.out) ? 4 : /status\|none/.test(r.out) ? 3 : -3;
-  return { ok: false, code, err };
+  return { ok: false, code, err, out: r.out.trim() };
+}
+
+/**
+ * 查这个终端目标所在 OS 窗口的可见性（会话行的「已隐藏」态探测）。认窗规则与
+ * 抬窗同一条（pid + 标题唯一命中）；拿不到（找不到窗/歧义/powershell 不可用）
+ * 回 null——调用方不摆状态，不猜。
+ */
+export async function winWindowVisibility(req: WinRaiseRequest): Promise<'visible' | 'hidden' | null> {
+  const titles = (req.titles ?? []).filter((t) => t && !t.includes('|'));
+  const r = await winRaiseOnce({ ...req, visibility: 'query' }, titles);
+  const m = /vis\|(visible|hidden)/.exec(r.out);
+  return m ? (m[1] as 'visible' | 'hidden') : null;
+}
+
+/** guiPid 名下顶层窗口 HWND 快照（新窗最大化的兜底认窗用；失败 = 空表）。 */
+export async function winListOwnedHwnds(guiPid: number): Promise<number[]> {
+  const r = await winRaiseOnce({ guiPid, listOnly: true }, []);
+  if (!r.ok) return [];
+  return r.out
+    .split('\n')
+    .map((l) => Number(l.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+/** 按已知 HWND 最大化（跳过标题认窗；失败静默——与 maximize 同为锦上添花口径）。 */
+export async function winMaximizeByHwnd(hwnd: number): Promise<void> {
+  try {
+    await winRaiseOnce({ hwnd, alsoMaximize: true }, []);
+  } catch {
+    // 尽力而为
+  }
 }
 
 /** PowerShell 脚本（base64/UTF-16，`-EncodedCommand` 免引号转义）；纯函数，单测覆盖。 */
@@ -80,6 +122,21 @@ export function winRaiseEncodedScript(): string {
 Add-Type -TypeDefinition @'
 ${WIN_RAISE_CS}
 '@
+# HWND 直打：快照（listOnly）或按已知 HWND 操作，跳过标题认窗——
+# 新窗最大化的兜底不依赖 pane 标题上报时序。
+if ($env:WEAVE_RAISE_LIST -eq '1') {
+  foreach ($w in [WeaveRaise]::Owned(
+    (@(($env:WEAVE_RAISE_PIDS + '') -split ',' | Where-Object { $_ }) | ForEach-Object { [uint32]$_ }),
+    '')) { '{0}' -f [int64]$w.Handle }
+  exit 0
+}
+if ($env:WEAVE_RAISE_HWND -ne '') {
+  $h = [int64]$env:WEAVE_RAISE_HWND
+  if ($env:WEAVE_RAISE_VIS -eq 'query') { [Console]::Out.WriteLine('vis|' + [WeaveRaise]::VisibleOf($h)); exit 0 }
+  [void][WeaveRaise]::ShowZoomed($h)
+  'zoomed ' + $h
+  exit 0
+}
 $exe = $env:WEAVE_RAISE_EXE
 if (-not $exe) { $exe = '' }
 $exe = $exe.ToLower()
@@ -120,6 +177,9 @@ if ($pick -eq $null) {
   if ($rows.Count -gt 1) { $code = 4; 'status|ambiguous' } else { 'status|none' }
   exit $code
 }
+if ($env:WEAVE_RAISE_VIS -eq 'query') { [Console]::Out.WriteLine('vis|' + [WeaveRaise]::VisibleOf([int64]$pick.Handle)); exit 0 }
+if ($env:WEAVE_RAISE_VIS -eq 'hide') { [WeaveRaise]::SetHidden([int64]$pick.Handle); 'hidden ' + [int64]$pick.Handle; exit 0 }
+if ($env:WEAVE_RAISE_VIS -eq 'show') { [WeaveRaise]::SetShown([int64]$pick.Handle); 'shown ' + [int64]$pick.Handle; exit 0 }
 $res = [WeaveRaise]::Raise([int64]$pick.Handle)
 if ($res -ne 'ok') { [Console]::Error.WriteLine('raise:' + $res); exit 5 }
 if ($env:WEAVE_RAISE_MAX -eq '1') { [void][WeaveRaise]::ShowZoomed([int64]$pick.Handle) }
@@ -155,6 +215,7 @@ public static class WeaveRaise
     [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint attach, uint attachTo, bool join);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
@@ -185,7 +246,9 @@ public static class WeaveRaise
         List<WeaveWindow> list = new List<WeaveWindow>();
         EnumWindows(delegate(IntPtr h, IntPtr p) {
             int len = GetWindowTextLengthW(h);
-            if (len == 0 || !IsWindowVisible(h)) return true;
+            // 不筛 IsWindowVisible：隐藏（SW_HIDE）的窗也要认得出，否则 weave 自己
+            // 藏掉的窗自己找不回（GetWindowText 对隐藏窗照常有效）。
+            if (len == 0) return true;
             StringBuilder sb = new StringBuilder(len + 2);
             GetWindowTextW(h, sb, sb.Capacity);
             uint pid;
@@ -202,6 +265,21 @@ public static class WeaveRaise
 
     /** SW_MAXIMIZE（3）对已最大化的窗口是幂等的。 */
     public static void ShowZoomed(long hwnd) { ShowWindow(new IntPtr(hwnd), 3); }
+
+    /** SW_HIDE（0）：系统级隐藏——屏幕与任务栏（含 Alt+Tab）都消失，进程照跑。 */
+    public static void SetHidden(long hwnd) { ShowWindow(new IntPtr(hwnd), 0); }
+
+    /** SW_SHOW（5）+ 解最小化：隐藏窗的找回入口；对可见窗是幂等的。最大化态的窗
+     *  走 SW_SHOWMAXIMIZED（3）——SW_RESTORE 会把最大化的窗还原成小窗（丢尺寸）。 */
+    public static void SetShown(long hwnd)
+    {
+        IntPtr h = new IntPtr(hwnd);
+        ShowWindow(h, 5);
+        ShowWindow(h, IsZoomed(h) ? 3 : 9);
+    }
+
+    /** 窗口当前可见吗（wezterm/wt 会话行的「已隐藏」态探测；认窗规则同 Owned）。 */
+    public static string VisibleOf(long hwnd) { return IsWindowVisible(new IntPtr(hwnd)) ? "visible" : "hidden"; }
 
     static string ExeOf(uint pid)
     {

@@ -21,7 +21,7 @@ import {
   type SessionTerminal,
   type WeztermMux,
 } from './wezterm-mux.js';
-import { winRaiseTerminalWindow } from './win-raise.js';
+import { winRaiseTerminalWindow, winWindowVisibility } from './win-raise.js';
 import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, throughCmd } from './shared.js';
 import {
   TerminalBackend,
@@ -121,8 +121,8 @@ export class WeztermBackend extends TerminalBackend {
     );
   }
 
-  override listTargets(dir: string): Promise<AttachTarget[]> {
-    return listAttachTargets(dir, this.platform);
+  override listTargets(dir: string, includeForeign = false): Promise<AttachTarget[]> {
+    return listAttachTargets(dir, this.platform, includeForeign);
   }
 
   override runAt(dir: string, argv: string[], targetId: string): Promise<LaunchOrigin | null> {
@@ -145,17 +145,70 @@ export class WeztermBackend extends TerminalBackend {
     const res = await weztermCli(args, mux.socket);
     if (!res?.ok) throw new Error(weztermStepError(args, mux.socket, res));
     if (this.platform !== 'win32') return;
-    // activate 之后的标题才是 OS 窗口标题；目标 pane 的标题最可信，同窗口其它 pane
-    // 次之（OS 标题可能停在别的 tab 上一次上报的那一帧）。
-    const after = (await weztermMuxForId(parsed.muxKey))?.panes ?? mux.panes;
-    const fresh = after.find((p) => p.paneId === pane.paneId) ?? pane;
-    const titles = [
-      fresh.title,
-      ...after.filter((p) => p.windowId === parsed.windowId).map((p) => p.title),
-    ].filter((t): t is string => !!t);
     await winRaiseTerminalWindow({
       guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
-      titles,
+      titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
+    });
+  }
+
+  /** 目标 tab 所在 OS 窗口的标题候选：目标 pane 的标题最可信，同窗口其它 pane 次之
+   *  （OS 标题可能停在别的 tab 上一次上报的那一帧）。认窗（抬/隐/查）共用一份。 */
+  private async windowTitlesOf(
+    muxKey: string,
+    windowId: number,
+    paneId: number,
+  ): Promise<string[]> {
+    const after = (await weztermMuxForId(muxKey))?.panes ?? [];
+    const fresh = after.find((p) => p.paneId === paneId);
+    return [fresh?.title, ...after.filter((p) => p.windowId === windowId).map((p) => p.title)]
+      .filter((t): t is string => !!t);
+  }
+
+  /**
+   * 系统级隐藏/恢复（SW_HIDE / SW_SHOW）：认窗与抬窗同一套（guiPid + 标题唯一命中）。
+   * hide 前若窗口已最小化，SW_HIDE 照样生效；show 解隐藏同时解最小化。
+   */
+  override async setTargetVisibility(
+    _dir: string,
+    targetId: string,
+    visibility: 'hide' | 'show',
+  ): Promise<{ visibility: 'visible' | 'hidden' }> {
+    const parsed = parseAttachTargetId(targetId);
+    if (!parsed) throw new Error(`Invalid terminal target "${targetId}"`);
+    if (this.platform !== 'win32') {
+      throw new Error(`Terminal preset "${this.preset}" cannot hide or show windows on this platform`);
+    }
+    const mux = await weztermMuxForId(parsed.muxKey);
+    if (!mux) throw new Error('wezterm instance is gone');
+    const pane = mux.panes.find(
+      (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
+    );
+    if (!pane) throw new Error('That terminal is gone — reopen the list');
+    await winRaiseTerminalWindow({
+      guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
+      titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
+      visibility,
+    });
+    // 切换后复读实况（hide 后 IsWindowVisible 即假），不回显意图。
+    const vis = await winWindowVisibility({
+      guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
+      titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
+    });
+    return { visibility: vis ?? (visibility === 'hide' ? 'hidden' : 'visible') };
+  }
+
+  override async targetVisibility(_dir: string, targetId: string): Promise<'visible' | 'hidden' | null> {
+    const parsed = parseAttachTargetId(targetId);
+    if (!parsed || this.platform !== 'win32') return null;
+    const mux = await weztermMuxForId(parsed.muxKey);
+    if (!mux) return null;
+    const pane = mux.panes.find(
+      (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
+    );
+    if (!pane) return null;
+    return winWindowVisibility({
+      guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
+      titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
     });
   }
 
@@ -191,6 +244,11 @@ export class WeztermBackend extends TerminalBackend {
   /** 本后端的 pane id 表示法 = `<mux 短哈希>:<paneId>`（见 parsePromptPaneId）。 */
   override ownsPaneId(paneId: string): boolean {
     return parsePromptPaneId(paneId) !== null;
+  }
+
+  /** 目标 id（attach 形三段 `<mux>:<win>:<tab>`）归本后端；与 prompt 两段形分家。 */
+  override ownsTargetId(targetId: string): boolean {
+    return parseAttachTargetId(targetId) !== null;
   }
 
   /**

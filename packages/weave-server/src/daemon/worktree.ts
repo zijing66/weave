@@ -371,6 +371,10 @@ export interface WorktreeMergeScanDeps {
   onChange?: () => void;
   /** 占位认领完成后的钩（出征账本同一拍改写 session_key；G3）。 */
   onClaim?: (pendingKey: string, sessionId: string) => void;
+  /** B5 并回改走合并梯（G6 前置小批；2026-11-10 裁决「并回同梯同规」）：装配方
+   *  注入「临时 merge worktree 里跑 runMergeLadder + update-ref」；缺省回落旧的
+   *  一刀 merge（不引梯子的部署照旧可用）。 */
+  mergeViaLadder?: (projectPath: string, entry: SessionWorktreeEntry) => Promise<MergeOutcome>;
 }
 
 /**
@@ -413,7 +417,9 @@ export async function sweepWorktreeMerges(deps: WorktreeMergeScanDeps): Promise<
     if (!session || !exit || session.lastEventType !== exit) continue;
     const projectPath = deps.projectPathOf(entry.projectId);
     if (!projectPath) continue;
-    const outcome = await mergeSessionWorktree(projectPath, entry, exec);
+    const outcome = deps.mergeViaLadder
+      ? await deps.mergeViaLadder(projectPath, entry)
+      : await mergeSessionWorktree(projectPath, entry, exec);
     const merged: SessionWorktreeEntry = outcome.ok
       ? { ...entry, status: 'merged', at: new Date().toISOString() }
       : outcome.conflict

@@ -800,6 +800,34 @@ describe('attachTargetsFromMuxes / parseAttachTargetId（会话终端选择弹�
     expect(attachTargetsFromMuxes('/p/none', muxes, 'linux')).toEqual([]);
   });
 
+  it('includeForeign（opt-in）：他项目 tab 也进候选（本项目排前、带 cwd、无 paneIds）', () => {
+    const muxes = [
+      {
+        socket: '/socks/gui-sock-1',
+        idleMs: 0,
+        panes: [
+          pane(0, 1, 10, 'file:///p/proj'),
+          pane(0, 2, 20, 'file:///p/other', true, '别的项目'),
+        ],
+      },
+    ];
+    const all = attachTargetsFromMuxes('/p/proj', muxes, 'linux', true);
+    // 排序规则照旧（聚焦 tab 在前）：他项目 tab 2 active 故排前
+    expect(all.map((t) => [t.windowId, t.tabId])).toEqual([
+      [0, 2],
+      [0, 1],
+    ]);
+    // 本项目行照旧（matchCount/paneIds 不变），他项目行 matchCount=0 + cwd 可识别
+    expect(all[1]).toMatchObject({ matchCount: 1, paneIds: [`${all[1]!.id.slice(0, 8)}:10`] });
+    expect(all[1]!.cwd).toBe('file:///p/proj');
+    expect(all[0]).toMatchObject({ matchCount: 0, cwd: 'file:///p/other' });
+    expect(all[0]!.paneIds).toBeUndefined();
+    // 关掉 opt-in = 现状
+    expect(attachTargetsFromMuxes('/p/proj', muxes, 'linux')).toHaveLength(1);
+    // includeForeign 且请求目录查无（key null）也照常列全量
+    expect(attachTargetsFromMuxes('/p/none', muxes, 'linux', true)).toHaveLength(2);
+  });
+
   it('parseAttachTargetId 往返；坏 id → null', () => {
     const id = attachTargetsFromMuxes(
       '/p/proj',

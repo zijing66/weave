@@ -5,7 +5,7 @@ import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
 import type { LaunchOrigin } from '../opener.js';
 import { joinCmd } from './shared.js';
-import { winMaximizeTerminalWindow } from './win-raise.js';
+import { winListOwnedHwnds, winMaximizeByHwnd, winMaximizeTerminalWindow } from './win-raise.js';
 
 export interface WeztermPaneInfo {
   windowId: number;
@@ -214,6 +214,8 @@ export interface AttachTarget {
   /** 本卡片上 cwd 命中本项目的 pane（可关的那几个，表示法同 prompt pane id）；
    *  给不出 = 该后端关不了远程 pane，前端不摆关闭键。 */
   paneIds?: string[];
+  /** 该 tab 聚焦 pane 的 cwd（opt-in 全量清单里识别别的项目用；缺省不给）。 */
+  cwd?: string | null;
 }
 
 /**
@@ -321,14 +323,18 @@ export function parseAttachTargetId(
  * 排序（最近活跃从上往下）：① 整个 wezterm 实例更近活跃（mux 的 client idle
  * 更小）在前；② 同实例内含聚焦 pane 的 tab 在前；③ 其余按 tabId 降序（tab 越晚
  * 创建越可能更近用过）。`cli list` 不报任何时间戳，这是可得信号下的最佳近似。
+ *
+ * `includeForeign`（opt-in）：非本项目 tab 也进候选（本项目的排前、附带 cwd）——
+ * 跨项目分屏（演示双会话并排）的落点选择用；默认关，弹窗现状一概不变。
  */
 export function attachTargetsFromMuxes(
   dir: string,
   muxes: readonly { socket: string; idleMs: number; panes: WeztermPaneInfo[] }[],
   platform: NodeJS.Platform = process.platform,
+  includeForeign = false,
 ): AttachTarget[] {
   const key = normalizeDirKey(dir, platform);
-  if (!key) return [];
+  if (!key && !includeForeign) return [];
   const out: AttachTarget[] = [];
   for (const mux of [...muxes].sort((a, b) => a.idleMs - b.idleMs)) {
     const muxKey = weztermMuxKey(mux.socket);
@@ -341,8 +347,8 @@ export function attachTargetsFromMuxes(
     }
     const rows: AttachTarget[] = [];
     for (const [k, panes] of byTarget) {
-      const mine = panes.filter((p) => normalizeDirKey(p.cwd, platform) === key);
-      if (mine.length === 0) continue; // 非本项目终端 → 不进候选
+      const mine = key ? panes.filter((p) => normalizeDirKey(p.cwd, platform) === key) : [];
+      if (mine.length === 0 && !includeForeign) continue; // 非本项目终端 → 不进候选
       const windowId = Number(k.slice(0, k.indexOf(':')));
       const tabId = Number(k.slice(k.indexOf(':') + 1));
       const focus = panes.find((p) => p.isActive) ?? panes[0]!;
@@ -357,7 +363,9 @@ export function attachTargetsFromMuxes(
         full: panes.length >= MAX_PANES_PER_SCREEN,
         // 与 listProjectPanes 同一表示法（`<mux 短哈希>:<paneId>`）：关卡片时原样喂给
         // closeTerminalsIn，项目外的 pane 不动。
-        paneIds: mine.map((p) => `${muxKey}:${p.paneId}`),
+        ...(mine.length > 0 ? { paneIds: mine.map((p) => `${muxKey}:${p.paneId}`) } : {}),
+        // opt-in 全量清单里带聚焦 pane 的 cwd：调用方识别别的项目用
+        ...(includeForeign ? { cwd: focus.cwd } : {}),
       });
     }
     rows.sort((a, b) => Number(b.active) - Number(a.active) || b.tabId - a.tabId);
@@ -370,9 +378,10 @@ export function attachTargetsFromMuxes(
 export async function listAttachTargets(
   dir: string,
   platform: NodeJS.Platform = process.platform,
+  includeForeign = false,
 ): Promise<AttachTarget[]> {
   const { muxes } = await weztermLiveMuxes();
-  return attachTargetsFromMuxes(dir, muxes, platform);
+  return attachTargetsFromMuxes(dir, muxes, platform, includeForeign);
 }
 
 /** 活跃 client：workspace + idle 毫秒（idle 还用来在多个 mux 之间选最活跃的）。 */
@@ -823,6 +832,9 @@ export async function maximizeWeztermWindow(socket: string, paneId: string): Pro
   try {
     const guiPid = weztermGuiPidOf(socket);
     if (guiPid === null) return;
+    // 兜底快照先拍：spawn 已发生、新 HWND 出现得比 pane 标题上报早得多，
+    // 一记快照 diff 命中就免去后面整段标题轮询（命中 = 竞态已被绕开）。
+    const before = await winListOwnedHwnds(guiPid);
     let title: string | null = null;
     for (let i = 0; i < 10 && !title; i++) {
       await new Promise((r) => setTimeout(r, 300));
@@ -830,8 +842,20 @@ export async function maximizeWeztermWindow(socket: string, paneId: string): Pro
       const found = parseWeztermPanes(panes?.ok ? panes.out : null).find((p) => String(p.paneId) === paneId);
       title = found?.title ?? null;
     }
-    if (!title) return;
-    await winMaximizeTerminalWindow({ guiPid, titles: [title] });
+    if (title) {
+      await winMaximizeTerminalWindow({ guiPid, titles: [title] });
+      return;
+    }
+    // 标题等不到（上报延迟/格式异常）：按快照 diff 认新窗——新增的那个 HWND
+    // 就是刚 spawn 的窗口，按 HWND 直打最大化，不再依赖标题时序。
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      const added = (await winListOwnedHwnds(guiPid)).filter((h) => !before.includes(h));
+      if (added.length === 1) {
+        await winMaximizeByHwnd(added[0]!);
+        return;
+      }
+    }
   } catch {
     // 尽力而为： maximize 失败不影响落子结果
   }

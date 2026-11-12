@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { cn } from '@/lib/utils';
 import { api, type ProjectRow, type ProjectStorageResult } from '@/lib/api';
 import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
@@ -15,8 +16,8 @@ interface StorageSettingsModalProps {
 }
 
 /**
- * 项目存储路径设置（项目卡设置按钮）：对话附件的图片/文件各自落哪。
- * 空 = 全局默认（`<data>/uploads`）；存量文件留原处，新上传走新路径。
+ * 项目配置（项目卡设置按钮）：附件存储路径 + 终端窗口行为（hideWindow 开关）。
+ * 路径空 = 全局默认（`<data>/uploads`）；存量文件留原处，新上传走新路径。
  */
 export function StorageSettingsModal({ project, onClose }: StorageSettingsModalProps) {
   const t = useT();
@@ -24,6 +25,7 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
   const [loaded, setLoaded] = useState<ProjectStorageResult | null>(null);
   const [images, setImages] = useState('');
   const [files, setFiles] = useState('');
+  const [hideWindow, setHideWindow] = useState(false);
   const [saving, setSaving] = useState(false);
   /** 正在为哪一档选目录（null = 选择器关着）。 */
   const [picking, setPicking] = useState<'images' | 'files' | null>(null);
@@ -37,6 +39,7 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
         setLoaded(r);
         setImages(r.storage.images ?? '');
         setFiles(r.storage.files ?? '');
+        setHideWindow(r.storage.hideWindow === true);
       })
       .catch((e: unknown) => {
         show('error', t('project.storageLoadFailed', { error: errorText(e) }));
@@ -46,7 +49,9 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
 
   const dirty =
     loaded !== null &&
-    (images !== (loaded.storage.images ?? '') || files !== (loaded.storage.files ?? ''));
+    (images !== (loaded.storage.images ?? '') ||
+      files !== (loaded.storage.files ?? '') ||
+      hideWindow !== (loaded.storage.hideWindow === true));
 
   const save = (): void => {
     if (!project || !dirty) return;
@@ -55,11 +60,13 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
       .putProjectStorage(project.id, {
         images: images.trim() || null,
         files: files.trim() || null,
+        hideWindow,
       })
       .then((r) => {
         setLoaded(r);
         setImages(r.storage.images ?? '');
         setFiles(r.storage.files ?? '');
+        setHideWindow(r.storage.hideWindow === true);
         show('success', t('project.storageSaved'));
       })
       .catch((e: unknown) => show('error', t('project.storageSaveFailed', { error: errorText(e) })))
@@ -144,6 +151,33 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
                   <p className="text-10 leading-relaxed text-neutral-600">
                     {t('project.storageNotes')}
                   </p>
+                  <div className="space-y-1.5 border-t border-edge/[0.06] pt-3">
+                    <label className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-neutral-300">
+                        {t('project.hideWindowLabel')}
+                      </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={hideWindow}
+                        onClick={() => setHideWindow((v) => !v)}
+                        className={cn(
+                          'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+                          hideWindow ? 'bg-blue-600' : 'bg-neutral-700',
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform',
+                            hideWindow ? 'translate-x-4.5' : 'translate-x-0.5',
+                          )}
+                        />
+                      </button>
+                    </label>
+                    <p className="text-10 leading-relaxed text-neutral-600">
+                      {t('project.hideWindowHint')}
+                    </p>
+                  </div>
                 </>
               )}
             </div>

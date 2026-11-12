@@ -836,6 +836,32 @@ document.addEventListener('contextmenu', (e) => {
 
   menuEl.appendChild(item('打开 Dashboard', () => openDashboard(`${location.origin}/`)));
 
+  // 批量显隐全部终端窗：服务端逐项目枚举目标后逐个 SW_HIDE/SHOW（失败隔离）。
+  // 菜单行带胶囊计数——隐藏行显「当前可见 N 窗」、显示行显「当前隐藏 N 窗」，
+  // 数是菜单打开那一刻异步拉的（GET 每目标一枪 powershell，~百 ms 量级）。
+  const toggleTerminals = (visibility: 'hide' | 'show'): void => {
+    void fetch(`${API_BASE}/terminals/visibility`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ visibility }),
+    });
+  };
+  const visRow = (label: string, pillBg: string, pillColor: string, countKey: 'visible' | 'hidden', vis: 'hide' | 'show'): HTMLDivElement => {
+    const row = item(label, () => toggleTerminals(vis));
+    const pill = document.createElement('span');
+    pill.textContent = '…';
+    pill.style.cssText = `float:right;margin-left:10px;padding:0 7px;border-radius:99px;font-size:10px;line-height:16px;background:${pillBg};color:${pillColor}`;
+    row.appendChild(pill);
+    void fetchJson<{ visible: number; hidden: number }>(`/terminals/visibility`).then((r) => {
+      const n = r?.[countKey] ?? 0;
+      pill.textContent = String(n);
+      if (n === 0) pill.style.opacity = '0.45';
+    });
+    return row;
+  };
+  menuEl.appendChild(visRow('隐藏全部终端', 'rgba(63,185,80,.18)', '#7ee2a8', 'visible', 'hide'));
+  menuEl.appendChild(visRow('显示全部终端', 'rgba(139,124,246,.2)', '#b6adff', 'hidden', 'show'));
+
   // 播放开关：图标表明「点下去会怎样」，文字表明「现在是什么」——悬停时文字
   // 也从状态改成动作，一眼看出这一下会停止还是开始。
   const runRow = document.createElement('div');

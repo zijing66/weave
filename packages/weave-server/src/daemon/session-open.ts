@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from './server.js';
-import { readDaemonSettings } from './settings.js';
+import { readDaemonSettings, type TerminalSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { combinedLivenessOf } from './liveness.js';
 import { messagingSurfaceFor } from '../surfaces.js';
@@ -58,6 +58,36 @@ function noteLaunchOrigin(
 }
 
 /**
+ * 落子后的可见性兜底（全局设置 `terminalFocus.focusOnOpen`，默认开）：目标项目
+ * 的窗若处于隐藏态（此前被弹层藏过），调起会话把它拉回可见——「从 weave 调起
+ * 必然看得见」。项目 hideWindow 开着时**例外**（那个项目的意愿就是藏，open 路由
+ * 的自动隐藏在延迟一拍之后跑，这里提前 show 会跟它打架）。fire-and-forget、
+ * 失败静默：这是体验兜底，不值得为它报错。
+ */
+function restoreVisibilityIfHidden(
+  _projectId: number | undefined,
+  cwd: string,
+  terminal: TerminalSettings,
+): void {
+  void (async () => {
+    try {
+      const focus = (await readDaemonSettings()).terminalFocus?.focusOnOpen;
+      if (focus === false) return;
+      const backend = terminalBackendFor(terminal);
+      if (!backend.enumerable) return;
+      const targets = await backend.listTargets(cwd);
+      const target = targets[0];
+      if (!target) return;
+      const vis = await backend.targetVisibility(cwd, target.id);
+      if (vis !== 'hidden') return;
+      await backend.setTargetVisibility(cwd, target.id, 'show');
+    } catch {
+      // 藏不回来的场景照旧（窗已关 / preset 不支持 / 枚举失败）：静默
+    }
+  })();
+}
+
+/**
  * 引导注入（`resume.bootstrapText`，懒建档宿主的会话行加速）：spawn 成功后延时把
  * 引导文本贴进起点 pane 并提交——codex 的 `/rename` 是零模型调用的本地命令，注入
  * 即建 rollout，会话行即刻进列表（起点候选也在同一拍被认领，分组同时点亮）。
@@ -92,11 +122,14 @@ export function scheduleBootstrapInjection(
 /**
  * 在默认终端打开会话（spawn 独立终端跑 harness 交互式 resume，如 `claude --resume <id>`）。
  * 路由与编排引擎的「目标会话没开就拉起来」共用这一份：判据、能力面取法与错误码只有一处。
+ * `opts.cwd` 覆盖落点（缺省 = 项目根）：B5 worktree 会话的重开必须原地——转录按
+ * 引发它的 cwd 落 slug，换目录 resume 认不到那份转录。
  */
 export async function openSessionTerminal(
   deps: SessionOpenDeps,
   sessionId: string,
   target?: string,
+  opts?: { cwd?: string },
 ): Promise<SessionOpenResult> {
   if (!deps.hookSessions) return { ok: false, status: 503, error: 'Hooks subsystem unavailable' };
   const session = deps.hookSessions.getBySessionId(sessionId);
@@ -128,6 +161,7 @@ export async function openSessionTerminal(
     if (!info.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
     const settings = await readDaemonSettings();
     const argv = [spec.bin, ...(spec.launchArgs ?? []), ...spec.openArgs(sessionId)];
+    const runCwd = opts?.cwd ?? project.path;
     if (target) {
       // 定点附加的能力归后端：能反查目标的 preset 才有定点通道（wezterm mux /
       // Terminal.app osascript / wt 进程表），其余明确拒绝而非静默忽略——调用方不列白名单。
@@ -138,19 +172,24 @@ export async function openSessionTerminal(
       }
       const runAt = opener.runInTerminalAt;
       if (!runAt) throw new Error('Targeted attach is unavailable');
-      const origin = await runAt(project.path, argv, target, settings.terminal);
+      const origin = await runAt(runCwd, argv, target, settings.terminal);
       noteLaunchOrigin(deps, src, sessionId, origin);
     } else {
-      const origin = await opener.runInTerminal(project.path, argv, settings.terminal);
+      const origin = await opener.runInTerminal(runCwd, argv, settings.terminal);
       noteLaunchOrigin(deps, src, sessionId, origin);
     }
+    // 可见性兜底：项目开了 hideWindow 就别跟它的自动隐藏打架（延迟一拍后它自己藏）。
+    const hideWindow =
+      (deps.projects.getMeta(session.projectId) as { storage?: { hideWindow?: boolean } } | null)
+        ?.storage?.hideWindow === true;
+    if (!hideWindow) restoreVisibilityIfHidden(session.projectId, runCwd, settings.terminal);
     // 角标对账：新 pane 的 cwd 上报有一拍延迟（立即探看不到增量），600ms 后补一枪。
     setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
     return {
       ok: true,
       sessionId,
       command: argv.join(' '),
-      cwd: project.path,
+      cwd: runCwd,
       ...(target ? { target } : {}),
     };
   } catch (e) {
@@ -167,18 +206,19 @@ export type EnsureOpenResult =
  * 「判死会话先拉起再投递」的共享工厂：`openSessionTerminal` spawn + 等「真进了
  * 会话」（SessionStart 事件 id 超过拉起前基线；注册表出现 pid 只算弱信号）。
  * 编排引擎的「目标会话没开就拉起来」用这一份——判据、预算、错误口径只有一处。
- * **单飞**：同一会话被并发投递时只拉起一次（后到的搭同一班车的结果）。
+ * **单飞**：同一会话被并发投递时只拉起一次（后到的搭同一班车的结果）；`opts.cwd`
+ * 不同则各飞各的（B5 冲突修补在 worktree 原地重开）。
  */
 export function createEnsureOpen(
   deps: SessionOpenDeps & { livenessOf?: () => Map<string, boolean> },
-): (sessionId: string) => Promise<EnsureOpenResult> {
+): (sessionId: string, opts?: { cwd?: string }) => Promise<EnsureOpenResult> {
   const opening = new Map<string, Promise<EnsureOpenResult>>();
-  const ensure = async (sessionId: string): Promise<EnsureOpenResult> => {
+  const ensure = async (sessionId: string, opts?: { cwd?: string }): Promise<EnsureOpenResult> => {
     if (!deps.hookEvents) return { ok: false, error: 'Hook ingestion unavailable' };
     // 回执基线：拉起前该会话的最新事件 id。`--resume` 起来的宿主会补一笔
     // SessionStart——那才是「真进了会话」；注册表出现 pid 只说明进程起来了。
     const baseline = deps.hookEvents.listBySession(sessionId, 1).at(-1)?.id ?? 0;
-    const opened = await openSessionTerminal(deps, sessionId);
+    const opened = await openSessionTerminal(deps, sessionId, undefined, opts);
     if (!opened.ok) return { ok: false, error: opened.error };
     let alive = false;
     for (let i = 0; i < 60; i++) {
@@ -192,11 +232,12 @@ export function createEnsureOpen(
     }
     return alive ? { ok: true, ack: 'registry' } : { ok: false, error: 'session did not report ready within 15s' };
   };
-  return (sessionId) => {
-    const existing = opening.get(sessionId);
+  return (sessionId, opts) => {
+    const key = opts?.cwd ? `${sessionId}\u0000${opts.cwd}` : sessionId;
+    const existing = opening.get(key);
     if (existing) return existing;
-    const task = ensure(sessionId).finally(() => opening.delete(sessionId));
-    opening.set(sessionId, task);
+    const task = ensure(sessionId, opts).finally(() => opening.delete(key));
+    opening.set(key, task);
     return task;
   };
 }

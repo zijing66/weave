@@ -19,6 +19,12 @@ export interface TerminalTopology {
   /** projectId → 本项目已开终端窗口数（项目卡角标）。 */
   counts: Record<number, number>;
   /**
+   * projectId → 本项目是否**全部已开窗都处于系统级隐藏态**（项目卡角标的隐藏
+   * 小标；探不到/不支持的项目不进表 = 前端不摆）。仅 win32 + 有显隐通道的后端
+   * 才有值；count>0 而缺键 = 至少一窗可见（或没探）。
+   */
+  hidden: Record<number, boolean>;
+  /**
    * sessionId → 所在可见屏幕；`null` = 确认不在了（pane 已关 / 换了 mux / 整个
    * GUI 没了），缺 = 这轮没探到或没上报过定位——web 据此保留上次分块，不摘行。
    */
@@ -112,7 +118,11 @@ export class TerminalTopologyRefresher {
         if (screen === undefined) continue;
         mergedTerminals[sessionId] = screen;
       }
-      const merged: TerminalTopology = { counts: topology.counts, terminals: mergedTerminals };
+      const merged: TerminalTopology = {
+        counts: topology.counts,
+        hidden: topology.hidden,
+        terminals: mergedTerminals,
+      };
       this.last = merged;
       const fingerprint = JSON.stringify(merged);
       if (fingerprint === this.lastFingerprint) return;

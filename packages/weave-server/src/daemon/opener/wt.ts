@@ -321,7 +321,7 @@ public static class WeaveWtKeys
                     Marshal.WriteInt16(r, 10, (short)vk);         // wVirtualKeyCode
                     Marshal.WriteInt16(r, 12, 0);                 // wVirtualScanCode
                     Marshal.WriteInt16(r, 14, (short)c);          // UnicodeChar
-                    Marshal.WriteInt32(r, 16, ctrl);              // dwControlKeyState
+                    Marshal.WriteInt32(r, 16, (int)ctrl);         // dwControlKeyState（.NET Framework 无 uint 重载，uint 直传编译炸）
                 }
             }
             uint written;

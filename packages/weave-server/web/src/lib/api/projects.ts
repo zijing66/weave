@@ -30,8 +30,10 @@ export interface ProjectRow {
   meta: string | null;
   /** 归档时间（null/undefined = 活跃项目）。 */
   archivedAt?: string | null;
-  /** 内建仓库标记（RPG 角色仓/协调者仓）：过滤只在渲染层（ProjectList / # 选择器）。 */
+  /** 内建仓库标记（RPG 角色仓）：过滤只在渲染层（ProjectList / # 选择器）。 */
   hidden?: boolean;
+  /** 超级代理项目（上帝 = coordinator）：置顶常驻、禁归档，功能随 weave 版本更新。 */
+  superagent?: boolean;
   /** 已接入的 harness（init 选择结果）；缺省 = 服务端未带（旧响应）。 */
   harnesses?: ProjectHarness[];
 }
@@ -52,6 +54,8 @@ export interface TerminalTarget {
   full: boolean;
   /** 这张卡片上属于本项目的 pane（可关）；缺省 = 该后端关不了远程 pane。 */
   paneIds?: string[];
+  /** 聚焦 pane 的 cwd（opt-in 全量清单里识别别的项目用）。 */
+  cwd?: string | null;
 }
 
 /** 项目名下可关的一个终端 pane（关终端多选弹窗的一张卡）；id 不透明，回传给
@@ -81,10 +85,12 @@ export interface HarnessCheck {
   ok: boolean;
 }
 
-/** 项目存储配置（对话附件的图片/文件落盘目录；null/缺省 = 全局默认）。 */
+/** 项目配置（附件存储目录 + 终端窗口行为；路径 null/缺省 = 全局默认）。 */
 export interface ProjectStorage {
   images: string | null;
   files: string | null;
+  /** 打开/唤出终端后顺手系统级隐藏窗口（缺省 false）。 */
+  hideWindow?: boolean;
 }
 
 export interface ProjectStorageResult {
@@ -188,36 +194,62 @@ export const projectApi = {
       method: 'POST',
       body: JSON.stringify({ ...(harness ? { harness } : {}), ...(worktree ? { worktree: true } : {}) }),
     }),
-  /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。 */
-  listProjectTerminals: (projectId: number): Promise<TerminalTarget[]> =>
-    apiFetch<{ terminals: TerminalTarget[] }>(`/projects/${projectId}/terminals`).then(
-      (r) => r.terminals,
-    ),
+  /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。
+   *  `all` = 别的项目的 tab 也进候选（跨项目分屏落点用；缺省 = 现状只列本项目）。 */
+  listProjectTerminals: (projectId: number, all = false): Promise<TerminalTarget[]> =>
+    apiFetch<{ terminals: TerminalTarget[] }>(
+      `/projects/${projectId}/terminals${all ? '?all=1' : ''}`,
+    ).then((r) => r.terminals),
   /** 唤醒（切到前台）该项目的某个已开终端——targetId 取自 listProjectTerminals。 */
   focusProjectTerminal: (projectId: number, targetId: string): Promise<{ ok: boolean }> =>
     apiFetch<{ ok: boolean }>(`/projects/${projectId}/focus-terminal`, {
       method: 'POST',
       body: JSON.stringify({ targetId }),
     }),
+  /** 系统级隐藏/恢复该项目某终端所在 OS 窗口；回切换后实况可见性。 */
+  setProjectTerminalVisibility: (
+    projectId: number,
+    targetId: string,
+    visibility: 'hide' | 'show',
+  ): Promise<{ ok: boolean; visibility: 'visible' | 'hidden' }> =>
+    apiFetch<{ ok: boolean; visibility: 'visible' | 'hidden' }>(
+      `/projects/${projectId}/terminal-visibility`,
+      { method: 'POST', body: JSON.stringify({ targetId, visibility }) },
+    ),
+  /** 查该项目某终端所在 OS 窗口此刻的可见性；拿不到 = null（前端不摆态）。 */
+  getProjectTerminalVisibility: (
+    projectId: number,
+    targetId: string,
+  ): Promise<{ visibility: 'visible' | 'hidden' | null }> =>
+    apiFetch<{ visibility: 'visible' | 'hidden' | null }>(
+      `/projects/${projectId}/terminal-visibility?targetId=${encodeURIComponent(targetId)}`,
+    ),
   /** 项目存储路径（对话附件落盘目录）：GET 回配置 + 生效目录。 */
   getProjectStorage: (projectId: number): Promise<ProjectStorageResult> =>
     apiFetch<ProjectStorageResult>(`/projects/${projectId}/storage`),
-  /** 保存项目存储路径：空串/null = 清回全局默认；服务端校验绝对路径与可写。 */
+  /** 保存项目配置（存储路径 + hideWindow）：空串/null = 清回全局默认；服务端校验绝对路径与可写。 */
   putProjectStorage: (
     projectId: number,
-    storage: { images?: string | null; files?: string | null },
+    storage: { images?: string | null; files?: string | null; hideWindow?: boolean },
   ): Promise<ProjectStorageResult> =>
     apiFetch<ProjectStorageResult>(`/projects/${projectId}/storage`, {
       method: 'PUT',
       body: JSON.stringify(storage),
     }),
-  listAssets: (projectPath: string): Promise<AssetEntry[]> =>
-    apiFetch<{ projectPath: string; assets: AssetEntry[] }>(
+  listAssets: (projectPath: string): Promise<{ assets: AssetEntry[]; home: string }> =>
+    apiFetch<{ projectPath: string; assets: AssetEntry[]; home: string }>(
       `/assets?path=${encodeURIComponent(projectPath)}`,
-    ).then((r) => r.assets),
+    ).then((r) => ({ assets: r.assets, home: r.home })),
   /** Machine-level harness files (~/.claude, ~/.codex) for the global tree. */
-  listGlobalFileAssets: (): Promise<AssetEntry[]> =>
-    apiFetch<{ assets: AssetEntry[] }>('/global-file-assets').then((r) => r.assets),
+  listGlobalFileAssets: (): Promise<{ assets: AssetEntry[]; home: string }> =>
+    apiFetch<{ assets: AssetEntry[]; home: string }>('/global-file-assets').then((r) => ({
+      assets: r.assets,
+      home: r.home,
+    })),
+  /** 重跑 `weave init`（dashboard 触发，子进程跑 CLI；initVersionBehind / needsInit
+   *  的自愈入口）。409 = 未接入 harness 或已有 init 在飞；500 带 CLI 的 stderr 尾巴。 */
+  runProjectInit: (projectId: number): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>(`/projects/${projectId}/init`, { method: 'POST' }),
 
   // --- 项目文件数据面（索引浏览/搜索 + 根内只读预览） ---
   /** 项目文件索引的一页：`q` 非空 = `dir` 子树内模糊匹配，空 = 列 `dir` 的直接子项。 */
@@ -264,3 +296,4 @@ export const projectApi = {
     return { text: await res.text(), truncated: res.headers.get('x-weave-truncated') === '1' };
   },
 };
+

@@ -10,7 +10,7 @@ import {
   wtPanesCached,
   wtWindowSlug,
 } from './wt.js';
-import { winRaiseTerminalWindow } from './win-raise.js';
+import { winRaiseTerminalWindow, winWindowVisibility } from './win-raise.js';
 import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, throughCmd } from './shared.js';
 import {
   PRESET_CANDIDATES,
@@ -108,12 +108,43 @@ export class WtBackend extends TerminalBackend {
    */
   override async focusTarget(dir: string, targetId: string): Promise<void> {
     if (!parseWtTargetId(targetId)) throw new Error(`Invalid terminal target "${targetId}"`);
+    const pids = await this.projectPanePids(dir);
+    await winRaiseTerminalWindow({ panePids: pids, exe: 'windowsterminal.exe' });
+  }
+
+  /** 本项目 pane 的 console 客户端 pid 表（唤出/隐藏/查可见性共用的认窗抓手）。 */
+  private async projectPanePids(dir: string): Promise<readonly number[]> {
     const key = normalizeDirKey(dir, this.platform);
     const pids = (await wtPanesCached())
       .filter((p) => key !== null && normalizeDirKey(p.cwd, this.platform) === key)
       .map((p) => p.pid);
     if (!pids.length) throw new Error('That terminal is gone — reopen the list');
-    await winRaiseTerminalWindow({ panePids: pids, exe: 'windowsterminal.exe' });
+    return pids;
+  }
+
+  override async setTargetVisibility(
+    dir: string,
+    targetId: string,
+    visibility: 'hide' | 'show',
+  ): Promise<{ visibility: 'visible' | 'hidden' }> {
+    if (this.platform !== 'win32') {
+      throw new Error(`Terminal preset "${this.preset}" cannot hide or show windows on this platform`);
+    }
+    if (!parseWtTargetId(targetId)) throw new Error(`Invalid terminal target "${targetId}"`);
+    const pids = await this.projectPanePids(dir);
+    await winRaiseTerminalWindow({ panePids: pids, exe: 'windowsterminal.exe', visibility });
+    const vis = await winWindowVisibility({ panePids: pids, exe: 'windowsterminal.exe' });
+    return { visibility: vis ?? (visibility === 'hide' ? 'hidden' : 'visible') };
+  }
+
+  override async targetVisibility(dir: string, targetId: string): Promise<'visible' | 'hidden' | null> {
+    if (this.platform !== 'win32' || !parseWtTargetId(targetId)) return null;
+    const key = normalizeDirKey(dir, this.platform);
+    const pids = (await wtPanesCached())
+      .filter((p) => key !== null && normalizeDirKey(p.cwd, this.platform) === key)
+      .map((p) => p.pid);
+    if (!pids.length) return null;
+    return winWindowVisibility({ panePids: pids, exe: 'windowsterminal.exe' });
   }
 
   /**
@@ -130,6 +161,11 @@ export class WtBackend extends TerminalBackend {
   /** 本后端的 pane id 表示法 = `wt:<pid>`（见 parseWtPaneId）。 */
   override ownsPaneId(paneId: string): boolean {
     return parseWtPaneId(paneId) !== null;
+  }
+
+  /** 目标 id（命名窗形 `wt:weave-…`）归本后端；与 pane pid 形分家。 */
+  override ownsTargetId(targetId: string): boolean {
+    return parseWtTargetId(targetId) !== null;
   }
 
   /**
