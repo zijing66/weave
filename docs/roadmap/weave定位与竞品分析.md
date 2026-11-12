@@ -308,3 +308,5 @@ N 个分支依次合入时，**合并顺序影响总冲突量**。贪心策略�
   [ACP（Agent Client Protocol）](https://agentclientprotocol.com) ·
   [claude-agent-acp（Zed 官方适配器，v0.98 源码实测）](https://github.com/zed-industries/claude-agent-acp)
 - 三方对标评审记录见 [`会话扩展点与编排重设计.md`](./会话扩展点与编排重设计.md) 头部修订注。
+- 四新竞品（herdr / orca / t3code / lody，2026-11-10）并入对照见
+  [`编排层竞品全景对照.md`](./编排层竞品全景对照.md)。
