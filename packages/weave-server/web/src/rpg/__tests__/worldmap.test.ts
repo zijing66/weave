@@ -12,9 +12,11 @@ import {
   GOD_SPOT,
   HOMESTEAD_HOTSPOT,
   TRAINING_HOTSPOT,
+  worldExitSpawnOf,
+  WORLD_GOD_SPOT,
 } from '../worldmap';
 import { RPG_SCENE_PALETTE } from '../worldmap';
-import { RPG_SCENES, sceneOf } from '../scenes';
+import { RPG_SCENES, sceneOf, roomSceneKey, worldExitHouseIdOf, worldExitSceneKey } from '../scenes';
 import { RPG_BOOT_ITEMS, rpgBoot, type RpgBootKey } from '../rpg-boot';
 
 /** G1 骨架纯函数与数据不变式：tile 槽位表是数据结构不是美术——换资产零改动
@@ -100,8 +102,8 @@ describe('场景与热点布点', () => {
     expect(projectHouseSpot(1)).toEqual({ x: 6, y: 11 });
     expect(projectHouseSpot(-1)).toBeNull();
     const spots = projectHouseHotspots([
-      { id: 1, name: 'a' },
-      { id: 2, name: 'b' },
+      { id: 1 },
+      { id: 2 },
     ]);
     expect(spots.map((s) => s.id)).toEqual(['project-1', 'project-2']);
     // 每座房都在地图边界内（放不下的自然截断）
@@ -112,6 +114,61 @@ describe('场景与热点布点', () => {
     // 槽位上限之外的截断：把第 i 座推到地图外（3 tile 宽）
     const beyond = projectHouseSpot(100);
     expect(beyond === null || beyond.x + 3 <= WORLD_MAP[0]!.length).toBe(true);
+  });
+});
+
+describe('出房落点（world-exit）', () => {
+  const houses = [
+    { id: 11, coreProjectId: 1 },
+    { id: 22, coreProjectId: 2 },
+  ];
+  const projects = [{ id: 1 }, { id: 2 }];
+
+  it('场景键三件套：拼装、解析、归一 world 场景', () => {
+    expect(worldExitSceneKey(11)).toBe('world-exit-11');
+    expect(worldExitHouseIdOf('world-exit-11')).toBe(11);
+    expect(worldExitHouseIdOf('world')).toBeNull();
+    expect(worldExitHouseIdOf('world-exit-x')).toBeNull();
+    expect(worldExitHouseIdOf(undefined)).toBeNull();
+    expect(sceneOf('world-exit-11').kind).toBe('world');
+    expect(sceneOf('world-exit-0').kind).toBe('world');
+    // 房间键不受影响
+    expect(sceneOf(roomSceneKey(5)).kind).toBe('room');
+  });
+
+  it('落在该房门外一格（3×3 槽位正南）：顶格与脚格都在房热点矩形之外', () => {
+    const spawn = worldExitSpawnOf(11, houses, projects);
+    // house 0 槽位 (2,11)、3×3 占 rows 11-13；门外一格 = (3,14)，
+    // 化身占 rows 14-15（脚 = start.y+1），一步之内不误触发回屋。
+    expect(spawn).toEqual({ start: { x: 3, y: 14 }, facing: 'down' });
+    const hotspot = projectHouseHotspots(projects)[0]!;
+    expect(hitTest([hotspot], spawn.start.x, spawn.start.y)).toBeNull(); // 顶格
+    expect(hitTest([hotspot], spawn.start.x, spawn.start.y + 1)).toBeNull(); // 脚格
+  });
+
+  it('不同房槽位落点不重叠；查不到的房/项目回默认安全格', () => {
+    const a = worldExitSpawnOf(11, houses, projects);
+    const b = worldExitSpawnOf(22, houses, projects);
+    expect(a.start).not.toEqual(b.start);
+    expect(worldExitSpawnOf(99, houses, projects).start).toEqual({ x: WORLD_GOD_SPOT.x, y: WORLD_GOD_SPOT.y });
+    expect(worldExitSpawnOf(11, houses, [{ id: 7 }]).start).toEqual({ x: WORLD_GOD_SPOT.x, y: WORLD_GOD_SPOT.y });
+    // 项目序在末尾（房子排到路南尽头的最后一个槽位）也落门外一格，不回默认
+    const late = worldExitSpawnOf(22, houses, [{ id: 9 }, { id: 2 }]);
+    expect(late.start).toEqual({ x: 7, y: 14 });
+  });
+
+  it('所有槽位的门外落点都可走且不压任何热点矩形（全槽位扫描）', () => {
+    const many = Array.from({ length: 6 }, (_, i) => ({ id: i + 1 }));
+    const hotspots = projectHouseHotspots(many);
+    for (let i = 0; i < 6; i++) {
+      const spawn = worldExitSpawnOf(i + 1, many.map((p) => ({ id: p.id, coreProjectId: p.id })), many);
+      for (let row = spawn.start.y; row <= spawn.start.y + 1; row++) {
+        expect(TILE_TYPES[WORLD_MAP[row]![spawn.start.x]!]?.solid).toBeFalsy();
+        for (const h of [...hotspots, HOMESTEAD_HOTSPOT, TRAINING_HOTSPOT]) {
+          expect(hitTest([h], spawn.start.x, row)).toBeNull();
+        }
+      }
+    }
   });
 });
 

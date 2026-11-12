@@ -1,15 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useT } from '@/i18n/I18nProvider';
 import { api } from '@/lib/api';
 import { useRpgData } from './use-rpg-data';
-import { CharacterSprite } from './CharacterSprite';
+import { CharacterSprite, GodSprite, spriteSeedOf } from './CharacterSprite';
 import { gameStatusOf } from './status-map';
 import { PixelScene } from './PixelScene';
 import { SpriteHeadBars, headBarsOf, SelectionDetailBar } from './hud';
 import { RoleProgressPanel } from './RoleProgressPanel';
-import { useState } from 'react';
 import { ROOM_GOD_SPOT, ROOM_HOTSPOTS, ROOM_MAP, TILE_PX, roomSeatSpot } from './worldmap';
+import { worldExitSceneKey } from './scenes';
 import { navigate } from '@/lib/route';
 import type { RpgRoleView, SessionRow } from '@/lib/api';
 
@@ -17,7 +17,8 @@ import type { RpgRoleView, SessionRow } from '@/lib/api';
  * 进房协同棋盘（G2 段1）：World 项目房点击的落点——房间 tilemap + 席位纵排 +
  * 状态徽章横排（TFT 可读性口径）。数据面复用 useRpgData（观察态零冗余：席位
  * 状态 = 该角色项目最近会话的派生态）；名册 live 展开走 houses 表成员行现读。
- * 上帝化身自由走动语义 G2 先静态摆位（席位列左侧）。
+ * 上帝化身自由走动语义 G2 先静态摆位（席位列左侧）。南门热点带出房上下文
+ *（`world-exit-<houseId>`）——出门落门外一格、朝向向外，不回默认出生点。
  */
 
 export function RoomScene({ houseId }: { houseId: number }) {
@@ -29,6 +30,15 @@ export function RoomScene({ houseId }: { houseId: number }) {
     queryFn: () => api.fetchHouse(houseId),
     staleTime: 15_000,
   });
+  // 南门热点换成出房键（其余照旧）；分身外貌 = houseId 派生确定性 seed。
+  const hotspots = useMemo(
+    () =>
+      ROOM_HOTSPOTS.map((h) =>
+        h.id === 'room-door' ? { ...h, action: { type: 'scene' as const, scene: worldExitSceneKey(houseId) } } : h,
+      ),
+    [houseId],
+  );
+  const coordinatorSeed = useMemo(() => spriteSeedOf(`house-${houseId}`), [houseId]);
 
   // 席位名册 = 分身（协调者，固定语义首排）+ 入住角色（house 成员行现读，live）。
   const seats = useMemo(() => {
@@ -64,7 +74,13 @@ export function RoomScene({ houseId }: { houseId: number }) {
         >
           {/* G2.5 三件套①：头顶状态条（派生不出的格不摆） */}
           <SpriteHeadBars bars={headBarsOf(role, data, Date.now())} />
-          <CharacterSprite archetype={role.archetype} status={gameStatusOf(status)} size={0.5} />
+          <CharacterSprite
+            archetype={role.archetype}
+            status={gameStatusOf(status)}
+            size={0.75}
+            gender={role.gender}
+            appearanceSeed={role.appearanceSeed}
+          />
           <span
             className={
               'mt-0.5 whitespace-nowrap rounded px-1 text-[9px] ' +
@@ -85,7 +101,7 @@ export function RoomScene({ houseId }: { houseId: number }) {
       <PixelScene
         map={ROOM_MAP}
           indoor
-        hotspots={ROOM_HOTSPOTS}
+        hotspots={hotspots}
         onHotspot={onHotspot}
         onEmptyClick={() => setSelectedRoleId(null)}
         sprites={[
@@ -95,7 +111,15 @@ export function RoomScene({ houseId }: { houseId: number }) {
             y: roomSeatSpot(0)!.y,
             node: (
               <div title={t('rpg.coordinatorSeat')}>
-                <CharacterSprite archetype={null} status="idle" size={0.5} />
+                <CharacterSprite
+                  archetype={null}
+                  status="idle"
+                  size={0.75}
+                  god
+                  bar="ok"
+                  gender={coordinatorSeed % 2 ? 'female' : 'male'}
+                  appearanceSeed={coordinatorSeed}
+                />
               </div>
             ),
           },
@@ -103,9 +127,9 @@ export function RoomScene({ houseId }: { houseId: number }) {
         ]}
         god={{
           start: ROOM_GOD_SPOT,
-          node: (
+          node: (facing) => (
             <div title={t('rpg.godAvatar')}>
-              <CharacterSprite archetype={null} status="idle" size={0.5} />
+              <GodSprite size={0.75} facing={facing} />
             </div>
           ),
         }}

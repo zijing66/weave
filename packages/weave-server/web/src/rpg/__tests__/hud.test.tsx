@@ -86,9 +86,10 @@ describe('headBarsOf', () => {
 });
 
 describe('SpriteHeadBars', () => {
-  it('全 null = 什么都不渲染（不摆空壳条）', () => {
+  it('全 null = 常驻纯绿「正常」条（G2.6 规格 §4.3：状态条是常驻器官不是装饰）', () => {
     const html = renderToString(<SpriteHeadBars bars={{ hp: null, progress: null, health: null }} />);
-    expect(html).toBe('');
+    expect(html).toContain('#3fbf5f');
+    expect(html).toContain('pointer-events-none');
   });
 
   it('有据 = 渲染分段条', () => {
@@ -104,12 +105,24 @@ describe('alertsOf', () => {
       questions: questions as never,
       runs: [run(2, 'failed'), run(3, 'failed', 'boom')],
       sessionById: new Map([['s1', session('s1', 1)]]),
+      routingPending: 0,
     });
     expect(alerts.map((a) => a.severity)).toEqual(['red', 'red', 'yellow']);
   });
 
+  it('级2 待批 = 红且排最前（G6 决策信箱）；零待批不摆', () => {
+    const alerts = alertsOf({
+      questions: new Map([['s1', { sessionId: 's1', kind: 'question' }]]) as never,
+      runs: [run(3, 'failed', 'boom')],
+      sessionById: new Map(),
+      routingPending: 2,
+    });
+    expect(alerts[0]).toMatchObject({ key: 'routing-pending', severity: 'red', routing: true, label: '2' });
+    expect(alerts.filter((a) => a.key === 'routing-pending')).toHaveLength(1);
+  });
+
   it('无警报 = 空表（带子不出现由调用方判）', () => {
-    expect(alertsOf({ questions: new Map(), runs: [], sessionById: new Map() })).toEqual([]);
+    expect(alertsOf({ questions: new Map(), runs: [], sessionById: new Map(), routingPending: 0 })).toEqual([]);
   });
 });
 

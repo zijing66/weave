@@ -309,6 +309,26 @@ export const TRAINING_HOTSPOT: Hotspot = {
 
 export const WORLD_HOTSPOTS: readonly Hotspot[] = [HOMESTEAD_HOTSPOT, TRAINING_HOTSPOT];
 
+/** G5 客席区（联机席位）：宅基地东侧草坪两排——对等上帝席位排 y=5、来访 NPC
+ *  排 y=7（出 Home 门沿路北东望即见；不与宅基地热点（x4-11）相撞）。槽位纯
+ *  函数，超界返回 null = 调用方截断。 */
+export function peerGodSeatSpot(i: number): { x: number; y: number } | null {
+  if (!Number.isInteger(i) || i < 0) return null;
+  const x = 13 + i * 3;
+  const y = 5;
+  // sprite 宽 2 格 + 留 1 格呼吸；图纸中段（cols 13-38 均为草地）
+  if (x + 2 > 38) return null;
+  return { x, y };
+}
+
+export function visitorNpcSpot(i: number): { x: number; y: number } | null {
+  if (!Number.isInteger(i) || i < 0) return null;
+  const x = 13 + i * 2;
+  const y = 7;
+  if (x + 2 > 38) return null;
+  return { x, y };
+}
+
 /** 进房协同棋盘（G2 RoomScene，20×14，G2.6 仅校色）：木地板 + 四面墙 + 南墙
  *  一门（出室外回世界地图）+ 中部一条地毯长席（席位纵排，TFT 可读性口径）。 */
 export const ROOM_MAP: TileMap = [
@@ -346,6 +366,26 @@ export const ROOM_HOTSPOTS: readonly Hotspot[] = [
   { id: 'room-door', x: 9, y: 13, w: 2, h: 1, labelKey: 'rpg.doorExit', action: { type: 'scene', scene: 'world' } },
 ];
 
+/** 出房落点（纯函数）：`world-exit-<houseId>` 的世界初始格——该房 3×3 槽位
+ *  正南门外一格（脚点在热点矩形之外，站上不会误触发回屋），朝向延续为向外
+ *  down。房子查不到/项目对不上/槽位越界 = 回默认宅基地安全格。 */
+export function worldExitSpawnOf(
+  houseId: number,
+  houses: readonly { id: number; coreProjectId: number }[],
+  projects: readonly { id: number }[],
+): { start: { x: number; y: number }; facing: 'down' } {
+  const house = houses.find((h) => h.id === houseId);
+  const idx = house ? projects.findIndex((p) => p.id === house.coreProjectId) : -1;
+  const spot = idx >= 0 ? projectHouseSpot(idx) : null;
+  if (spot) {
+    const start = { x: spot.x + 1, y: spot.y + HOUSE_TILES };
+    // 落点可走（草）且全身、脚格都在房热点矩形之外
+    const walkable = start.y >= 0 && start.y < WORLD_MAP.length && !TILE_TYPES[WORLD_MAP[start.y]![start.x]!]?.solid;
+    if (walkable) return { start, facing: 'down' };
+  }
+  return { start: { x: WORLD_GOD_SPOT.x, y: WORLD_GOD_SPOT.y }, facing: 'down' };
+}
+
 /** 项目房沿土路（G2.6 参考图比例裁决：房 3 tile 宽、在路南沿路排开）的槽位
  *  （纯函数，可单测）：第 i 座房的左上角，占 3×3、间隔 1 格，放不下（超出
  *  地图）返回 null——调用方截断展示即可（项目房上限 = 槽位数）。 */
@@ -360,10 +400,9 @@ export function projectHouseSpot(i: number): { x: number; y: number } | null {
   return { x, y };
 }
 
-/** 项目房热点（动态：既有项目列表 → 每项目一座房，点击进项目视图）。 */
-export function projectHouseHotspots(
-  projects: readonly { id: number; name: string }[],
-): Hotspot[] {
+/** 项目房热点（动态：既有项目列表 → 每项目一座房，点击进项目视图）。
+ *  只按 id 布点（name 不参与），传 ProjectRow 或裸 {id} 均可。 */
+export function projectHouseHotspots(projects: readonly { id: number }[]): Hotspot[] {
   const out: Hotspot[] = [];
   for (let i = 0; i < projects.length; i++) {
     const spot = projectHouseSpot(i);

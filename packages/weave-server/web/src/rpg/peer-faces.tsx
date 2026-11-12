@@ -3,7 +3,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { api, type PeerRow, type PeerSessionsView } from '@/lib/api';
 import { registerInvalidator } from '@/lib/sse';
 import { useEffect } from 'react';
-import { CharacterSprite } from './CharacterSprite';
+import { CharacterSprite, spriteSeedOf } from './CharacterSprite';
 
 /**
  * F2 跨机面（CollabScene 的两块新增卡）：peer 角色行（来源徽章 + 远端状态，只读）
@@ -12,8 +12,9 @@ import { CharacterSprite } from './CharacterSprite';
  * 点击不跳本地会话（没有本地会话可跳——如实不摆详情链接）。
  */
 
-/** 对端机器清单（在线态随行；federation 帧失效重拉）。 */
-function usePeers() {
+/** 对端机器清单（在线态随行；federation 帧失效重拉）。世界场景客席区（G5）
+ *  与协同视图跨机面共用同一查询域。 */
+export function usePeers() {
   const peers = useQuery({
     queryKey: ['fed-peers-rpg'],
     queryFn: () => api.listPeers(),
@@ -34,7 +35,8 @@ function usePeerSessions(peerId: string | null, online: boolean) {
   return q.data ?? null;
 }
 
-function livenessOf(lastSeenAt: string | null): boolean {
+/** 在线判据（与 server peerLiveness 同口径：90s 心跳窗）。 */
+export function livenessOf(lastSeenAt: string | null): boolean {
   if (!lastSeenAt) return false;
   const at = Date.parse(lastSeenAt);
   return Number.isFinite(at) && Date.now() - at <= 90_000;
@@ -73,7 +75,13 @@ function PeerRoleCard({ peerId, peerName }: { peerId: string; peerName: string }
   return (
     <div className="flex flex-col items-center gap-1" title={`${t('rpg.peerRoleBadge')}: ${peerName}`}>
       <div className="opacity-90">
-        <CharacterSprite archetype="适配" status="idle" size={3} />
+        <CharacterSprite
+          archetype="适配"
+          status="idle"
+          size={3}
+          gender={spriteSeedOf(peerId) % 2 ? 'female' : 'male'}
+          appearanceSeed={spriteSeedOf(peerId)}
+        />
       </div>
       <span className="max-w-36 truncate text-sm font-medium">{peerName}</span>
       <span className="rounded bg-[var(--w-surface-2)] px-1.5 py-0.5 text-[11px] text-[var(--w-text-dim)]">
@@ -122,7 +130,7 @@ export function CrossMachineBoard({ localRuns }: { localRuns: number | null }) {
   );
 }
 
-function usePeerSessionsMulti(peers: Array<{ id: string; name: string }>) {
+export function usePeerSessionsMulti(peers: Array<{ id: string; name: string }>) {
   const q = useQuery({
     queryKey: ['fed-peer-sessions-multi', peers.map((p) => p.id).join(',')],
     queryFn: async () => {

@@ -30,6 +30,8 @@ export const RPG_SCENES: readonly RpgScene[] = [
 export function sceneOf(key: string | undefined): RpgScene {
   // 房间键是动态键（`room-<houseId>`，深链直达某间房）——按前缀归一到 room。
   if (isRoomSceneKey(key)) return RPG_SCENES.find((s) => s.kind === 'room')!;
+  // 出房键 `world-exit-<houseId>`：world 场景 + 门外落点上下文（深链兼容）。
+  if (isWorldExitSceneKey(key)) return RPG_SCENES.find((s) => s.kind === 'world')!;
   return RPG_SCENES.find((s) => s.key === key) ?? RPG_SCENES[0]!;
 }
 
@@ -40,4 +42,19 @@ export function roomSceneKey(houseId: number): string {
 
 export function isRoomSceneKey(key: string | undefined): boolean {
   return /^room-\d+$/.test(key ?? '');
+}
+
+/** 出房场景键 = `world-exit-<houseId>`：从该房南门走出，落世界门外一格。 */
+export function worldExitSceneKey(houseId: number): string {
+  return `world-exit-${houseId}`;
+}
+
+export function isWorldExitSceneKey(key: string | undefined): boolean {
+  return /^world-exit-\d+$/.test(key ?? '');
+}
+
+/** 解析出房键里的 houseId；非出房键返回 null。 */
+export function worldExitHouseIdOf(key: string | undefined): number | null {
+  const m = /^world-exit-(\d+)$/.exec(key ?? '');
+  return m ? Number(m[1]) : null;
 }

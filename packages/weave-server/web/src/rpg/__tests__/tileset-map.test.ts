@@ -7,7 +7,6 @@ import {
   cellFaceOf,
   collectBaseRuns,
   collectSpriteRuns,
-  houseGridTiles,
   PINE_TILES,
   CROP_TILES,
   SOIL_MOUND_TILES,
@@ -148,9 +147,11 @@ describe('run 合并', () => {
     expect(collectBaseRuns(HOME_MAP).every((r) => !r.northWall)).toBe(true);
   });
 
-  it('世界层 div 预算：底图 + sprite ≈ 200（性能纪律①）', () => {
+  it('世界层 div 预算：底图 + sprite ≤ 380（性能纪律①）', () => {
+    // 收尾批加草地草叶点缀（~109 枚，测得 sprite 253 + base 88 = 341）：
+    // 仍 ≈ 1/5 逐格渲染（1728 div），预算随之实测上调——每次加面必须重新度量。
     const total = collectBaseRuns(WORLD_MAP).length + collectSpriteRuns(WORLD_MAP).length;
-    expect(total).toBeLessThanOrEqual(260);
+    expect(total).toBeLessThanOrEqual(380);
   });
 
   it('Home/Room 室内 run 数量同样收敛（逐格 240 → 双层合计 < 90）', () => {
@@ -161,18 +162,9 @@ describe('run 合并', () => {
   });
 });
 
-describe('房体九宫', () => {
-  it('3×3 = 平墙为主 + 顶行窗点缀 + 梁柱缘 + 底行中央门，seed 奇偶换门/窗', () => {
-    const grid = houseGridTiles(0);
-    expect(grid).toHaveLength(9);
-    // X 门件只出现在底行中央门位
-    expect(grid[7]).toBe(DOOR_TILES[0]);
-    expect(houseGridTiles(1)[7]).toBe(DOOR_TILES[1]);
-    // 墙面行 = 平木墙 114-116
-    expect([grid[0], grid[2], grid[4], grid[6], grid[8]]).toEqual([114, 116, 115, 114, 116]);
-    // 顶行中央窗（112/113）、中行左右梁柱（102/104）
-    expect([112, 113]).toContain(grid[1]);
-    expect([grid[3], grid[5]]).toEqual([102, 104]);
+describe('房体词表', () => {
+  it('门词表 = 双开门对两枚（房体南墙门位与室内 DD 门格共用）；墙面词表随九宫退役', () => {
+    expect(DOOR_TILES).toEqual([126, 127]);
   });
 
   it('耕地土条词表：上缘 48-50、下缘 60-62（世界地图灵田可用）', () => {

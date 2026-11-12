@@ -141,6 +141,13 @@ export function PixelScene({
 
   // ---- G4 行走状态（god 给出才启用） ----
   const [pos, setPos] = useState<Cell | null>(() => god?.start ?? null);
+  // 化身朝向：步进方向即朝向（撞墙也转向）；随初始格一起重置。
+  const [facing, setFacing] = useState<Dir>(god?.facing ?? 'down');
+  // 行走态（步行动画开关）：步进间隔 STEP_MS，停步两拍即回待机——
+  // 键盘长按、dpad 连发与点按同管道（都走 stepAndTrigger）。
+  const [walking, setWalking] = useState(false);
+  const walkIdleRef = useRef<number>(0);
+  useEffect(() => () => window.clearTimeout(walkIdleRef.current), []);
   // E 键探针：把「同步读当前格」的回调交给调用方（只读，不写状态）。
   useEffect(() => {
     if (!godPosProbe) return;
@@ -150,11 +157,12 @@ export function PixelScene({
     };
   });
   // 场景切换（map 变了 = 换场景）或化身出现（异步数据后到，god 从 undefined
-  // 变有值）时落初始格——行走进行中不回卷（pos 已非 null 才是「进行中」）。
+  // 变有值）时落初始格与初始朝向——行走进行中不回卷（pos 已非 null 才是「进行中」）。
   const mapKey = useMemo(() => `${cols}x${rows}`, [cols, rows]);
   const hasGod = god != null;
   useEffect(() => {
     setPos((cur) => cur ?? god?.start ?? null);
+    setFacing((god?.facing ?? 'down'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapKey, hasGod]);
 
@@ -196,6 +204,11 @@ export function PixelScene({
 
   const stepAndTrigger = useCallback(
     (dir: Dir) => {
+      setFacing(dir);
+      // 行走中：有步进在打（键盘长按/dpad 连发/点按），停步 2 拍后回 idle。
+      setWalking(true);
+      window.clearTimeout(walkIdleRef.current);
+      walkIdleRef.current = window.setTimeout(() => setWalking(false), STEP_MS * 2);
       setPos((cur) => {
         if (!cur) return cur;
         const next = resolveStep(map, cur, dir);
@@ -365,19 +378,30 @@ export function PixelScene({
               <SteleTile />
             </div>
           ))}
-          {/* 静态摆位角色（席位/NPC 不动——G4 裁决：只有上帝化身可走） */}
+          {/* 静态摆位角色（席位/NPC 不动——G4 裁决：只有上帝化身可走）；
+              z-index = 脚点行 × 2（painter order：脚点越靠南越靠前） */}
           {sprites?.map((s) => (
-            <div key={s.key} style={{ position: 'absolute', left: s.x * TILE_PX, top: s.y * TILE_PX, width: TILE_PX, height: TILE_PX * 2 }}>
+            <div
+              key={s.key}
+              style={{ position: 'absolute', left: s.x * TILE_PX, top: s.y * TILE_PX, width: TILE_PX, height: TILE_PX * 2, zIndex: (s.y + 1) * 2 }}
+            >
               {s.node}
             </div>
           ))}
-          {/* 上帝化身：transform 离散步进（translate 整格），无逐帧重绘 */}
+          {/* 上帝化身：transform 离散步进（translate 整格），无逐帧重绘；
+              行走中挂 rpg-walking——精灵两脚按步进节拍交替提起（CSS 帧切换） */}
           {god && pos && (
             <div
-              className="rpg-god-sprite"
-              style={{ position: 'absolute', width: TILE_PX, height: TILE_PX * 2, transform: `translate(${pos.x * TILE_PX}px, ${pos.y * TILE_PX}px)` }}
+              className={'rpg-god-sprite' + (walking ? ' rpg-walking' : '')}
+              style={{
+                position: 'absolute',
+                width: TILE_PX,
+                height: TILE_PX * 2,
+                transform: `translate(${pos.x * TILE_PX}px, ${pos.y * TILE_PX}px)`,
+                zIndex: (pos.y + 1) * 2,
+              }}
             >
-              {god.node}
+              {god.node(facing, walking)}
             </div>
           )}
           {/* 热点层（画布内可见命中区） */}
@@ -466,7 +490,10 @@ const DIR_ARROW: Record<Dir, string> = { up: '▲', down: '▼', left: '◀', ri
 export interface GodAvatar {
   /** 初始格（tile 坐标，1×2 顶格）。 */
   start: Cell;
-  node: React.ReactNode;
+  /** 初始朝向（缺省 down）——出房落点应朝外。 */
+  facing?: Dir;
+  /** 朝向/行走态接入的渲染函数（步进转向与开步停步时重渲染）。 */
+  node: (facing: Dir, walking: boolean) => React.ReactNode;
 }
 
 export { DIR_DELTA };

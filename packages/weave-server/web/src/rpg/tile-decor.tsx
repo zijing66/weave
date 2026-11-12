@@ -1,5 +1,5 @@
 import { TILE_PX, RPG_SCENE_PALETTE as P } from './worldmap';
-import { houseGridTiles } from './tileset-map';
+import { DOOR_TILES } from './tileset-map';
 import type { TileSprites } from './tile-atlas';
 
 /**
@@ -34,31 +34,100 @@ export function SteleTile(): React.ReactNode {
   );
 }
 
-/** 项目房体（3×3 热点格，G2.6 资产化）：图集九宫一次成画——顶行山墙 X 带、
- *  中行带梁墙 + 蓝窗、底行平墙 + 谷仓门（seed 奇偶换门）。backgroundColor
- *  兜底（图集加载失败退木墙色块）。 */
+/** 项目房体（3×3 热点格，¾ 侧俯瞰三面，2026-11-11 用户裁决：房屋应可见三个
+ *  面——正面墙 + 东侧山墙 + 屋顶南坡）。tile 网格不动（canvas/引擎都是俯视
+ *  正交），体感靠三方块的像素阶梯：屋顶右倾梯形（脊偏左、檐口右探 = 透视
+ *  挤压）+ 瓦楞横纹，东墙深一档木色、顶边随屋檐斜率，南墙亮木 + 谷仓门
+ * （复用图集门 tile，seed 奇偶换扇）+ 暖窗光。门在南墙正中 = 出房落点语义。
+ *  房高溢出 3×3 槽顶部（西北向抬升），z-index 由调用方按脚点行排（painter
+ *  order），站在房后的东西被正确盖住。 */
 export function HouseTile({ seed, sprites }: { seed: number; sprites: TileSprites | null }): React.ReactNode {
-  const tiles = houseGridTiles(seed);
-  const images: string[] = [];
-  const positions: string[] = [];
-  tiles.forEach((n, i) => {
-    const img = sprites?.get(n);
-    if (!img) return;
-    images.push(`url(${img})`);
-    positions.push(`${(i % 3) * TILE_PX}px ${Math.floor(i / 3) * TILE_PX}px`);
-  });
+  const doorTile = sprites?.get(DOOR_TILES[seed % 2]!);
+  const roofBands = `repeating-linear-gradient(to bottom, ${P.roofRidge} 0px 3px, ${P.roof} 3px 10px, ${P.roofDeep} 10px 12px)`;
+  const wallPlanks = `repeating-linear-gradient(to bottom, ${P.wallWood} 0px 7px, ${P.woodDeep} 7px 9px)`;
+  const W = TILE_PX * 3; // 72
+  // 屋顶：脊线在槽顶上方 8px、偏左（x 10-50）；檐口压到 y≈42、左右各探 5px
+  const roofClip = 'polygon(14% 0%, 70% 0%, 107% 100%, -6% 100%)';
   return (
-    <div
-      className="absolute inset-0"
-      aria-hidden
-      style={{
-        backgroundColor: P.wallWood,
-        backgroundImage: images.join(',') || undefined,
-        backgroundPosition: positions.join(',') || undefined,
-        backgroundRepeat: 'no-repeat',
-        imageRendering: 'pixelated',
-      }}
-    />
+    <div className="absolute inset-0" style={{ overflow: 'visible' }} aria-hidden>
+      {/* 房前独立落影（先画，压在墙脚之下） */}
+      <div style={{ position: 'absolute', left: -2, right: 2, top: W - 3, height: 8, background: 'rgba(26,23,33,0.32)' }} />
+      {/* 东侧山墙（暗面）：顶边随屋檐向右上挑（透视斜率 = 屋顶右缘同斜率） */}
+      <div
+        style={{
+          position: 'absolute',
+          left: W - 18,
+          top: 30,
+          width: 18,
+          height: W - 30,
+          background: wallPlanks,
+          filter: 'brightness(0.72)',
+          clipPath: 'polygon(0% 38%, 100% 0%, 100% 100%, 0% 100%)',
+        }}
+      >
+        {/* 山墙小窗（暖光，夜灯感） */}
+        <div style={{ position: 'absolute', left: 5, top: 18, width: 7, height: 7, background: P.windowGlow, boxShadow: `inset 0 0 0 1px ${P.woodDeep}` }} />
+      </div>
+      {/* 南面正墙（亮面）：木墙板 + 檐口压影 */}
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 40,
+          width: W - 16,
+          height: W - 40,
+          background: wallPlanks,
+        }}
+      >
+        {/* 檐口在墙上投的影（两道暗线，像素阶） */}
+        <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 2, background: 'rgba(26,23,33,0.55)' }} />
+        {/* 暖窗（左） */}
+        <div style={{ position: 'absolute', left: 5, top: 6, width: 9, height: 9, background: P.windowGlow, boxShadow: `inset 0 0 0 1px ${P.woodDeep}` }} />
+        {/* 墙脚暗缘 */}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'rgba(26,23,33,0.4)' }} />
+      </div>
+      {/* 南墙正中 = 谷仓门（图集门 tile，16px 艺术格放大 1.5×=24px 对齐门格） */}
+      {doorTile != null && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 24,
+            top: 40,
+            width: 24,
+            height: 24,
+            backgroundImage: `url(${doorTile})`,
+            backgroundSize: '24px 24px',
+            imageRendering: 'pixelated',
+          }}
+        />
+      )}
+      {doorTile == null && (
+        /* 图集未就绪的门兜底（木门深色块 + 门框） */
+        <div style={{ position: 'absolute', left: 24, top: 40, width: 24, height: 24, background: P.door, boxShadow: `inset 0 0 0 2px ${P.woodDeep}` }} />
+      )}
+      {/* 屋顶南坡（三方块的视觉主导面）：右倾梯形 + 瓦楞横纹 + 脊线帽 */}
+      <div
+        style={{
+          position: 'absolute',
+          left: -5,
+          top: -8,
+          width: W + 10,
+          height: 50,
+          background: roofBands,
+          clipPath: roofClip,
+          imageRendering: 'pixelated',
+        }}
+      >
+        {/* 脊线帽（沿梯形上边） */}
+        <div style={{ position: 'absolute', left: '14%', width: '56%', top: 0, height: 2, background: P.roofRidge, boxShadow: '0 1px 0 rgba(26,23,33,0.4)' }} />
+        {/* 屋顶右缘高光（透视挤压的受光边） */}
+        <div style={{ position: 'absolute', right: 0, top: '10%', width: 2, height: '88%', background: P.roofRidge, opacity: 0.5 }} />
+        {/* 檐口下缘投影（压在两墙之上） */}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 2, background: 'rgba(26,23,33,0.45)' }} />
+        {/* 屋顶烟囱（seed 奇偶摆位微差） */}
+        <div style={{ position: 'absolute', left: seed % 2 ? '62%' : '22%', top: 2, width: 6, height: 7, background: P.stele, boxShadow: `inset 0 -2px 0 ${P.wallWood}` }} />
+      </div>
+    </div>
   );
 }
 

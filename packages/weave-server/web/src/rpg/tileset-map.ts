@@ -49,14 +49,14 @@ export const CROP_TILES = [4, 5, 8] as const;
 export const SOIL_MOUND_TILES = [51, 63] as const;
 export const SOIL_TOP_TILES = [48, 49, 50] as const;
 export const SOIL_BOTTOM_TILES = [60, 61, 62] as const;
-/** 房体九宫：平木墙三段（114-116 横向接缝实测错色条不连续，纯墙带用
- *  115 一档保墙纹均匀）+ 带梁上墙（102/104，左/右缘梁柱）+ 窗（112，
- *  110-113 窗族点缀）+ 谷仓门（126/127，仅底行中央一格）。 */
-export const WALL_BEAM_TILES = [102, 104] as const;
+/** 室内木墙（114/115 按 2 格块交替，接缝实测无缝）；房体外观已改 ¾ 三面
+ *  手绘（tile-decor.HouseTile），墙/窗词表随之退役，只剩门两枚供房体与室内
+ *  门格共用。 */
 export const WALL_TILES = [114, 115, 116] as const;
-export const HOUSE_WINDOW_TILES = [112, 113] as const;
-/** 谷仓门两枚（双开门对）。 */
+/** 谷仓门两枚（双开门对）——房体南墙门位与室内 'DD' 门格共用。 */
 export const DOOR_TILES = [126, 127] as const;
+/** 草叶点缀 sprite（图集 #80 = 浅草底上的深绿草叶簇，透明底）。 */
+export const GRASS_TUFT_TILE = 80;
 
 /* ---- 格位面 ---- */
 
@@ -78,6 +78,10 @@ export function cellFaceOf(map: TileMap, col: number, row: number): CellFace {
   if (!code) return { kind: null, spriteTile: 0 };
   switch (code) {
     case '.':
+      // 素草底 + 确定性草叶点缀（约 1/9 格）：打破大片纯色棋盘的塑料感
+      //（图集无干净无缝草底Tile，草感全靠底色 + 稀疏草簇）；
+      //  与 run 合并只看 kind，点缀不影响底图 run。
+      return { kind: 'grass', spriteTile: jitter(col, row, 9) === 0 ? GRASS_TUFT_TILE : 0 };
     case ',':
       return { kind: 'grass', spriteTile: 0 };
     case 'T':
@@ -226,26 +230,9 @@ export function collectSpriteRuns(map: TileMap): TileRun[] {
   return collectRuns(map, 'sprite', false);
 }
 
-/* ---- 房体九宫（HouseTile 消费） ---- */
+/* ---- 房体（HouseTile 消费） ---- */
 
 /**
- * 房体 3×3 贴图九宫（纯函数）：三行全以平木墙为面（114-116），顶行嵌一枚
- * 窗（112/113 按 seed 取）、中行左右缘用带梁墙（102/104）立柱感、底行中央
- * 一格谷仓门（126/127 按 seed 换扇）——X 门件只出现在门位，墙不再带 X 纹。
- * 返回 9 枚 tile 序号（行优先）。
+ * 房体现在是 ¾ 三面手绘（tile-decor.HouseTile：南墙 + 东山墙 + 屋顶坡），
+ * 图集侧只剩门与墙面词表（下方）——九宫拼装已随平面视角退役。
  */
-export function houseGridTiles(seed: number): readonly number[] {
-  const door = DOOR_TILES[((seed % 2) + 2) % 2]!;
-  const win = HOUSE_WINDOW_TILES[((seed % 2) + 2) % 2]!;
-  return [
-    WALL_TILES[0]!,
-    win,
-    WALL_TILES[2]!,
-    WALL_BEAM_TILES[0]!,
-    WALL_TILES[1]!,
-    WALL_BEAM_TILES[1]!,
-    WALL_TILES[0]!,
-    door,
-    WALL_TILES[2]!,
-  ];
-}

@@ -13,7 +13,7 @@ import type { RpgHexagon, RpgProgressView, RpgRoleView } from '@/lib/api';
  * - 头顶状态条：绿 = 体力（token 预算余量：sessionRow.contextTokens / 模型窗口，
  *   `contextWindowOf` 同一档位表）/ 黄 = 进度（回合开着时长，lastSeenAt 近似——
  *   回合开着的会话才摆）/ 红 = 健康（该角色项目下 failed run 数，近 50 条账内）。
- * - 顶部警报带：挂起待答（questions）+ 失败 run，按红黄排序；无警报整条不出现。
+ * - 顶部警报带：级2 待批（决策信箱，G6）+ 挂起待答（questions）+ 失败 run，按红黄排序；无警报整条不出现。
  * - 底部选中详情条：点 sprite 展开（RoleProgressPanel 内容 + 最近回合 + 在跑 run）。
  * - 时钟位：右上角事件速率 + 在跑会话数（dashboard rate 缓存，读不到不摆）。
  */
@@ -50,17 +50,20 @@ export function headBarsOf(
       ? Math.max(0.15, Math.min(1, turnAge / 120_000))
       : null;
   const failed = (data.runs ?? []).filter((r) => r.status === 'failed').length;
-  const health = failed > 0 ? Math.min(1, failed / 5) : null;
+  // 失败会话（defeated）= 满红；失败 run 只按计数热度。
+  const health =
+    status === 'failed' ? 1 : failed > 0 ? Math.min(1, failed / 5) : null;
   return { hp, progress, health };
 }
 
-/** 头顶状态条（sprite 头上 2-3px 细条，叠三格：绿/黄/红；缺格不摆）。 */
+/** 头顶状态条（sprite 头上 2-3px 细条，叠三格：绿/黄/红）。
+ *  常驻语义（G2.6 规格 §4.3）：一格都派生不出 = 一行纯绿「正常」——
+ *  状态条是角色的常驻器官，不是数据富余时的装饰。 */
 export function SpriteHeadBars({ bars }: { bars: HeadBars }) {
   const segs: Array<[string, number]> = [];
   if (bars.hp != null) segs.push(['#3fbf5f', bars.hp]);
   if (bars.progress != null) segs.push(['#d9a441', bars.progress]);
   if (bars.health != null) segs.push(['#c9566e', bars.health]);
-  if (segs.length === 0) return null;
   return (
     <div
       className="pointer-events-none absolute -top-1 left-0 flex w-full gap-px"
@@ -72,6 +75,7 @@ export function SpriteHeadBars({ bars }: { bars: HeadBars }) {
           <div style={{ width: `${Math.round(v * 100)}%`, height: '100%', background: color }} />
         </div>
       ))}
+      {segs.length === 0 && <div className="flex-1" style={{ background: '#3fbf5f', opacity: 0.85 }} />}
     </div>
   );
 }
@@ -82,15 +86,21 @@ export interface RpgAlert {
   key: string;
   severity: 'red' | 'yellow';
   label: string;
+  /** 级2 待批格（G6 决策路由）：渲染方按它接信箱 onOpen）；其余格 label 即终文。 */
+  routing?: boolean;
   /** 点击动作（面板展开/跳转，由调用方接）。 */
   onOpen?: () => void;
 }
 
-/** 警报派生（纯函数）：挂起待答 = 红、失败 run = 红（有 error）/黄；按红先黄后。 */
+/** 警报派生（纯函数）：级2 待批 = 红（label = 待批数，文案由渲染方译）、挂起待答
+ *  = 红、失败 run = 红（有 error）/黄；按红先黄后。 */
 export function alertsOf(
-  data: Pick<RpgData, 'questions' | 'runs' | 'sessionById'>,
+  data: Pick<RpgData, 'questions' | 'runs' | 'sessionById' | 'routingPending'>,
 ): RpgAlert[] {
   const out: RpgAlert[] = [];
+  if (data.routingPending > 0) {
+    out.push({ key: 'routing-pending', severity: 'red', label: String(data.routingPending), routing: true });
+  }
   for (const [sessionId] of data.questions) {
     const title = data.sessionById.get(sessionId)?.title ?? sessionId.slice(0, 8);
     out.push({
@@ -110,8 +120,9 @@ export function alertsOf(
   return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'red' ? -1 : 1));
 }
 
-/** 顶部警报带：有警报才出现（整条横贯顶部，红黄排）；点击跳对应会话/复盘面板。 */
-export function AlertStrip({ data }: { data: RpgData }) {
+/** 顶部警报带：有警报才出现（整条横贯顶部，红黄排）；点击跳对应会话/复盘面板。
+ *  级2 待批格点击开决策信箱（G6）。 */
+export function AlertStrip({ data, onOpenRouting }: { data: RpgData; onOpenRouting?: () => void }) {
   const t = useT();
   const alerts = useMemo(() => alertsOf(data), [data]);
   if (alerts.length === 0) return null;
@@ -125,14 +136,16 @@ export function AlertStrip({ data }: { data: RpgData }) {
           <span
             key={a.key}
             title={a.label}
+            onClick={a.routing && onOpenRouting ? onOpenRouting : undefined}
             className={
-              'max-w-56 cursor-pointer truncate rounded-sm px-1.5 py-0.5 text-[11px] ' +
+              'max-w-56 truncate rounded-sm px-1.5 py-0.5 text-[11px] ' +
+              (a.routing && onOpenRouting ? 'cursor-pointer ' : '') +
               (a.severity === 'red'
                 ? 'bg-[#c9566e]/25 text-[#e58ca0]'
                 : 'bg-[#d9a441]/20 text-[#e0b768]')
             }
           >
-            {a.severity === 'red' ? '●' : '▲'} {a.label}
+            {a.severity === 'red' ? '●' : '▲'} {a.routing ? t('rpg.routingAlert', { n: a.label }) : a.label}
           </span>
         ))}
       </div>
@@ -196,7 +209,13 @@ export function DetailHud({
       {/* ① 像素头像 · 名字 · 状态 · 当前行为 */}
       <div className="flex min-w-32 items-center gap-2">
         <div className="h-8 w-8 shrink-0 overflow-hidden">
-          <CharacterSprite archetype={role.archetype} status="idle" size={0.17} />
+          <CharacterSprite
+            archetype={role.archetype}
+            status="idle"
+            size={0.75}
+            gender={role.gender}
+            appearanceSeed={role.appearanceSeed}
+          />
         </div>
         <div className="min-w-0">
           <div className="truncate text-xs text-[#d7d1c6]">{role.name}</div>

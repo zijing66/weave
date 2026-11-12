@@ -12,12 +12,14 @@ import { Input } from '@/components/ui/input';
 
 const ROLE_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const ARCHETYPES = ['能量', '思考', '创造', '连接', '审核', '执行', '适配'] as const;
+type GenderChoice = 'unspecified' | 'male' | 'female';
 
 export function CreateRoleForm({ onCreated }: { onCreated: (role: RpgRoleView) => void }) {
   const t = useT();
   const [name, setName] = useState('');
   const [archetype, setArchetype] = useState<(typeof ARCHETYPES)[number]>('适配');
   const [persona, setPersona] = useState('');
+  const [gender, setGender] = useState<GenderChoice>('unspecified');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,10 +33,13 @@ export function CreateRoleForm({ onCreated }: { onCreated: (role: RpgRoleView) =
         name: name.trim(),
         archetype,
         ...(persona.trim() ? { persona: persona.trim() } : {}),
+        // 未显式选性别就不带字段——服务端随机定性别与外貌。
+        ...(gender === 'unspecified' ? {} : { gender }),
       });
       onCreated(role);
       setName('');
       setPersona('');
+      setGender('unspecified');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -77,6 +82,33 @@ export function CreateRoleForm({ onCreated }: { onCreated: (role: RpgRoleView) =
         rows={3}
         className="w-full rounded-md border border-edge/[0.08] bg-neutral-900 p-2 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-mac-accent/50 focus:outline-none"
       />
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-[var(--w-text-dim)]">{t('rpg.roleGenderLabel')}</span>
+        <div className="flex gap-1">
+          {(
+            [
+              ['unspecified', 'rpg.roleGenderRandom'],
+              ['male', 'rpg.roleGenderMale'],
+              ['female', 'rpg.roleGenderFemale'],
+            ] as const
+          ).map(([value, key]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setGender(value)}
+              className={
+                'rounded px-2 py-1 text-xs ' +
+                (value === gender
+                  ? 'bg-[var(--w-accent)] text-white'
+                  : 'bg-[var(--w-surface-2)] text-[var(--w-text-dim)] hover:bg-[var(--w-surface-3)]')
+              }
+            >
+              {t(key)}
+            </button>
+          ))}
+        </div>
+        <span className="text-[11px] text-[var(--w-text-dim)]">{t('rpg.roleAppearanceHint')}</span>
+      </div>
       <div className="flex items-center gap-3">
         <button
           type="button"

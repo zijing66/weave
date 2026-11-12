@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n/I18nProvider';
-import { RPG_SCENES, roomSceneKey, sceneOf } from './scenes';
+import { RPG_SCENES, roomSceneKey, sceneOf, worldExitHouseIdOf } from './scenes';
 import { useRpgData } from './use-rpg-data';
-import { CharacterSprite } from './CharacterSprite';
+import { CharacterSprite, GodSprite, spriteSeedOf } from './CharacterSprite';
 import { CollabScene } from './CollabScene';
 import { ClassroomScene } from './ClassroomScene';
 import { MeetingScene } from './MeetingScene';
@@ -22,9 +22,16 @@ import {
   WORLD_GOD_SPOT,
   WORLD_HOTSPOTS,
   WORLD_MAP,
+  peerGodSeatSpot,
   projectHouseHotspots,
+  visitorNpcSpot,
+  worldExitSpawnOf,
   type Hotspot,
 } from './worldmap';
+import { usePeers, usePeerSessionsMulti, livenessOf } from './peer-faces';
+import { PeerSeatBar, peerSeatRowsOf, visitorLabelOf, visitorRowsOf } from './peer-camp';
+import { RoutingInbox } from './inbox';
+import { GoalsPanel } from './goals';
 import { triggerHotspotAt, type Cell } from './walker';
 import { HouseTile } from './tile-decor';
 import { useTileSprites } from './tile-atlas';
@@ -70,11 +77,14 @@ export function RpgView({
   const rpgData = useRpgData();
   const [housePending, setHousePending] = useState<ProjectRow | null>(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  // 决策路由信箱（G6）：全场景顶层 overlay，警报带「级2 待批」点开。
+  const [inboxOpen, setInboxOpen] = useState(false);
+  // 任务沙盘全局面板（G6 批4c）：任意场景可唤起，不锁 Home；入口常驻 HUD。
+  const [goalsOpen, setGoalsOpen] = useState(false);
   useRpgBootProgress();
   const boot = useSyncExternalStore(rpgBoot.subscribe, rpgBoot.snapshot, rpgBoot.snapshot);
-  const [bootDismissed, setBootDismissed] = useState(false);
-  // 全清即淡出退场（复用门切换 transition）；失败项停住等重试，不假满格。
-  const bootVisible = !bootDismissed && (boot.done < boot.total || boot.failed);
+  // 启动浮层满格判据：全清即淡出退场；失败项停住等重试，不假满格。
+  const bootDone = boot.done >= boot.total && !boot.failed;
   const [entered, setEntered] = useState(false);
   // 进场淡入（门切换过渡：场景键变化时重放一次 transition）
   useEffect(() => {
@@ -115,6 +125,8 @@ export function RpgView({
           <HomeIndoorScene projects={projects} consoleOpen={consoleOpen} onConsole={setConsoleOpen} />
         ) : scene.kind === 'world' ? (
           <WorldScene
+            key={sceneKey ?? 'world'}
+            exitHouseId={worldExitHouseIdOf(sceneKey)}
             projects={projects}
             onOpenSession={onOpenSession}
             onNoHouse={setHousePending}
@@ -130,24 +142,10 @@ export function RpgView({
         )}
       </div>
 
-      {/* HUD 层（G2.5 overlay 三排）：启动进度 / 头部徽章（返回项目视图）/
-          场景快捷键提示。浮层弹开时画布仍可见底下（半透明表面）。 */}
-      {bootVisible && (
-        <div className="rpg-hud-anchor pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center">
-          <div className="pointer-events-auto mt-2 rounded border border-[var(--w-border)] bg-[var(--w-surface-1)]/95 p-2 shadow-lg">
-            <RpgBootBar />
-            {!boot.failed && boot.done >= boot.total && (
-              <button
-                type="button"
-                onClick={() => setBootDismissed(true)}
-                className="mt-1 rounded bg-[var(--w-surface-2)] px-2 py-0.5 text-[11px] text-[var(--w-text-dim)] hover:bg-[var(--w-surface-3)]"
-              >
-                {t('rpg.bootDone')}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* 启动装载浮层（G2.6 收尾，对齐首屏 BootSplash 口径）：进入游戏 = 全屏
+          深底 + 六格真实进度满格前盖住世界（此前数据被 dashboard 预热时六格
+          瞬时满格、顶条一闪即逝，用户看不到任何装载过程）；失败停住重试。 */}
+      <RpgBootSplash done={bootDone} />
       <div className="rpg-hud-anchor pointer-events-none absolute left-0 top-0 z-10 flex items-start gap-2 p-2">
         <div className="rpg-hud-face pointer-events-auto flex flex-col gap-0.5 px-2 py-1 text-xs">
           <div className="flex items-center gap-1">
@@ -163,10 +161,28 @@ export function RpgView({
             </button>
           </div>
           <SceneHotkeysHint />
+          <button
+            type="button"
+            onClick={() => setGoalsOpen(true)}
+            className="mt-0.5 w-fit rounded border border-[var(--w-border)] px-1.5 py-0.5 text-[11px] text-[var(--w-text-dim)] hover:bg-[var(--w-surface-2)] hover:text-[#ffd166]"
+          >
+            ⚑ {t('rpg.goalsEntry')}
+            {(rpgData.goals ?? []).some((g) => g.status === 'active') && (
+              <span className="ml-1 rounded bg-sky-900/70 px-1 text-[10px] tabular-nums text-sky-200">
+                {(rpgData.goals ?? []).filter((g) => g.status === 'active').length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
-      <AlertStrip data={rpgData} />
+      <AlertStrip data={rpgData} onOpenRouting={() => setInboxOpen(true)} />
       <ClockRateBadge />
+
+      {/* 决策路由信箱（G6）：顶部警报带「级2 待批」点开；Esc/返回键收起。 */}
+      <RoutingInbox open={inboxOpen} onClose={() => setInboxOpen(false)} data={rpgData} />
+
+      {/* 任务沙盘全局面板（G6 批4c）：goal 列表 + 立项 + 状态动作；Esc/返回键收起。 */}
+      <GoalsPanel open={goalsOpen} onClose={() => setGoalsOpen(false)} data={rpgData} />
 
       {housePending != null && (
         <HouseCreateDialog
@@ -176,6 +192,35 @@ export function RpgView({
           onClose={() => setHousePending(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** 启动装载浮层（对齐首屏 BootSplash 时序）：满格 → 淡出 → 卸载；失败不过
+ *  done、停重在浮层里的重试按钮。chunk 下载期由 App 侧 RpgChunkFallback
+ *  先盖一层，模块挂载后这里无缝接棒。 */
+function RpgBootSplash({ done }: { done: boolean }) {
+  const [phase, setPhase] = useState<'show' | 'exit' | 'gone'>('show');
+  useEffect(() => {
+    if (!done || phase === 'gone') return;
+    if (phase === 'show') {
+      const timer = window.setTimeout(() => setPhase('exit'), 0);
+      return () => window.clearTimeout(timer);
+    }
+    const timer = window.setTimeout(() => setPhase('gone'), 320);
+    return () => window.clearTimeout(timer);
+  }, [done, phase]);
+  if (phase === 'gone') return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={
+        'rpg-boot-overlay fixed inset-0 z-[80] flex flex-col items-center justify-center ' +
+        (phase === 'exit' ? 'rpg-boot-overlay-exit' : 'rpg-boot-overlay-enter')
+      }
+    >
+      <RpgBootBar />
     </div>
   );
 }
@@ -279,7 +324,7 @@ function HomeIndoorScene({
           indoor
           hotspots={HOME_HOTSPOTS}
           onHotspot={onHotspot}
-          god={{ start: GOD_SPOT, node: <CharacterSprite archetype={null} status="idle" size={0.5} /> }}
+          god={{ start: GOD_SPOT, node: (facing) => <GodSprite size={1.25} facing={facing} /> }}
         />
         <div className="p-8 text-sm text-[var(--w-text-dim)]">…</div>
       </div>
@@ -295,9 +340,9 @@ function HomeIndoorScene({
         onHotspot={onHotspot}
         god={{
           start: GOD_SPOT,
-          node: (
+          node: (facing) => (
             <div title={t('rpg.godAvatar')}>
-              <CharacterSprite archetype={null} status="idle" size={0.5} />
+              <GodSprite size={0.75} facing={facing} />
             </div>
           ),
         }}
@@ -374,10 +419,14 @@ function HomeConsoleOverlay({ projects, onClose }: { projects: ProjectRow[]; onC
  *  项目房沿土路一字排开、超出槽位截断展示。 */
 function WorldScene({
   projects,
+  exitHouseId,
   onOpenSession,
   onNoHouse,
 }: {
   projects: ProjectRow[];
+  /** 出房上下文（`world-exit-<houseId>`）：非空 = 落该房门外一格；查房数据
+   *  未到 = 暂不挂化身（挂上再落初始格，不闪错位）。 */
+  exitHouseId: number | null;
   onOpenSession: (projectId: number, sessionId: string) => void;
   onNoHouse: (p: ProjectRow) => void;
 }) {
@@ -387,9 +436,31 @@ function WorldScene({
   const coarse = useMediaQueryCoarse();
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
+  // G5 联机席位：客席区选中（对等上帝席 / 来访 NPC 共用一条只读详情条）。
+  const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
   const houses = useQuery({ queryKey: ['rpg-houses'], queryFn: () => api.listHouses(), staleTime: 15_000 });
-  const activeProjects = useMemo(() => projects.filter((p) => !p.archivedAt), [projects]);
+  // F1 面：peers 注册表判在线（90s 心跳窗）→ 对等上帝席位。
+  const peers = usePeers();
+  // F2 面：在线对端的只读 sessions 代理（来访 NPC + 跨机原语重放的数据源）。
+  const onlinePeerKeys = useMemo(
+    () => peers.filter((p) => p.enabled && livenessOf(p.lastSeenAt)).map((p) => ({ id: p.id, name: p.name })),
+    [peers],
+  );
+  const peerViews = usePeerSessionsMulti(onlinePeerKeys);
+  // 世界项目房不含超级代理项目（2026-11-11 裁决：上帝 = coordinator 本身，
+  // 不是一座房——它自由行走全图，不占项目房槽位，用户项目房序号不变）。
+  const activeProjects = useMemo(
+    () => projects.filter((p) => !p.archivedAt && !p.superagent),
+    [projects],
+  );
   const houseHotspots = useMemo(() => projectHouseHotspots(activeProjects), [activeProjects]);
+  // 出房落点：houses 落地才算得出（房槽位按项目序）；查不到 = 回默认安全格，
+  //  普通世界入口沿 WORLD_GOD_SPOT。落点随场景键重算（key 化身重挂）。
+  const exitSpawn = useMemo(() => {
+    if (exitHouseId == null) return null;
+    if (houses.data == null) return undefined;
+    return worldExitSpawnOf(exitHouseId, houses.data.houses, activeProjects);
+  }, [exitHouseId, houses.data, activeProjects]);
   // G2.6 资产化：房体九宫用单 tile data URL（加载失败退色块）
   const tileSprites = useTileSprites();
   const hotspots = useMemo(() => [...WORLD_HOTSPOTS, ...houseHotspots], [houseHotspots]);
@@ -491,11 +562,18 @@ function WorldScene({
               title={role.name}
               onClick={(e) => {
                 e.stopPropagation();
+                setSelectedPeerId(null);
                 setSelectedRoleId((cur) => (cur === role.id ? null : role.id));
               }}
             >
               <SpriteHeadBars bars={bars} />
-              <CharacterSprite archetype={role.archetype} status="idle" size={0.5} />
+              <CharacterSprite
+                archetype={role.archetype}
+                status="idle"
+                size={0.75}
+                gender={role.gender}
+                appearanceSeed={role.appearanceSeed}
+              />
               <span
                 className={
                   'whitespace-nowrap rounded-sm px-1 text-[9px] ' +
@@ -510,6 +588,89 @@ function WorldScene({
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data.roles, data.sessionById, data.statuses, data.runs, selectedRoleId],
+  );
+
+  // G5 联机席位（只摆有数据：无在线对端 = 客席区整块不出现）：
+  //  席位排 = 对等上帝（机器）；来访 NPC 排 = 对端真在跑的会话（只读），
+  //  NPC 状态徽章重放对端回合忙态（turnOpen → battle 帧）。
+  const peerSeats = useMemo(() => peerSeatRowsOf(peers), [peers]);
+  const visitorRows = useMemo(() => visitorRowsOf(peers, peerViews), [peers, peerViews]);
+  const campSprites = useMemo(() => {
+    if (peerSeats.length === 0 && visitorRows.length === 0) return [];
+    const nodes: Array<{ key: string; x: number; y: number; node: React.ReactNode }> = [];
+    for (const seat of peerSeats) {
+      const spot = peerGodSeatSpot(seat.spotIndex)!;
+      // 对等上帝 = 另一台机的上帝：其外貌种子在本机读不到，按 peer id 派生
+      //  确定性外貌（刷新不变，不蹭本机上帝的脸）。
+      const seed = spriteSeedOf(seat.peer.id);
+      nodes.push({
+        key: `peer-seat-${seat.peer.id}`,
+        x: spot.x,
+        y: spot.y,
+        node: (
+          <div
+            className="flex cursor-pointer flex-col items-center"
+            title={t('rpg.peerGodSeat', { name: seat.peer.name })}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedRoleId(null);
+              setSelectedPeerId(seat.peer.id);
+            }}
+          >
+            <CharacterSprite
+              archetype={null}
+              status="idle"
+              size={0.75}
+              god
+              bar="ok"
+              gender={seed % 2 ? 'female' : 'male'}
+              appearanceSeed={seed}
+            />
+            <span className="flex items-center gap-1 rounded-sm bg-[var(--w-surface-1)]/70 px-1 text-[9px] text-[var(--w-text-dim)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#4ec9b0]" />
+              {seat.peer.name}
+            </span>
+          </div>
+        ),
+      });
+    }
+    for (const v of visitorRows) {
+      const spot = visitorNpcSpot(v.spotIndex)!;
+      nodes.push({
+        key: `visitor-${v.peer.id}-${v.sessionId}`,
+        x: spot.x,
+        y: spot.y,
+        node: (
+          <div
+            className="flex cursor-pointer flex-col items-center opacity-95"
+            title={`${v.peer.name} · ${visitorLabelOf(v)}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedRoleId(null);
+              setSelectedPeerId(v.peer.id);
+            }}
+          >
+            <CharacterSprite
+              archetype="适配"
+              status={v.turnOpen ? 'battle' : 'idle'}
+              size={0.75}
+              bar="ok"
+              gender={spriteSeedOf(v.sessionId) % 2 ? 'female' : 'male'}
+              appearanceSeed={spriteSeedOf(v.sessionId)}
+            />
+            <span className="whitespace-nowrap rounded-sm bg-[var(--w-surface-1)]/70 px-1 text-[9px] text-[var(--w-text-dim)]">
+              {visitorLabelOf(v)}
+            </span>
+          </div>
+        ),
+      });
+    }
+    return nodes;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerSeats, visitorRows]);
+  const selectedPeer = useMemo(
+    () => peers.find((p) => p.id === selectedPeerId) ?? null,
+    [peers, selectedPeerId],
   );
 
   // ④ 最近回合摘要：该角色项目下最近 runs（≤3 行，真实账派生）。
@@ -544,29 +705,33 @@ function WorldScene({
         map={WORLD_MAP}
         hotspots={hotspots}
         onHotspot={onHotspot}
-        onEmptyClick={() => setSelectedRoleId(null)}
-        sprites={roleSprites.filter((s): s is NonNullable<typeof s> => s != null)}
+        onEmptyClick={() => {
+          setSelectedRoleId(null);
+          setSelectedPeerId(null);
+        }}
+        sprites={[...roleSprites.filter((s): s is NonNullable<typeof s> => s != null), ...campSprites]}
         godPosProbe={godPosRef}
         viewportOverlay={
           /* G2.6 底部字幕：贴视口底（不随镜头/控制带平移）；无选中才摆
-              （选中时详情条占位，不叠两行）。 */
+              （选中时详情条占位，不叠两行）；常驻上帝条在场时垫高一档。 */
           selectedRoleId == null ? (
-            <div className="rpg-hud-anchor pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+            <div className="rpg-hud-anchor pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center">
               <span className="rpg-subtitle text-sm">{t('rpg.worldSubtitle')}</span>
             </div>
           ) : null
         }
         god={
-          data.roles?.length
-            ? {
-                start: WORLD_GOD_SPOT,
-                node: (
-                  <div className="relative">
-                    <CharacterSprite archetype={data.roles[0]!.archetype} status="idle" size={0.5} />
+          exitSpawn === undefined
+            ? undefined
+            : {
+                start: exitSpawn?.start ?? WORLD_GOD_SPOT,
+                facing: exitSpawn?.facing,
+                node: (facing: 'up' | 'down' | 'left' | 'right') => (
+                  <div title={t('rpg.godAvatar')}>
+                    <GodSprite size={0.75} facing={facing} />
                   </div>
                 ),
               }
-            : undefined
         }
       >
         {/* G2.6 参考图：项目房 tile 级房体（坡屋顶+窗光+门前小牌+投影），
@@ -575,7 +740,7 @@ function WorldScene({
           <div
             key={`house-body-${h.id}`}
             className="pointer-events-none absolute"
-            style={{ left: h.x * TILE_PX, top: h.y * TILE_PX, width: HOUSE_TILES * TILE_PX, height: HOUSE_TILES * TILE_PX, zIndex: 2 }}
+            style={{ left: h.x * TILE_PX, top: h.y * TILE_PX, width: HOUSE_TILES * TILE_PX, height: HOUSE_TILES * TILE_PX, zIndex: (h.y + HOUSE_TILES - 1) * 2 + 1 }}
             aria-hidden
           >
             <HouseTile seed={i} sprites={tileSprites} />
@@ -600,6 +765,15 @@ function WorldScene({
             height: (TRAINING_HOTSPOT.h + 2) * TILE_PX,
           }}
         />
+        {/* G5 客席区铭牌（只摆有数据：一个席位/来访都没有 = 不渲染） */}
+        {campSprites.length > 0 && (
+          <span
+            className="pointer-events-none absolute whitespace-nowrap text-[11px] text-[var(--w-text-dim)]"
+            style={{ left: 13 * TILE_PX, top: 4 * TILE_PX - 12 }}
+          >
+            {t('rpg.peerGuestZone')}
+          </span>
+        )}
       </PixelScene>
       {activeProjects.length === 0 && (
         <div className="pointer-events-none absolute inset-x-0 bottom-10 flex justify-center">
@@ -625,6 +799,34 @@ function WorldScene({
           onClose={() => setSelectedRoleId(null)}
         />
       )}
+      {/* G5 客席只读详情条（对等上帝席 / 来访 NPC 选中才摆；写操作永远落本机） */}
+      {selectedPeer != null && (
+        <PeerSeatBar
+          peer={selectedPeer}
+          view={selectedPeerId != null ? peerViews.get(selectedPeerId) ?? null : null}
+          onClose={() => setSelectedPeerId(null)}
+        />
+      )}
+      {/* 底部常驻上帝条（G2.6 收尾裁决：详情 HUD 常驻，不点选也有底座）——
+          无选中才摆；角色/客席选中时由对应详情条占位。不造假数据：上帝没有
+          六维/修为账，只摆化身 + 指引。 */}
+      {selectedRole == null && selectedPeer == null && <GodHudStrip />}
+    </div>
+  );
+}
+
+/** 常驻上帝条：横向半透明 HUD（与 DetailHud 同款表面），化身头像 + 名 + 指引。 */
+function GodHudStrip() {
+  const t = useT();
+  return (
+    <div className="rpg-hud-face pointer-events-auto absolute inset-x-2 bottom-2 z-20 flex items-center gap-3 px-3 py-2 shadow-xl">
+      <div className="h-10 w-8 shrink-0">
+        <GodSprite size={0.75} />
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-xs text-[#d7d1c6]">{t('rpg.godAvatar')}</div>
+        <div className="truncate text-[10px] text-[var(--w-text-dim)]">{t('rpg.godHudHint')}</div>
+      </div>
     </div>
   );
 }

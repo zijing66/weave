@@ -115,7 +115,13 @@ export function CollabScene({
                   title={t('rpg.roleProgress')}
                 >
                   <div className={game === 'gone' ? 'opacity-40' : undefined}>
-                    <CharacterSprite archetype={role.archetype} status={game} size={3} />
+                    <CharacterSprite
+                      archetype={role.archetype}
+                      status={game}
+                      size={3}
+                      gender={role.gender}
+                      appearanceSeed={role.appearanceSeed}
+                    />
                   </div>
                   <span className="truncate text-sm font-medium">{role.name}</span>
                   <span className={'rounded px-1.5 py-0.5 text-[11px] ' + STATUS_BADGE[status]}>

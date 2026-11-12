@@ -27,12 +27,14 @@ describe('PixelScene', () => {
           map={WORLD_MAP}
           hotspots={WORLD_HOTSPOTS}
           onHotspot={() => {}}
-          god={{ start: GOD_SPOT, node: <div style={{ width: 24, height: 48 }} /> }}
+          god={{ start: GOD_SPOT, facing: 'down', node: (facing) => <div data-facing={facing} style={{ width: 24, height: 48 }} /> }}
         />
       </I18nProvider>,
     );
     expect(html).toContain('rpg-god-sprite');
     expect(html).toContain(`translate(${GOD_SPOT.x * 24}px, ${GOD_SPOT.y * 24}px)`);
+    // 初始朝向传进渲染函数（出房落点朝外的不变式）
+    expect(html).toContain('data-facing="down"');
   });
 
   it('Room 协同棋盘：上帝化身与静态席位共存渲染不炸', () => {
@@ -44,7 +46,7 @@ describe('PixelScene', () => {
             hotspots={ROOM_HOTSPOTS}
             onHotspot={() => {}}
             sprites={[{ key: 'seat', x: 9, y: 4, node: <div style={{ width: 24, height: 48 }} /> }]}
-            god={{ start: ROOM_GOD_SPOT, node: <div style={{ width: 24, height: 48 }} /> }}
+            god={{ start: ROOM_GOD_SPOT, node: (facing) => <div data-facing={facing} style={{ width: 24, height: 48 }} /> }}
           />
         </I18nProvider>,
       ),
