@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
@@ -69,9 +69,12 @@ function resolveCliBin(): string {
   // 主路径：包解析（伞包安装里 cli 与 server 同级）。monorepo dev 下 workspace
   // 包不在 node_modules——回落到仓布局（packages/weave-cli）。
   try {
-    const resolved = import.meta.resolve('@weavecode/cli/package.json');
-    const pkgUrl = pathToFileURL(resolved.startsWith('file:') ? resolved : `file://${resolved}`);
-    return new URL('./bin/cli.js', pkgUrl).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+    // import.meta.resolve 返回的已是合法 URL 字符串（file:///…），直接 new URL；
+    // 过 pathToFileURL 会把 file:/// 再包一层 → `…/cwd/file:/D:/…` 坏路径。
+    const pkgUrl = new URL(import.meta.resolve('@weavecode/cli/package.json'));
+    const bin = fileURLToPath(new URL('./bin/cli.js', pkgUrl));
+    if (fs.existsSync(bin)) return bin;
+    throw new Error('cli bin missing after resolve');
   } catch {
     // dev：…/packages/weave-server/src|dist/… → 仓根 → packages/weave-cli/bin/cli.js
     const here = fileURLToPath(import.meta.url);
@@ -111,7 +114,7 @@ function spawnInit(projectPath: string, harnesses: readonly string[], presetFlag
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`weave init exited ${code}: ${out.slice(-500)}`));
+      else reject(new Error(`weave init exited ${code}: ${out.slice(0, 200)}…${out.slice(-300)}`));
     });
   });
 }
