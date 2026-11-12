@@ -57,6 +57,7 @@ const SESSION_SAMPLE_ARGS: Record<string, Record<string, unknown>> = {
   list_side_questions: { sessionId: 's1' },
   get_plan: { sessionId: 's1' },
   list_commands: { sessionId: 's1' },
+  open_terminal: { sessionId: 's1' },
 };
 
 describe('MCP 注册表', () => {
@@ -94,6 +95,7 @@ describe('MCP 注册表', () => {
       'list_side_questions',
       'get_plan',
       'list_commands',
+      'open_terminal',
     ]);
     for (const tool of SESSIONS_TOOLS) {
       expect(tool.outputSchema.type, `${tool.name} outputSchema`).toBeTruthy();

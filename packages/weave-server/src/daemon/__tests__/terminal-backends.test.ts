@@ -471,7 +471,19 @@ describe('终端后端 — Windows Terminal 通道（进程表反查 + 命名窗
     const [run] = resolveTerminalLaunch(DIR, settings('wt'), 'win32', RUN);
     expect(run).toEqual({
       command: 'wt.exe',
-      args: ['-M', '-w', wtWindowSlug(DIR), '-d', DIR, 'cmd.exe', '/k', 'claude --resume abc'],
+      args: [
+        '-M',
+        '-w',
+        wtWindowSlug(DIR),
+        'new-tab',
+        '--title',
+        'proj',
+        '-d',
+        DIR,
+        'cmd.exe',
+        '/k',
+        'claude --resume abc',
+      ],
     });
     expect(commands('wt', 'darwin')).toEqual([]);
   });

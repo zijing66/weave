@@ -806,6 +806,7 @@ export async function weztermSpawnAndSend(
   platform: NodeJS.Platform = process.platform,
 ): Promise<LaunchOrigin> {
   const paneId = await weztermSpawnPane(socket, dir, split, workspace);
+  await renameWeztermTab(socket, paneId, dir, !split);
   const sendArgs = [
     'cli',
     'send-text',
@@ -819,6 +820,28 @@ export async function weztermSpawnAndSend(
   if (!split && platform === 'win32') await maximizeWeztermWindow(socket, paneId);
   const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
   return { env: { [paneKey]: paneId, [socketKey]: socket } };
+}
+
+/**
+ * spawn 后给新 pane 所在 tab（新窗时连 window 一起）命名 = 项目目录名。wezterm
+ * pane 标题要等宿主 shell 的 OSC 序列上报，启动后有几秒空窗——期间 OS 窗口标题
+ * 停在「未命名」，多个窗口并排时人眼与抬窗认窗都抓瞎。这里在落子那一刻就用
+ * `cli set-tab-title` 先写上项目名（窗口标题跟随活动 tab），宿主第一帧 OSC 到达
+ * 后自然覆盖，不冲突。失败尽力而为：命名是锦上添花，不影响落子。
+ */
+async function renameWeztermTab(
+  socket: string,
+  paneId: string,
+  dir: string,
+  newWindow: boolean,
+): Promise<void> {
+  const title = basename(dir);
+  try {
+    await weztermCli(['cli', 'set-tab-title', '--pane-id', paneId, title], socket);
+    if (newWindow) await weztermCli(['cli', 'set-window-title', '--pane-id', paneId, title], socket);
+  } catch {
+    /* 尽力而为 */
+  }
 }
 
 /**

@@ -244,7 +244,7 @@ export async function handleProjectRoutes(
       sendJson(res, 404, { error: 'Project not found' });
       return true;
     }
-    let body: { harness?: unknown; worktree?: unknown };
+    let body: { harness?: unknown; worktree?: unknown; target?: unknown };
     try {
       body = JSON.parse((await readBody(req)) || '{}') as { harness?: unknown };
     } catch {
@@ -253,6 +253,10 @@ export async function handleProjectRoutes(
     }
     if (body.worktree !== undefined && typeof body.worktree !== 'boolean') {
       sendJson(res, 400, { error: 'Invalid "worktree" (boolean)' });
+      return true;
+    }
+    if (body.target !== undefined && (typeof body.target !== 'string' || !body.target)) {
+      sendJson(res, 400, { error: 'Invalid "target" (non-empty string)' });
       return true;
     }
     // 起哪个 harness = 项目 init 选择结果里的；请求体指定则用它。未接入的不许起
@@ -317,7 +321,13 @@ export async function handleProjectRoutes(
       }
       const settings = await readDaemonSettings();
       const argv = [spec.bin, ...(spec.launchArgs ?? [])];
-      const origin = await opener.runInTerminal(cwd, argv, settings.terminal);
+      // 定点落子（可选 target = list_terminals 的 targetId）：能力归后端——enumerable
+      // preset 才有定点通道，其余明确报因；目标没了 / 长满了 throw 转前端报因，
+      // 绝不静默换落点（换了就是「点了 A 进了 B」）。
+      const origin =
+        typeof body.target === 'string'
+          ? await opener.runInTerminalAt!(cwd, argv, body.target, settings.terminal)
+          : await opener.runInTerminal(cwd, argv, settings.terminal);
       // 起点候选：sessionId 事后才知道（宿主自己生成）——spawn 回执先按
       // (harness, projectId) 排队，ingest 侧（hook 事件 / rollout session_meta）
       // 认领。只为 paneEnvSource='launch' 的 harness 记（'hook' 的 env 精确，

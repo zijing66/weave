@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { basename } from 'node:path';
 import type { TerminalPreset, TerminalSettings } from '../settings.js';
 import type { AttachTarget, SessionTerminal } from './wezterm-mux.js';
 import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, joinCmd, quotePath, throughCmd } from './shared.js';
@@ -289,6 +290,9 @@ export const PRESET_CANDIDATES: Record<
               '-M',
               '-w',
               wtWindowSlug(dir),
+              // 窗口标题跟随活动 tab（wt 无 set-window-title 通道）：tab 打上
+              // 项目名，OS 窗口标题即刻可认（2026-11-12 实测），多窗不再全叫 powershell。
+              ...(run ? ['new-tab', '--title', basename(dir)] : []),
               '-d',
               dir,
               ...(throughCmd(run, true) ?? []),

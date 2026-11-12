@@ -316,6 +316,20 @@ export const SESSIONS_TOOLS = [
     inputSchema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' } } },
     outputSchema: { type: 'object', additionalProperties: true },
   },
+  {
+    name: 'open_terminal',
+    description:
+      "Open this session in a terminal (interactive resume, e.g. `claude --resume <id>`), spawned detached from the daemon. Optional target = a targetId from the projects service's list_terminals to attach into that exact tab as a split (enumerable presets only — wezterm/wt/Terminal.app); omitted = automatic placement (reuse the project's tab or open a new window). A gone or full target fails with the reason instead of silently moving elsewhere. Returns { ok, sessionId, command, cwd, target? }.",
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId'],
+      properties: {
+        sessionId: { type: 'string' },
+        target: { type: 'string', description: 'targetId from list_terminals — attach into that tab as a split' },
+      },
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+  },
 ] as const satisfies readonly McpToolDef[];
 
 type Args = Record<string, unknown>;
@@ -400,6 +414,12 @@ export function toolRequest(name: string, args: Args): McpToolRequest {
       return {
         method: 'GET',
         path: `/sessions/${idOf(args)}/side-questions${qs({ limit: num(args.limit), beforeId: num(args.beforeId) })}`,
+      };
+    case 'open_terminal':
+      return {
+        method: 'POST',
+        path: `/sessions/${idOf(args)}/open-terminal`,
+        body: { ...(args.target === undefined ? {} : { target: args.target }) },
       };
     case 'get_plan':
       return { method: 'GET', path: `/sessions/${idOf(args)}/plan` };
