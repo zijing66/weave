@@ -21,7 +21,7 @@ import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { Combobox } from '@/components/ui/combobox';
 import { formatTime, sessionLabel } from '@/lib/hook-payload';
-import { SessionList } from './SessionList';
+import { SessionList, byActivity } from './SessionList';
 import { SessionMessages } from './SessionMessages';
 import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
@@ -495,8 +495,14 @@ export function TasksPanel({
   }, [answerFor, questionOf]);
 
   // 会话列表就绪后补默认选中（初始选中会话优先；用户点击后 prev 非空，不再覆盖）。
+  // 「最新」= 活动序第一条（lastSeenAt 倒序），与服务端列表的 created_at 序区分。
   useEffect(() => {
-    setSelectedId((prev) => prev ?? sessions?.[0]?.sessionId ?? null);
+    setSelectedId(
+      (prev) =>
+        prev ??
+        sessions?.slice().sort(byActivity)[0]?.sessionId ??
+        null,
+    );
   }, [sessions]);
 
   // 切会话：清空上一会话的事件与游标，全折叠 + 窗口重置回最新 10 条

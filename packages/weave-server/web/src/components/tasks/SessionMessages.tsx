@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Square, Trash2, Workflow, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, Trash2, Workflow, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -102,11 +102,14 @@ import { convUnits, NarrationStack } from './conv-stack';
  *  刚开的那层菜单也退掉）。冷却只为防连发，与「能不能点」无关。 */
 const ESC_COOLDOWN_S = 3;
 
-/** 输入框高度（行数）：桌面顶边可拖，2~20 行，localStorage 记住。 */
+/** 输入框高度（行数）：分界线可拖（拖动 = 调对话区大小），2~20 行，localStorage 记住；
+ *  拖拽时另按面板实测高度动态封顶——对话区至少留 {@link MIN_CONV_PX}，挤不没。 */
 const INPUT_ROWS_MIN = 2;
 const INPUT_ROWS_MAX = 20;
 /** 一行的高度（px）：拖拽位移换算行数用，与 textarea 的实际行高同量级。 */
 const INPUT_ROW_PX = 16;
+/** 拖拽时对话区的保底高度（px）：输入区再能吃，也不许把对话区挤到看不见。 */
+const MIN_CONV_PX = 120;
 
 /** 发送快捷键：`ctrl-enter` = Ctrl+Enter 发送 / Enter 换行；`enter` = 反过来。
  *  全局偏好，localStorage 记住（与输入框行数同一口径）。 */
@@ -199,7 +202,7 @@ export function SessionMessages({
     error,
     threadRef,
     contentRef,
-    stick, atBottom, lastScroll,
+    stick, atBottom, lastScroll, lastAnchor, anchorAtTop,
     status,
     compacting, interrupted, generating, failed, liveText,
     pull,
@@ -272,7 +275,7 @@ export function SessionMessages({
       : INPUT_ROWS_MIN;
   });
   useEffect(() => localStorage.setItem('weave:conv-input-rows', String(inputRows)), [inputRows]);
-  const rowsGrip = useRef<{ y: number; rows: number } | null>(null);
+  const rowsGrip = useRef<{ y: number; rows: number; chrome: number } | null>(null);
   /** 发送快捷键（全局偏好）：ctrl-enter = Ctrl+Enter 发送 / Enter 换行；enter = 交换。 */
   const [sendKey, setSendKey] = useState<SendKeyMode>(sendKeyOf);
   useEffect(() => localStorage.setItem(SEND_KEY_KEY, sendKey), [sendKey]);
@@ -515,7 +518,7 @@ export function SessionMessages({
   } = useConvSelect({ thread, coarse });
 
   // 分享/导出域：复制 / canvas 图片 / 单页 HTML（反馈键共用 convImg:<id>）
-  const { copyPicked, shareImage, exportHtml, exportMarkdown, openShareMenu } = useConvShare({
+  const { copyPicked, shareImage, shareViaSheet, exportHtml, exportMarkdown, openShareMenu } = useConvShare({
     sessionId,
     label,
     pickedEntries,
@@ -590,6 +593,42 @@ export function SessionMessages({
     return () => window.clearTimeout(id);
   }, [ctrlCCooldown]);
 
+  // B5 并回冲突卡的两枚 AI 通道（2026-11-10 裁决「冲突闭环恒走 AI」，不摆人工
+  // git 操作面）：重试 = 再扫一轮合并梯；修补 = 在 worktree 原地重开会话并投递
+  // 带冲突现场的修补 prompt。
+  const retryWorktreeMerge = useCallback(() => {
+    void fb.run(
+      'wt-retry',
+      async () => {
+        const r = await api.retrySessionWorktreeMerge(sessionId);
+        if (r.merged) {
+          show('success', t('tasks.worktreeRetryDone'));
+        } else {
+          show(
+            'error',
+            t('tasks.worktreeRetryStill', {
+              detail: r.message ?? t(`tasks.worktreeStatus.${r.status ?? 'conflict'}` as Parameters<typeof t>[0]),
+            }),
+          );
+        }
+        await refresh();
+      },
+      { fail: (e) => t('tasks.worktreeRetryFailed', { error: errorText(e) }) },
+    );
+  }, [fb, sessionId, show, t, refresh]);
+
+  const dispatchWorktreeRepair = useCallback(() => {
+    void fb.run(
+      'wt-repair',
+      async () => {
+        await api.repairSessionWorktree(sessionId);
+        show('success', t('tasks.worktreeRepairDone'));
+        await refresh();
+      },
+      { fail: (e) => t('tasks.worktreeRepairFailed', { error: errorText(e) }) },
+    );
+  }, [fb, sessionId, show, t, refresh]);
+
   /** 右键锚定的那条（菜单项按它的角色出）：改动汇总只对宿主回复的气泡有意义
    *  ——我方发送的气泡没有「改动」可言，菜单里不摆这一项。 */
   const menuEntry = menu?.kind === 'bubble' ? thread.find((e) => e.key === menu.key) : undefined;
@@ -617,16 +656,33 @@ export function SessionMessages({
 
 
 
-  /** 顶边拖拽调输入框高度：位移换行数（向上拖变高），期间只改本地态。 */
+  /** 分界线拖拽（调对话区大小，等价于反向调输入框行数）：向上拖 = 输入框变高、
+   *  对话区让位；**上限按拖拽起点实测**——面板高 − 对话保底 − 输入区其余（控制行/
+   *  头部/边距，起点量一次）⇒ 输入框最多能让到几行。死值 20 行在矮面板里会把对话
+   *  挤没；算错则怎么拖都被钳在原地（2026-11-11 用户实测「拖动没效果」两连）。 */
   const onRowsDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    rowsGrip.current = { y: e.clientY, rows: inputRows };
+    let chrome = 0;
+    const panel = panelRef.current;
+    const conv = threadRef.current;
+    if (panel && conv) {
+      chrome = panel.offsetHeight - conv.clientHeight - (inputRows * INPUT_ROW_PX + 12);
+    }
+    rowsGrip.current = { y: e.clientY, rows: inputRows, chrome };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onRowsMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
     const g = rowsGrip.current;
     if (!g) return;
     const rows = g.rows + Math.round((g.y - e.clientY) / INPUT_ROW_PX);
-    setInputRows(Math.min(INPUT_ROWS_MAX, Math.max(INPUT_ROWS_MIN, rows)));
+    let max = INPUT_ROWS_MAX;
+    if (g.chrome > 0 || panelRef.current) {
+      const panelH = panelRef.current?.offsetHeight ?? 0;
+      max = Math.max(
+        INPUT_ROWS_MIN,
+        Math.floor((panelH - MIN_CONV_PX - g.chrome) / INPUT_ROW_PX),
+      );
+    }
+    setInputRows(Math.min(INPUT_ROWS_MAX, max, Math.max(INPUT_ROWS_MIN, rows)));
   };
   const onRowsUp = (e: ReactPointerEvent<HTMLDivElement>): void => {
     rowsGrip.current = null;
@@ -771,6 +827,47 @@ export function SessionMessages({
                 </Tooltip>
               </>
             )}
+            {/* B5 并回冲突/失败卡的两枚 AI 通道（冲突闭环恒走 AI）：重试恒在，
+                修补只在冲突态摆（error 多为环境问题，改派修补不解决问题）。 */}
+            {sessionRow?.worktree &&
+              (sessionRow.worktree.status === 'conflict' || sessionRow.worktree.status === 'error') && (
+                <>
+                  <Tooltip label={t('tasks.worktreeRetryHint')} side="top">
+                    <button
+                      type="button"
+                      aria-label={t('tasks.worktreeRetry')}
+                      disabled={fb.stateOf('wt-retry') === 'loading'}
+                      onClick={retryWorktreeMerge}
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/30 px-1.5 py-0.5 text-10 text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                    >
+                      <FeedbackIcon
+                        state={fb.stateOf('wt-retry')}
+                        className="h-3 w-3"
+                        icon={<RotateCcw className="h-3 w-3" />}
+                      />
+                      <span className="max-lg:hidden">{t('tasks.worktreeRetry')}</span>
+                    </button>
+                  </Tooltip>
+                  {sessionRow.worktree.status === 'conflict' && (
+                    <Tooltip label={t('tasks.worktreeRepairHint')} side="top">
+                      <button
+                        type="button"
+                        aria-label={t('tasks.worktreeRepair')}
+                        disabled={fb.stateOf('wt-repair') === 'loading'}
+                        onClick={dispatchWorktreeRepair}
+                        className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/30 px-1.5 py-0.5 text-10 text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                      >
+                        <FeedbackIcon
+                          state={fb.stateOf('wt-repair')}
+                          className="h-3 w-3"
+                          icon={<GitMerge className="h-3 w-3" />}
+                        />
+                        <span className="max-lg:hidden">{t('tasks.worktreeRepair')}</span>
+                      </button>
+                    </Tooltip>
+                  )}
+                </>
+              )}
             {/* 全屏：两种形态都能用（嵌入右栏被挤窄时尤其有用）；ESC 也能退。
                 样式与「事件链」同款按钮，图标用四角括线（放大 = 往外、缩小 = 往里）。 */}
             <Tooltip label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')} side="top">
@@ -854,6 +951,8 @@ export function SessionMessages({
               const bottom = atBottom();
               lastScroll.current = { top: el.scrollTop, atBottom: bottom };
               stick.current = bottom;
+              // 锚抓拍与 lastScroll 同拍：切走那刻布局盒已拆、事后抓不到，只能滚动时记
+              lastAnchor.current = anchorAtTop();
             }
             cancelTap(); // 手指在滑 = 这一击不算轻点
             pull.syncEdge();
@@ -932,7 +1031,7 @@ export function SessionMessages({
                 if (unit.kind === 'group') {
                   const g = unit.group;
                   return (
-                    <div key={g.key} className="group/stack">
+                    <div key={g.key} data-conv-anchor={g.key} className="group/stack">
                       <NarrationStack
                         group={g}
                         selecting={selecting}
@@ -963,6 +1062,7 @@ export function SessionMessages({
                   return (
                     <div
                       key={m.key}
+                      data-conv-anchor={m.key}
                       {...rowProps(m.key)}
                       className={cn(
                         // touch-manipulation：双击是我们开菜单的手势，压掉移动浏览器的双击缩放
@@ -1076,6 +1176,7 @@ export function SessionMessages({
                 return (
                   <div
                     key={m.key}
+                    data-conv-anchor={m.key}
                     {...rowProps(m.key)}
                     className={cn(
                       // touch-manipulation：同助手气泡，双击开菜单不触发双击缩放
@@ -1107,6 +1208,11 @@ export function SessionMessages({
                         {m.rewound === true && (
                           <span className="shrink-0 rounded bg-red-500/15 px-1 py-px text-10 font-medium text-red-300">
                             {t('tasks.convRewound')}
+                          </span>
+                        )}
+                        {m.answer === true && (
+                          <span className="shrink-0 rounded bg-sky-500/15 px-1 py-px text-10 font-medium text-sky-300">
+                            {t('tasks.convUserAnswer')}
                           </span>
                         )}
                         {m.fromWeave && (
@@ -1520,6 +1626,26 @@ export function SessionMessages({
           </div>
         </div>
 
+        {/* 分界拖拽手柄：贴在**对话区的下边线**上（拖动 = 调对话区大小，输入区
+            让位/收回），不再挂在输入编辑器顶边——两件事的语义在一条线上才对
+            （2026-11-11 用户实测：拖动条应在上方气泡框的边线上）。负边距吃掉
+            flex gap，常显不添空隙；触屏同样可用（pointer capture + touch-none）。 */}
+        {isDesktop && (
+          <div
+            role="separator"
+            aria-label={t('tasks.msgResizeInput')}
+            onPointerDown={onRowsDown}
+            onPointerMove={onRowsMove}
+            onPointerUp={onRowsUp}
+            onPointerCancel={onRowsUp}
+            className="group -my-1 flex h-3 shrink-0 cursor-ns-resize touch-none items-center justify-center"
+          >
+            <Tooltip label={t('tasks.msgResizeInput')} side="top">
+              <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
+            </Tooltip>
+          </div>
+        )}
+
         {error && (
           <p className="mt-1 shrink-0 rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-11 text-red-300">
             {error}
@@ -1846,34 +1972,12 @@ export function SessionMessages({
                   textarea 里塞不了元素。高度仍按行数算（顶边可拖），换行靠自己
                   插——浏览器 Enter 那套会给出 `<div>`，序列化就不干净了。 */}
               <div className="relative min-w-0 flex-1 max-lg:basis-full">
-                {/* 顶边拖拽手柄贴在**编辑器自己**的顶边：此前挂在输入行顶上，桌面
-                    纵向按钮组（ESC/Ctrl+C/Enter/发送竖排 108px）把整行撑高、编辑器
-                    `items-end` 贴底，手柄与输入框之间隔着 60+px 空白，看着像悬空
-                    的孤立横线（2026-11-07 用户截图实测）。居中指示条只占编辑器
-                    宽度一小段；窄屏加高触控区（负边距吃 gap 不多占行高）。 */}
-                <div
-                  role="separator"
-                  aria-label={t('tasks.msgResizeInput')}
-                  onPointerDown={onRowsDown}
-                  onPointerMove={onRowsMove}
-                  onPointerUp={onRowsUp}
-                  onPointerCancel={onRowsUp}
-                  className="group -mb-1 flex h-2 w-full cursor-ns-resize touch-none items-center justify-center max-lg:h-4"
-                >
-                  {/* Tooltip 只包住可见指示条（整宽手柄当锚点会让 tooltip 飞到编辑器
-                      中央之外的位置，锚在指示条上才贴着那根线）；side=top 不遮输入框 */}
-                  <Tooltip label={t('tasks.msgResizeInput')} side="top">
-                    <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50 max-lg:w-12" />
-                  </Tooltip>
-                </div>
                 {draft === '' && (
                   /* 触发符提示拼在文案尾部，窄屏一行摆不下 ⇒ 移动端两行封顶换行
                      （line-clamp 自带省略号，真机字号/缩放偏大需要第三行时不会
                      被半行裁掉——truncate 的 overflow:hidden 是整行隐藏无示警），
-                     桌面维持单行截断。top 要跨过上面的拖拽手柄（h-2/h-4 减 -mb-1
-                     净占 4px/12px）再落到编辑器内边距位（py-1.5=6px）：
-                     桌面 10px、窄屏 18px。 */
-                  <span className="pointer-events-none absolute left-2 right-2 top-2.5 truncate text-xs text-neutral-600 max-lg:top-[18px] max-lg:line-clamp-2 max-lg:whitespace-normal max-lg:break-words">
+                     桌面维持单行截断。top = 编辑器内边距位（py-1.5=6px）抬半档。 */
+                  <span className="pointer-events-none absolute left-2 right-2 top-2.5 truncate text-xs text-neutral-600 max-lg:line-clamp-2 max-lg:whitespace-normal max-lg:break-words">
                     {asking
                       ? t('tasks.msgBlockedByQuestion')
                       : t('tasks.messagesPlaceholder', { send: sendCombo, newline: newlineCombo })}
@@ -2032,14 +2136,13 @@ export function SessionMessages({
                   {t('tasks.msgNewline')}
                 </button>
               </Tooltip>
-              {/* 停止 / 发送（+ 通道下拉）：靠右；桌面纵向一列（输入框多吃宽度），
-                  移动端横排一行（纵排在触屏上占高、拇指行程长）。窄屏输入框独占
-                  一行、这组折到下一行靠右（`ml-auto`，与左边那枚换行分开拇指够
-                  得到的两头）。停止与事件链组头同一判据与 fb 键。通道下拉贴着
-                  发送键——它改的是「这条从哪出去」，与停止是两回事，故只管自己那一格。 */}
+              {/* 停止 / 发送（+ 通道下拉）：靠右；桌面 2 行网格、列自动增长
+                  （4 枚钮 = 2×2，纵排太高——2026-11-11 用户圈注「适当换行，可以
+                  2列」）；移动端横排一行不动（max-lg:flex 还原）。停止与事件链
+                  组头同一判据与 fb 键。通道下拉贴着发送键。 */}
               <div
                 ref={sendGroupRef}
-                className="flex shrink-0 flex-col items-center gap-1 max-lg:flex-row max-lg:items-center max-lg:ml-auto"
+                className="grid shrink-0 grid-flow-col grid-rows-2 items-center justify-items-center gap-1 max-lg:flex max-lg:flex-row max-lg:items-center max-lg:ml-auto"
               >
                 {/* 停止 = 一枚 ESC 键帽：位置恒在（进出会拉动旁边的发送键），尺寸恒方
                     （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；**恒可点**
@@ -2302,6 +2405,17 @@ export function SessionMessages({
                 </>
               ) : (
                 <>
+                  {/* 系统分享面板（移动端把图发出去的正路）：有 Web Share 才出这项 */}
+                  {shareViaSheet() && (
+                    <button
+                      type="button"
+                      onClick={() => shareImage('share')}
+                      className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                    >
+                      <Share2 className="h-3 w-3 text-neutral-500" />
+                      {t('tasks.convShareSheet')}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => shareImage('clipboard')}

@@ -141,6 +141,8 @@ export interface ConvEntry {
   /** 命令回显的触发符（缺省 `/`）：bash 模式（`!`）的气泡染品红——与输入框的
    *  bash 形态同色，一眼看出这条是宿主本地执行的命令、不是发给模型的 prompt。 */
   commandSigil?: '/' | '!';
+  /** 用户的作答回显（阻塞问答落定笔里解析的；hook 域没有 UPS，这段没有事件）。 */
+  answer?: boolean;
 }
 
 /**
@@ -723,6 +725,32 @@ export function withPreQuestion(
   };
   const at = entries.findIndex((e) => e.at > pre.at);
   return at < 0 ? [...entries, entry] : [...entries.slice(0, at), entry, ...entries.slice(at)];
+}
+
+/** 作答回显插进对话流（位置 = 按时刻，与提问前说明同一条时间线）：作答不发 UPS、
+ *  也没有 Stop 前自己的事件——不补这块，用户在面板里看不到自己答了什么（TUI 有
+ *  「User answered …」回显）。正文 = 「问句 → 作答」，摆用户侧。 */
+export function withAnswers(
+  entries: readonly ConvEntry[],
+  answers: ReadonlyArray<{ at: string; question: string; answer: string }> | null,
+): ConvEntry[] {
+  if (!answers?.length) return [...entries];
+  const out = [...entries];
+  let n = 0;
+  for (const a of answers) {
+    if (!a.answer.trim()) continue;
+    const entry: ConvEntry = {
+      key: `a${a.at}:${n++}`,
+      role: 'user',
+      at: a.at,
+      text: `${a.question}\n→ ${a.answer}`,
+      answer: true,
+    };
+    const idx = out.findIndex((e) => e.at > a.at);
+    if (idx < 0) out.push(entry);
+    else out.splice(idx, 0, entry);
+  }
+  return out;
 }
 
 /** 旁白文本与既有气泡同文案的归一比对（空白折叠后相等 = 同一句话）。 */

@@ -255,6 +255,22 @@ export const sessionApi = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'DELETE' },
     ),
+  /** B5 并回冲突卡 · AI 通道①重试：放回 active 再扫一轮合并梯（rerere / AI 修补
+   *  接着消化）。`merged:false` = 跑完仍冲突/失败，`status`/`message` 如实带因。 */
+  retrySessionWorktreeMerge: (
+    sessionId: string,
+  ): Promise<{ ok: boolean; merged: boolean; status?: string; message?: string | null }> =>
+    apiFetch<{ ok: boolean; merged: boolean; status?: string; message?: string | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/worktree/merge-retry`,
+      { method: 'POST' },
+    ),
+  /** B5 并回冲突卡 · AI 通道②改派修补：在 worktree 原地 resume 该会话，投递带
+   *  冲突现场的修补 prompt（它对自己改过什么最清楚，解完提交 sweeper 自动接续）。 */
+  repairSessionWorktree: (sessionId: string): Promise<{ ok: boolean; repaired: boolean }> =>
+    apiFetch<{ ok: boolean; repaired: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}/worktree/repair`,
+      { method: 'POST' },
+    ),
   /** 聊天窗口 `/` 的命令候选（发现规则归 harness；supported=false = 没有命令面）。 */
   listSessionCommands: (
     sessionId: string,

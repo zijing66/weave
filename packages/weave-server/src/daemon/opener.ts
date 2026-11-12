@@ -1,5 +1,5 @@
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
-import { readDaemonSettings, type TerminalPreset, type TerminalSettings } from './settings.js';
+import { type TerminalPreset, type TerminalSettings } from './settings.js';
 import { normalizeDirKey } from './opener/wezterm-mux.js';
 import { KonsoleBackend } from './opener/backend-konsole.js';
 import { ItermBackend } from './opener/backend-iterm.js';
@@ -224,6 +224,39 @@ export function terminalBackendFor(
 }
 
 /**
+ * 本平台有反查能力的全部后端（win32 = wt + wezterm，其余平台照各自实现）。
+ * 角标/显隐的探测面按它合并——已开窗口活在哪个终端里只由它自己在的事实决定，
+ * 换 settings preset 不改写历史窗口的归属（用户从 wt 换 wezterm，wt 里开着的
+ * 会话照常计数/显隐/唤出，不会「切换后全部丢失」）。
+ */
+function enumerableBackends(platform: NodeJS.Platform = process.platform): TerminalBackend[] {
+  const presets: TerminalPreset[] =
+    platform === 'win32'
+      ? ['wt', 'wezterm']
+      : platform === 'darwin'
+        ? ['terminal', 'iterm', 'wezterm']
+        : ['wezterm', 'gnome', 'konsole', 'ghostty'];
+  return presets
+    .map((p) => BACKEND_FACTORIES[p]?.(  { preset: p, customCommand: '' }, platform))
+    .filter((b): b is TerminalBackend => Boolean(b) && b!.enumerable);
+}
+
+/**
+ * targetId → 后端认领（id 表示法归各后端：`wt:weave-…` / wezterm 三段 attach 形）。
+ * 没人认领按 settings 指的后端处理（开窗偏好兜底，旧行为）。
+ */
+function backendForTargetId(
+  targetId: string,
+  terminal: TerminalSettings,
+  platform: NodeJS.Platform = process.platform,
+): TerminalBackend {
+  const claimed = enumerableBackends(platform).find(
+    (b) => b.ownsTargetId(targetId) || b.ownsPaneId(targetId),
+  );
+  return claimed ?? terminalBackendFor(terminal, platform);
+}
+
+/**
  * 上报的 pane env 属于哪个终端 preset——**每组键齐了才算认得**（缺键 = 不是那个
  * 终端的会话）。表来自 core 的定位键表（preset 名不散写），故「会话活在哪个终端」
  * 只有一个事实源。
@@ -419,19 +452,60 @@ export async function closeTerminalsIn(
 
 /**
  * 每项目窗口数（projectId → 窗口数）：/terminals/counts 路由与隐藏刷新器共用
- * 同一口径，免得两处各自拼 settings/opener 后漂移。
+ * 同一口径，免得两处各自拼 settings/opener 后漂移。探测面 = 全部可枚举后端
+ * 求和（wezterm tab 与 wt pane 反查键天然不重叠）——已开窗口不因换 preset 丢失。
  */
 export async function readTerminalCounts(
   projects: readonly { id: number; path: string }[],
   opener: ProjectOpener | undefined = undefined,
 ): Promise<Record<number, number>> {
-  const settings = await readDaemonSettings();
-  const count = opener?.countTerminals ?? countOpenTerminals;
-  const byPath = await count(
-    projects.map((p) => p.path),
-    settings.terminal,
-  );
+  void opener;
+  const paths = projects.map((p) => p.path);
+  const maps = await Promise.all(enumerableBackends().map((b) => b.countWindows(paths)));
+  const byPath = new Map<string, number>();
+  for (const m of maps) for (const [dir, n] of m) byPath.set(dir, (byPath.get(dir) ?? 0) + n);
   return Object.fromEntries(projects.map((p) => [p.id, byPath.get(p.path) ?? 0]));
+}
+
+/**
+ * 每项目「全部已开窗都隐藏」半边（项目卡角标的隐藏小标）：逐项目枚举目标后查
+ * 窗口可见性——count>0 且**每一窗都 hidden** 才记 true（部分隐藏不算；count=0
+ * 或探不到的目标不进表 = 前端不摆态）。逐目标一枪 visibility 查询有 powershell
+ * 开销，只配 30s 一拍的对账循环、不进请求关键路径；单项目失败隔离跳过。
+ */
+export async function readTerminalHidden(
+  projects: readonly { id: number; path: string }[],
+  opener: ProjectOpener | undefined = undefined,
+): Promise<Record<number, boolean>> {
+  const backends = enumerableBackends().filter(
+    (b) => b.targetVisibility !== TerminalBackend.prototype.targetVisibility,
+  );
+  if (backends.length === 0) return {};
+  void opener;
+  const out: Record<number, boolean> = {};
+  await Promise.all(
+    projects.map(async (project) => {
+      try {
+        // 合并面：每个有显隐通道的后端各枚举各的目标（id 前缀天然区分归属）。
+        const perBackend = await Promise.all(
+          backends.map(async (backend) => {
+            const targets = await backend.listTargets(project.path);
+            if (targets.length === 0) return null;
+            const vis = await Promise.all(
+              targets.map((t) => backend.targetVisibility(project.path, t.id)),
+            );
+            return vis.length > 0 && vis.every((v) => v === 'hidden');
+          }),
+        );
+        const checks = perBackend.filter((v): v is boolean => v !== null);
+        if (checks.length === 0) return;
+        if (checks.every((v) => v)) out[project.id] = true;
+      } catch {
+        // 枚举/查询失败 = 不摆态（与 count 探测失败的口径一致）
+      }
+    }),
+  );
+  return out;
 }
 
 /**
@@ -489,8 +563,9 @@ export interface ProjectOpener {
   ): Promise<number>;
   /** 本目录名下可关的 pane（可选）：关终端多选弹窗的数据面。 */
   listPanes?(dir: string, terminal: TerminalSettings): Promise<PromptPaneTarget[]>;
-  /** 可附加终端目标列表（可选）：多终端选择弹窗的数据面。 */
-  listTerminals?(dir: string, terminal: TerminalSettings): Promise<AttachTarget[]>;
+  /** 可附加终端目标列表（可选）：多终端选择弹窗的数据面。includeForeign（opt-in）=
+   *  跨项目的 tab 也进候选（默认关，现状不变）。 */
+  listTerminals?(dir: string, terminal: TerminalSettings, includeForeign?: boolean): Promise<AttachTarget[]>;
   /** 定点附加到指定目标 tab（可选）：会话终端选择后的落点。 */
   runInTerminalAt?(
     dir: string,
@@ -499,6 +574,19 @@ export interface ProjectOpener {
     terminal: TerminalSettings,
   ): Promise<LaunchOrigin | null>;
   focusTerminal?(dir: string, targetId: string, terminal: TerminalSettings): Promise<void>;
+  /** 系统级隐藏/恢复该目标所在 OS 窗口（可选：能力归后端，win32 才有实现）。 */
+  setTerminalVisibility?(
+    dir: string,
+    targetId: string,
+    visibility: 'hide' | 'show',
+    terminal: TerminalSettings,
+  ): Promise<{ visibility: 'visible' | 'hidden' }>;
+  /** 目标所在 OS 窗口此刻的可见性（可选；拿不到 null，前端不摆态）。 */
+  terminalVisibility?(
+    dir: string,
+    targetId: string,
+    terminal: TerminalSettings,
+  ): Promise<'visible' | 'hidden' | null>;
 }
 
 export const defaultProjectOpener: ProjectOpener = {
@@ -509,10 +597,22 @@ export const defaultProjectOpener: ProjectOpener = {
   closeTerminals: (dir, terminal, paneIds) => closeTerminalsIn(dir, terminal, paneIds),
   listPanes: (dir, terminal) => listProjectPanes(dir, terminal),
   // 目标列表/定点附加经 settings → 后端分发（wezterm mux / Terminal.app osascript），
-  // 不再硬连 wezterm——调用方只传语义参数。
-  listTerminals: (dir, terminal) => terminalBackendFor(terminal).listTargets(dir),
+  // 不再硬连 wezterm——调用方只传语义参数。目标列表走合并面：每个可枚举后端
+  // 各列各的（id 前缀区分归属），已开窗口不因换 preset 从弹窗里消失。
+  listTerminals: async (dir, _terminal, includeForeign = false) =>
+    (
+      await Promise.all(
+        enumerableBackends().map((b) =>
+          b.listTargets(dir, includeForeign).catch(() => [] as AttachTarget[]),
+        ),
+      )
+    ).flat(),
   runInTerminalAt: (dir, argv, targetId, terminal) =>
     terminalBackendFor(terminal).runAt(dir, argv, targetId),
   focusTerminal: (dir, targetId, terminal) =>
     terminalBackendFor(terminal).focusTarget(dir, targetId),
+  setTerminalVisibility: (dir, targetId, visibility, terminal) =>
+    backendForTargetId(targetId, terminal).setTargetVisibility(dir, targetId, visibility),
+  terminalVisibility: (dir, targetId, terminal) =>
+    backendForTargetId(targetId, terminal).targetVisibility(dir, targetId),
 };

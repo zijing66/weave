@@ -385,6 +385,19 @@ export const CLAUDE_BLOCKING_PROMPT: BlockingPromptSpec = {
     if (eventType === 'PreModelSwitch') return switchQuestion(payload.raw);
     return null;
   },
+  parseAnswers(toolName, toolResponse) {
+    if (toolName !== 'AskUserQuestion') return null;
+    const answers =
+      toolResponse && typeof toolResponse === 'object'
+        ? (toolResponse as { answers?: unknown }).answers
+        : undefined;
+    if (answers == null || typeof answers !== 'object' || Array.isArray(answers)) return null;
+    const out: Array<{ question: string; answer: string }> = [];
+    for (const [question, answer] of Object.entries(answers)) {
+      if (typeof answer === 'string' && answer) out.push({ question, answer });
+    }
+    return out.length > 0 ? out : null;
+  },
   async preQuestion(transcriptPath) {
     if (!transcriptPath) return null;
     // 只读尾部：提问前那段话与阻塞工具调用是相邻行（同一 message 被拆成几行），

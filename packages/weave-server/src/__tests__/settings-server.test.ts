@@ -113,6 +113,8 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       extensions: { staleMs: 600000 }, // 会话扩展点陈旧窗（归一化补默认 10min）
       pet: { enabled: false, petId: 'weave-spider', notifications: true, size: 'small' }, // 桌面宠物（归一化补默认，默认关+小号）
       federation: { discovery: false, enabled: false, autoAccept: false }, // 联邦与发现（归一化补默认，双关——安全红线；autoAccept 邀请自动接受默认关）
+      backup: { enabled: true, hour: 1, includeHistory: false }, // 每日备份（归一化补默认：开、凌晨 1 点、不含历史）
+      terminalFocus: { focusOnOpen: true }, // 终端开窗行为（归一化补默认：调起拉回可见）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）
     expect(autoStartCalls).toEqual([false]);

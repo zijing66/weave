@@ -48,6 +48,12 @@ export function stepRewind(state: RewindState, line: string): void {
   const p = tp?.promptIndex;
   const ts = entry.timestamp;
   if (typeof p !== 'number' || !Number.isInteger(p) || p < 1 || typeof ts !== 'string') return;
+  // 系统注入（task_notification / scheduled 等）复用当前轮次计数且不重置它，
+  // 但宿主在上一轮收尾后注入时 p 与 prevP 相等 + turnEnded 已置位——恰好凑齐
+  // 「相等且上一轮已收尾」的回退判据，把后台任务通知误判成回退重发
+  // （2026-11-12 实测：p=69 三连 system 注入被标回退）。真回退重发的消息
+  // 是用户亲手发的：turnOrigin 恒 human。系统行既不算回退也不推 prevP。
+  if (entry.turnOrigin !== undefined && entry.turnOrigin !== 'human') return;
   // 严格下降 = 退回到更早的轮；相等且上一轮已收尾 = 退回最后一轮重发（计数不变，
   // 故靠「上一轮已结束」把同轮排队连发排除掉）。
   const rewound = state.prevP !== null && (p < state.prevP || (p === state.prevP && state.turnEnded));

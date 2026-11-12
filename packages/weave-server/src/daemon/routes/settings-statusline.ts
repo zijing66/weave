@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
 import type { WeaveServerDeps } from '../server.js';
 import { readBody, sendJson } from '../http.js';
 import {
@@ -298,7 +299,8 @@ export async function handleSettingsRoutes(
       const namespace = namespaces.get(a.relPath);
       return namespace ? { ...a, namespace } : a;
     });
-    sendJson(res, 200, { projectPath, assets });
+    // home 随行：web 把 absPath 显示成 `~/…` 形（家目录相对、不露机器绝对路径）。
+    sendJson(res, 200, { projectPath, assets, home: homedir() });
     return true;
   }
 
@@ -306,7 +308,7 @@ export async function handleSettingsRoutes(
   // ~/.codex) for the global 文件资产 tree. A bounded whitelist walk, never a
   // home-directory scan.
   if (pathname === '/global-file-assets' && req.method === 'GET') {
-    sendJson(res, 200, { assets: await listGlobalFileAssets() });
+    sendJson(res, 200, { assets: await listGlobalFileAssets(), home: homedir() });
     return true;
   }
 

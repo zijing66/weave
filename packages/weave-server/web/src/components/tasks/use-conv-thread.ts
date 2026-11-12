@@ -24,6 +24,7 @@ import {
   withNarration,
   withPlan,
   withPreQuestion,
+  withAnswers,
   withRewinds,
   readConvCache,
   writeConvCache,
@@ -84,6 +85,8 @@ export function useConvThread(deps: {
   const [plan, setPlan] = useState<SessionPlan | null>(null);
   /** 阻塞提问前模型写下的说明（转录里认的；没在提问 / 没写字 = null）。 */
   const [preQuestion, setPreQuestion] = useState<{ at: string; text: string } | null>(null);
+  /** 作答回显（落定笔里解析的；没答过 / 无该面 = null，不摆）。 */
+  const [answers, setAnswers] = useState<ReadonlyArray<{ at: string; question: string; answer: string }> | null>(null);
   /** 旁白：转录补采的中间 assistant 输出（无该面 / 读不到 = null，不摆）。 */
   const [narration, setNarration] = useState<ReadonlyArray<{ at: string | null; text: string }> | null>(null);
   /** 回退锚点（宿主 rewind 在转录里留的；无该面 / 读不到 = null，不标）。 */
@@ -202,6 +205,16 @@ export function useConvThread(deps: {
     }
   }, [sessionId]);
 
+  /** 作答回显（落定笔里解析的）：取不到就当没有——没答过 / 无该面是常态。 */
+  const loadAnswers = useCallback(async (): Promise<void> => {
+    try {
+      setAnswers(await api.sessionAnswers(sessionId));
+    } catch {
+      setAnswers(null);
+    }
+  }, [sessionId]);
+
+
   /** 旁白（转录里认的）：取不到就当没有——没有该面的 harness / 读不到转录是常态。
    *  失败保留旧值：高频补采下偶发读崩不该把已摆出的卡片闪收走。 */
   const loadNarration = useCallback(async (): Promise<void> => {
@@ -226,10 +239,26 @@ export function useConvThread(deps: {
     void refreshMessages();
     void loadPlan();
     void loadPreQuestion();
+    void loadAnswers();
     void loadNarration();
     void loadRewinds();
     void loadExecutions();
-  }, [loadExecutions, loadNewest, loadNarration, loadPlan, loadPreQuestion, loadRewinds, refreshMessages]);
+  }, [loadAnswers, loadExecutions, loadNewest, loadNarration, loadPlan, loadPreQuestion, loadRewinds, refreshMessages]);
+
+  // 作答落定即回显：作答不发 UPS、PostToolUse 也没有自己的对话帧（Stop 要等
+  // 整轮跑完）——待答面从有到无（作答送达或被摘）就补一拍，用户答完立刻能看到
+  // 自己答了什么（对齐 TUI 的「User answered …」回显）。
+  const wasAnswerPending = useRef(false);
+  useEffect(() => {
+    if (answerPending) {
+      wasAnswerPending.current = true;
+      return;
+    }
+    if (wasAnswerPending.current) {
+      wasAnswerPending.current = false;
+      void loadAnswers();
+    }
+  }, [answerPending, loadAnswers]);
 
   // 缓存写盘节流：entries 随 SSE 500ms 一拍刷新，逐拍 JSON.stringify 上百条长
   // 正文再同步写 sessionStorage 会卡主线程（会话越长越明显）。攒到 2s 写一次，
@@ -399,6 +428,84 @@ export function useConvThread(deps: {
     scrollFix.current = null;
   }, [entries]);
 
+  /**
+   * 会话滚动位置记忆（用户裁决 2026-11-11）：关窗时记下**视口顶那条气泡**的键
+   * 与它到容器顶的偏移（按锚恢复，迟渲染/异步内容撑高不破）；下次开窗先滚到
+   * 记忆锚（锚在 = 原位，锚被翻页游标裁掉 = 回到贴底——历史还在，只是那一页
+   * 没进首屏窗口）。过程输出迟加载把内容插到锚之上/之下都会把视口顶走，锚恢复
+   * 在其渲染后重放一拍（见下）。会话级 sessionStorage，与对话缓存同寿。
+   */
+  const anchorRef = useRef<{ key: string; offset: number } | null>(null);
+  /** 滚动时持续记账的锚（SessionMessages onScroll 同拍写）：关窗落盘的数据源。 */
+  const lastAnchor = useRef<{ key: string; offset: number } | null>(null);
+  const scrollOf = (key: string): HTMLElement | null =>
+    threadRef.current?.querySelector(`[data-conv-anchor="${CSS.escape(key)}"]`) ?? null;
+  /** 视口顶当前压着哪条气泡（first = 压线者；略过折叠分隔等无锚单元）。 */
+  const anchorAtTop = (): { key: string; offset: number } | null => {
+    const el = threadRef.current;
+    if (!el || el.clientHeight === 0) return null;
+    const nodes = el.querySelectorAll<HTMLElement>('[data-conv-anchor]');
+    for (const n of nodes) {
+      const d = n.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      if (d >= -4) return { key: n.getAttribute('data-conv-anchor') ?? '', offset: Math.max(0, d) };
+    }
+    return null;
+  };
+  /** 把锚滚回原位；成功 = true（锚不存在/没有容器 = false）。 */
+  const restoreAnchor = (): boolean => {
+    const el = threadRef.current;
+    const a = anchorRef.current;
+    if (!el || !a || el.clientHeight === 0) return false;
+    const node = scrollOf(a.key);
+    if (!node) return false;
+    el.scrollTop =
+      node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - a.offset;
+    return true;
+  };
+  // 关窗（卸载 / minimized 翻真）落盘：锚在滚动时持续记账（切走那刻布局盒已拆、
+  // 事后 anchorAtTop 读不到），这里只把最后一份写 sessionStorage。
+  useEffect(() => {
+    if (minimized && lastAnchor.current)
+      try {
+        sessionStorage.setItem(
+          `weave:conv-anchor:${sessionId}`,
+          JSON.stringify(lastAnchor.current),
+        );
+      } catch {
+        /* 配额满/隐私模式：内存里还有一份 */
+      }
+  }, [minimized, sessionId]);
+  useEffect(
+    () => () => {
+      const a = lastAnchor.current;
+      if (a)
+        try {
+          sessionStorage.setItem(`weave:conv-anchor:${sessionId}`, JSON.stringify(a));
+        } catch {
+          /* 同上 */
+        }
+    },
+    [sessionId],
+  );
+  // 开窗恢复：entries 首次落位（null → 数组）后 layout 阶段滚到记忆锚；
+  // 没有记忆 / 锚不在首屏窗口 = 维持贴底缺省（首屏本来就在最新一页）。
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (minimized || entries === null) return;
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    try {
+      const raw = sessionStorage.getItem(`weave:conv-anchor:${sessionId}`);
+      if (raw) anchorRef.current = JSON.parse(raw) as { key: string; offset: number } | null;
+    } catch {
+      anchorRef.current = null;
+    }
+    // 贴底 effect 同拍先跑（tailSig 首拍会贴底），这里随后覆盖
+    requestAnimationFrame(() => {
+      if (anchorRef.current) restoreAnchor();
+    });
+  }, [entries, minimized, sessionId]);
+
   /** 人工投递才进对话：编排域的注入/无头消息不是用户说的话。 */
   const manualDeliveries = useMemo(
     () => (messages ?? []).filter((m) => m.mode === 'prompt'),
@@ -408,13 +515,25 @@ export function useConvThread(deps: {
     () =>
       attachDeliveries(
         withCommands(
-          withRewinds(withPlan(withNarration(withPreQuestion(entries ?? [], preQuestion), narration), plan), rewinds),
+          withRewinds(withPlan(withNarration(withPreQuestion(withAnswers(entries ?? [], answers), preQuestion), narration), plan), rewinds),
           executions,
         ),
         manualDeliveries,
       ),
-    [entries, executions, manualDeliveries, narration, plan, preQuestion, rewinds],
+    [answers, entries, executions, manualDeliveries, narration, plan, preQuestion, rewinds],
   );
+  // 过程输出迟加载 / 图片解码把内容撑高：恢复后头几拍里视口被顶走就重放锚原位
+  // （限恢复后 3 拍，之后交给用户——不能终身抢滚动）。这也是「开窗后过程输出
+  // 加载完、视口漂到非底部」的修法：漂走的那一刻锚还在，按锚落回原位。
+  const restoredTick = useRef(0);
+  useEffect(() => {
+    if (minimized || !restoredRef.current) return;
+    const id = requestAnimationFrame(() => {
+      restoredTick.current += 1;
+      if (restoredTick.current <= 3 && anchorRef.current) restoreAnchor();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [thread, minimized]);
   /** 最新那条回复（计划也算一条）：缺省只展开它，更早的回复在气泡里收成三行。 */
   const newestAssistantKey = useMemo(() => {
     for (let i = thread.length - 1; i >= 0; i--) {
@@ -558,7 +677,7 @@ export function useConvThread(deps: {
     thread, outbox, visible, newestAssistantKey, newestUserKey, newestQueuedId, now,
     error, setError,
     threadRef, contentRef, scrollFix,
-    stick, atBottom, lastScroll,
+    stick, atBottom, lastScroll, lastAnchor, restoreAnchor, anchorAtTop,
     compacting, interrupted, generating, failed, liveText,
     pull,
     refreshMessages,

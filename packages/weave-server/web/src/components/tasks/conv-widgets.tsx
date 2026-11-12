@@ -27,8 +27,9 @@ export type ConvMenu =
   | { kind: 'share'; right: number; top?: number; bottom?: number; up: boolean };
 
 export const MENU_W = 168;
-/** 菜单高度上限（气泡菜单至多三项）：只用于向上定位与下沿夹取，略大无害。 */
-export const MENU_H = 104;
+/** 菜单高度上限（分享菜单至多五项，有 Web Share 才加「分享」）：只用于向上定位
+ *  与下沿夹取，略大无害。 */
+export const MENU_H = 132;
 
 /** 设置页「当前使用」的自定义头；读不到设置就当没有（导出不该被设置面挡住）。 */
 export async function activeHtmlHead(): Promise<string | null> {

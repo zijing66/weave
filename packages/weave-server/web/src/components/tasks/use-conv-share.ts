@@ -1,4 +1,4 @@
-import { copyImage, copyText } from '@/lib/clipboard';
+import { canShareImage, copyImage, copyText, type CopyImageResult } from '@/lib/clipboard';
 import { api } from '@/lib/api';
 import {
   downloadBlob,
@@ -62,30 +62,55 @@ const copyPicked = (): void => {
   );
 };
 
-/** 对话 → 图片：canvas 文本卡片，复制到剪贴板或下载 PNG。生成失败与「浏览器
- *  不给写剪贴板」都当失败报出去（后者引导走下载）。 */
-const shareImage = (to: 'clipboard' | 'download'): void => {
+/** 对话 → 图片：canvas 文本卡片，复制到剪贴板 / 系统分享面板 / 下载 PNG。生成
+ *  失败与「浏览器不给写剪贴板」都当失败报出去（后者引导分享/下载）。复制路径把
+ *  **渲染函数**交给 `copyImage`——write 要在用户手势内先落子，渲染 promise 直接
+ *  喂 ClipboardItem；分享路径渲染后走 `navigator.share`（移动端正路：直接进
+ *  微信/相册，绕开剪贴板写图片在 Android 上不可靠的那段）。 */
+const shareImage = (to: 'clipboard' | 'share' | 'download'): void => {
   const chosen = pickedEntries();
   if (chosen.length === 0) return;
   setMenu(null);
   void fb.run(
     `convImg:${sessionId}`,
     async () => {
-      let blob: Blob;
-      try {
-        blob = await renderConversationImage(
+      const render = (): Promise<Blob> =>
+        renderConversationImage(
           toImageEntries(chosen, t('tasks.convPlan')),
           { stamp: exportStamp, theme },
           (path) => api.visualizationFragment(path).then((r) => r.html ?? ''),
         );
-      } catch (e) {
-        throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
-      }
-      if (to === 'download') {
+      if (to === 'share') {
+        let blob: Blob;
+        try {
+          blob = await render();
+        } catch (e) {
+          throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
+        }
+        try {
+          // 用户取消面板（AbortError）不报错不邀功：面板本身就是反馈
+          await navigator.share({
+            files: [new File([blob], imageFileName(label), { type: 'image/png' })],
+          });
+        } catch (e) {
+          if ((e as DOMException)?.name !== 'AbortError') throw e;
+        }
+      } else if (to === 'download') {
+        let blob: Blob;
+        try {
+          blob = await render();
+        } catch (e) {
+          throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
+        }
         downloadBlob(blob, imageFileName(label));
         show('success', t('tasks.convImgSaved'));
       } else {
-        const copied = await copyImage(blob);
+        let copied: CopyImageResult;
+        try {
+          copied = await copyImage(render);
+        } catch (e) {
+          throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
+        }
         if (copied === 'ok') show('success', t('tasks.convImgOk', { n: chosen.length }));
         else if (copied === 'insecure') throw new Error(t('tasks.convImgCopyInsecure'));
         else throw new Error(t('tasks.convImgCopyFailed'));
@@ -94,6 +119,9 @@ const shareImage = (to: 'clipboard' | 'download'): void => {
     { fail: errorText },
   );
 };
+
+/** 分享菜单里给不给「分享」项：交给系统分享面板（微信/相册）的能力探测。 */
+const shareViaSheet = canShareImage;
 
 /** 导出为**单页 HTML**：样式/图片（base64）/mermaid（SVG）全内联，自定义头按设置页
  *  「当前使用」那一份原样注入。取不到设置或某张图/某块图渲染失败都只降级、不中断。 */
@@ -182,5 +210,5 @@ const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
   });
 };
 
-  return { copyPicked, shareImage, exportHtml, exportMarkdown, openShareMenu };
+  return { copyPicked, shareImage, shareViaSheet, exportHtml, exportMarkdown, openShareMenu };
 }

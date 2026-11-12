@@ -222,6 +222,18 @@ describe('项目归档（POST /projects/:id/archive · restore · 消费面跳�
     expect((await post('/projects/9999/restore')).status).toBe(404);
   });
 
+  it('超级代理项目拒归档：409 且行不动（仍活跃、无 archived_at）', async () => {
+    const god = projects.register({ path: '/proj-god', name: 'coordinator', token: 'tok-god', source: 'init', superagent: true });
+    const res = await post(`/projects/${god.id}/archive`);
+    expect(res.status).toBe(409);
+    const active = (await (await get('/projects')).json()) as {
+      projects: Array<{ id: number; superagent?: boolean; archivedAt: string | null }>;
+    };
+    const row = active.projects.find((p) => p.id === god.id);
+    expect(row?.superagent).toBe(true);
+    expect(row?.archivedAt).toBeNull();
+  });
+
   it('hooksRoot 默认根不受测试注入影响（生产装配走缺省值）', () => {
     // 仅守护：注入的 hooksDir 只是测试替身，模块缺省仍是全局数据目录
     expect(hooksRoot()).not.toBe(hooksDir);
@@ -253,6 +265,52 @@ describe('ProjectRepository 归档语义', () => {
       projects.setArchived(row.id, false);
       expect(projects.list()).toHaveLength(1);
       expect(projects.listArchived()).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('ProjectRepository superagent 语义（上帝 = coordinator 升格）', () => {
+  it('置顶恒第一（手动序盖不过它）；setOrder 忽略；拒归档', () => {
+    const db = openDatabase(':memory:');
+    try {
+      const projects = new ProjectRepository(db);
+      const a = projects.register({ path: '/sa-a', name: 'a', token: 'tk1', source: 'init' });
+      const b = projects.register({ path: '/sa-b', name: 'b', token: 'tk2', source: 'init' });
+      const god = projects.register({
+        path: '/sa-god', name: 'coordinator', token: 'tk3', source: 'init', superagent: true,
+      });
+      projects.setOrder([b.id, a.id]);
+      const order = projects.list().map((p) => p.id);
+      expect(order[0]).toBe(god.id); // 置顶：手动序块整体让位
+      expect(order.slice(1)).toEqual([b.id, a.id]);
+      projects.setOrder([god.id, a.id, b.id]); // 夹带 superagent id 也翻不动它（god 落空，余下按位重排）
+      expect(projects.list().map((p) => p.id)).toEqual([god.id, a.id, b.id]);
+      expect(() => projects.setArchived(god.id, true)).toThrow(/superagent/);
+      expect(projects.list().map((p) => p.id)).toEqual([god.id, a.id, b.id]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('register MAX 升格保位 + markSuperagent 幂等翻正（存量 hidden 行升格）', () => {
+    const db = openDatabase(':memory:');
+    try {
+      const projects = new ProjectRepository(db);
+      // 旧库形态：coordinator 曾以 hidden 行注册（早于升格的存量装机）
+      const row = projects.register({ path: '/sa-god', name: 'coordinator', token: 'tk', source: 'init', hidden: true });
+      expect(row.hidden).toBe(true);
+      // weave 新版 register 同路径带 superagent——MAX 保位不丢
+      const again = projects.register({ path: '/sa-god', name: 'coordinator', token: 'tk2', source: 'init', superagent: true });
+      expect(again.superagent).toBe(true);
+      // 存量 hidden=1 被 markSuperagent 翻正（幂等：再调返回 false）
+      expect(projects.markSuperagent(again.id)).toBe(true);
+      expect(projects.markSuperagent(again.id)).toBe(true); // 幂等仅翻位，changes>0 恒真
+      const god = projects.getByPath('/sa-god')!;
+      expect(god.superagent).toBe(true);
+      expect(god.hidden).toBe(false); // 升格即露出：置顶常驻可见
+      expect(projects.list()[0]!.id).toBe(god.id);
     } finally {
       db.close();
     }

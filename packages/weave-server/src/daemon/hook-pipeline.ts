@@ -48,6 +48,8 @@ export interface HookPipelineDeps {
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
   /** 会话扩展点引擎（第五消费者）：同透传（onEvent 带 payload）。 */
   extensionEngine?: Pick<import('../hooks/extension-engine.js').ExtensionEngine, 'onEvent'>;
+  /** goal 驱动循环（第六消费者，G6 批4b）：同透传（回合落账 + 失控兜底两闸）。 */
+  goalEngine?: Pick<import('../rpg/goal-engine.js').RpgGoalEngine, 'onEvent'>;
   /** 仪表盘速率快照（ingest 路径累加；读侧见 /dashboard/stats）。 */
   dashboardRate?: { record(): void };
   /** 会话转录路径上报（中断态探测；同 pane env 口径）+ 换模型落定（`PostModelSwitch`）+ 推理档位。 */
@@ -188,6 +190,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         activityTracker: deps.activityTracker,
         sideQuestions: deps.sideQuestions,
         extensionEngine: deps.extensionEngine,
+        goalEngine: deps.goalEngine,
         dashboardRate: deps.dashboardRate,
         sessionProbe: deps.sessionProbe,
         uploads: deps.uploads,

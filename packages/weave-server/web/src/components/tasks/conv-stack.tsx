@@ -106,6 +106,20 @@ function edgeLayersOf(n: number): number {
   return Math.min(EDGE_LAYERS, Math.max(1, Math.floor((n - 1) / FOLD_STEP)));
 }
 
+/** 翻页位置按组记忆（模块级）：组件随面板开关卸载重挂，idx 只活在 useState
+ *  里的话切走再回就跳回最新段——用户读到的位置丢了。组 key 稳定（首段 key），
+ *  段数变化时读出值在 effect 里夹回合法区间。满了整体清空（防泄漏即可）。 */
+const pageMemo = new Map<string, number>();
+const PAGE_MEMO_MAX = 100;
+function rememberPage(key: string, idx: number, atLatest: boolean): void {
+  if (!atLatest) {
+    if (pageMemo.size >= PAGE_MEMO_MAX) pageMemo.clear();
+    pageMemo.set(key, idx);
+  } else {
+    pageMemo.delete(key);
+  }
+}
+
 /** 当前页对应的段（idx 越界夹回——组收缩瞬间渲染先于 effect）。 */
 function segKeyOf(group: NarrationGroup, idx: number): string {
   return group.segs[Math.min(Math.max(idx, 0), group.segs.length - 1)]!.key;
@@ -132,13 +146,19 @@ export function NarrationStack({
 }) {
   const t = useT();
   const n = group.segs.length;
-  /** 看到第几张（0 基，0 = 最旧）。缺省盯最新段——实时流式时新卡滑入即顶卡。 */
-  const [idx, setIdx] = useState(n - 1);
+  /** 看到第几张（0 基，0 = 最旧）。缺省盯最新段——实时流式时新卡滑入即顶卡；
+   *  面板重开时从 pageMemo 恢复上次读到的位置（atLatest 语义 = 恢复值是否为
+   *  最新段，不是最新段就不自动跟流）。 */
+  const [idx, setIdx] = useState(() => Math.min(pageMemo.get(group.key) ?? n - 1, n - 1));
   /** 流式跟进：新段到达且此前正贴着最新段 → 跟到新最新段；翻在历史段不动。 */
-  const atLatest = useRef(true);
+  const atLatest = useRef((pageMemo.get(group.key) ?? n - 1) >= n - 1);
   useEffect(() => {
     if (atLatest.current) setIdx(n - 1);
   }, [n]);
+  // 翻页落定即记忆（atLatest = true 的位置不记——那本就是缺省行为）
+  useEffect(() => {
+    rememberPage(group.key, idx, atLatest.current);
+  }, [group.key, idx]);
   const go = (delta: number): void => {
     setIdx((prev) => {
       const next = Math.min(Math.max(prev + delta, 0), n - 1);

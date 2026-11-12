@@ -11,6 +11,7 @@ import {
   Image as ImageIcon,
   Loader2,
   MessageCircleQuestion,
+  Share2,
   X,
 } from 'lucide-react';
 import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
@@ -18,7 +19,7 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { api, type SideQuestionRow } from '@/lib/api';
-import { copyImage, copyText } from '@/lib/clipboard';
+import { canShareImage, copyImage, copyText, type CopyImageResult } from '@/lib/clipboard';
 import {
   downloadBlob,
   imageFileName,
@@ -363,28 +364,51 @@ export function SideQuestionDialog({
     );
   };
 
-  /** 选中 → 图片：canvas 文本卡片，复制到剪贴板或下载 PNG（与对话面板同一套）。 */
-  const shareImage = (to: 'clipboard' | 'download'): void => {
+  /** 选中 → 图片：canvas 文本卡片，复制 / 系统分享面板 / 下载 PNG（与对话面板
+   *  同一套：复制路径把渲染函数交给 `copyImage`，write 在用户手势内先落子）。 */
+  const shareImage = (to: 'clipboard' | 'share' | 'download'): void => {
     const chosen = pickedRows;
     if (chosen.length === 0) return;
     setMenu(null);
     void fb.run(
       'sideImg',
       async () => {
-        let blob: Blob;
-        try {
-          blob = await renderConversationImage(
+        const render = (): Promise<Blob> =>
+          renderConversationImage(
             rowsImageEntries(chosen, t('tasks.sideRoleAsk'), t('tasks.sideRoleAnswer')),
             { stamp: fullStamp, theme },
           );
-        } catch (e) {
-          throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
-        }
-        if (to === 'download') {
+        if (to === 'share') {
+          let blob: Blob;
+          try {
+            blob = await render();
+          } catch (e) {
+            throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
+          }
+          try {
+            // 用户取消面板（AbortError）不报错不邀功：面板本身就是反馈
+            await navigator.share({
+              files: [new File([blob], imageFileName(label), { type: 'image/png' })],
+            });
+          } catch (e) {
+            if ((e as DOMException)?.name !== 'AbortError') throw e;
+          }
+        } else if (to === 'download') {
+          let blob: Blob;
+          try {
+            blob = await render();
+          } catch (e) {
+            throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
+          }
           downloadBlob(blob, imageFileName(label));
           show('success', t('tasks.convImgSaved'));
         } else {
-          const copied = await copyImage(blob);
+          let copied: CopyImageResult;
+          try {
+            copied = await copyImage(render);
+          } catch (e) {
+            throw new Error(t('tasks.convImgFailed', { error: errorText(e) }));
+          }
           if (copied === 'ok') show('success', t('tasks.convImgOk', { n: chosen.length }));
           else if (copied === 'insecure') throw new Error(t('tasks.convImgCopyInsecure'));
           else throw new Error(t('tasks.convImgCopyFailed'));
@@ -724,6 +748,16 @@ export function SideQuestionDialog({
               </button>
             ) : (
               <>
+                {canShareImage() && (
+                  <button
+                    type="button"
+                    onClick={() => shareImage('share')}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <Share2 className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convShareSheet')}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => shareImage('clipboard')}

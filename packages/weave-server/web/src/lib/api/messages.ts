@@ -228,6 +228,13 @@ export const messageApi = {
     apiFetch<{ preQuestion: { at: string; text: string } | null }>(
       `/sessions/${encodeURIComponent(sessionId)}/pre-question`,
     ).then((r) => r.preQuestion),
+  /** 用户的作答回显（阻塞问答落定笔里解析的；无该面 = 空表）。 */
+  sessionAnswers: (
+    sessionId: string,
+  ): Promise<Array<{ at: string; question: string; answer: string }>> =>
+    apiFetch<{ answers: Array<{ at: string; question: string; answer: string }> }>(
+      `/sessions/${encodeURIComponent(sessionId)}/answers`,
+    ).then((r) => r.answers ?? []),
   /** 旁白：模型在一轮里的全部 assistant 正文（转录里认的；无该面 / 读不到 = null）。 */
   sessionNarration: (sessionId: string): Promise<Array<{ at: string | null; text: string }> | null> =>
     apiFetch<{ supported: boolean; narration: Array<{ at: string | null; text: string }> | null }>(

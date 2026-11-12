@@ -65,6 +65,10 @@ const planCache = new Map<string, { latestId: number; plan: PlanPayload | null }
 /** 计划正文上限：超了截断（气泡要能渲染，别把几 MB 的文档塞进响应）。 */
 const PLAN_MAX_CHARS = 200_000;
 
+/** 作答回显扫描窗口（最近事件条数）：问答是低频事件，覆盖最近几轮足够；全史
+ *  翻旧账不值得（payload 解析成本随行数线性涨，与计划扫描同一条教训）。 */
+const ANSWER_SCAN_WINDOW = 2_000;
+
 /** 事件 payload 里的工具三元组（坏 JSON → 全 null，交给 spec 判「不是计划」）。 */
 function payloadTools(payload: string): [string | null, unknown, unknown] {
   try {
@@ -259,6 +263,41 @@ export async function handleSessionInsightRoutes(
     const spec = src ? blockingPromptFor(src) : null;
     const pre = await spec?.preQuestion?.(deps.sessionProbe?.transcriptPathOf(sessionId) ?? null);
     sendJson(res, 200, { preQuestion: pre ?? null });
+    return true;
+  }
+
+  // ---- 作答回显：阻塞问答的落定笔里解析出的用户作答（hook 域没有 UPS，这段
+  //  只在 PostToolUse 的 toolResponse 里——不解析对话面板就少一块）----
+  const answersMatch = pathname.match(/^\/sessions\/([^/]+)\/answers$/);
+  if (answersMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(answersMatch[1]!);
+    if (!projectOfSession(res, deps, sessionId)) return true;
+    const out: Array<{ at: string; question: string; answer: string }> = [];
+    const src = latestHarnessOf(deps, sessionId);
+    const spec = src ? blockingPromptFor(src) : null;
+    if (spec?.parseAnswers && deps.hookEvents) {
+      for (const row of deps.hookEvents.listBySession(sessionId, ANSWER_SCAN_WINDOW)) {
+        let parsed0: { eventType?: unknown; toolName?: unknown; toolResponse?: unknown };
+        try {
+          parsed0 = JSON.parse(row.payload) as typeof parsed0;
+        } catch {
+          continue;
+        }
+        const payload = parsed0;
+        const toolName = payload.toolName;
+        if (
+          payload.eventType !== 'PostToolUse' ||
+          typeof toolName !== 'string' ||
+          !spec.blockingTools.includes(toolName)
+        ) {
+          continue;
+        }
+        const parsed = spec.parseAnswers(toolName, payload.toolResponse ?? null);
+        if (!parsed) continue;
+        for (const a of parsed) out.push({ at: row.createdAt, ...a });
+      }
+    }
+    sendJson(res, 200, { answers: out });
     return true;
   }
 
