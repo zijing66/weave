@@ -59,6 +59,8 @@ export interface DaemonSettings {
   pet?: PetSettings;
   /** 联邦与 mTCP 发现（默认关——pairing 显式授权；mirror of daemon settings）。 */
   federation?: { discovery: boolean; enabled: boolean; autoAccept?: boolean };
+  /** 终端开窗行为：落子后把隐藏的目标窗拉回可见（默认开；mirror of daemon settings）。 */
+  terminalFocus?: { focusOnOpen: boolean };
 }
 
 /** 一份自定义头（原样注入导出 HTML 的 `</head>` 之前；只在导出文件里生效）。 */
@@ -113,6 +115,51 @@ export interface CaptureRow {
   helperPresent: boolean;
 }
 
+// ---- 每日自动备份（mirror of daemon/backup.ts — 保持同步）----
+
+export interface BackupSettings {
+  enabled: boolean;
+  /** 每日触发时刻（小时 0-23）。 */
+  hour: number;
+  /** 历史会话域随包（气泡 + 上传图同进同退）。 */
+  includeHistory: boolean;
+}
+
+export interface BackupProgress {
+  phase: 'tables' | 'market' | 'uploads' | 'finalize';
+  ratio: number;
+  etaSeconds: number | null;
+}
+
+export interface BackupStatus {
+  running: boolean;
+  startedAt: string | null;
+  progress: BackupProgress | null;
+  lastResult: { file: string; bytes: number; durationMs: number; tables: number; marketRepos: number; marketSkipped: number } | null;
+  lastError: string | null;
+}
+
+export interface BackupPackage {
+  name: string;
+  bytes: number;
+  at: string;
+}
+
+export interface BackupStatusBundle {
+  status: BackupStatus;
+  settings: BackupSettings;
+  packages: BackupPackage[];
+}
+
+export interface BackupResult {
+  file: string;
+  bytes: number;
+  durationMs: number;
+  tables: number;
+  marketRepos: number;
+  marketSkipped: number;
+}
+
 export const settingsApi = {
   /** Daemon-level settings (terminal preset) plus this platform's options. */
   getDaemonSettings: (): Promise<DaemonSettingsBundle> =>
@@ -121,6 +168,21 @@ export const settingsApi = {
     apiFetch<DaemonSettings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
+    }),
+  // ---- 每日自动备份（/backup/*；缺引擎 503 时前端隐藏面板）----
+  /** 运行态（含进度/ETA）+ 备份设置 + 包清单，一处取齐。 */
+  getBackupStatus: (): Promise<BackupStatusBundle> =>
+    apiFetch<BackupStatusBundle>('/backup/status'),
+  /** 手动触发（includeHistory 缺省从设置带）。忙时 409。 */
+  runBackup: (includeHistory?: boolean): Promise<{ result: BackupResult }> =>
+    apiFetch<{ result: BackupResult }>('/backup/run', {
+      method: 'POST',
+      body: JSON.stringify(includeHistory === undefined ? {} : { includeHistory }),
+    }),
+  putBackupSettings: (backup: BackupSettings): Promise<{ settings: BackupSettings }> =>
+    apiFetch<{ settings: BackupSettings }>('/backup/settings', {
+      method: 'PUT',
+      body: JSON.stringify(backup),
     }),
   /** user 档采集状态行（§6-2d：跨项目事件采集的地基）。 */
   getCapture: (): Promise<CaptureRow[]> =>

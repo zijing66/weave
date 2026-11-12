@@ -140,6 +140,21 @@ export function emptyItemOf(spec: TreeNodeSpec): unknown {
   return spec.fields && spec.fields.length > 0 ? {} : defaultValueOf(spec.valueType ?? 'string', spec.valueOptions);
 }
 
+/** 模型值的变体组后缀（claude 的 1M context 变体写法 `model[1m]`）。 */
+const MODEL_GROUP_SUFFIX = /\[1m\]$/i;
+
+/** 拆模型值：剥尾部 `[1m]` 组后缀 → 裸模型名 + 是否带组。 */
+export function splitModelValue(value: unknown): { model: string; oneM: boolean } {
+  const text = typeof value === 'string' ? value : textOf(value);
+  const oneM = MODEL_GROUP_SUFFIX.test(text);
+  return { model: oneM ? text.replace(MODEL_GROUP_SUFFIX, '') : text, oneM };
+}
+
+/** 组合模型值：勾选组 → `model[1m]`，否则裸名。 */
+export function joinModelValue(model: string, oneM: boolean): string {
+  return oneM && model.trim() ? `${model.trim()}[1m]` : model.trim();
+}
+
 /** 配置树的一个节点：段名 + 完整点号路径；有 spec 的是词表里的键，`extra` 的是文件里多出来的。 */
 export interface ConfigTreeNode {
   segment: string;

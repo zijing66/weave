@@ -62,7 +62,7 @@ export interface InitFileUpdate {
 }
 
 /** `.weave/config.yaml` 的解析结果（手写 k:v 行，对象值是 JSON 一行）。 */
-interface InitRuntime {
+export interface InitRuntime {
   initVersion: string | null;
   preset: Preset;
   harnesses: Harness[];
@@ -114,7 +114,15 @@ export async function readInitRuntime(projectPath: string): Promise<InitRuntime>
   try {
     raw = await readFile(path.join(projectPath, '.weave', 'config.yaml'), 'utf-8');
   } catch {
-    raw = '';
+    // 无 config.yaml 的项目（如超级代理仓，出厂物化不走 weave init）：
+    // 版本戳在 `.weave/scaffold-version` 的 `initVersion:` 键里。
+    let stamp: string;
+    try {
+      stamp = await readFile(path.join(projectPath, '.weave', 'scaffold-version'), 'utf-8');
+    } catch {
+      stamp = '';
+    }
+    raw = stamp;
   }
   const parsed = parseConfigYaml(raw);
   const preset = parsed['preset'];
@@ -262,4 +270,39 @@ export async function applyInitFile(update: InitFileUpdate): Promise<boolean> {
 /** 会进 git、因此只能提醒用户跑 `weave init` 的漂移条目。 */
 export function needsInit(updates: readonly InitFileUpdate[]): boolean {
   return updates.some((u) => u.syncClass === 'manual' && u.outdated);
+}
+
+/** 语义版本数值比较（段数不等按 0 补齐、非数字段按 0）：`a < b`。 */
+function versionLt(a: string, b: string): boolean {
+  const pa = a.split('.').map((n) => Number.parseInt(n, 10));
+  const pb = b.split('.').map((n) => Number.parseInt(n, 10));
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const va = Number.isFinite(pa[i]) ? pa[i]! : 0;
+    const vb = Number.isFinite(pb[i]) ? pb[i]! : 0;
+    if (va < vb) return true;
+    if (va > vb) return false;
+  }
+  return false;
+}
+
+export interface InitVersionLag {
+  /** init 落档版本落后于当前 weave → 提醒重跑 `weave init`（生成物内容漂移之外的口径）。 */
+  behind: boolean;
+  /** `.weave/config.yaml` 的 `initVersion`；null = 无版本戳的极旧 init。 */
+  initVersion: string | null;
+}
+
+/**
+ * init 版本滞后检测：`.weave/config.yaml` 的 `initVersion` 落后于当前 weave 即提醒。
+ * 与生成物漂移（detectInitFileUpdates）互补——托管块这类「进 git 且内容只在升级后
+ * 变」的文件，旧版块与新版期望内容相同时漂移检测看不见（版本标记又被刻意剥掉），
+ * 只有版本号能如实说「这份 init 是老版本写的」。
+ */
+export async function detectInitVersionLag(projectPath: string): Promise<InitVersionLag> {
+  if (!(await inited(projectPath))) return { behind: false, initVersion: null };
+  const runtime = await readInitRuntime(projectPath);
+  return {
+    behind: runtime.initVersion == null || versionLt(runtime.initVersion, WEAVE_VERSION),
+    initVersion: runtime.initVersion,
+  };
 }

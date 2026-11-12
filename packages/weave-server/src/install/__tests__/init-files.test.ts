@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setGlobalStatuslineDir } from '../../statusline/manager.js';
 import { WEAVE_VERSION } from '../../version.js';
-import { applyInitFile, detectInitFileUpdates, needsInit } from '../init-files.js';
+import { applyInitFile, detectInitFileUpdates, detectInitVersionLag, needsInit } from '../init-files.js';
 
 /**
  * init 生成物的漂移自愈：不进 git 的自动代写刷新，会进 git 的只报不写。
@@ -182,5 +182,28 @@ describe('detectInitFileUpdates', () => {
     expect(await applyInitFile(handler)).toBe(false);
     expect(read(handlerRel)).toContain('0.0.1');
     expect(needsInit(updates)).toBe(true);
+  });
+});
+
+describe('detectInitVersionLag', () => {
+  it('initVersion 落后于当前 weave → behind；相等 → 不 behind', async () => {
+    writeConfig({ initVersion: '0.0.1' });
+    const lag = await detectInitVersionLag(projectDir);
+    expect(lag).toEqual({ behind: true, initVersion: '0.0.1' });
+
+    writeConfig({ initVersion: WEAVE_VERSION });
+    expect(await detectInitVersionLag(projectDir)).toEqual({
+      behind: false,
+      initVersion: WEAVE_VERSION,
+    });
+  });
+
+  it('无版本戳的极旧 init → behind；没跑过 init（无 config）→ 不 behind', async () => {
+    mkdirSync(path.join(projectDir, '.weave'), { recursive: true });
+    writeFileSync(path.join(projectDir, '.weave', 'config.yaml'), 'preset: default\n');
+    expect(await detectInitVersionLag(projectDir)).toEqual({ behind: true, initVersion: null });
+
+    rmSync(path.join(projectDir, '.weave'), { recursive: true, force: true });
+    expect(await detectInitVersionLag(projectDir)).toEqual({ behind: false, initVersion: null });
   });
 });

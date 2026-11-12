@@ -79,6 +79,10 @@ export interface DaemonSettings {
   pet?: PetSettings;
   /** 联邦与 mTCP 发现（默认关——安全红线：pairing 显式授权，读时归一化）。 */
   federation?: FederationSettings;
+  /** 每日自动备份（默认开、凌晨 1 点——读时归一化）。 */
+  backup?: BackupSettings;
+  /** 终端开窗行为（落子后拉回可见——读时归一化）。 */
+  terminalFocus?: TerminalFocusSettings;
 }
 
 export interface HooksSettings {
@@ -111,6 +115,16 @@ export interface ServerSettings {
   /** 局域网 HTTPS 监听端口（自签证书，手机浏览器通知的前提）；0 = 关闭。 */
   tlsPort: number;
 }
+
+/** 终端开窗行为：落子后把目标 OS 窗口拉回可见（隐藏窗的自动恢复；默认开——
+ *  项目 hideWindow 开着时该项目例外，open 路由先藏后开不冲突）。 */
+export interface TerminalFocusSettings {
+  focusOnOpen: boolean;
+}
+
+export const DEFAULT_TERMINAL_FOCUS_SETTINGS: TerminalFocusSettings = {
+  focusOnOpen: true,
+};
 
 /**
  * AI 助手（OpenAI 兼容端点）的非密配置。**api key 不在这里**——它落
@@ -219,6 +233,24 @@ export const DEFAULT_FEDERATION_SETTINGS: FederationSettings = {
   autoAccept: false,
 };
 
+/**
+ * 每日自动备份：配置面（DB 白名单表 + market 的 git 管理文件）默认全含；
+ * 历史会话域（hook_events/sessions/uploads）可选。保留 7 天滚动。
+ */
+export interface BackupSettings {
+  enabled: boolean;
+  /** 每日触发时刻（小时，0-23；默认 1 点）。 */
+  hour: number;
+  /** 历史会话域随包（气泡 + 上传图同进同退；默认关——包会到 GB 级）。 */
+  includeHistory: boolean;
+}
+
+export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
+  enabled: true,
+  hour: 1,
+  includeHistory: false,
+};
+
 /** 尺寸档 → 窗像素（宽×高；精灵单元比例约 12:13，留气泡余量）。 */
 export const PET_SIZE_PRESETS: Record<PetSettings['size'], { width: number; height: number }> = {
   small: { width: 160, height: 192 },
@@ -240,6 +272,8 @@ export const DEFAULT_DAEMON_SETTINGS: DaemonSettings = {
   htmlExport: DEFAULT_HTML_EXPORT_SETTINGS,
   pet: DEFAULT_PET_SETTINGS,
   federation: DEFAULT_FEDERATION_SETTINGS,
+  backup: DEFAULT_BACKUP_SETTINGS,
+  terminalFocus: DEFAULT_TERMINAL_FOCUS_SETTINGS,
 };
 
 /** Coerce a stored locale to a supported one (whitelist, never throws). */
@@ -443,6 +477,36 @@ function mergeDefaults(raw: unknown): DaemonSettings {
     htmlExport,
     pet,
     federation,
+    backup: normalizeBackup(obj.backup),
+    terminalFocus: normalizeTerminalFocus(obj.terminalFocus),
+  };
+}
+
+/** terminalFocus 段归一：布尔矫正，坏值落默认（开）。 */
+function normalizeTerminalFocus(raw: unknown): TerminalFocusSettings {
+  const obj = (raw ?? {}) as Partial<TerminalFocusSettings>;
+  return {
+    focusOnOpen:
+      typeof obj.focusOnOpen === 'boolean'
+        ? obj.focusOnOpen
+        : DEFAULT_TERMINAL_FOCUS_SETTINGS.focusOnOpen,
+  };
+}
+
+/** backup 段归一：布尔/0-23 小时矫正，坏值落默认。 */
+function normalizeBackup(raw: unknown): BackupSettings {
+  const obj = (raw ?? {}) as Partial<BackupSettings>;
+  return {
+    enabled:
+      typeof obj.enabled === 'boolean' ? obj.enabled : DEFAULT_BACKUP_SETTINGS.enabled,
+    hour:
+      Number.isInteger(obj.hour) && (obj.hour as number) >= 0 && (obj.hour as number) <= 23
+        ? (obj.hour as number)
+        : DEFAULT_BACKUP_SETTINGS.hour,
+    includeHistory:
+      typeof obj.includeHistory === 'boolean'
+        ? obj.includeHistory
+        : DEFAULT_BACKUP_SETTINGS.includeHistory,
   };
 }
 
@@ -472,6 +536,10 @@ const KEYS = {
   pet: 'pet.config',
   /** 整段 JSON：联邦与 mTCP 发现（discovery/enabled 两个布尔）。 */
   federation: 'federation.config',
+  /** 整段 JSON：每日自动备份（enabled/hour/includeHistory）。 */
+  backup: 'backup.config',
+  /** 整段 JSON：终端开窗行为（focusOnOpen）。 */
+  terminalFocus: 'terminal.focusConfig',
 } as const;
 
 /** 测试注入（内存库）；null = 未注入。 */
@@ -560,6 +628,12 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(jsonOf(map.get(KEYS.federation)) != null
       ? { federation: jsonOf(map.get(KEYS.federation)) as Partial<FederationSettings> }
       : {}),
+    ...(jsonOf(map.get(KEYS.backup)) != null
+      ? { backup: jsonOf(map.get(KEYS.backup)) as Partial<BackupSettings> }
+      : {}),
+    ...(jsonOf(map.get(KEYS.terminalFocus)) != null
+      ? { terminalFocus: jsonOf(map.get(KEYS.terminalFocus)) as Partial<TerminalFocusSettings> }
+      : {}),
   });
 }
 
@@ -608,6 +682,11 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     [
       KEYS.federation,
       JSON.stringify(settings.federation ?? DEFAULT_FEDERATION_SETTINGS),
+    ],
+    [KEYS.backup, JSON.stringify(settings.backup ?? DEFAULT_BACKUP_SETTINGS)],
+    [
+      KEYS.terminalFocus,
+      JSON.stringify(settings.terminalFocus ?? DEFAULT_TERMINAL_FOCUS_SETTINGS),
     ],
   ];
 }

@@ -32,11 +32,14 @@ export function ConfigTree({
   nodes,
   depth = 0,
   handlers,
+  modelOptions,
   footer,
 }: {
   nodes: readonly ConfigTreeNode[];
   depth?: number;
   handlers: ConfigTreeHandlers;
+  /** 已拉到的模型候选（`model` 键的下拉数据源，透传给行控件）。 */
+  modelOptions?: readonly { id: string; name?: string }[];
   /** 展开对象节点后、子节点下面追加的一行（env 的「加一个变量」就在这儿）。 */
   footer?: (node: ConfigTreeNode, depth: number) => ReactNode;
 }) {
@@ -84,7 +87,9 @@ export function ConfigTree({
                 )}
                 </button>
               </Tooltip>
-              {open && <ConfigTree nodes={node.children} depth={depth + 1} handlers={handlers} footer={footer} />}
+              {open && (
+                <ConfigTree nodes={node.children} depth={depth + 1} handlers={handlers} modelOptions={modelOptions} footer={footer} />
+              )}
               {open && footer?.(node, depth + 1)}
             </div>
           );
@@ -120,6 +125,7 @@ export function ConfigTree({
             value={handlers.valueOf(node.path)}
             managed={handlers.isManaged(node.path)}
             locked={handlers.lockedEntriesOf(node.path)}
+            modelOptions={modelOptions}
             onChange={(edit) => handlers.onChange(node.path, edit)}
           />
         );

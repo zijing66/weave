@@ -1,14 +1,20 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { generateToken } from '../daemon/auth.js';
 import type { ProjectRepository } from '../repositories/projects.js';
+import type { OrchestrationRepository } from '../repositories/orchestrations.js';
 import { projectKey } from '../repositories/projects.js';
-import { getAuthPath, getRpgRolesRoot } from '../db/paths.js';
+import { getAuthPath, getRpgHandbookRoot, getRpgRolesRoot, getSuperagentRoot } from '../db/paths.js';
+import { WEAVE_VERSION } from '../version.js';
 import { readDaemonState } from '../daemon/state.js';
 import type { McpServerConfig } from '@weavecode/harness';
-import { RpgRoleRepository, archetypeBaseline, type Hexagon } from './roles.js';
+import { generateHookHandler } from '@weavecode/harness';
+import { generateSettingsJson, mergeSettingsJson, statusLineIsWeave } from '@weavecode/harness';
+import { DEFAULT_HOOKS, type PlatformInfo } from '@weavecode/core';
+import { RpgRoleRepository, archetypeBaseline, type Hexagon, type RpgRoleRow } from './roles.js';
 import { ROLE_MANIFEST_KEY, readRoleManifest, type RoleManifest } from './role-plugin.js';
-import { BUILTIN_ROLE_TEMPLATES, COORDINATOR_PERSONA } from '../install/role-manifests.js';
+import { BUILTIN_ROLE_TEMPLATES, COORDINATOR_PERSONA, COORDINATOR_SKILLS, handbookPersonaSection } from '../install/role-manifests.js';
 import { BUILTIN_MCP_SERVERS } from '../install/builtin-mcp.js';
 
 /**
@@ -30,6 +36,8 @@ export interface ProvisionDeps {
   rolesRoot?: string;
   /** 测试注入缝：内置 MCP 的 daemon 端口与本机令牌（缺省读 daemon state + auth.json）。 */
   mcpEndpoint?: { port: number; token: string | null };
+  /** 编排仓储（可选）：随脚手架物化出厂示例编排（记忆出口节点演示，停用态）。 */
+  orchestrations?: Pick<OrchestrationRepository, 'insert' | 'list'>;
 }
 
 // ---- 内建仓库项目档 MCP + 托管 ignore（E4 验收⑥）----
@@ -94,6 +102,60 @@ async function ensureMcpJsonIgnored(dir: string): Promise<void> {
   await writeFile(file, joined, 'utf-8');
 }
 
+/**
+ * 内建仓的项目档采集安装（幂等）：hook-handler 脚本 + `.claude/settings.json`
+ * 的 weave 采集组。与 `weave init` 同源——组形（`captureHookGroup`）、脚本正文
+ * （`generateHookHandler`）、settings 合并（`mergeSettingsJson`）全部出自 harness
+ * 单源，这里只做编排。不装 statusline（出厂仓对话页有它即可，不需要终端条）。
+ */
+async function ensureProjectCapture(dir: string): Promise<void> {
+  const helpersDir = path.join(dir, '.claude', 'helpers');
+  await mkdir(helpersDir, { recursive: true });
+  await writeFile(
+    path.join(helpersDir, 'hook-handler.cjs'),
+    generateHookHandler(WEAVE_VERSION),
+    'utf-8',
+  );
+  const file = path.join(dir, '.claude', 'settings.json');
+  let existing: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(await readFile(file, 'utf-8')) as unknown;
+    if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      existing = parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* 缺文件/坏文件 = 新建 */
+  }
+  const platform: PlatformInfo = {
+    os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'darwin' : 'linux',
+    arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+    nodeVersion: process.version,
+    shell: process.platform === 'win32' ? 'powershell' : 'sh',
+    homeDir: homedir(),
+    configDir: homedir(),
+  };
+  const generated = generateSettingsJson({
+    components: {
+      settings: true,
+      skills: false,
+      commands: false,
+      agents: false,
+      helpers: true,
+      mcp: false,
+      claudeMd: false,
+      agentsMd: false,
+    },
+    hooks: DEFAULT_HOOKS,
+    platform,
+    helpersDir,
+  });
+  const merged = mergeSettingsJson(existing, generated);
+  // statusLine 指向不物化的 statusline.cjs（components 只有 helpers 开着时它跟
+  // hooks 同门）——出厂仓不需要终端条，摘掉避免宿主每轮跑一个不存在的脚本。
+  if (statusLineIsWeave(merged['statusLine'])) delete merged['statusLine'];
+  await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, 'utf-8');
+}
+
 export type ProvisionRoleResult =
   | {
       ok: true;
@@ -103,6 +165,8 @@ export type ProvisionRoleResult =
         name: string;
         path: string;
         archetype: string | null;
+        gender: RpgRoleRow['gender'];
+        appearanceSeed: RpgRoleRow['appearanceSeed'];
         /** true = 复用既有项目（未重建仓库）；false = 新建。 */
         reused: boolean;
       };
@@ -122,6 +186,8 @@ export async function provisionRole(
     archetype?: string;
     persona?: string;
     hexagon?: Hexagon;
+    gender?: RpgRoleRow['gender'];
+    appearanceSeed?: number;
     /** 默认装备清单（来自角色插件 manifest 或调用方显式给；逐项落占位声明文件）。 */
     manifest?: RoleManifest;
   },
@@ -146,6 +212,8 @@ export async function provisionRole(
         name,
         path: existing.path,
         archetype: role.archetype,
+        gender: role.gender,
+        appearanceSeed: role.appearanceSeed,
         reused: true,
       },
     };
@@ -162,13 +230,6 @@ export async function provisionRole(
   if (input.persona) {
     await writeFile(path.join(dir, 'CLAUDE.md'), input.persona + '\n', 'utf-8');
   }
-  if (input.manifest) {
-    await writeFile(
-      path.join(dir, '.weave', 'role.json'),
-      JSON.stringify({ skills: input.manifest.skills, mcp: input.manifest.mcp, plugins: input.manifest.plugins }, null, 2) + '\n',
-      'utf-8',
-    );
-  }
   // 内置 MCP 收口（E4 验收⑥）：编排/协调链的消费者只有角色仓库的会话——全集写
   // 项目档（token 不进版本历史），任意项目不再每会话背一万+ token 的 schema 税。
   await ensureBuiltinMcp(dir, deps.mcpEndpoint).catch(() => {});
@@ -182,7 +243,25 @@ export async function provisionRole(
     archetype: input.archetype ?? null,
     persona: input.persona ?? null,
     hexagon: input.hexagon ?? archetypeBaseline(input.archetype),
+    ...(input.gender !== undefined ? { gender: input.gender } : {}),
+    ...(input.appearanceSeed !== undefined ? { appearanceSeed: input.appearanceSeed } : {}),
   });
+  // 外貌/性别元数据随装备声明落 role.json（agent 读自己档案的同一份文件）。
+  await writeFile(
+    path.join(dir, '.weave', 'role.json'),
+    JSON.stringify(
+      {
+        skills: input.manifest?.skills ?? [],
+        mcp: input.manifest?.mcp ?? [],
+        plugins: input.manifest?.plugins ?? [],
+        gender: role.gender,
+        appearanceSeed: role.appearanceSeed,
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
   return {
     ok: true,
     role: {
@@ -191,6 +270,8 @@ export async function provisionRole(
       name,
       path: row.path,
       archetype: role.archetype,
+      gender: role.gender,
+      appearanceSeed: role.appearanceSeed,
       reused: false,
     },
   };
@@ -210,25 +291,51 @@ export interface ScaffoldCoordinatorResult {
   created: string[];
   /** 本次物化进 roles/ 的内置角色模板清单（幂等：已有目录跳过）。 */
   rolesSeeded: string[];
+  /** 本次物化进 .claude/skills/ 的出厂 skill 清单（幂等：已有文件跳过）。 */
+  skillsSeeded: string[];
   reused: boolean;
 }
 
+/** 出厂物化版本戳（`<dir>/.weave/scaffold-version`）：与 WEAVE_VERSION 不同
+ *  = weave 升级了，weave 出厂文件（人设/七型模板/skill/README）重写一遍；
+ *  用户自建的任何其他文件不碰。**写入 `initVersion` 键**（与 `weave init`
+ *  的 `.weave/config.yaml` 同字段）——版本滞后提醒（detectInitVersionLag）
+ *  读的就是这个口径，超级代理仓升级后能被同一张提醒网兜住。 */
+const SCAFFOLD_STAMP_FILE = 'scaffold-version';
+/** 兼容读：无 `initVersion` 键的旧 stamp 整行就是版本号（旧格式第一行 = 版本）。 */
+async function readStamp(dir: string): Promise<string | null> {
+  try {
+    const raw = (await readFile(path.join(dir, '.weave', SCAFFOLD_STAMP_FILE), 'utf-8')).trim();
+    const m = /^initVersion:\s*(\S+)$/m.exec(raw);
+    return m ? m[1]! : raw;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * 建「协调者项目」脚手架：目录骨架 + 团队/剧本目录就位。项目注册与建角色同一份
- * 仓储单点；协调者是 singleton（同根复用即 no-op）。root 缺省 = `<rolesRoot>/../
- * coordinator`（注入 rolesRoot 时随注入根走，测试/自定义根同构）。
+ * 建/刷新「超级代理项目」（原协调者仓，2026-11-11 用户裁决升格：上帝 =
+ * coordinator）：目录骨架 + 出厂文件物化 + 项目注册（superagent 置顶常驻）。
+ * singleton（同根复用即刷新）。
  *
- * 基础七型角色模板随脚手架物化进 `roles/`（每型一个子目录 = 一份角色插件声明，
- * 声明即模板——实例化 = provisionRole 消费它）。已有目录不覆盖（用户的）。
+ * 版本重物化（「功能随 weave 升版本更新」）：stamp 与当前 WEAVE_VERSION 不同
+ * → 出厂文件全部重写（roles/ 模板、MPU skill、CLAUDE.md 人设、README）；
+ * 相同版本走「已有不覆盖」幂等（用户改过的同名文件在版本不变时不被动）。
+ * root 缺省 = `<data>/superagent/weave`（getSuperagentRoot，2026-11-11 裁决：
+ * 不挂 rpg 域——weave 出厂项目，不是游戏资产）。
  */
 export async function scaffoldCoordinator(
   deps: ProvisionDeps,
   root?: string,
 ): Promise<ScaffoldCoordinatorResult> {
-  const dir = root ?? path.join(deps.rolesRoot ?? getRpgRolesRoot(), '..', 'coordinator');
+  const dir = root ?? getSuperagentRoot();
   const created: string[] = [];
   const rolesSeeded: string[] = [];
+  const skillsSeeded: string[] = [];
   const existing = deps.projects.getByPath(dir);
+  // 版本重物化判据：stamp 缺失（首装/旧库）或 ≠ 当前 weave 版本。
+  const stamp = await readStamp(dir);
+  const refresh = stamp !== WEAVE_VERSION;
   for (const sub of COORDINATOR_DIRS) {
     const target = path.join(dir, sub);
     try {
@@ -240,18 +347,18 @@ export async function scaffoldCoordinator(
   }
   for (const tpl of BUILTIN_ROLE_TEMPLATES) {
     const roleDir = path.join(dir, 'roles', tpl.id);
-    try {
-      await mkdir(roleDir, { recursive: true });
-    } catch {
-      continue;
-    }
     const manifestPath = path.join(roleDir, 'weave-plugin.json');
-    try {
-      await stat(manifestPath);
-      continue; // 已物化过：不覆盖
-    } catch {
-      /* 首次物化 */
+    const exists = (p: string) => stat(p).then(() => true, () => false);
+    // 目录被同名用户角色仓占住（2026-11-11 起角色仓与模板同层）：整条让位——
+    // 不 rm 也不写 manifest，两分支共用。
+    if (await exists(path.join(roleDir, '.weave'))) continue;
+    if (!refresh) {
+      if (await exists(manifestPath)) continue; // 已物化过：不覆盖
+    } else {
+      // 版本刷新：清掉旧模板目录重建（拿到这里的一定不是用户角色仓）。
+      await rm(roleDir, { recursive: true, force: true }).catch(() => {});
     }
+    await mkdir(roleDir, { recursive: true });
     await writeFile(
       manifestPath,
       JSON.stringify(
@@ -259,7 +366,7 @@ export async function scaffoldCoordinator(
           manifestVersion: 1,
           id: tpl.id,
           name: tpl.name,
-          version: '0.1.0',
+          version: WEAVE_VERSION,
           description: `内置角色插件：${tpl.name}（基础七型）`,
           [ROLE_MANIFEST_KEY]: tpl.role,
         },
@@ -270,39 +377,118 @@ export async function scaffoldCoordinator(
     );
     rolesSeeded.push(tpl.id);
   }
-  if (!existing) {
-    deps.projects.register({
-      path: dir,
-      name: 'coordinator',
-      token: generateToken(),
-      source: 'init',
-      hidden: true,
-    });
+  // MPU 三枚出厂 skill（G6：督导/破局/降级）物化进 .claude/skills/——协调者分身
+  // （本仓普通会话）即可用；与角色仓库形态同构，分身出征直接声明进 role.json
+  // 走 installKit。版本刷新时重写，版本不变时用户已有同名 = 跳过不覆盖。
+  for (const skill of COORDINATOR_SKILLS) {
+    const skillDir = path.join(dir, '.claude', 'skills', skill.name);
+    const skillFile = path.join(skillDir, 'SKILL.md');
+    if (!refresh) {
+      try {
+        await stat(skillFile);
+        continue; // 已物化或用户自有：不覆盖
+      } catch {
+        /* 首次物化 */
+      }
+    }
+    await rm(skillDir, { recursive: true, force: true }).catch(() => {});
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(skillFile, skill.body, 'utf-8');
+    skillsSeeded.push(skill.name);
+  }
+  // superagent 注册/升格：新注册走 hidden:false + superagent:true；存量行
+  // （旧库 hidden:1）由 register 的 MAX + markSuperagent 翻正——升格是幂等的。
+  const row = deps.projects.register({
+    path: dir,
+    name: 'weave',
+    token: generateToken(),
+    source: 'init',
+    superagent: true,
+  });
+  if (row.hidden || !row.superagent) deps.projects.markSuperagent(row.id);
+  // 存量行还顶着出厂名 coordinator（register 幂等不刷名字）：翻正成 weave——
+  // 用户已自己改过名的不动（出厂名才是 coordinator）。
+  if (row.name === 'coordinator') deps.projects.rename(row.id, 'weave');
+  // 出厂示例编排（记忆出口演示）：只在给了编排仓储时物化；同名即用户资产，
+  // 永不覆盖。**它只是演示记忆出口长什么样，不是写入落点**——记忆出口写的是
+  // 编排挂靠项目自己的记忆文件（2026-11-12 用户裁决：每项目各一份）。
+  if (deps.orchestrations) {
+    await ensureExampleOrchestration(deps.orchestrations, row.id).catch(() => {});
   }
   await ensureBuiltinMcp(dir, deps.mcpEndpoint).catch(() => {});
   await ensureMcpJsonIgnored(dir).catch(() => {});
-  try {
-    await writeFile(
-      path.join(dir, 'CLAUDE.md'),
-      COORDINATOR_PERSONA,
-      'utf-8',
-    );
-  } catch {
+  // 采集面：出厂仓不装 hooks 的话，里面起的会话对 weave 完全不可见（无
+  // SessionStart ⇒ 无会话行——用户在列表里找不到自己刚开的会话）。装法与
+  // `weave init` 同源（组形/命令表示法/脚本正文都出自 harness 单源）。
+  await ensureProjectCapture(dir).catch(() => {});
+  await writeFile(
+    path.join(dir, 'CLAUDE.md'),
+    COORDINATOR_PERSONA + handbookPersonaSection(getRpgHandbookRoot()),
+    'utf-8',
+  ).catch(() => {
     /* 写不进不挡脚手架 */
-  }
-  try {
-    await writeFile(
-      path.join(dir, 'README.md'),
-      '# 协调者仓库\n\nteams/ 团队声明 · roles/ 内置角色插件 · playbooks/ 任务剧本 · state/ 运行素材\n',
-      'utf-8',
-    );
-  } catch {
-    /* 已有 README 不覆盖 */
-  }
-  return { ok: true, path: projectKey(dir), created, rolesSeeded, reused: existing != null };
+  });
+  await writeFile(
+    path.join(dir, 'README.md'),
+    '# 超级代理仓库（上帝）\n\nteams/ 团队声明 · roles/ 内置角色插件 · playbooks/ 任务剧本 · state/ 运行素材\n',
+    'utf-8',
+  ).catch(() => {
+    /* 写不进不挡脚手架 */
+  });
+  await mkdir(path.join(dir, '.weave'), { recursive: true });
+  // hook-handler 靠 `.weave/token` 定位采集落点（缺它 = 事件全丢，会话不可见）
+  await writeFile(path.join(dir, '.weave', 'token'), `${row.token}\n`, 'utf-8').catch(
+    () => {
+      /* 写不进不挡脚手架 */
+    },
+  );
+  await writeFile(
+    path.join(dir, '.weave', SCAFFOLD_STAMP_FILE),
+    `initVersion: ${WEAVE_VERSION}\n`,
+    'utf-8',
+  ).catch(() => {
+    /* stamp 写不进：下次启动会再刷新一遍（重复物化无害） */
+  });
+  void existing; // 存量与否只影响 reused 报告；升格路径已由 register+mark 收敛
+  return { ok: true, path: projectKey(dir), created, rolesSeeded, skillsSeeded, reused: existing != null };
 }
 
 // ---- 从角色模板实例化（协调者「创建角色」动词的输入）----
+
+/** 出厂示例编排的名字（幂等键：同名即用户资产，永不覆盖）。 */
+const EXAMPLE_ORCH_NAME = '记忆出口示例';
+
+/**
+ * 超级代理仓的出厂示例编排：手动触发 → 记忆出口两节点的最小形状，入停用态
+ * （用户在画布上看见、复制或启用才跑）。演示「记忆出口节点长什么样」。
+ */
+async function ensureExampleOrchestration(
+  orchestrations: NonNullable<ProvisionDeps['orchestrations']>,
+  projectId: number,
+): Promise<void> {
+  const existing = orchestrations
+    .list()
+    .find((o) => o.projectId === projectId && o.name === EXAMPLE_ORCH_NAME);
+  if (existing) return;
+  orchestrations.insert({
+    name: EXAMPLE_ORCH_NAME,
+    projectId,
+    startText: '把要沉淀的结论写进手动触发的正文里',
+    nodes: [
+      { id: 't:memory-demo', kind: 'trigger' },
+      { id: 'm:project-verdicts', kind: 'memory' },
+    ],
+    edges: [
+      {
+        id: 'e1',
+        from: 't:memory-demo',
+        to: 'm:project-verdicts',
+        text: '沉淀为站立判决：{upstream}',
+      },
+    ],
+    enabled: false,
+  });
+}
 
 export type ProvisionFromTemplateResult = ProvisionRoleResult;
 

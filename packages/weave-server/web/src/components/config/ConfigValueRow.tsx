@@ -7,10 +7,12 @@ import {
   controlOf,
   defaultValueOf,
   emptyItemOf,
+  joinModelValue,
   linesOf,
   listOfLines,
   mapEntriesOf,
   shapeOf,
+  splitModelValue,
   textOf,
   valueOfText,
 } from '@/lib/config-form';
@@ -45,6 +47,7 @@ export function ConfigValueRow({
   value,
   managed,
   locked,
+  modelOptions,
   onChange,
 }: {
   spec: TreeNodeSpec;
@@ -55,6 +58,8 @@ export function ConfigValueRow({
   managed: boolean;
   /** 这个数组里 weave 自己写进去的条目：这几行只读，其余照常增删。 */
   locked?: readonly string[];
+  /** 已拉到的模型候选（`model` 键的下拉数据源；空 = 退化为可输入下拉）。 */
+  modelOptions?: readonly { id: string; name?: string }[];
   onChange: (edit: RowEdit) => void;
 }) {
   const t = useT();
@@ -116,6 +121,9 @@ export function ConfigValueRow({
       );
     }
     const control = controlOf(spec.type, spec.valueOptions ?? spec.options);
+    if (spec.key === 'model' && !managed) {
+      return <ModelControl value={value} modelOptions={modelOptions ?? []} onChange={onChange} />;
+    }
     if (control === 'switch') {
       return (
         <div className="pt-1">
@@ -663,6 +671,45 @@ function JsonField({ value, onCommit }: { value: unknown; onCommit: (next: unkno
         className={cn(INPUT_CLS, 'w-72 font-mono')}
       />
       {parsed.error === 'invalidJson' && <p className="mt-0.5 text-10 text-red-400">{t('cfg.invalidJson')}</p>}
+    </div>
+  );
+}
+
+/**
+ * model 键的控件：模型下拉（creatable，候选外手敲照旧）+ 尾部一枚 `[1m]` 组勾选
+ * （默认不勾，勾上即 `model[1m]`——1M context 变体写法），两控件并排成一个整体。
+ */
+function ModelControl({
+  value,
+  modelOptions,
+  onChange,
+}: {
+  value: unknown;
+  modelOptions: readonly { id: string; name?: string }[];
+  onChange: (edit: RowEdit) => void;
+}) {
+  const t = useT();
+  const { model, oneM } = splitModelValue(value);
+  const options: Array<{ value: string; label: string }> = modelOptions.map((m) => ({ value: m.id, label: m.name ?? m.id }));
+  if (model && !options.some((o) => o.value === model)) options.push({ value: model, label: model });
+  return (
+    <div className="flex items-center gap-1.5">
+      <Combobox
+        value={model}
+        options={options}
+        creatable
+        onChange={(next) => onChange({ value: joinModelValue(next, oneM) })}
+        className="w-40"
+      />
+      <label className="flex cursor-pointer select-none items-center gap-1" title={t('cfg.modelGroup')}>
+        <input
+          type="checkbox"
+          checked={oneM}
+          onChange={(e) => onChange({ value: joinModelValue(model, e.target.checked) })}
+          className="h-3 w-3 accent-[var(--w-mac-accent)]"
+        />
+        <span className="font-mono text-11 text-neutral-500">[1m]</span>
+      </label>
     </div>
   );
 }

@@ -5,11 +5,13 @@ import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from '../server.js';
 import { messagingSurfaceFor } from '../../surfaces.js';
 import { readBody, sendJson } from '../http.js';
+import { handleProjectInit } from './project-init.js';
 import { readDaemonSettings } from '../settings.js';
 import {
   closeTerminalsIn,
   defaultProjectOpener,
   readTerminalCounts,
+  readTerminalHidden,
   terminalBackendFor,
 } from '../opener.js';
 import { purgeProjectPipeline } from '../hook-pipeline.js';
@@ -19,10 +21,12 @@ import { scheduleBootstrapInjection } from '../session-open.js';
 import { getUploadsDir } from '../../db/paths.js';
 import { PENDING_WT_PREFIX, createSessionWorktree, upsertWorktreeEntry } from '../worktree.js';
 
-/** 项目存储配置（projects.meta.storage）：图片/文件各自的落盘目录，空 = 全局默认。 */
+/** 项目配置（projects.meta.storage）：存储目录 + 终端窗口行为。 */
 export interface ProjectStorage {
   images?: string | null;
   files?: string | null;
+  /** 打开/唤出终端窗口后是否顺手系统级隐藏（SW_HIDE）。缺省 false = 不隐藏。 */
+  hideWindow?: boolean;
 }
 
 /**
@@ -63,6 +67,27 @@ export async function handleProjectRoutes(
       } else {
         const settings = await readDaemonSettings();
         await opener.openTerminal(project.path, settings.terminal);
+        // 项目配置 hideWindow：开完顺手系统级隐藏（延迟一拍——窗要起来才藏得着）。
+        const hideWindow =
+          (deps.projects.getMeta(project.id) as { storage?: ProjectStorage } | null)?.storage
+            ?.hideWindow === true;
+        if (hideWindow) {
+          setTimeout(() => {
+            void (async () => {
+              try {
+                const list = opener.listTerminals ?? defaultProjectOpener.listTerminals!;
+                const targets = await list(project.path, settings.terminal);
+                const setVis =
+                  opener.setTerminalVisibility ?? defaultProjectOpener.setTerminalVisibility;
+                if (targets[0] && setVis) {
+                  await setVis(project.path, targets[0].id, 'hide', settings.terminal);
+                }
+              } catch {
+                // 尽力而为：藏不成就保持可见
+              }
+            })();
+          }, 2500);
+        }
         // 角标对账：新窗 pane 的 cwd 上报有一拍延迟，立即探也看不到增量——
         // 600ms 后对一次账（原先由前端 setTimeout 拉 GET，改服务端自对账）。
         setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
@@ -144,6 +169,66 @@ export async function handleProjectRoutes(
     } catch (e) {
       sendJson(res, 409, { error: e instanceof Error ? e.message : 'Cannot focus terminal' });
     }
+    return true;
+  }
+
+  // --- 系统级隐藏/恢复该项目的某个已开终端窗口（终端弹层的「隐藏/显示」切换）---
+  // SW_HIDE 比最小化深一级：任务栏与 Alt+Tab 都消失，weave 是唯一找回入口，故
+  // 切换响应里带**切换后实况可见性**（前端就地摆态）。项目不存在 404、targetId
+  // 缺失 400、preset 无通道/窗已不在 409 带原文。GET = 只查实况（拿不到 null）。
+  const visMatch = pathname.match(/^\/projects\/(\d+)\/terminal-visibility$/);
+  if (visMatch) {
+    const project = deps.projects.getById(Number(visMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    let body: { targetId?: unknown; visibility?: unknown } = {};
+    if (req.method === 'POST') {
+      try {
+        body = JSON.parse((await readBody(req)) || '{}') as typeof body;
+      } catch {
+        sendJson(res, 400, { error: 'Invalid JSON body' });
+        return true;
+      }
+      if (typeof body.targetId !== 'string' || !body.targetId) {
+        sendJson(res, 400, { error: 'targetId must be a non-empty string' });
+        return true;
+      }
+      if (body.visibility !== 'hide' && body.visibility !== 'show') {
+        sendJson(res, 400, { error: "visibility must be 'hide' or 'show'" });
+        return true;
+      }
+    } else if (req.method !== 'GET') {
+      return false;
+    }
+    const opener = deps.opener ?? defaultProjectOpener;
+    const settings = await readDaemonSettings();
+    if (req.method === 'POST') {
+      const setVis = opener.setTerminalVisibility ?? defaultProjectOpener.setTerminalVisibility;
+      if (!setVis) {
+        sendJson(res, 409, { error: 'Terminal preset has no window visibility channel' });
+        return true;
+      }
+      try {
+        const r = await setVis(project.path, body.targetId as string, body.visibility as 'hide' | 'show', settings.terminal);
+        // 窗口世界变了（可见性进角标的 hidden 半边）：踢一拍对账，别让前端等 30s 周期。
+        setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+        sendJson(res, 200, { ok: true, ...r });
+      } catch (e) {
+        sendJson(res, 409, { error: e instanceof Error ? e.message : 'Cannot change window visibility' });
+      }
+      return true;
+    }
+    // GET：targetId 走 query（GET 不带 body）
+    const targetId = new URL(req.url ?? '', 'http://x').searchParams.get('targetId');
+    if (!targetId) {
+      sendJson(res, 400, { error: 'targetId query param is required' });
+      return true;
+    }
+    const getVis = opener.terminalVisibility ?? defaultProjectOpener.terminalVisibility;
+    const visibility = getVis ? await getVis(project.path, targetId, settings.terminal) : null;
+    sendJson(res, 200, { visibility });
     return true;
   }
 
@@ -265,6 +350,13 @@ export async function handleProjectRoutes(
     return true;
   }
 
+  // POST /projects/:id/init — dashboard 触发重跑 `weave init`（子进程跑 CLI，
+  // 隔离 CLI 的 process.exit；实现归 project-init.ts 一处）。
+  const initMatch = pathname.match(/^\/projects\/(\d+)\/init$/);
+  if (initMatch && req.method === 'POST') {
+    return handleProjectInit(req, res, Number(initMatch[1]), deps);
+  }
+
   // GET /projects/archived — 归档面数据（仅基础信息；历史会话已在归档时清空）。
   if (pathname === '/projects/archived' && req.method === 'GET') {
     sendJson(res, 200, {
@@ -283,6 +375,12 @@ export async function handleProjectRoutes(
     const project = deps.projects.getById(Number(archiveMatch[1]));
     if (!project) {
       sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    // 超级代理项目（上帝 = coordinator）不可归档（2026-11-11 用户裁决）：
+    // 功能随 weave 版本更新，归档会焚毁会话与消费面。
+    if (project.superagent) {
+      sendJson(res, 409, { error: 'Superagent project cannot be archived' });
       return true;
     }
     if (project.archivedAt) {
@@ -381,7 +479,8 @@ export async function handleProjectRoutes(
 
   // GET /projects/:id/terminals — 会话终端「选哪个终端」弹窗的数据面：
   // 按最近活跃排序的可附加目标（窗口内的 tab）。枚举能力归后端——非 enumerable
-  // 的 preset 无枚举通道 → 空表。
+  // 的 preset 无枚举通道 → 空表。`?all=1`（opt-in）：别的项目的 tab 也进候选
+  // （跨项目分屏落点用），本项目的照旧排前。
   const terminalsMatch = pathname.match(/^\/projects\/(\d+)\/terminals$/);
   if (terminalsMatch && req.method === 'GET') {
     const project = deps.projects.getById(Number(terminalsMatch[1]));
@@ -391,8 +490,9 @@ export async function handleProjectRoutes(
     }
     const settings = await readDaemonSettings();
     const list = deps.opener?.listTerminals ?? defaultProjectOpener.listTerminals!;
+    const includeForeign = new URL(req.url ?? '', 'http://x').searchParams.get('all') === '1';
     const terminals = terminalBackendFor(settings.terminal).enumerable
-      ? await list(project.path, settings.terminal)
+      ? await list(project.path, settings.terminal, includeForeign)
       : [];
     sendJson(res, 200, { projectId: project.id, terminals });
     return true;
@@ -406,19 +506,97 @@ export async function handleProjectRoutes(
   // 不需要再打这枪。未接刷新器（测试注入缝）才现探。
   if (pathname === '/terminals/counts' && req.method === 'GET') {
     if (deps.terminalRefresher) {
-      sendJson(res, 200, { counts: deps.terminalRefresher.lastSnapshot?.counts ?? {} });
+      sendJson(res, 200, {
+        counts: deps.terminalRefresher.lastSnapshot?.counts ?? {},
+        hidden: deps.terminalRefresher.lastSnapshot?.hidden ?? {},
+      });
       void deps.terminalRefresher.tick(true);
     } else {
       const opener = deps.opener ?? defaultProjectOpener;
-      sendJson(res, 200, { counts: await readTerminalCounts(deps.projects.list(), opener) });
+      sendJson(res, 200, {
+        counts: await readTerminalCounts(deps.projects.list(), opener),
+        hidden: await readTerminalHidden(deps.projects.list(), opener),
+      });
     }
     return true;
   }
 
-  // --- 项目存储路径（对话附件的图片/文件落盘目录）---
+  // GET /terminals/visibility — 全部已开终端窗的实况可见性计数（桌宠菜单胶囊）：
+  // 合并面枚举目标后逐个查实况；探不到的目标不进计数。
+  if (pathname === '/terminals/visibility' && req.method === 'GET') {
+    const opener = deps.opener ?? defaultProjectOpener;
+    const settings = await readDaemonSettings();
+    const list = opener.listTerminals ?? defaultProjectOpener.listTerminals!;
+    const getVis = opener.terminalVisibility ?? defaultProjectOpener.terminalVisibility!;
+    let visible = 0;
+    let hidden = 0;
+    const seen = new Set<string>();
+    for (const project of deps.projects.list()) {
+      try {
+        for (const t of await list(project.path, settings.terminal)) {
+          if (seen.has(t.id)) continue;
+          seen.add(t.id);
+          const v = await getVis(project.path, t.id, settings.terminal);
+          if (v === 'visible') visible += 1;
+          else if (v === 'hidden') hidden += 1;
+        }
+      } catch {
+        // 单项目枚举失败隔离：计数照常回
+      }
+    }
+    sendJson(res, 200, { visible, hidden });
+    return true;
+  }
+
+  // POST /terminals/visibility — 批量显隐全部已开终端窗（桌宠右键菜单）：逐项目
+  // 枚举可附加目标（合并面 = 全部有显隐通道的后端各列各的）后逐个 setVis；单项目
+  // 枚举/切换失败隔离计入 failed，不拖垮其余。无显隐通道的后端逐项目静默跳过。
+  if (pathname === '/terminals/visibility' && req.method === 'POST') {
+    let body: { visibility?: unknown };
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (body.visibility !== 'hide' && body.visibility !== 'show') {
+      sendJson(res, 400, { error: "visibility must be 'hide' or 'show'" });
+      return true;
+    }
+    const opener = deps.opener ?? defaultProjectOpener;
+    const settings = await readDaemonSettings();
+    const list = opener.listTerminals ?? defaultProjectOpener.listTerminals!;
+    const setVis = opener.setTerminalVisibility ?? defaultProjectOpener.setTerminalVisibility;
+    if (!setVis) {
+      sendJson(res, 409, { error: 'Terminal preset has no window visibility channel' });
+      return true;
+    }
+    let changed = 0;
+    const failed: string[] = [];
+    const seen = new Set<string>();
+    for (const project of deps.projects.list()) {
+      try {
+        const targets = await list(project.path, settings.terminal);
+        for (const t of targets) {
+          if (seen.has(t.id)) continue;
+          seen.add(t.id);
+          await setVis(project.path, t.id, body.visibility as 'hide' | 'show', settings.terminal);
+          changed += 1;
+        }
+      } catch {
+        failed.push(project.path);
+      }
+    }
+    setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+    sendJson(res, 200, { ok: true, changed, failed });
+    return true;
+  }
+
+  // --- 项目配置（存储路径 + 终端窗口行为）---
   // GET：回配置 + 生效目录（自定义 ?? 全局默认）。PUT：校验绝对路径 + mkdirSync
   // 试写（写不进的目录当场拒，不留一个存了也落不了盘的配置）；空串 = 清回全局默认。
-  // 存量文件留原处（uploads 行记 dir），新上传走新路径，零迁移。
+  // 存量文件留原处（uploads 行记 dir），新上传走新路径，零迁移。hideWindow =
+  // 打开/唤出终端窗口后顺手系统级隐藏（缺省 false）。
   const storageMatch = pathname.match(/^\/projects\/(\d+)\/storage$/);
   if (storageMatch) {
     const project = deps.projects.getById(Number(storageMatch[1]));
@@ -440,14 +618,20 @@ export async function handleProjectRoutes(
       return true;
     }
     if (req.method === 'PUT') {
-      let body: { images?: unknown; files?: unknown };
+      let body: { images?: unknown; files?: unknown; hideWindow?: unknown };
       try {
-        body = JSON.parse(await readBody(req)) as { images?: unknown; files?: unknown };
+        body = JSON.parse(await readBody(req)) as { images?: unknown; files?: unknown; hideWindow?: unknown };
       } catch {
         sendJson(res, 400, { error: 'Invalid JSON body' });
         return true;
       }
-      const next: ProjectStorage = {};
+      if (body.hideWindow !== undefined && typeof body.hideWindow !== 'boolean') {
+        sendJson(res, 400, { error: '"hideWindow" must be a boolean' });
+        return true;
+      }
+      const next: ProjectStorage = {
+        ...(body.hideWindow !== undefined ? { hideWindow: body.hideWindow } : {}),
+      };
       for (const key of ['images', 'files'] as const) {
         const raw = body[key];
         if (raw === undefined || raw === null || raw === '') {

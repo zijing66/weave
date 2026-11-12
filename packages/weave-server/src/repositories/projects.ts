@@ -14,8 +14,11 @@ export interface ProjectRow {
   sortOrder: number | null;
   /** 归档时间（NULL = 活跃）。归档项目不参与 server 任何消费面，仅保留基础信息待恢复。 */
   archivedAt: string | null;
-  /** 内建仓库标记（RPG 角色仓/协调者仓）：GET /projects 原样返回，过滤只在 web 消费点。 */
+  /** 内建仓库标记（RPG 角色仓）：GET /projects 原样返回，过滤只在 web 消费点。 */
   hidden: boolean;
+  /** 超级代理项目标记（上帝 = coordinator 仓，2026-11-11 用户裁决）：置顶常驻、
+   *  禁归档/禁拖离首行，功能随 weave 版本更新（daemon 启动重物化 weave 出厂文件）。 */
+  superagent: boolean;
 }
 
 export interface RegisterProjectInput {
@@ -23,8 +26,10 @@ export interface RegisterProjectInput {
   name: string;
   token: string;
   source: 'init' | 'scan';
-  /** 起源头标记内建仓库（provisionRole / scaffoldCoordinator 传 true）。 */
+  /** 起源头标记内建仓库（provisionRole 传 true）。 */
   hidden?: boolean;
+  /** 起源头标记超级代理项目（scaffoldCoordinator 传 true）。 */
+  superagent?: boolean;
 }
 
 /**
@@ -50,17 +55,21 @@ export class ProjectRepository {
     const key = projectKey(input.path);
     this.db
       .prepare(
-        `INSERT INTO projects (path, name, token, source, registered_at, last_seen_at, hidden)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(path) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+        `INSERT INTO projects (path, name, token, source, registered_at, last_seen_at, hidden, superagent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(path) DO UPDATE SET last_seen_at = excluded.last_seen_at, superagent = MAX(superagent, excluded.superagent)`,
       )
-      .run(key, input.name, input.token, input.source, now, now, input.hidden ? 1 : 0);
+      .run(key, input.name, input.token, input.source, now, now, input.hidden ? 1 : 0, input.superagent ? 1 : 0);
     return this.getByPath(key)!;
   }
 
   getByPath(path: string): ProjectRow | undefined {
     const row = this.db.prepare('SELECT * FROM projects WHERE path = ?').get(projectKey(path));
     return row ? toProject(row) : undefined;
+  }
+
+  rename(id: number, name: string): void {
+    this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(name, id);
   }
 
   getByToken(token: string): ProjectRow | undefined {
@@ -76,13 +85,14 @@ export class ProjectRepository {
   /**
    * 活跃项目（归档排除）。这是所有消费面（watch/mirror/inbox 存活集/同步/
    * 终端角标等）的统一口径——归档项目由 `listArchived()` 单独供「查看归档」面。
-   * 排序口径：手动序块在前（sort_order 升序），未手动排序的按注册时间倒序
-   * 垫尾——拖过的顺序权威，新注册项目照旧冒头在尾部可见位置。
+   * 排序口径：超级代理项目恒置顶（1 行）；其后手动序块在前（sort_order 升序），
+   * 未手动排序的按注册时间倒序垫尾——拖过的顺序权威，新注册项目照旧冒头在
+   * 尾部可见位置。
    */
   list(): ProjectRow[] {
     return this.db
       .prepare(
-        'SELECT * FROM projects WHERE archived_at IS NULL ORDER BY sort_order IS NULL, sort_order ASC, registered_at DESC',
+        'SELECT * FROM projects WHERE archived_at IS NULL ORDER BY superagent DESC, sort_order IS NULL, sort_order ASC, registered_at DESC',
       )
       .all()
       .map((row) => toProject(row));
@@ -100,12 +110,13 @@ export class ProjectRepository {
    * dashboard 拖动排序的持久化：payload 即完整目标顺序（id 全量列表）。
    * 幂等自愈——事务内先全清再按位写入，重复同一 payload 落同一状态；
    * 未知 id（并发删除）静默跳过，缺席的 id 回到未排序块。
+   * 超级代理项目不参与（list 恒置顶，写 sort_order 也没意义）。
    */
   setOrder(ids: number[]): void {
     this.db.exec('BEGIN IMMEDIATE'); // deferred 升级写锁时 busy_timeout 不重试，见 settings.ts writeMap
     try {
-      this.db.exec('UPDATE projects SET sort_order = NULL');
-      const stmt = this.db.prepare('UPDATE projects SET sort_order = ? WHERE id = ?');
+      this.db.exec("UPDATE projects SET sort_order = NULL WHERE superagent = 0");
+      const stmt = this.db.prepare('UPDATE projects SET sort_order = ? WHERE id = ? AND superagent = 0');
       ids.forEach((id, pos) => {
         stmt.run(pos, id);
       });
@@ -130,14 +141,30 @@ export class ProjectRepository {
   /**
    * 归档/恢复翻转。归档：置 archived_at、清 sort_order（退出活跃排序局，
    * 恢复后垫在未排序块尾部）。恢复：置 NULL，归档期间各消费面按活跃口径自然回归。
-   * 行不存在返回 false。
+   * 超级代理项目拒归档（throw，路由层转 409）——它的功能随 weave 版本更新，
+   * 归档会焚毁会话与仓库消费面。行不存在返回 false。
    */
   setArchived(id: number, archived: boolean): boolean {
+    if (archived) {
+      const row = this.db.prepare('SELECT superagent FROM projects WHERE id = ?').get(id) as
+        | { superagent?: number }
+        | undefined;
+      if (row && row.superagent === 1) {
+        throw new Error('superagent project cannot be archived');
+      }
+    }
     const result = archived
       ? this.db
           .prepare('UPDATE projects SET archived_at = ?, sort_order = NULL WHERE id = ?')
           .run(new Date().toISOString(), id)
       : this.db.prepare('UPDATE projects SET archived_at = NULL WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  /** 存量库升格：把已注册的 coordinator 项目翻成 superagent（幂等；daemon
+   *  启动 ensureSuperagent 调）。返回是否发生翻转。 */
+  markSuperagent(id: number): boolean {
+    const result = this.db.prepare('UPDATE projects SET superagent = 1, hidden = 0 WHERE id = ?').run(id);
     return result.changes > 0;
   }
 
@@ -177,5 +204,6 @@ function toProject(row: Record<string, unknown>): ProjectRow {
     sortOrder: row.sort_order == null ? null : Number(row.sort_order),
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
     hidden: row.hidden === 1,
+    superagent: row.superagent === 1,
   };
 }

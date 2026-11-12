@@ -27,8 +27,8 @@ describe('ProjectUpdatesRefresher', () => {
     const bus = new DataBus();
     const frames = collect(bus);
     let counts: Record<number, ProjectUpdateSummary> = {
-      1: { available: 0, needsInit: false },
-      2: { available: 1, needsInit: true },
+      1: { available: 0, needsInit: false, initVersionBehind: false },
+      2: { available: 1, needsInit: true, initVersionBehind: false },
     };
     const refresher = new ProjectUpdatesRefresher(
       async () => ({ ...counts }),
@@ -40,15 +40,15 @@ describe('ProjectUpdatesRefresher', () => {
     await refresher.refreshNow();
     expect(frames).toHaveLength(1); // 首次推，同值第二次不推
 
-    counts = { 1: { available: 0, needsInit: false }, 2: { available: 0, needsInit: false } };
+    counts = { 1: { available: 0, needsInit: false, initVersionBehind: false }, 2: { available: 0, needsInit: false, initVersionBehind: false } };
     await refresher.refreshNow();
     expect(frames).toHaveLength(2);
     expect(frames[1]).toEqual({
       key: 'updates',
       payload: {
         counts: {
-          1: { available: 0, needsInit: false },
-          2: { available: 0, needsInit: false },
+          1: { available: 0, needsInit: false, initVersionBehind: false },
+          2: { available: 0, needsInit: false, initVersionBehind: false },
         },
       },
     });
@@ -56,7 +56,7 @@ describe('ProjectUpdatesRefresher', () => {
 
   it('没人看时不重算；refreshNow(true)（同步落地）穿透', async () => {
     const bus = new DataBus();
-    const snapshot = vi.fn(async () => ({ 1: { available: 1, needsInit: false } }));
+    const snapshot = vi.fn(async () => ({ 1: { available: 1, needsInit: false, initVersionBehind: false } }));
     const refresher = new ProjectUpdatesRefresher(snapshot, bus, new HookEventBus(), () => false);
 
     await refresher.refreshNow();
@@ -70,7 +70,7 @@ describe('ProjectUpdatesRefresher', () => {
     const bus = new DataBus();
     const hookBus = new HookEventBus();
     const frames = collect(bus);
-    const snapshot = vi.fn(async () => ({ 1: { available: 2, needsInit: true } }));
+    const snapshot = vi.fn(async () => ({ 1: { available: 2, needsInit: true, initVersionBehind: false } }));
     new ProjectUpdatesRefresher(snapshot, bus, hookBus);
 
     expect(snapshot).not.toHaveBeenCalled();
@@ -78,7 +78,7 @@ describe('ProjectUpdatesRefresher', () => {
     await vi.waitFor(() => expect(frames).toHaveLength(1));
     expect(frames[0]).toEqual({
       key: 'updates',
-      payload: { counts: { 1: { available: 2, needsInit: true } } },
+      payload: { counts: { 1: { available: 2, needsInit: true, initVersionBehind: false } } },
     });
     expect(snapshot).toHaveBeenCalledTimes(1);
   });
@@ -86,7 +86,7 @@ describe('ProjectUpdatesRefresher', () => {
   it('新客户端接入：先补上次快照帧（值没变也补），再后台对账推差量', async () => {
     const bus = new DataBus();
     const frames = collect(bus);
-    let counts: Record<number, ProjectUpdateSummary> = { 1: { available: 0, needsInit: false } };
+    let counts: Record<number, ProjectUpdateSummary> = { 1: { available: 0, needsInit: false, initVersionBehind: false } };
     const refresher = new ProjectUpdatesRefresher(
       async () => ({ ...counts }),
       bus,
@@ -97,19 +97,19 @@ describe('ProjectUpdatesRefresher', () => {
     await vi.waitFor(() => expect(frames).toHaveLength(1));
     expect(frames[0]).toEqual({
       key: 'updates',
-      payload: { counts: { 1: { available: 0, needsInit: false } } },
+      payload: { counts: { 1: { available: 0, needsInit: false, initVersionBehind: false } } },
     });
 
-    counts = { 1: { available: 2, needsInit: false } };
+    counts = { 1: { available: 2, needsInit: false, initVersionBehind: false } };
     refresher.onSubscriberJoin(); // 已有快照：无条件补帧（旧值）+ 后台对账推差量
     await vi.waitFor(() => expect(frames).toHaveLength(3));
     expect(frames[1]).toEqual({
       key: 'updates',
-      payload: { counts: { 1: { available: 0, needsInit: false } } },
+      payload: { counts: { 1: { available: 0, needsInit: false, initVersionBehind: false } } },
     });
     expect(frames[2]).toEqual({
       key: 'updates',
-      payload: { counts: { 1: { available: 2, needsInit: false } } },
+      payload: { counts: { 1: { available: 2, needsInit: false, initVersionBehind: false } } },
     });
   });
 
@@ -120,7 +120,7 @@ describe('ProjectUpdatesRefresher', () => {
     let broken = false;
     const snapshot = vi.fn(async () => {
       if (broken) throw new Error('读盘失败');
-      return { 1: { available: 3, needsInit: false } };
+      return { 1: { available: 3, needsInit: false, initVersionBehind: false } };
     });
     new ProjectUpdatesRefresher(snapshot, bus, hookBus);
 
@@ -142,7 +142,7 @@ describe('ProjectUpdatesRefresher', () => {
     });
     const snapshot = vi.fn(async () => {
       await gate;
-      return { 1: { available: 1, needsInit: false } };
+      return { 1: { available: 1, needsInit: false, initVersionBehind: false } };
     });
     const refresher = new ProjectUpdatesRefresher(snapshot, bus, new HookEventBus());
 

@@ -9,9 +9,12 @@
  */
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { openDatabase } from '../db/db.js';
+import { BackupEngine } from './backup.js';
+import { startBackupScheduler } from './backup-scheduler.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { LibraryRepository } from '../repositories/libraries.js';
@@ -21,7 +24,7 @@ import { PluginStateRepository } from '../repositories/plugin-states.js';
 import { SessionRepository } from '../repositories/sessions.js';
 import { createRuntimeRegistry } from '@weavecode/harness';
 import { TERMINAL_LOCATOR_ENV_KEYS, isHarness } from '@weavecode/core';
-import { messagingSurfaceFor, narrationSurfaceFor } from '../surfaces.js';
+import { memorySinkFor, messagingSurfaceFor, narrationSurfaceFor } from '../surfaces.js';
 import { syntheticSessionIds } from '../hooks/synthetic-sessions.js';
 import { createEdgeExtract } from '../hooks/edge-extract.js';
 import { HookRuleRegistry } from '../hooks/registry.js';
@@ -53,7 +56,8 @@ import {
   ExtensionBindingRepository,
   ExtensionExecutionRepository,
 } from '../repositories/extension-bindings.js';
-import { createDecisionConditionJudge } from '../hooks/decision-judge.js';
+import { createDecisionConditionJudge, createDecisionModelTier } from '../hooks/decision-judge.js';
+import { createMemoryExit } from '../hooks/memory-exit.js';
 import { readDecisionKey } from './decision-config.js';
 import { createEnsureOpen } from './session-open.js';
 import { loadAllPlugins, type PluginManager } from '../hooks/plugin-loader.js';
@@ -61,7 +65,7 @@ import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
-import { startWorktreeMergeSweeper } from './worktree.js';
+import { defaultWorktreeGitExec, startWorktreeMergeSweeper, type SessionWorktreeEntry } from './worktree.js';
 import { hooksRoot } from '../hooks/mirror.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -78,7 +82,7 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { detectProjectUpdateCounts } from '../install/updates.js';
 import { pidAliveOf } from './claude-liveness.js';
 import { combinedLivenessOf } from './liveness.js';
-import { promptTerminalChannel, readTerminalCounts } from './opener.js';
+import { promptTerminalChannel, readTerminalCounts, readTerminalHidden } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
@@ -93,11 +97,18 @@ import {
   RpgScoreRepository,
   RpgHexagramRepository,
 } from '../rpg/roles.js';
+import { scaffoldCoordinator } from '../rpg/provisioning.js';
 import { RpgAchievementRepository, RpgXpRepository } from '../rpg/progress-store.js';
 import { RpgExpeditionRepository } from '../rpg/expedition-repo.js';
+import { RpgGoalRepository } from '../rpg/goals.js';
+import { RpgGoalEngine } from '../rpg/goal-engine.js';
+import { RpgProfileRepository } from '../rpg/profile.js';
+import { RpgRoutingDecisionRepository } from '../rpg/routing.js';
+import { MergeLadderRepository } from '../rpg/merge-ladder.js';
+import { mergeSessionWorktreeViaLadder, rebindExpeditionOnClaim } from '../rpg/expedition-session.js';
 import { RpgInvitationRepository } from '../rpg/invitations.js';
 import { PeerRepository } from '../repositories/peers.js';
-import { getPeerTokensDir, getCertsDir } from '../db/paths.js';
+import { getPeerTokensDir, getCertsDir, getDataRoot } from '../db/paths.js';
 import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
 import { certFingerprint } from './federation.js';
 import { startFederationHeartbeat, type FederationHeartbeat } from './federation-heartbeat.js';
@@ -286,6 +297,10 @@ async function main(): Promise<void> {
   // RPG 域（RPG-1：与 start.ts 同装配）：角色/成长两行挂上即「已装」——dev 入口
   // 此前漏挂 → /rpg/* 在 dev 下恒 503（游戏视图停在「…」）。
   const rpgRoles = new RpgRoleRepository(db);
+  // 超级代理项目物化（与 start.ts 同装配）：daemon 启动即建/刷新，失败不拦。
+  void scaffoldCoordinator({ projects, roles: rpgRoles, orchestrations }).catch((err) => {
+    console.error('[weave] superagent scaffold failed:', err instanceof Error ? err.message : err);
+  });
   const rpgGrowth = new RpgGrowthRepository(db);
   const rpgScores = new RpgScoreRepository(db);
   const rpgHexagram = new RpgHexagramRepository(db);
@@ -370,6 +385,7 @@ async function main(): Promise<void> {
   const terminalRefresher = new TerminalTopologyRefresher(
     async () => ({
       counts: await readTerminalCounts(projects.list()),
+      hidden: await readTerminalHidden(projects.list()),
       terminals: await messageDeliverer.sessionTerminals(),
     }),
     dataBus,
@@ -507,19 +523,22 @@ async function main(): Promise<void> {
     headless: headlessRunner,
     onSyntheticChange: () => hookPipelineRef?.pushSyntheticSessions(syntheticSessionIds()),
   });
-  // 条件边判断链（与 start.ts 同装配）：决策模型优先、fork 回落。
+  // 条件边判断链（与 start.ts 同装配）：决策模型优先、fork 回落。编排引擎的
+  // 判提合一批量档走裸通道（降级裁决收口在决策内核）。
+  const readDecisionConfig = async () => {
+    const decision = readDaemonSettingsSync().decision;
+    if (!decision?.baseUrl || !decision.model) return null;
+    const apiKey = readDecisionKey();
+    return apiKey ? { baseUrl: decision.baseUrl, model: decision.model, apiKey } : null;
+  };
   const conditionJudge = createDecisionConditionJudge({
-    config: async () => {
-      const decision = readDaemonSettingsSync().decision;
-      if (!decision?.baseUrl || !decision.model) return null;
-      const apiKey = readDecisionKey();
-      return apiKey ? { baseUrl: decision.baseUrl, model: decision.model, apiKey } : null;
-    },
+    config: readDecisionConfig,
     fallback: createForkConditionJudge({
       supports: (sessionId) => edgeExtract.supports(sessionId),
       extract: (input) => edgeExtract.run(input),
     }),
   });
+  const decisionModel = createDecisionModelTier({ config: readDecisionConfig });
   // 邀请选角内核（F2，与 start.ts 同装配）：决策模型优先 + fork 回落。
   const rpgCastKernel = createDecisionKernel({
     conditionJudge,
@@ -548,7 +567,9 @@ async function main(): Promise<void> {
     bus: hookBus,
     supportsExtract: (sessionId) => edgeExtract.supports(sessionId),
     extract: (input) => edgeExtract.run(input),
-    conditionJudge,
+    decisionModel,
+    // 记忆出口写盘面（与 start.ts 同装配）：判决落进编排项目自己的记忆文件。
+    deliverVerdict: createMemoryExit({ projects, sinkFor: memorySinkFor }).deliverVerdict,
     // 人在场闸（与 start.ts 同口径）：目标闲着且用户刚在看 → defer 搭车。
     deferWhenUserPresent: true,
     ensureOpen,
@@ -557,6 +578,20 @@ async function main(): Promise<void> {
   orchestrationEngine.rearm();
   const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
   cronTimer.unref();
+  // goal 驱动循环（G6 批4b，与 start.ts 同装配）：回合账归 ingest 落库，节拍 30s。
+  const rpgGoalEngine = new RpgGoalEngine({
+    goals: new RpgGoalRepository(db),
+    roles: rpgRoles,
+    expeditions: new RpgExpeditionRepository(db),
+    routing: new RpgRoutingDecisionRepository(db),
+    deliverer: messageDeliverer,
+    projects,
+    sessions: hookSessions,
+    livenessOf: combinedLivenessOf,
+    profile: new RpgProfileRepository(db),
+  });
+  const goalTimer = setInterval(() => rpgGoalEngine.tick(), 30_000);
+  goalTimer.unref();
   // 会话扩展点引擎（与 start.ts 同装配）：turn-end/idle 两点 × session/webhook 两端点。
   const extensionBindings = new ExtensionBindingRepository(db);
   const extensionExecutions = new ExtensionExecutionRepository(db);
@@ -609,6 +644,14 @@ async function main(): Promise<void> {
   // statusline 渲染缓存（与生产入口同一装配点）：helper 是短命进程，缓存没人管
   // 就会只增不减（旧版散在系统临时目录，实测两天 1151 个文件）。
   startStatuslineCacheSweeper();
+  // B5 并回走合并梯（G6 前置小批，与生产入口同一装配）：临时 merge worktree 里
+  // 跑梯 + 主干普通 merge。sweeper 与冲突重试路由共用同一实现。
+  const worktreeMergeViaLadder = (projectPath: string, entry: SessionWorktreeEntry) =>
+    mergeSessionWorktreeViaLadder(
+      { exec: defaultWorktreeGitExec, ladder: new MergeLadderRepository(db) },
+      projectPath,
+      entry,
+    );
   // 会话 worktree 并回扫描（B5 最小切片，与生产入口同一装配）：退出事件落库后
   // 15s 内把分支并回主干；重启恢复同一条路（登记在 cache，第一拍接上）。
   startWorktreeMergeSweeper({
@@ -621,8 +664,15 @@ async function main(): Promise<void> {
     hooksDir: hooksRoot(),
     onChange: () => dataBus.emit({ key: 'sessions' }),
     // 出征账本同一拍改绑（G3）：占位键 → 真实会话 id（rpg_expeditions.session_key）。
+    // 命名铁则（G6）：认领这一拍把出征的 [weave] 身份牌落到会话行（见
+    // rebindExpeditionOnClaim——只写这一拍，手动改名在后、weave 不再覆盖）。
     onClaim: (pendingKey, sessionId) =>
-      new RpgExpeditionRepository(db).rebindSessionKey(pendingKey, sessionId),
+      rebindExpeditionOnClaim(
+        { expeditions: new RpgExpeditionRepository(db), sessions: hookSessions },
+        pendingKey,
+        sessionId,
+      ),
+    mergeViaLadder: worktreeMergeViaLadder,
   });
   // hook 文件管道（mirror 镜像 + inbox 消费线程）：与 start.ts 共用同一装配
   const hookPipeline = wireHookFilePipeline({
@@ -643,6 +693,7 @@ async function main(): Promise<void> {
       },
     },
     extensionEngine,
+    goalEngine: rpgGoalEngine,
     sessionProbe,
     uploads,
     dashboardRate,
@@ -652,6 +703,20 @@ async function main(): Promise<void> {
   const staticDir = resolveStaticDir();
   // shutdown 定义在下方（要等各子系统都建好）：路由经这个容器拿到它
   const shutdownRef: { fn?: () => void } = {};
+
+  // 每日自动备份（配置面）：引擎 + 每分钟一看的调度（settings backup 段）。
+  const backupEngine = new BackupEngine({ db });
+  startBackupScheduler({
+    engine: backupEngine,
+    config: () => readDaemonSettingsSync().backup ?? { enabled: true, hour: 1, includeHistory: false },
+    hasBackupToday: async () => {
+      const names = await readdir(path.join(getDataRoot(), 'backups')).catch(() => [] as string[]);
+      const today = new Date();
+      const p = (n: number) => String(n).padStart(2, '0');
+      const prefix = `weave-backup-${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())}-`;
+      return names.some((n) => n.startsWith(prefix));
+    },
+  });
 
   // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
   const requestHandler = weaveRequestHandler({
@@ -680,6 +745,7 @@ async function main(): Promise<void> {
     hookRunner,
     messageDeliverer,
     ensureOpen,
+    mergeViaLadder: worktreeMergeViaLadder,
     terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
     uploads,
     questionTracker,
@@ -690,6 +756,7 @@ async function main(): Promise<void> {
     orchestrations,
     orchestrationRuns,
     orchestrationEngine,
+    conditionJudge,
     extensionBindings,
     extensionExecutions,
     extensionEngine,
@@ -716,6 +783,7 @@ async function main(): Promise<void> {
     pluginStates: new PluginStateRepository(db),
     dashboardRate,
     toolkit,
+    backupEngine,
     auth,
     requestShutdown: () => shutdownRef.fn?.(),
   });
@@ -755,6 +823,7 @@ async function main(): Promise<void> {
     // 在飞子进程（中继 / headless 回合）随 daemon 一起收：不留孤儿占资源
     headlessRunner.killAll();
     clearInterval(cronTimer);
+    clearInterval(goalTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
     mdnsAdvertiser?.stop();

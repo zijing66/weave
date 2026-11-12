@@ -7,6 +7,7 @@ import {
   defaultValueOf,
   emptyItemOf,
   fieldValueOf,
+  joinModelValue,
   itemObjectOf,
   linesOf,
   listOfLines,
@@ -15,6 +16,7 @@ import {
   matchesQuery,
   pruneTree,
   shapeOf,
+  splitModelValue,
   textOf,
   treeHasValue,
   valueAt,
@@ -145,5 +147,20 @@ describe('配置表单纯函数', () => {
     // 自由对象（无 shape/fields）维持空串，行为不变
     const free = { key: 'hooks', type: 'object', group: 'G', description: '' };
     expect(emptyItemOf(free)).toBe('');
+  });
+
+  it('模型值拆组：尾部 [1m] 剥成组勾选，往返组合还原', () => {
+    expect(splitModelValue('sonnet[1m]')).toEqual({ model: 'sonnet', oneM: true });
+    expect(splitModelValue('Sonnet-Model[1M]')).toEqual({ model: 'Sonnet-Model', oneM: true });
+    expect(splitModelValue('opus')).toEqual({ model: 'opus', oneM: false });
+    expect(splitModelValue('')).toEqual({ model: '', oneM: false });
+    expect(splitModelValue(undefined)).toEqual({ model: '', oneM: false });
+    // 保守拆法：只认尾部一对括号，中间的方括号留给模型名
+    expect(splitModelValue('a[b]c')).toEqual({ model: 'a[b]c', oneM: false });
+    expect(joinModelValue('sonnet', true)).toBe('sonnet[1m]');
+    expect(joinModelValue('sonnet', false)).toBe('sonnet');
+    expect(joinModelValue('sonnet[1m]', false)).toBe('sonnet[1m]'); // 裸名带后缀原样过
+    expect(joinModelValue('  sonnet ', true)).toBe('sonnet[1m]');
+    expect(joinModelValue('', true)).toBe('');
   });
 });

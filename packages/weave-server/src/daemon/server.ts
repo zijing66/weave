@@ -57,6 +57,7 @@ import { handleMarketRoutes } from './routes/market.js';
 import { handleInstallationRoutes } from './routes/installations.js';
 import { handleProjectRoutes } from './routes/projects.js';
 import { handleSettingsRoutes } from './routes/settings-statusline.js';
+import { handleBackupRoutes } from './routes/backup.js';
 import { handleNotifyChannelRoutes } from './routes/notify-channels.js';
 import { handleSearchRoutes } from './routes/search.js';
 import { handleProjectFileRoutes } from './routes/project-files.js';
@@ -142,8 +143,17 @@ export interface WeaveServerDeps {
   /** 消息域投递器（消息域重塑：纯管道裁决 + prompt 三层）；/sessions/:id/messages 依赖它。 */
   messageDeliverer?: MessageDeliverer;
   /** 判死拉起（共享工厂 session-open.ts，与编排引擎同一实例）：带 `#` 引用标注的
-   *  发送在投递前把未启动的目标会话拉起来。缺省 = 无此能力（报 503）。 */
-  ensureOpen?: (sessionId: string) => Promise<EnsureOpenResult>;
+   *  发送在投递前把未启动的目标会话拉起来；`opts.cwd` 覆盖落点（B5 冲突修补在
+   *  worktree 原地重开——转录按 cwd 落 slug，换目录 resume 认不到）。缺省 = 无此
+   *  能力（报 503）。 */
+  ensureOpen?: (sessionId: string, opts?: { cwd?: string }) => Promise<EnsureOpenResult>;
+  /** B5 worktree 并回走合并梯（G6 前置小批；与 sweeper 同一实现，实现体 =
+   *  rpg/expedition-session.ts 的 mergeSessionWorktreeViaLadder）；缺省不挂 =
+   *  并回冲突卡的重试路由 503（sweeper 缺它时回落旧一刀 merge）。 */
+  mergeViaLadder?: (
+    projectPath: string,
+    entry: import('./worktree.js').SessionWorktreeEntry,
+  ) => Promise<import('./worktree.js').MergeOutcome>;
   /**
    * 层② 终端通道（promptTerminalChannel 的产物，与 messageDeliverer 的 terminal
    * 同一实例）：new-session 的引导注入（`resume.bootstrapText`）借它定位 pane env
@@ -179,6 +189,8 @@ export interface WeaveServerDeps {
   orchestrationRuns?: OrchestrationRunRepository;
   /** 编排引擎；触发 / 取消 / webhook 入口依赖它。 */
   orchestrationEngine?: Pick<OrchestrationEngine, 'start' | 'cancel'>;
+  /** 条件边判断链（决策模型优先 + fork 回落）；/decision/status 与 /decision/judge 依赖它。 */
+  conditionJudge?: import('../hooks/decision-kernel.js').ConditionJudge;
   /** 会话扩展点绑定存储；/extensions/bindings 与删会话/归档级联依赖它。 */
   extensionBindings?: import('../repositories/extension-bindings.js').ExtensionBindingRepository;
   /** 联邦 peer 注册表（E3）；/federation/* 依赖它，缺省 503。 */
@@ -233,6 +245,10 @@ export interface WeaveServerDeps {
   rpgXp?: import('../rpg/progress-store.js').RpgXpRepository;
   /** 角色仓库根覆盖（settings rpg.rolesRoot 的注入缝；缺省 `<data>/rpg/roles/`）。 */
   rpgRolesRoot?: string;
+  /** 超级代理仓根覆盖（测试注入；缺省 `<data>/superagent/weave/`——不随 rpgRolesRoot 漂）。 */
+  superagentRoot?: string;
+  /** 全局手法库根覆盖（测试注入；缺省 `<data>/rpg/handbook/`）。 */
+  rpgHandbookRoot?: string;
   /** 晋升第②档（内建仓库）的根覆盖（测试注入；缺省 `<data>/market/weave/`）。 */
   rpgBuiltinRoot?: string;
   /** 跨机邀请存储（rpg_invitations 表，F2）；缺省不挂 = /federation/invitations 503。 */
@@ -247,6 +263,8 @@ export interface WeaveServerDeps {
     seed(series: readonly { at: string; n: number }[]): void;
     seedTotals(events: number, today: number): void;
   };
+  /** 每日自动备份引擎（GET/POST /backup/*）；缺省不挂 = 503（CLI/旧装配）。 */
+  backupEngine?: import('./backup.js').BackupEngine;
 }
 
 /**
@@ -439,6 +457,9 @@ async function handleRequest(
 
   // --- 设置/状态栏域 → routes/settings-statusline.ts（settings/目录浏览/config/statusline/assets）---
   if (await handleSettingsRoutes(req, res, deps, pathname, url)) return;
+
+  // --- 每日自动备份 → routes/backup.ts（状态/手动触发/包列表）---
+  if (await handleBackupRoutes(req, res, deps, pathname)) return;
 
   // --- 外发提醒通道 → routes/notify-channels.ts（CRUD + 测试发送）---
   if (await handleNotifyChannelRoutes(req, res, deps, pathname, url)) return;

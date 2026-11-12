@@ -6,6 +6,7 @@ import {
   type ConfigCatalogResponse,
   type ConfigEnvVarSpec,
   type ConfigFileId,
+  type ConfigModelOption,
   type ConfigView,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
@@ -142,6 +143,9 @@ export function HarnessConfigPanel({
 
   const values = draft ?? view?.values ?? {};
   const managed = view?.managedKeys ?? [];
+
+  // 已拉到的模型候选：模型卡拉取后上提，配置树 `model` 键的下拉数据源（空 = 手敲）
+  const [modelOptions, setModelOptions] = useState<ConfigModelOption[]>([]);
 
   // 配置里已存的凭据值（模型卡回显用）：ANTHROPIC_API_KEY 优先、AUTH_TOKEN 回退
   // （与 harness config.ts 的 credential 优先序一致）。
@@ -605,6 +609,7 @@ export function HarnessConfigPanel({
           })()}
           configuredCredential={configuredCredentialValue !== ''}
           configuredCredentialValue={configuredCredentialValue}
+          onModels={setModelOptions}
           onApply={(modelId) => setEdit('model', { value: modelId })}
         />
       )}
@@ -703,7 +708,7 @@ export function HarnessConfigPanel({
           {tree.nodes.length === 0 && <p className="text-11 text-neutral-500">{t('cfg.empty')}</p>}
           {tree.nodes.length > 0 && (
             <section className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-1.5">
-              <ConfigTree nodes={tree.nodes} handlers={treeHandlers} footer={envFooter} />
+              <ConfigTree nodes={tree.nodes} handlers={treeHandlers} modelOptions={modelOptions} footer={envFooter} />
             </section>
           )}
         </>

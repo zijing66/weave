@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { api, type ConfigFileId, type ConfigModelOption, type ConfigModelsResponse } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
@@ -22,6 +22,7 @@ export function ConfigModelCard({
   configuredBaseUrl,
   configuredCredential,
   configuredCredentialValue,
+  onModels,
   onApply,
 }: {
   harness: Harness;
@@ -35,6 +36,8 @@ export function ConfigModelCard({
   configuredCredential: boolean;
   /** 配置里已存的 key / token 值（回显进输入框，掩码展示）。 */
   configuredCredentialValue: string;
+  /** 拉到模型列表后上提（配置树 `model` 键的下拉数据源）。 */
+  onModels?: (models: ConfigModelOption[]) => void;
   onApply: (modelId: string) => void;
 }) {
   const t = useT();
@@ -55,15 +58,15 @@ export function ConfigModelCard({
     setBusy(true);
     setError(null);
     try {
-      setResult(
-        await api.postConfigModels({
-          harness,
-          file,
-          projectId,
-          ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
-          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        }),
-      );
+      const res = await api.postConfigModels({
+        harness,
+        file,
+        projectId,
+        ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      });
+      setResult(res);
+      onModels?.(res.models);
     } catch (err) {
       setError((err as Error).message);
       setResult(null);
@@ -71,6 +74,16 @@ export function ConfigModelCard({
       setBusy(false);
     }
   };
+
+  // 凭据已配就自动拉一拍（配置树 model 键的下拉靠它；失败静默——退化为手敲，不摆错误壳）
+  const autoFetched = useRef(false);
+  useEffect(() => {
+    if (configuredCredential && !autoFetched.current) {
+      autoFetched.current = true;
+      void fetchModels();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configuredCredential]);
 
   const credentialLabel = (credential: ConfigModelsResponse['credential']): string =>
     credential === 'none' ? t('cfg.modelsCredNone') : credential;
