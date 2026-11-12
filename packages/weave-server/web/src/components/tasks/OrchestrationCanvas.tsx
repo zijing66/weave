@@ -6,6 +6,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  BookMarked,
   Columns3,
   Copy,
   Globe,
@@ -49,6 +50,7 @@ import { useSessionStatus } from './session-status-store';
 import { SessionMessages } from './SessionMessages';
 import {
   ORCH_MAX_NODES,
+  addMemoryNode,
   addSessionNode,
   addTriggerNode,
   addWebhookNode,
@@ -601,6 +603,7 @@ export function OrchestrationCanvas({
         );
       }
       if (nodeId.startsWith('t:')) return t('orch.triggerNode');
+      if (nodeId.startsWith('m:')) return t('orch.memoryNode');
       return sessionLabel(sessionById.get(nodeId)?.title ?? null, nodeId);
     },
     [draft, sessionById, t],
@@ -1095,6 +1098,15 @@ export function OrchestrationCanvas({
                 <Zap className="h-3 w-3" />
                 {t('orch.addTrigger')}
               </button>
+              <button
+                type="button"
+                disabled={draft.nodes.length >= ORCH_MAX_NODES}
+                onClick={() => patch(addMemoryNode)}
+                className="inline-flex items-center gap-1 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-11 text-neutral-300 transition-colors hover:bg-edge/[0.06] disabled:opacity-40"
+              >
+                <BookMarked className="h-3 w-3" />
+                {t('orch.addMemory')}
+              </button>
               <span className="rounded bg-neutral-950/90 px-1.5 py-0.5 text-11 text-neutral-500">
                 {t('orch.summary', { nodes: draft.nodes.length, edges: draft.edges.length })}
               </span>
@@ -1427,6 +1439,39 @@ export function OrchestrationCanvas({
                   </div>
                   <p className="text-10 leading-relaxed text-neutral-600">
                     {t('orch.triggerNodeHint')}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      patch((d) => removeNode(d, selNode));
+                      setSel(null);
+                    }}
+                    className="inline-flex items-center gap-1 rounded border border-red-500/30 px-1.5 py-0.5 text-11 text-red-300 transition-colors hover:bg-red-950/40"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    {t('orch.removeNode')}
+                  </button>
+                </div>
+              )}
+              {selNode && draft && selNodeKind === 'memory' && (
+                <div className="space-y-1.5 border-b border-edge/[0.08] pb-2.5">
+                  <div className="flex items-center gap-1">
+                    <span className="min-w-0 flex-1 truncate text-11 font-medium text-neutral-100">
+                      {t('orch.memoryNode')}
+                    </span>
+                    <Tooltip label={t('common.close')} side="top">
+                      <button
+                        type="button"
+                        onClick={() => setSel(null)}
+                        aria-label={t('common.close')}
+                        className="shrink-0 rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Tooltip>
+                  </div>
+                  <p className="text-10 leading-relaxed text-neutral-600">
+                    {t('orch.memoryNodeHint')}
                   </p>
                   <button
                     type="button"

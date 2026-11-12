@@ -10,6 +10,7 @@ import {
   type EditsSurface,
   type ImagesSurface,
   type MessagingSurface,
+  type MemorySinkSurface,
   type NarrationSurface,
   type PluginStateSurface,
   type PluginSurface,
@@ -195,4 +196,12 @@ export function configSurfaces(): Array<{ harness: Harness; surface: ConfigSurfa
  */
 export function sessionTitleSurfaceFor(harness: Harness): SessionTitleSurface | null {
   return registry.get(harness)?.titles ?? null;
+}
+
+/**
+ * 按 harness 取项目记忆文件面（编排记忆出口的写入端）；null = 该 harness 无
+ * 此文件概念。写哪个文件、区块文法都归面自己，server 只传项目路径 + 判决文本。
+ */
+export function memorySinkFor(harness: Harness): MemorySinkSurface | null {
+  return registry.get(harness)?.memorySink ?? null;
 }

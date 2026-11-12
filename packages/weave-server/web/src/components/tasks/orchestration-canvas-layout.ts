@@ -31,12 +31,12 @@ export interface OrchCanvasSession {
 }
 
 export interface OrchLaidNode {
-  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `t:<uuid>` / `g:<projectId>`。 */
+  /** ReactFlow 节点 id：`s:<sessionId>` / `w:<uuid>` / `t:<uuid>` / `m:<uuid>` / `g:<projectId>`。 */
   key: string;
-  kind: 'session' | 'webhook' | 'trigger' | 'group';
+  kind: 'session' | 'webhook' | 'trigger' | 'memory' | 'group';
   x: number;
   y: number;
-  /** 编排节点 id（session 节点 = sessionId；webhook = w:<uuid>）。 */
+  /** 编排节点 id（session 节点 = sessionId；webhook = w:<uuid>；记忆出口 = m:<uuid>）。 */
   nodeId?: string;
   projectId?: number;
   /** 分组框尺寸（kind = group 时有效）。 */

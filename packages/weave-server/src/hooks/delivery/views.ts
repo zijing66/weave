@@ -119,6 +119,10 @@ export async function sessionTerminals(
     locateScreens?(
       envs: Record<string, Record<string, string>>,
     ): Promise<Record<string, SessionTerminal | null>>;
+    /** 关 pane（判死会话收尾顺带清 pane 用）。 */
+    closePane?(paneId: string): Promise<void>;
+    /** 由 env 定位 pane id（判死会话关 pane 前反查用）。 */
+    locatePane?(env: Record<string, string>): Promise<string | null>;
   } | null,
   paneEnvs: Map<string, Record<string, string>>,
   persistPaneEnvs: () => void,
@@ -144,9 +148,23 @@ export async function sessionTerminals(
       paneEnvs.delete(sessionId);
       persistPaneEnvs();
       out[sessionId] = null;
+      // 宿主进程已死、pane 只剩空 shell（/exit 这类退出不发 SessionEnd，靠这里
+      // 兜底）：顺带关掉——死 pane 的 cwd 仍指项目根，落点复用把它计入 tab 总数，
+      // 攒满 6 格后新会话全被挤去新窗口。尽力而为，失败不打拓扑刷新。
+      void closePaneQuietly(terminal, env).catch(() => {});
       continue;
     }
     envs[sessionId] = env;
   }
   return { ...out, ...(await terminal.locateScreens(envs)) };
+}
+
+/** 判死会话的 pane 清理（尽力而为）：定位不到 / 关失败都静默。 */
+async function closePaneQuietly(
+  terminal: { closePane?(paneId: string): Promise<void>; locatePane?(env: Record<string, string>): Promise<string | null> },
+  env: Record<string, string>,
+): Promise<void> {
+  if (!terminal.closePane || !terminal.locatePane) return;
+  const paneId = await terminal.locatePane(env).catch(() => null);
+  if (paneId) await terminal.closePane(paneId).catch(() => {});
 }

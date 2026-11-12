@@ -91,7 +91,11 @@ export function useOrchOverview(deps: {
     const labelOf = (id: string): string =>
       id.startsWith('w:')
         ? t(hasIn.has(id) ? 'orch.webhookExit' : 'orch.webhookEntry')
-        : sessionLabel(sessionById.get(id)?.title ?? null, id);
+        : id.startsWith('t:')
+          ? t('orch.triggerNode')
+          : id.startsWith('m:')
+            ? t('orch.memoryNode')
+            : sessionLabel(sessionById.get(id)?.title ?? null, id);
     const insOf = (nodeId: string): PortItem[] =>
       overview.edges
         .filter((edge) => edge.to === nodeId)
@@ -150,6 +154,23 @@ export function useOrchOverview(deps: {
             outPorts: overview.edges
               .filter((edge) => edge.from === nodeId)
               .map((edge, i) => ({ neighbor: edge.to, hint: `hook${i + 1} → ${labelOf(edge.to)}` })),
+          },
+        } satisfies Node;
+      }
+      if (n.kind === 'memory') {
+        const nodeId = n.nodeId ?? '';
+        return {
+          id: n.key,
+          type: 'orchMemory',
+          position: { x: n.x, y: n.y },
+          draggable: false,
+          data: {
+            hot: (overview.merged.orchIdsOf.get(nodeId) ?? []).some(
+              (oid) => (flash[`o${oid}:n:${nodeFlashKey(nodeId)}`] ?? 0) > now,
+            ),
+            selected: false,
+            missing: false,
+            inPorts: insOf(nodeId),
           },
         } satisfies Node;
       }

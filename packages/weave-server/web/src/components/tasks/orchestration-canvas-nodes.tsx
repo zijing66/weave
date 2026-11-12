@@ -14,7 +14,7 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 import type { SessionStatus } from './session-status';
 import { ORCH_COL_W, ORCH_GROUP_HEADER_H, ORCH_NODE_H, ORCH_NODE_W } from './orchestration-canvas-layout';
 import type { OrchDraft } from './orchestration-graph';
-import { ChevronDown, ChevronRight, Globe, MessageSquare, Zap } from 'lucide-react';
+import { BookMarked, ChevronDown, ChevronRight, Globe, MessageSquare, Zap } from 'lucide-react';
 
 /** 一次投递的点亮时长（边与节点同口径）。 */
 export const FLASH_MS = 1200;
@@ -417,10 +417,46 @@ export function TriggerNode({ data }: NodeProps<TriggerFlowNode>) {
   );
 }
 
+export type MemoryNodeData = {
+  hot: boolean;
+  selected: boolean;
+  missing: boolean;
+  inPorts: PortItem[];
+};
+export type MemoryFlowNode = Node<MemoryNodeData, 'orchMemory'>;
+
+/** 记忆出口（纯出口）：到达即把判决写进项目记忆文件的认领区块，无出边可画。 */
+export function MemoryNode({ data }: NodeProps<MemoryFlowNode>) {
+  const t = useT();
+  const { hot, selected, missing, inPorts } = data;
+  return (
+    <div
+      style={{ width: ORCH_NODE_W, height: ORCH_NODE_H }}
+      className={cn(
+        'flex rounded-lg border bg-neutral-900/95 shadow-mac transition-colors',
+        hot ? 'border-teal-400/70 ring-1 ring-teal-400/40' : 'border-edge/[0.08]',
+        selected && 'border-sky-400/70 ring-2 ring-sky-500/40',
+        missing ? 'opacity-50' : 'hover:border-blue-500/40',
+      )}
+    >
+      <PortRail ports={inPorts} side="in" />
+      <PortColumn ports={inPorts} side="in" />
+      <div className="flex min-w-0 flex-1 items-center gap-2 border-x border-edge/[0.06] px-2">
+        <BookMarked className="h-4 w-4 shrink-0 text-pink-300" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-100">
+          {t('orch.memoryNode')}
+        </span>
+        <Badge className="shrink-0 bg-pink-900/50 text-10 text-pink-300">{t('orch.exitTag')}</Badge>
+      </div>
+    </div>
+  );
+}
+
 export const nodeTypes = {
   orchSession: SessionNode,
   orchWebhook: WebhookNode,
   orchTrigger: TriggerNode,
+  orchMemory: MemoryNode,
   orchGroup: GroupNode,
 };
 
@@ -499,14 +535,16 @@ export function OrchFlowEdge({
 
 export const edgeTypes = { orchFlow: OrchFlowEdge };
 
-/** 节点的 flash 键（session 挂 `s:` 前缀；webhook/trigger 用裸 id）。 */
+/** 节点的 flash 键（session 挂 `s:` 前缀；webhook/trigger/memory 用裸 id）。 */
 export function nodeFlashKey(nodeId: string): string {
-  return nodeId.startsWith('w:') || nodeId.startsWith('t:') ? nodeId : `s:${nodeId}`;
+  return nodeId.startsWith('w:') || nodeId.startsWith('t:') || nodeId.startsWith('m:')
+    ? nodeId
+    : `s:${nodeId}`;
 }
 
-/** 渲染节点键 → 编排节点 id（`s:<会话>` → 会话 id，`w:`/`t:` 原样，分组框 = null）。 */
+/** 渲染节点键 → 编排节点 id（`s:<会话>` → 会话 id，`w:`/`t:`/`m:` 原样，分组框 = null）。 */
 export function orchIdOfRenderKey(key: string): string | null {
   if (key.startsWith('s:')) return key.slice(2);
-  if (key.startsWith('w:') || key.startsWith('t:')) return key;
+  if (key.startsWith('w:') || key.startsWith('t:') || key.startsWith('m:')) return key;
   return null;
 }

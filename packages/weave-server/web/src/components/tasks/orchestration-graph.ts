@@ -66,6 +66,13 @@ export function addTriggerNode(draft: OrchDraft): OrchDraft {
   return { ...draft, nodes: [...draft.nodes, { id, kind: 'trigger' }] };
 }
 
+/** 记忆出口节点：纯出口（到达即写项目记忆文件的认领区块，无出边可站）。 */
+export function addMemoryNode(draft: OrchDraft): OrchDraft {
+  let id = `m:${crypto.randomUUID()}`;
+  while (draft.nodes.some((n) => n.id === id)) id = `m:${crypto.randomUUID()}`;
+  return { ...draft, nodes: [...draft.nodes, { id, kind: 'memory' }] };
+}
+
 /** 去节点连带它的边。 */
 export function removeNode(draft: OrchDraft, nodeId: string): OrchDraft {
   return {
@@ -268,6 +275,9 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
     if (node.kind === 'trigger' && !node.id.startsWith('t:')) {
       return { ok: false, error: `Trigger node id must start with "t:": ${node.id}` };
     }
+    if (node.kind === 'memory' && !node.id.startsWith('m:')) {
+      return { ok: false, error: `Memory node id must start with "m:": ${node.id}` };
+    }
   }
   const pairs = new Set<string>();
   for (const edge of draft.edges) {
@@ -323,6 +333,16 @@ export function validateDraft(draft: OrchDraft): ValidateDraftResult {
     }
     if (!hasOut.has(node.id)) {
       return { ok: false, error: 'A trigger node is not connected' };
+    }
+  }
+  for (const node of draft.nodes) {
+    // 记忆节点是纯出口：只入、必连（与服务端同判据）。
+    if (node.kind !== 'memory') continue;
+    if (hasOut.has(node.id)) {
+      return { ok: false, error: 'Memory nodes cannot have outbound edges' };
+    }
+    if (!hasIn.has(node.id)) {
+      return { ok: false, error: 'A memory node is not connected' };
     }
   }
   for (const node of draft.nodes) {

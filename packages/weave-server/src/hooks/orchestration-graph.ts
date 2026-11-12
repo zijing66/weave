@@ -36,6 +36,9 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     if (node.kind === 'trigger' && !node.id.startsWith('t:')) {
       return { ok: false, error: `Trigger node id must start with "t:": ${node.id}` };
     }
+    if (node.kind === 'memory' && !node.id.startsWith('m:')) {
+      return { ok: false, error: `Memory node id must start with "m:": ${node.id}` };
+    }
   }
   if (edges.length > ORCH_MAX_EDGES) {
     return { ok: false, error: `At most ${ORCH_MAX_EDGES} edges per orchestration` };
@@ -76,6 +79,9 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     if (node.kind === 'webhook' && node.autoFire) {
       return { ok: false, error: `Webhook node ${node.id} cannot have autoFire` };
     }
+    if (node.kind === 'memory' && node.autoFire) {
+      return { ok: false, error: `Memory node ${node.id} cannot have autoFire` };
+    }
   }
   for (const node of nodes) {
     if (node.kind !== 'webhook') continue;
@@ -95,6 +101,16 @@ export function validateOrchestration(graph: OrchestrationGraph): ValidateResult
     }
     if (!hasOut.has(node.id)) {
       return { ok: false, error: `Trigger node ${node.id} is not connected` };
+    }
+  }
+  for (const node of nodes) {
+    // 记忆节点是纯出口：只入、必连——到达即写项目记忆文件，无出边可站。
+    if (node.kind !== 'memory') continue;
+    if (hasOut.has(node.id)) {
+      return { ok: false, error: `Memory node ${node.id} cannot have outbound edges` };
+    }
+    if (!hasIn.has(node.id)) {
+      return { ok: false, error: `Memory node ${node.id} is not connected` };
     }
   }
   for (const node of nodes) {

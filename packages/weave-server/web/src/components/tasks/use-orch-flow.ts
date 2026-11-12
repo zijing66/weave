@@ -93,7 +93,11 @@ const flowNodes: Node[] = useMemo(() => {
   const labelOf = (id: string): string =>
     id.startsWith('w:')
       ? t(entryIds.has(id) ? 'orch.webhookEntry' : 'orch.webhookExit')
-      : sessionLabel(sessionById.get(id)?.title ?? null, id);
+      : id.startsWith('t:')
+        ? t('orch.triggerNode')
+        : id.startsWith('m:')
+          ? t('orch.memoryNode')
+          : sessionLabel(sessionById.get(id)?.title ?? null, id);
   /** 入向 hook（左栏）：一条入边一枚，标题写「hookN ← 上游」。 */
   const insOf = (nodeId: string): PortItem[] =>
     draft.edges
@@ -151,6 +155,21 @@ const flowNodes: Node[] = useMemo(() => {
           missing: !draft.nodes.some((x) => x.id === nodeId),
           inPorts: [],
           outPorts: outsOf(nodeId),
+        },
+      } satisfies Node;
+    }
+    if (n.kind === 'memory') {
+      const nodeId = n.nodeId ?? '';
+      return {
+        id: n.key,
+        type: 'orchMemory',
+        position: { x: n.x, y: n.y },
+        draggable: false,
+        data: {
+          hot: orchId != null && (flash[`o${orchId}:n:${nodeFlashKey(nodeId)}`] ?? 0) > now,
+          selected: sel?.kind === 'node' && sel.id === nodeId,
+          missing: !draft.nodes.some((x) => x.id === nodeId),
+          inPorts: insOf(nodeId),
         },
       } satisfies Node;
     }

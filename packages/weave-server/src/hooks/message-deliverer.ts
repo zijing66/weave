@@ -119,7 +119,7 @@ export type MessageFromKind = 'dashboard' | 'session';
  * 「编排投的」和「人投的」）。manual（缺省）= 人投（自然回合）；其余三源
  * 投出的消息会**诱导目标会话的下一回合**——登记见 `takeInduction`。
  */
-export type MessageOrigin = 'manual' | 'orchestration' | 'extension' | 'plugin';
+export type MessageOrigin = 'manual' | 'orchestration' | 'extension' | 'plugin' | 'goal';
 
 /** 管道消息状态：pending 只活在 promptbox 文件，其余在内存注册表。 */
 export type PipeStatus =
@@ -403,6 +403,15 @@ export function screenTailMatches(screen: string, tail: string): boolean {
 
 /** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
 const INBOX_READY_POLL_MS = 250;
+
+/** 补一记提交 CR（带图 paste 后用；通道没了就放弃，交给未回执闸）。 */
+async function terminalSendCr(terminal: PromptTerminal | null, paneId: string): Promise<void> {
+  try {
+    await terminal?.sendKeys(paneId, '\r');
+  } catch {
+    // 补打失败不落 failed：文本已在框里，未回执闸会接手
+  }
+}
 
 /** 取「最近一条最终输出」往前回看几条事件：空回合（没有最终输出）要能跳过。 */
 const TURN_OUTPUT_LOOKBACK = 5;
@@ -945,6 +954,20 @@ export class MessageDeliverer {
   }
 
   /**
+   * 该会话**在途未消费**的管道消息正文（扇入并置用，2026-11-12 裁决）：编排
+   * fan-in「每到一条执行一次」的每次到达，其出边判断的证据除该边上游输出外，
+   * 还应并置目标会话其余未消费投递的正文——多上游结论拼合判断，单边孤证不判。
+   * 只读内存态（投递已送达等待回合完成），不扫文件/库。
+   */
+  pendingTextsOf(sessionId: string): string[] {
+    const out: string[] = [];
+    for (const msg of this.memory.values()) {
+      if (msg.sessionId === sessionId && msg.text) out.push(msg.text);
+    }
+    return out;
+  }
+
+  /**
    * hook 旁路上报的会话 pane 定位 env（**每个 hook 事件覆盖刷新**：会话换 pane /
    * resume 到新窗口后，下一次事件就把定位改过来，与 inbox 凭据同一自愈口径）。
    *
@@ -1049,7 +1072,9 @@ export class MessageDeliverer {
    */
   sessionExited(sessionId: string): void {
     this.inboxSockets.forget(sessionId);
+    const env = this.paneEnvs.get(sessionId);
     this.paneEnvs.delete(sessionId);
+    this.closePaneBestEffort(sessionId, env);
     // 定位撤销要显式报给拓扑快照（sessionTerminals 回 null 摘出终端分组）：
     // 只删 env 的话，快照里上次扫到的分块按「缺席 = 保留」契约永远留着。
     this.revokedPaneEnvs.add(sessionId);
@@ -1064,6 +1089,34 @@ export class MessageDeliverer {
       sessionId,
       entries.filter((e) => !this.dismissedIds.has(e.id)),
     );
+  }
+
+  /**
+   * 退出收尾顺带关 pane：宿主已随会话退出，pane 只剩空 shell——留着它 cwd 仍指
+   * 项目根，落点复用把死 pane 计入「tab 总 pane 数」，攒满 6 格后新会话全被挤到
+   * 新窗口。尽力而为：定位 env 缺失 / 通道没装 / 关失败（如宿主被用户手动关了）
+   * 都静默放过——pane 清理不值得打断退出流程。
+   */
+  private closePaneBestEffort(
+    sessionId: string,
+    env: Record<string, string> | undefined,
+  ): void {
+    void (async () => {
+      try {
+        const terminal = this.terminalChannel();
+        if (!terminal) return;
+        const session = this.deps.sessions.getBySessionId(sessionId);
+        const project =
+          session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
+        if (!session || !project || !env) return;
+        // env 用快照喂定位（不写回共享 paneEnvs——那是「活着的世界」的账，退出
+        // 的会话不能再冒头；sessionTerminals 的撤销报 null 会被重新报到的分块盖掉）
+        const pane = await locateTerminalPane(terminal, new Map([[sessionId, env]]), session, project);
+        if (pane) await terminal.closePane(pane.id);
+      } catch {
+        // pane 清理是锦上添花，任何失败静默
+      }
+    })();
   }
 
   /**
@@ -2186,7 +2239,17 @@ export class MessageDeliverer {
 
   /** 层② 终端注入终态（语义同中继：成功 delivered / 失败 failed 可见）。 */
   private async runTerminalPrompt(messageId: string, paneId: string, text: string): Promise<void> {
+    const entry = this.memory.get(messageId);
     await this.runTerminal(messageId, (terminal) => terminal.sendText(paneId, text), paneId);
+    // 带图补一记提交：paste 与末尾 CR 同拍写入时，claude 宿主消化附件块常把 CR 吞掉
+    // （2026-11-11 实测：贴图消息全数要人工 enter；读屏探针认不出附件占位形态、
+    // 永远失明）。隔一拍补打对已提交的空框是无操作、对被吞的那记是提交——两侧都安全。
+    if (entry && hasImages(entry)) {
+      await sleep(SUBMIT_PROBE_DELAY_MS);
+      const current = this.memory.get(messageId);
+      if (current && current.acked !== true && current.status === 'delivered')
+        await terminalSendCr(this.terminalChannel(), paneId);
+    }
   }
 
   /**

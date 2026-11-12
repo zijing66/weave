@@ -3,6 +3,7 @@ import path from 'node:path';
 import { HARNESS_LIFECYCLE } from '@weavecode/core';
 import type { AttachSpec, MessagingSurface, PathRefSpec, QueuedPromptSpec, RecognizedRef } from '../driver.js';
 import { CODEX_SIDE_QUESTION } from './side-question.js';
+import { CODEX_FORK_EXTRACT } from './fork.js';
 
 /**
  * codex CLI 的可直接 spawn 入口。win32 的 `codex` 可能是 `.cmd` 垫片
@@ -143,6 +144,9 @@ export const CODEX_MESSAGING: MessagingSurface = {
   attach: CODEX_ATTACH,
   pathRefs: CODEX_PATH_REF,
   sideQuestion: CODEX_SIDE_QUESTION,
+  // 边级提取 fork 面：app-server thread/fork（ephemeral）——编排判提合一的 codex
+  // 通道，与 claude 的 extractArgs CLI 形并列（见 fork.ts）。
+  forkExtract: CODEX_FORK_EXTRACT,
   unsupportedReasons: {
     discovery: 'Codex event ingestion is pending research (BACKLOG §10-6); sessions are not discoverable',
     prompt: 'Codex has no native peer-messaging channel; prompts reach it via its own queue or terminal text injection',

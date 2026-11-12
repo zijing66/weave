@@ -447,6 +447,8 @@ export interface IngestedHandlerDeps {
   activityTracker?: Pick<ActivityTracker, 'onEvent'>;
   /** 旁路会话回答认领（claude = `/btw`）：判据归 harness 能力面；缺省不认领。 */
   sideQuestions?: { onEvent(input: SideQuestionEvent): void };
+  /** goal 驱动循环（第六消费者，G6 批4b）：回合落账 + 失控兜底两闸（预算/无进展）。 */
+  goalEngine?: Pick<import('../rpg/goal-engine.js').RpgGoalEngine, 'onEvent'>;
   /** 会话扩展点引擎（第五消费者）：onEvent 带 payload——tool-failed 的错误摘要只在 payload 里。 */
   extensionEngine?: Pick<import('./extension-engine.js').ExtensionEngine, 'onEvent'>;
   /** 会话转录路径上报（中断态探测用；转录路径在 payload 里，帧域不带）+ 换模型落定 + 推理档位。 */
@@ -521,6 +523,14 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         eventType: record.input.eventType,
         source: record.input.source,
       });
+      // goal 驱动循环（G6 批4b）：回合落账与事件判读与 watch 同挂点、同形态。
+      if (isHarness(record.input.source)) {
+        deps.goalEngine?.onEvent({
+          sessionId: record.input.sessionId,
+          eventType: record.input.eventType,
+          source: record.input.source,
+        });
+      }
       deps.orchestrationEngine?.onEvent({
         sessionId: record.input.sessionId,
         eventType: record.input.eventType,

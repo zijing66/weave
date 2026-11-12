@@ -31,13 +31,13 @@ export interface OrchestrationEdge {
   when?: string;
 }
 
-export type OrchestrationNodeKind = 'session' | 'webhook' | 'trigger';
+export type OrchestrationNodeKind = 'session' | 'webhook' | 'trigger' | 'memory';
 
 export interface OrchestrationNode {
   /**
    * session 节点 id = sessionId（运行态 pending 键、RunEvent.from/to、画布 flash
-   * 全按它流转）；webhook 节点 = `w:<uuid>`；手动触发节点 = `t:<uuid>`——三者
-   * 互不碰撞。
+   * 全按它流转）；webhook 节点 = `w:<uuid>`；手动触发节点 = `t:<uuid>`；记忆
+   * 出口节点 = `m:<uuid>`——四者互不碰撞。
    */
   id: string;
   kind: OrchestrationNodeKind;
@@ -71,7 +71,14 @@ function parseNodes(raw: unknown): OrchestrationNode[] {
     if (typeof o.id !== 'string' || !o.id) continue;
     const node: OrchestrationNode = {
       id: o.id,
-      kind: o.kind === 'webhook' ? 'webhook' : o.kind === 'trigger' ? 'trigger' : 'session',
+      kind:
+        o.kind === 'webhook'
+          ? 'webhook'
+          : o.kind === 'trigger'
+            ? 'trigger'
+            : o.kind === 'memory'
+              ? 'memory'
+              : 'session',
     };
     if (typeof o.webhookToken === 'string' && o.webhookToken) node.webhookToken = o.webhookToken;
     if (typeof o.url === 'string' && o.url) node.url = o.url;
@@ -131,9 +138,10 @@ export interface RunEvent {
   /**
    * 事件种类：缺省 = 一次投递；`ensure` = 目标判死后拉起会话的一次尝试；
    * `condition` = 条件边判定（放行与拦下都落一条——谁判的、依据什么在 source/detail）；
-   * `defer` = 人在场闸挂起（占位 pending 已入队，用户下一轮消费时真投）。
+   * `defer` = 人在场闸挂起（占位 pending 已入队，用户下一轮消费时真投）；
+   * `memory` = 记忆出口落一条（含「判为不值得留、跳过」的那类，原因在 detail）。
    */
-  stage?: 'ensure' | 'condition' | 'defer';
+  stage?: 'ensure' | 'condition' | 'defer' | 'memory';
   /** 耗时（ms）：ensure 用；投递事件不带。 */
   ms?: number;
   /** condition 事件专用：谁做的判断（decision-model / fork）。 */

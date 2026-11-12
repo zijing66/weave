@@ -29,6 +29,9 @@ export interface SessionPurgeDeps {
   /** 会话扩展点：该会话的会话级绑定 + 执行行一并清（不计数；项目级绑定不动）。 */
   extensionBindings?: Pick<import('../repositories/extension-bindings.js').ExtensionBindingRepository, 'deleteSessionScoped'>;
   extensionExecutions?: Pick<import('../repositories/extension-bindings.js').ExtensionExecutionRepository, 'deleteBySession'>;
+  /** 决策分级路由（G6）：该会话的裁决行一并清（保留期 = 会话生命周期；无会话
+   *  语境的行——如用户当场批的晋升——不受此闸，随项目级联走）。 */
+  routingDecisions?: Pick<import('../rpg/routing.js').RpgRoutingDecisionRepository, 'deleteBySession'>;
   /** 上传件（不计数）：事件清完顺带回收再没有人引用的图（文件 + 行）。 */
   uploads?: { pruneUnreferenced(): number };
 }
@@ -53,6 +56,7 @@ export function purgeSession(
   deps.sideQuestions?.deleteBySession(sessionId);
   deps.extensionExecutions?.deleteBySession(sessionId);
   deps.extensionBindings?.deleteSessionScoped(sessionId);
+  deps.routingDecisions?.deleteBySession(sessionId);
   deps.probe?.forget(sessionId);
   deps.sessions.remove(sessionId);
   return { events, dispatches, messages };

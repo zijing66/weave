@@ -34,6 +34,8 @@ export type StartResult =
 interface Runtime {
   id: number;
   orchestrationId: number;
+  /** 所属项目（记忆出口写盘要把它映射回项目根——判定文本不变、只多这一枚键）。 */
+  projectId: number;
   trigger: OrchestrationTrigger;
   name: string;
   nodes: OrchestrationNode[];
@@ -59,9 +61,6 @@ function joined(text: string, carried: string): string {
   const head = text.trim();
   return head ? `${head}\n\n${carried}` : carried;
 }
-
-/** `{upstream}` 那段的上限（宿主上报的最终输出不受 capFields 约束，整段没意义）。 */
-const CARRY_OUTPUT_MAX_CHARS = 4_000;
 
 /**
  * 判断证据的上限（when 预筛 + condition 判断共用；与边正文的 4000 分开账——
@@ -97,19 +96,33 @@ function renderEdgeText(
 const UNRESOLVED_VAR = /\{(upstream|summary|session)\}/;
 
 // 判断域已收敛进决策内核（decision-kernel.ts）：引擎与装配侧只从这里取类型与
-// 缺省 fork 判断；编排的 when 预筛、judgeBatch 闸与 ORCH_MAX_FORKS 预算仍在本域。
+// 缺省 fork 判断；编排的 when 预筛、ORCH_MAX_FORKS 预算与事件落痕仍在本域。
 export type { ConditionDecision, ConditionJudge } from './decision-kernel.js';
-export { parseConditionAnswer, createForkConditionJudge, createDecisionKernel } from './decision-kernel.js';
-import { createDecisionKernel, type ConditionDecision, type ConditionJudge } from './decision-kernel.js';
+export {
+  parseConditionAnswer,
+  createForkConditionJudge,
+  createDecisionKernel,
+  matchWhen,
+  type DecisionModelTier,
+  type EvalBatchItem,
+  type EvalBatchOutcome,
+} from './decision-kernel.js';
+import {
+  createDecisionKernel,
+  matchWhen,
+  type DecisionModelTier,
+  type EvalBatchItem,
+  type EvalBatchOutcome,
+} from './decision-kernel.js';
 
-/** when 预筛：关键词（逗号/换行/分号分隔）任一为文本的子串即命中（不区分大小写）。 */
-export function matchWhen(when: string, text: string | null): boolean {
-  const hay = (text ?? '').toLowerCase();
-  return when
-    .split(/[,，\n;；]/)
-    .map((k) => k.trim().toLowerCase())
-    .filter((k) => k.length > 0)
-    .some((k) => hay.includes(k));
+/**
+ * 边是否免于判断（when 快捷出口，2026-11-12 降权裁决）：仅当**配置了 when 且
+ * 关键词命中**才免——证据已足，省一次模型/fork。不命中没有拦截权——条件边照
+ * 常进判断链（模型主裁）；纯 when 边（无 condition）不命中维持旧拦截（用户
+ * 配了 when 就是明示过滤意图）。无 when 的边走判断或直投，与本函数无关。
+ */
+function whenFastPathOf(edge: OrchestrationEdge, text: string | null): boolean {
+  return !!edge.when?.trim() && matchWhen(edge.when, text);
 }
 
 /** 自然回合自动触发的冷却：Stop 与 SessionEnd 连拍（同轮收尾两条 idle）不重复触发。 */
@@ -141,6 +154,16 @@ const PENDING_STALE_MS = 2 * 3_600_000;
 const DELIVERY_RETRY_DELAY_MS = 1_500;
 
 /**
+ * 记忆出口的「值不值得留」判词（决策模型 noul 与组合 fork 都吃这一句）：拦下
+ * 的意义是防流水账——常规进度、一次性回答不入记忆文件。
+ */
+const MEMORY_WORTH_CONDITION =
+  'Does the delivery below contain a durable conclusion, decision, or constraint that future sessions working in this project must know? Answer yes only for lasting guidance - routine progress, transient status, or one-off replies are no';
+
+/** 判决文本的兜底裁剪：站立规则不该长过这个量级（fork 提炼理应远短于此）。 */
+const VERDICT_MAX_CHARS = 2_000;
+
+/**
  * 人在场窗：目标闲着且最近这么久有过事件 = 用户在场 → 编排投递 defer（搭用户
  * 下一轮的车），防止层② 击键突袭手输中的输入框。超过窗口 = 无人值守，直投。
  */
@@ -153,8 +176,6 @@ export class OrchestrationEngine {
     string,
     Promise<{ ok: true; ack?: 'session-start' | 'registry' } | { ok: false; error: string }>
   >();
-  /** 缺省判断内核（fork 子 Agent 判断档）；装配侧注入 conditionJudge 即整体替换。 */
-  private readonly forkJudge: ConditionJudge;
 
   constructor(
     private readonly deps: {
@@ -167,7 +188,7 @@ export class OrchestrationEngine {
         MessageDeliverer,
         'send' | 'registerInduction' | 'consumeInduction' | 'markCompleted'
       > &
-        Partial<Pick<MessageDeliverer, 'awaitInboxReady' | 'lastTurnOutput'>>;
+        Partial<Pick<MessageDeliverer, 'awaitInboxReady' | 'lastTurnOutput' | 'pendingTextsOf'>>;
       sessions: Pick<SessionRepository, 'listWithCounts' | 'getBySessionId' | 'turnOpenOf'>;
       bus: HookEventBus;
       /** 上游会话是否支持 fork 提取（harness 无 extractArgs = false，边回落 {upstream}）。 */
@@ -175,10 +196,11 @@ export class OrchestrationEngine {
       /** 边级提取（装配侧 fork 无头回合实现）；null/拒绝 = 回落 {upstream}。 */
       extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
       /**
-       * 条件边判断引擎（占位）：缺省 = supportsExtract/extract 拼的 fork 子 Agent
-       * 判断；注入即整体替换（决策模型等其他判断方案走这里）。
+       * 判断三级链第一档（决策模型裸通道）：判提合一批量档的快裁层——配了它，
+       * 强 yes/no 的条件不在 fork 烧 token；判不准/失败降级组合 fork。没配 = 全
+       * 走 fork。单问语义的判断链（MCP / RPG）不经引擎，仍走 decision-judge。
        */
-      conditionJudge?: ConditionJudge;
+      decisionModel?: DecisionModelTier;
       /** 目标会话判死时拉起终端（装配侧 = openSessionTerminal + 等回执）。
        *  `ack` 说明回执来源（`session-start` = 宿主真进了会话，`registry` = 只见到进程）。 */
       ensureOpen?: (
@@ -203,17 +225,17 @@ export class OrchestrationEngine {
       channelById?: (id: string) => Pick<NotifyChannelRow, 'kind' | 'config' | 'enabled'> | undefined;
       /** 通道发送（测试注入）；缺省 hooks/notify-channels 的 sendToChannel。 */
       sendToChannelImpl?: typeof sendToChannel;
+      /**
+       * 记忆出口的写盘面（装配侧 = memory-exit 的 deliverVerdict；缺省/缺线 =
+       * 如实记失败）。判决落进该编排项目自己的记忆文件，逐 harness 接入面分发。
+       */
+      deliverVerdict?: (input: { projectId: number; text: string }) => Promise<{
+        ok: boolean;
+        files: string[];
+        error?: string;
+      }>;
     },
-  ) {
-    // 缺省判断链走内核（档一纯判断；预算闸 takeFork 仍在本域）。装配侧注入
-    // conditionJudge（决策模型优先 + fork 回落）即整体替换。
-    this.forkJudge = createDecisionKernel({
-      fork: {
-        supports: (sessionId) => deps.supportsExtract?.(sessionId) ?? false,
-        extract: (input) => deps.extract?.(input) ?? Promise.resolve(null),
-      },
-    });
-  }
+  ) {}
 
   /**
    * 触发一次运行。`entryIds` 缺省 = 全部 session 入口（cron 语义）；显式给 =
@@ -266,6 +288,7 @@ export class OrchestrationEngine {
     const rt: Runtime = {
       id: row.id,
       orchestrationId: orch.id,
+      projectId: orch.projectId,
       trigger,
       name: orch.name,
       nodes: orch.nodes,
@@ -380,6 +403,7 @@ export class OrchestrationEngine {
     const rt: Runtime = {
       id: row.id,
       orchestrationId: orch.id,
+      projectId: orch.projectId,
       trigger: 'manual',
       name: orch.name,
       nodes: orch.nodes,
@@ -468,6 +492,7 @@ export class OrchestrationEngine {
         const rt: Runtime = {
           id: row.id,
           orchestrationId: row.orchestrationId,
+          projectId: row.projectId,
           trigger: row.trigger,
           name: row.orchestrationName,
           nodes: orch!.nodes,
@@ -570,36 +595,61 @@ export class OrchestrationEngine {
       return;
     }
     const rawUpstream = payload || (this.deps.deliverer.lastTurnOutput?.(from)?.output ?? null);
-    const upstream = rawUpstream
-      ? rawUpstream.length > CARRY_OUTPUT_MAX_CHARS
-        ? `${rawUpstream.slice(0, CARRY_OUTPUT_MAX_CHARS)}…`
-        : rawUpstream
-      : null;
-    // 判断证据（when 预筛 + condition）用独立的宽预算：决策模型只看得到这份文本。
-    const judgeUpstream = rawUpstream
-      ? judgeUpstreamOf(rawUpstream)
+    // 三本账统一后 carry 与判断证据同口径：32k 触顶头尾各半（不再「截前段加省略
+    // 号」的半截硬裁——结尾是结论，丢了误下游）。扇入并置（见下方 judge 状态）。
+    const upstream = rawUpstream ? judgeUpstreamOf(rawUpstream).text : null;
+    // 扇入证据并置（2026-11-12 裁决）：fan-in 目标的出边判断不该只看单边上游——
+    // 目标会话已送达、尚未消费的其余投递正文（deliverer 在途行）与当前边的
+    // {upstream} 拼合成判断 state，多上游结论并置裁决；载荷入口（webhook）与
+    // 无在途投递时不并置（判据自然回单边证据）。
+    const fanIn = !payload ? (this.deps.deliverer.pendingTextsOf?.(from) ?? []) : [];
+    const fanInOthers = fanIn.filter((t) => t !== rawUpstream);
+    const judgeText =
+      fanInOthers.length > 0
+        ? [
+            rawUpstream,
+            `[weave: fan-in context — ${fanInOthers.length} other pending deliveries to this node]`,
+            ...fanInOthers,
+          ]
+            .filter((part) => part != null)
+            .join('\n\n')
+        : rawUpstream;
+    // 判断证据（when 快捷出口 + condition）用独立的宽预算：决策模型只看得到这份文本。
+    const judgeUpstream = judgeText
+      ? judgeUpstreamOf(judgeText)
       : { text: null as string | null, truncated: false };
     const session = this.deps.sessions.getBySessionId(from)?.title || from;
 
-    // 条件边整批预判（非载荷路径）：when 预筛先裁掉一半，剩下的 condition 一次
-    // 问完（judgeBatch；引擎没实现就逐条）。判定结果记进 verdicts，投递段只查表。
-    const verdicts = new Map<string, boolean>();
+    // 判提合一（双形 fork，2026-11-12 批 2）：非载荷路径把本轮**全部**边的判断与
+    // 提炼一次出齐——条件走三级链（决策模型快裁 → 组合 fork → 文本兜底），提炼
+    // 与判断并批同一次组合 fork（模型放行的只提炼：prompt 无判断节；模型缺席/
+    // 判不准的判提合一：一次 JSON 出 answers+briefs）。fork 预算闸经 forkGate 挂
+    // 进内核（每次实际烧 fork 前过闸），不再逐边领名额。
+    // 载荷路径（webhook/trigger 入口）没有会话可问，只有纯直投语义。
+    const items: EvalBatchItem[] = [];
     if (!payload) {
-      const conditioned = edges.filter(
-        (edge) =>
-          edge.condition?.trim() &&
-          !(edge.when?.trim() && !matchWhen(edge.when, judgeUpstream.text)),
-      );
-      if (conditioned.length > 0) {
-        const judged = await this.evaluateConditionsBatch(
-          rt,
-          from,
-          conditioned,
-          judgeUpstream.text,
-          judgeUpstream.truncated,
-        );
-        for (const [edgeId, ok] of judged) verdicts.set(edgeId, ok);
+      for (const edge of edges) {
+        const fast = whenFastPathOf(edge, judgeUpstream.text);
+        if (!fast && !edge.condition?.trim() && edge.when?.trim()) continue; // 纯 when 未命中：拦下，不烧 fork
+        const condition = !fast && edge.condition?.trim() ? edge.condition.trim() : null;
+        const summarize = edge.extract?.trim() || null;
+        if (!condition && !summarize) continue;
+        items.push({
+          key: edge.id,
+          ...(condition ? { condition } : {}),
+          ...(summarize ? { summarize } : {}),
+        });
       }
+    }
+    const outcomes = new Map<string, EvalBatchOutcome>();
+    if (items.length > 0) {
+      const batch = await this.kernelOf().evaluateBatch({
+        sessionId: from,
+        items,
+        upstream: judgeUpstream.text,
+        forkGate: () => this.takeFork(rt),
+      });
+      for (const [key, value] of batch) outcomes.set(key, value);
     }
 
     await Promise.allSettled(
@@ -617,15 +667,27 @@ export class OrchestrationEngine {
             : joined(rendered, payload);
           return this.deliver(rt, { from, to: edge.to, edgeId: edge.id, text });
         }
-        let summary: string | null = null;
-        if (edge.extract?.trim() && this.takeFork(rt)) {
-          summary = this.deps.supportsExtract?.(from)
-            ? ((await this.deps.extract?.({ sessionId: from, prompt: edge.extract.trim() })) ?? null)
-            : null;
-        }
-        // 文本预筛：{upstream}（文末总结）命中任一关键词才继续——费 token 的
-        // condition fork 不做无谓功。不命中拦下（不 fork、不投）。
-        if (edge.when?.trim() && !matchWhen(edge.when, judgeUpstream.text)) {
+        // when 快捷出口（2026-11-12 降权裁决）：命中 = 证据已足、跳过判断直接
+        // 放行（省一次模型/fork），不落 stage 事件。不命中时条件边照常进判断链；
+        // 纯 when 边不命中维持旧拦截（配置 when 即明示过滤意图）。
+        const fastPath = whenFastPathOf(edge, judgeUpstream.text);
+        const outcome = outcomes.get(edge.id);
+        if (!fastPath && edge.condition?.trim()) {
+          // 放行与拦下都落痕：谁判的（model/fork/text）、依据、截断注记。
+          this.record(rt, {
+            from,
+            to: edge.to,
+            edgeId: edge.id,
+            ok: outcome?.ok ?? false,
+            stage: 'condition',
+            ...(outcome?.ok
+              ? {}
+              : { error: outcome?.reason ?? 'condition not satisfied — delivery blocked' }),
+            ...(outcome ? { source: outcome.source } : {}),
+            ...this.conditionDetail(outcome?.detail, judgeUpstream.truncated),
+          });
+          if (!outcome?.ok) return;
+        } else if (!fastPath && !edge.condition?.trim() && edge.when?.trim()) {
           this.record(rt, {
             from,
             to: edge.to,
@@ -636,26 +698,9 @@ export class OrchestrationEngine {
           });
           return;
         }
-        // 放行条件：预判阶段已整批判定，这里只查表（不在表 = 预算耗尽没判成）。
-        if (edge.condition?.trim()) {
-          const verdict = verdicts.get(edge.id);
-          if (verdict !== true) {
-            if (verdict === undefined) {
-              this.record(rt, {
-                from,
-                to: edge.to,
-                edgeId: edge.id,
-                ok: false,
-                stage: 'condition',
-                error: `fork budget exhausted (${ORCH_MAX_FORKS}) — condition not evaluated`,
-              });
-            }
-            return;
-          }
-        }
         const text = renderEdgeText(edge.text, {
           upstream,
-          summary: summary ?? upstream,
+          summary: outcome?.summary ?? upstream,
           session,
         });
         if (UNRESOLVED_VAR.test(text)) {
@@ -674,68 +719,6 @@ export class OrchestrationEngine {
     this.maybeDone(rt);
   }
 
-  /**
-   * 条件边整批判定：judgeBatch（一次 fork 出全边路由）优先，引擎没实现或抛错
-   * 回落逐条 judge。每条的结果（放行/拦下原因）都落 RunEvent；预算在批次入口
-   * 一次扣（整批一个 fork 名额），到顶整批记预算原因。
-   */
-  private async evaluateConditionsBatch(
-    rt: Runtime,
-    from: string,
-    edges: OrchestrationEdge[],
-    upstream: string | null,
-    stateTruncated: boolean,
-  ): Promise<Map<string, boolean>> {
-    const out = new Map<string, boolean>();
-    const judge = this.deps.conditionJudge ?? this.forkJudge;
-    if (!this.takeFork(rt)) {
-      for (const edge of edges) {
-        this.record(rt, {
-          from,
-          to: edge.to,
-          edgeId: edge.id,
-          ok: false,
-          stage: 'condition',
-          error: `fork budget exhausted (${ORCH_MAX_FORKS}) — condition not evaluated`,
-        });
-      }
-      return out;
-    }
-    if (judge.judgeBatch && edges.length > 1) {
-      try {
-        const decisions = await judge.judgeBatch({
-          sessionId: from,
-          items: edges.map((edge) => ({ key: edge.id, condition: edge.condition!.trim() })),
-          upstream,
-        });
-        edges.forEach((edge, i) => {
-          const decision = decisions[i];
-          if (!decision) return;
-          out.set(edge.id, decision.ok);
-          // 放行与拦下都落痕：谁判的（source）、依据什么（detail）。
-          this.record(rt, {
-            from,
-            to: edge.to,
-            edgeId: edge.id,
-            ok: decision.ok,
-            stage: 'condition',
-            ...(decision.ok
-              ? {}
-              : { error: decision.reason ?? 'condition not satisfied — delivery blocked' }),
-            ...(decision.source ? { source: decision.source } : {}),
-            ...this.conditionDetail(decision.detail, stateTruncated),
-          });
-        });
-        return out;
-      } catch {
-        // 批量失败回落逐条（下面统一走）
-      }
-    }
-    for (const edge of edges) {
-      out.set(edge.id, await this.evaluateCondition(rt, from, edge, upstream, stateTruncated));
-    }
-    return out;
-  }
 
   /** 判断事件的 detail：判断依据 + 截断注记（有一样记一样，误判可诊断）。 */
   private conditionDetail(detail: string | undefined, truncated: boolean): { detail?: string } {
@@ -746,64 +729,6 @@ export class OrchestrationEngine {
     return parts.length > 0 ? { detail: parts.join(' — ') } : {};
   }
 
-  /**
-   * 条件边的放行判断：委托 ConditionJudge（缺省 = fork 子 Agent，装配侧可注入
-   * 其他决策方案）。放行才投；拦下（no / 判不出 / 判断引擎自己抛错）都记
-   * `stage:'condition'` 事件——宁可不发错包。
-   */
-  private async evaluateCondition(
-    rt: Runtime,
-    from: string,
-    edge: OrchestrationEdge,
-    upstream: string | null,
-    stateTruncated = false,
-  ): Promise<boolean> {
-    const block = (reason: string): false => {
-      this.record(rt, {
-        from,
-        to: edge.to,
-        edgeId: edge.id,
-        ok: false,
-        stage: 'condition',
-        error: reason,
-        ...(decisionSource ? { source: decisionSource } : {}),
-        ...this.conditionDetail(decisionDetail, stateTruncated),
-      });
-      return false;
-    };
-    let decisionSource: ConditionDecision['source'] | undefined;
-    let decisionDetail: string | undefined;
-    let decision: ConditionDecision;
-    try {
-      decision = await (this.deps.conditionJudge ?? this.forkJudge).judge({
-        sessionId: from,
-        condition: edge.condition!.trim(),
-        upstream,
-      });
-      decisionSource = decision.source;
-      decisionDetail = decision.detail;
-    } catch (err) {
-      return block(
-        `condition judge failed — delivery blocked: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-    if (!decision.ok) {
-      return block(decision.reason ?? 'condition not satisfied — delivery blocked');
-    }
-    // 放行也落一条：日志看得出「谁判的、依据什么」（否则放行静默，决策模型不可见）。
-    this.record(rt, {
-      from,
-      to: edge.to,
-      edgeId: edge.id,
-      ok: true,
-      stage: 'condition',
-      ...(decisionSource ? { source: decisionSource } : {}),
-      ...this.conditionDetail(decisionDetail, stateTruncated),
-    });
-    return true;
-  }
 
   /**
    * 投一次（带一次退避重试）：session 目标判活（死则拉起并按需等 inbox 凭据）、
@@ -850,6 +775,9 @@ export class OrchestrationEngine {
         this.record(rt, { ...input, ok: result.ok, ...(result.ok ? {} : { error: result.error }) });
         this.checkBudget(rt);
         return result.ok;
+      }
+      if (target.kind === 'memory') {
+        return this.deliverVerdictOnce(rt, input);
       }
       // 正文空：没有可送的东西，照样记一笔失败（不投空消息）。
       if (!input.text.trim()) {
@@ -940,6 +868,80 @@ export class OrchestrationEngine {
     }
   }
 
+  /**
+   * 记忆出口（批 3，2026-11-12）：判提合一写**这个项目自己的**记忆文件——
+   * 「值不值得留」廉闸（决策模型 P≤0.3 连 fork 都不烧；判不准走组合 fork 与
+   * 判决文本一次出）拦下流水账，放行的产出站立规则文风判决经写盘面落
+   * CLAUDE.local.md / AGENTS.md 认领区块。模型与 fork 都不在 = 不判，正文原样
+   * 落盘（挂记忆节点本身就是要记）。拦下不是错误：记 stage:memory 落痕、
+   * run 照常收尾；写盘失败才走投递重试那一次。
+   */
+  private async deliverVerdictOnce(
+    rt: Runtime,
+    input: { from: string; to: string; edgeId: string; text: string },
+  ): Promise<boolean> {
+    const text = input.text.trim();
+    if (!text) {
+      this.record(rt, { ...input, ok: false, error: 'memory exit has no content' });
+      return false;
+    }
+    // 载荷型入口（webhook/trigger 直连记忆）没有上游会话可 fork——只剩决策
+    // 模型快裁那一路；两条都不在就不判（见上：挂节点即意图）。
+    const canJudge =
+      this.deps.decisionModel != null ||
+      (input.from ? (this.deps.supportsExtract?.(input.from) ?? false) : false);
+    let verdict = text.slice(0, VERDICT_MAX_CHARS);
+    if (canJudge) {
+      const outcomes = await this.kernelOf().evaluateBatch({
+        sessionId: input.from,
+        items: [
+          {
+            key: input.to,
+            condition: MEMORY_WORTH_CONDITION,
+            summarize:
+              `Distill the delivery below into one standing-rule verdict for this project's memory file: ` +
+              `1-3 imperative lines, same language as the delivery, no dates or filler.\n\nDelivery:\n${text}`,
+          },
+        ],
+        upstream: judgeUpstreamOf(text).text,
+        forkGate: () => this.takeFork(rt),
+      });
+      if (!rt.running) return false;
+      const outcome = outcomes.get(input.to);
+      if (outcome && !outcome.ok) {
+        rt.deliveries++;
+        this.record(rt, {
+          ...input,
+          ok: true,
+          stage: 'memory',
+          ...(outcome.source ? { source: outcome.source } : {}),
+          detail: outcome.detail ?? outcome.reason ?? 'verdict not worth keeping — skipped',
+        });
+        this.checkBudget(rt);
+        return true;
+      }
+      if (outcome?.summary) verdict = outcome.summary.slice(0, VERDICT_MAX_CHARS);
+    }
+    const result = this.deps.deliverVerdict
+      ? await this.deps.deliverVerdict({ projectId: rt.projectId, text: verdict })
+      : { ok: false as const, files: [] as string[], error: 'memory exit not wired' };
+    if (!rt.running) return false;
+    rt.deliveries++;
+    this.record(rt, {
+      ...input,
+      ok: result.ok,
+      stage: 'memory',
+      ...(result.ok
+        ? {
+            detail:
+              result.files.join(', ') + (result.error ? ` — partial: ${result.error}` : ''),
+          }
+        : { error: result.error ?? 'verdict delivery failed' }),
+    });
+    this.checkBudget(rt);
+    return result.ok;
+  }
+
   /** 出口 webhook 选了已登记通道：查通道 → 按平台格式发（查无/禁用 = 失败，走重试一次）。 */
   private async deliverViaChannel(
     channelId: string,
@@ -973,6 +975,17 @@ export class OrchestrationEngine {
     return true;
   }
 
+  /** 判提合一内核（fireEdges 边级与记忆出口共用一个装法，fork 预算闸各自挂）。 */
+  private kernelOf() {
+    return createDecisionKernel({
+      decisionModel: this.deps.decisionModel,
+      fork: {
+        supports: (sessionId) => this.deps.supportsExtract?.(sessionId) ?? false,
+        extract: (input) => this.deps.extract?.(input) ?? Promise.resolve(null),
+      },
+    });
+  }
+
   private record(
     rt: Runtime,
     input: {
@@ -981,7 +994,7 @@ export class OrchestrationEngine {
       edgeId: string;
       ok: boolean;
       error?: string;
-      stage?: 'ensure' | 'condition' | 'defer';
+      stage?: 'ensure' | 'condition' | 'defer' | 'memory';
       ms?: number;
       source?: string;
       detail?: string;

@@ -17,9 +17,9 @@ export interface OrchestrationEdge {
   when?: string;
 }
 
-export type OrchestrationNodeKind = 'session' | 'webhook' | 'trigger';
+export type OrchestrationNodeKind = 'session' | 'webhook' | 'trigger' | 'memory';
 
-/** mirror of `OrchestrationNode`：session 节点 id = sessionId；webhook = `w:<uuid>`；手动触发 = `t:<uuid>`。 */
+/** mirror of `OrchestrationNode`：session 节点 id = sessionId；webhook = `w:<uuid>`；手动触发 = `t:<uuid>`；记忆出口 = `m:<uuid>`。 */
 export interface OrchestrationNode {
   id: string;
   kind: OrchestrationNodeKind;

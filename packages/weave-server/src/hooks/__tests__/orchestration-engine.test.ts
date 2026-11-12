@@ -15,8 +15,7 @@ import {
   OrchestrationEngine,
   matchWhen,
   parseConditionAnswer,
-  type ConditionDecision,
-  type ConditionJudge,
+  type DecisionModelTier,
 } from '../orchestration-engine.js';
 import type { SendInput, SendResult, PipeMessage, PipeStatus } from '../message-deliverer.js';
 
@@ -100,7 +99,10 @@ const deliverer = (
     return had;
   });
   const markCompleted = vi.fn(() => false);
-  return { send, awaitInboxReady, lastTurnOutput, setLastOutput, registerInduction, consumeInduction, markCompleted };
+  // 扇入并置（2026-11-12）：fake deliverer 的可选只读口（真实现 = 在途行正文）。
+  const pendingTexts = new Map<string, string[]>();
+  const pendingTextsOf = vi.fn((sessionId: string): string[] => pendingTexts.get(sessionId) ?? []);
+  return { send, awaitInboxReady, lastTurnOutput, setLastOutput, registerInduction, consumeInduction, markCompleted, pendingTextsOf, setPendingTexts: (s: string, texts: string[]) => pendingTexts.set(s, texts) };
 };
 
 const setup = (
@@ -113,7 +115,7 @@ const setup = (
     maxDeliveries?: number;
     supportsExtract?: (sessionId: string) => boolean;
     extract?: (input: { sessionId: string; prompt: string }) => Promise<string | null>;
-    conditionJudge?: ConditionJudge;
+    decisionModel?: DecisionModelTier;
     deferWhenUserPresent?: boolean;
     postJson?: (
       url: string,
@@ -125,6 +127,11 @@ const setup = (
       channel: unknown,
       payload: { title: string; body: string },
     ) => Promise<{ ok: boolean; status: string; error?: string }>;
+    deliverVerdict?: (input: { projectId: number; text: string }) => Promise<{
+      ok: boolean;
+      files: string[];
+      error?: string;
+    }>;
   } = {},
 ) => {
   const bus = new HookEventBus();
@@ -145,11 +152,12 @@ const setup = (
     retryDelayMs: 0,
     ...(opts.supportsExtract ? { supportsExtract: opts.supportsExtract } : {}),
     ...(opts.extract ? { extract: opts.extract } : {}),
-    ...(opts.conditionJudge ? { conditionJudge: opts.conditionJudge } : {}),
+    ...(opts.decisionModel ? { decisionModel: opts.decisionModel } : {}),
     ...(opts.deferWhenUserPresent ? { deferWhenUserPresent: true } : {}),
     postJsonImpl: postJson as never,
     ...(opts.channelById ? { channelById: opts.channelById } : {}),
     ...(opts.sendToChannel ? { sendToChannelImpl: opts.sendToChannel as never } : {}),
+    ...(opts.deliverVerdict ? { deliverVerdict: opts.deliverVerdict } : {}),
   });
   const frames: Array<{ kind: string; [k: string]: unknown }> = [];
   bus.subscribe((m) => {
@@ -468,30 +476,33 @@ describe('边级提取与变量', () => {
     expect(texts).toContain('plain');
   });
 
-  it('extract：fork 提取结果填 {summary}；失败回落 {upstream}', async () => {
+  it('extract：判提合一组合 fork 一次出全边 briefs；缺键的边回落 {upstream}', async () => {
     const prompts: string[] = [];
     const { d, engine } = setup({
       deliverer: { lastOutput: { output: '上游原文', at: AT } },
       supportsExtract: (id) => id === 'a',
       extract: async (input) => {
         prompts.push(input.prompt);
-        return input.prompt.includes('fail') ? null : '提炼后的交接说明';
+        // 两边的提炼指令并批进同一次组合 fork（键齐全的那条拿到 brief）。
+        return '{"briefs":{"a-b":"提炼后的交接说明"}}';
       },
     });
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
     await engine.start(
       graph([
         { id: 'a-b', from: 'a', to: 'b', text: '{summary}', extract: '请总结' },
-        { id: 'a-c', from: 'a', to: 'c', text: '{summary}', extract: '请 fail' },
+        { id: 'a-c', from: 'a', to: 'c', text: '{summary}', extract: '请提炼' },
       ]),
       'manual',
     );
     idleOf(engine, 'a');
     await flush();
-    expect(prompts).toEqual(['请总结', '请 fail']);
+    expect(prompts).toHaveLength(1); // 两条边的提炼一次 fork 并批出
+    expect(prompts[0]).toContain('请总结');
+    expect(prompts[0]).toContain('请提炼');
     const texts = d.send.mock.calls.map((c) => c[0].text);
     expect(texts).toContain('提炼后的交接说明');
-    expect(texts).toContain('上游原文'); // 提取失败回落上游输出
+    expect(texts).toContain('上游原文'); // 缺键回落上游输出
   });
 
   it('不支持提取 → 不跑 fork，直接回落 {upstream}', async () => {
@@ -911,7 +922,7 @@ describe('条件边（edge.condition）', () => {
   ): OrchestrationEdge => ({ id, from, to, text: `msg to ${to}`, condition });
 
   it('回答 yes → 放行投递；旁边无条件边不受影响', async () => {
-    const extract = vi.fn(async () => 'yes');
+    const extract = vi.fn(async () => '{"answers":{"a-b":true}}');
     const { d, engine } = setup({ supportsExtract: () => true, extract });
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
@@ -941,7 +952,7 @@ describe('条件边（edge.condition）', () => {
   it('回答 no → 拦下不投（stage=condition）；全拦下 run 落 done', async () => {
     const { d, engine } = setup({
       supportsExtract: () => true,
-      extract: async () => 'no',
+      extract: async () => '{"answers":{"a-b":false}}',
     });
     for (const id of ['a', 'b']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
@@ -964,8 +975,8 @@ describe('条件边（edge.condition）', () => {
     });
   });
 
-  it('回答不认 → 拦下并给原因', async () => {
-    const { engine } = setup({
+  it('组合 fork 回坏答案（非 JSON）→ 回落逐边仍坏 → 文本兜底拦下', async () => {
+    const { d, engine } = setup({
       supportsExtract: () => true,
       extract: async () => '我觉得应该发一下',
     });
@@ -978,41 +989,48 @@ describe('条件边（edge.condition）', () => {
       edges: [condEdge('a', 'b', '需要发吗')],
     }).id;
     const result = await engine.start(id, 'manual');
+    d.setLastOutput({ output: '上游没提到关键词', at: new Date().toISOString() });
     idleOf(engine, 'a');
     await flush();
     const run = runs.getById((result as { runId: number }).runId)!;
     expect(run.status).toBe('done');
     const event = run.state.events.find((e) => e.stage === 'condition');
-    expect(event?.error).toContain('could not be evaluated');
+    expect(event?.ok).toBe(false);
+    expect(event?.source).toBe('text'); // 三级链末档接住了坏答案
   });
 
-  it('harness 没有上下文子 Agent 面 → 拦下并给原因', async () => {
-    const { engine } = setup({ supportsExtract: () => false });
+  it('harness 没有上下文子 Agent 面 → 文本兜底判（关键词命中放行，否则拦下）', async () => {
+    const { d, engine } = setup({ supportsExtract: () => false });
     for (const id of ['a', 'b']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
       name: 'cond-unsupported',
       projectId,
       startText: 'go',
       nodes: [sNode('a'), sNode('b')],
-      edges: [condEdge('a', 'b', '需要发吗')],
+      edges: [condEdge('a', 'b', '需要发吗,发包')],
     }).id;
     const result = await engine.start(id, 'manual');
+    d.setLastOutput({ output: '上游决定发包', at: new Date().toISOString() });
     idleOf(engine, 'a');
+    await flush();
+    const targets = d.send.mock.calls.map((c) => c[0].toSessionId);
+    expect(targets).toContain('b'); // 关键词命中 → 文本兜底放行
+    idleOf(engine, 'b'); // b 消费投递 → run 收尾
     await flush();
     const run = runs.getById((result as { runId: number }).runId)!;
     expect(run.status).toBe('done');
-    expect(run.state.events.find((e) => e.stage === 'condition')?.error).toContain(
-      'no context sub-agent face',
-    );
+    const event = run.state.events.find((e) => e.stage === 'condition');
+    expect(event?.ok).toBe(true);
+    expect(event?.source).toBe('text');
   });
 
-  it('注入 conditionJudge → 判断整体走它（fork 不跑），拦下带它给的原因', async () => {
-    const extract = vi.fn(async () => 'yes');
-    const judge = vi.fn(async () => ({ ok: false, reason: 'jev: P(yes)=0.3 below threshold' }));
+  it('注入决策模型 → 强结论直接出（fork 不烧）；P≤0.3 真拦截带概率原因', async () => {
+    const extract = vi.fn(async () => '{"answers":{"a-b":true}}');
+    const ask = vi.fn(async () => ({ 'a-b': 0.05 }));
     const { d, engine } = setup({
       supportsExtract: () => true,
       extract,
-      conditionJudge: { judge },
+      decisionModel: { ask },
     });
     for (const id of ['a', 'b']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
@@ -1026,27 +1044,33 @@ describe('条件边（edge.condition）', () => {
     d.setLastOutput({ output: '上游这一轮的输出', at: new Date().toISOString() });
     idleOf(engine, 'a');
     await flush();
-    expect(extract).not.toHaveBeenCalled();
-    expect(judge).toHaveBeenCalledTimes(1);
-    expect(judge.mock.calls[0]![0]).toMatchObject({
-      sessionId: 'a',
-      condition: '需要发吗',
+    expect(extract).not.toHaveBeenCalled(); // 真拦截连 fork 都不烧
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.calls[0]![0]).toMatchObject({
       upstream: '上游这一轮的输出',
+    });
+    expect(ask.mock.calls[0]![0].questions['a-b']).toMatchObject({
+      type: 'noul',
+      instructions: '需要发吗',
     });
     expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 的首投
     const run = runs.getById((result as { runId: number }).runId)!;
-    expect(run.state.events.find((e) => e.stage === 'condition')?.error).toContain(
-      'jev: P(yes)=0.3',
-    );
+    const event = run.state.events.find((e) => e.stage === 'condition');
+    expect(event?.error).toContain('condition answered no');
+    expect(event?.detail).toContain('P(yes)=0.05');
+    expect(event?.source).toBe('decision-model');
   });
 
-  it('conditionJudge 抛错 → 拦下并记原因（不投）', async () => {
-    const judge: ConditionJudge = {
-      judge: async () => {
-        throw new Error('api down');
-      },
-    };
-    const { d, engine } = setup({ conditionJudge: judge });
+  it('决策模型抛错/中间带 → 降级组合 fork 判断（不因模型故障拦死）', async () => {
+    const extract = vi.fn(async () => '{"answers":{"a-b":true}}');
+    const ask = vi.fn(async () => {
+      throw new Error('api down');
+    });
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract,
+      decisionModel: { ask },
+    });
     for (const id of ['a', 'b']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
       name: 'cond-judge-throw',
@@ -1056,20 +1080,26 @@ describe('条件边（edge.condition）', () => {
       edges: [condEdge('a', 'b', '需要发吗')],
     }).id;
     const result = await engine.start(id, 'manual');
+    d.setLastOutput({ output: '上游输出', at: new Date().toISOString() });
     idleOf(engine, 'a');
     await flush();
-    expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 的首投
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(extract).toHaveBeenCalledTimes(1); // 模型故障降级 fork
     const run = runs.getById((result as { runId: number }).runId)!;
-    expect(run.state.events.find((e) => e.stage === 'condition')?.error).toContain('api down');
+    const event = run.state.events.find((e) => e.stage === 'condition');
+    expect(event?.ok).toBe(true);
+    expect(event?.source).toBe('fork');
+    expect(d.send).toHaveBeenCalledTimes(2); // start 首投 + 放行的 b
   });
 
-  it('判断证据用 32K 头尾预算（边正文仍 4000），截断落 detail 注记', async () => {
-    const judge = vi.fn(async (): Promise<ConditionDecision> => ({
-      ok: true,
-      source: 'decision-model',
-      detail: 'P(yes)=0.9',
-    }));
-    const { d, engine } = setup({ conditionJudge: { judge } });
+  it('判断证据与边正文同账 32K 头尾预算（三本账统一，2026-11-12），截断落 detail 注记', async () => {
+    const ask = vi.fn(async () => ({ 'a-b': 0.9 }));
+    const extract = vi.fn(async () => 'yes'); // 不该被调用：模型已出强结论
+    const { d, engine } = setup({
+      supportsExtract: () => true,
+      extract,
+      decisionModel: { ask },
+    });
     for (const id of ['a', 'b']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
       name: 'judge-budget',
@@ -1083,17 +1113,20 @@ describe('条件边（edge.condition）', () => {
     d.setLastOutput({ output: `HEAD${'a'.repeat(40_000)}TAIL`, at: new Date().toISOString() });
     idleOf(engine, 'a');
     await flush();
+    expect(extract).not.toHaveBeenCalled(); // 模型强结论免 fork
     // 判断拿到 32K 头尾版：两头都在、带截断标记。
-    const state = judge.mock.calls[0]![0].upstream ?? '';
+    const state = ask.mock.calls[0]![0].upstream ?? '';
     expect(state).toContain('HEAD');
     expect(state).toContain('TAIL');
     expect(state).toContain('chars truncated');
     expect(state.length).toBeLessThan(33_000);
-    // 边正文仍是 4000 头部版：只有 HEAD、没有 TAIL（首投是 start 的 'go'，取末条）。
+    // 边正文同账 32K 头尾版（旧 4000 半截硬裁已退役）：两头都在（首投是 start 的
+    // 'go'，取末条）。
     const sent = d.send.mock.calls.at(-1)![0] as SendInput;
     expect(sent.text).toContain('HEAD');
-    expect(sent.text).not.toContain('TAIL');
-    expect(sent.text.length).toBeLessThan(4_100);
+    expect(sent.text).toContain('TAIL');
+    expect(sent.text).toContain('chars truncated');
+    expect(sent.text.length).toBeLessThan(33_000);
     // RunEvent 的 detail 带截断注记（误判可诊断）。
     const run = runs.getById((result as { runId: number }).runId)!;
     const event = run.state.events.find((e) => e.stage === 'condition');
@@ -1116,33 +1149,46 @@ describe('条件边（edge.condition）', () => {
 });
 
 describe('when 预筛 + 中间节点自然触发', () => {
-  it('when 不命中 → 拦下且不烧 fork；命中 → 继续（fork 后投递）', async () => {
-    const extract = vi.fn(async () => 'yes');
+  it('when 不命中 → 条件边照常进判断（模型主裁）；命中 → 快捷放行免 fork；纯 when 不命中维持拦下', async () => {
+    const extract = vi.fn(async () => '{"answers":{"a-b":true}}');
     const { d, engine } = setup({ supportsExtract: () => true, extract });
-    for (const id of ['a', 'b']) sessions.touch(id, projectId);
+    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    // a→b：when+condition（不命中也进判断）；a→c：纯 when（不命中维持拦截）
     const id = orchestrations.insert({
       name: 'when',
       projectId,
       startText: 'go',
-      nodes: [sNode('a'), sNode('b')],
-      edges: [{ ...edge('a', 'b'), when: 'MODE=,ARTIFACT=', condition: '需要发吗' }],
+      nodes: [sNode('a'), sNode('b'), sNode('c')],
+      edges: [
+        { ...edge('a', 'b'), when: 'MODE=,ARTIFACT=', condition: '需要发吗' },
+        { ...edge('a', 'c'), when: 'MODE=' },
+      ],
     }).id;
     const result = await engine.start(id, 'manual');
-    // 第一轮输出没有关键词 → 拦下，fork 一次都没跑
+    // 第一轮输出没有关键词：a→b 不命中 when 但有 condition → 进判断（fork 判
+    // yes → 照投）；a→c 纯 when 不命中 → 拦下。
     d.setLastOutput({ output: '普通聊天内容', at: new Date().toISOString() });
     idleOf(engine, 'a');
     await flush();
-    expect(extract).not.toHaveBeenCalled();
-    expect(d.send).toHaveBeenCalledTimes(1); // 只有 start 首投
-    // 第二轮输出带 MODE= → 过筛，fork 判 yes → 投递
-    (engine as unknown as { deps: { deliverer: { setLastOutput: (v: unknown) => void } } }).deps
-      .deliverer.setLastOutput({ output: 'MODE=pack\nARTIFACT=x.tgz', at: new Date().toISOString() });
-    idleOf(engine, 'a');
-    await flush();
-    expect(extract).toHaveBeenCalledTimes(1);
-    expect(d.send).toHaveBeenCalledTimes(2);
+    expect(extract).toHaveBeenCalledTimes(1); // 判断烧了一次 fork
+    expect(d.send).toHaveBeenCalledTimes(2); // start 首投 + b（c 被纯 when 拦下）
     const run = runs.getById((result as { runId: number }).runId)!;
-    expect(run.state.events.filter((e) => e.stage === 'condition')).toHaveLength(1);
+    expect(
+      run.state.events.filter((e) => e.edgeId === 'a-c' && e.stage === 'condition'),
+    ).toHaveLength(1);
+    // 第二轮输出带 MODE= → 两边都命中快捷放行（免 fork 直投）
+    const forksAfterFirst = extract.mock.calls.length;
+    const sendAfterFirst = d.send.mock.calls.length;
+    const run2 = await engine.start(id, 'manual'); // 同编排并进 run（单 run 闸）
+    void run2;
+    idleOf(engine, 'b'); // b 有 pending（第一轮投给 b 的），消费它的出边（无出边）
+    idleOf(engine, 'c');
+    await flush();
+    d.setLastOutput({ output: 'MODE=pack\nARTIFACT=x.tgz', at: new Date().toISOString() });
+    idleOf(engine, 'a'); // 新 run 的 a 消费（不命中 nothing：两边命中快捷）
+    await flush();
+    expect(d.send.mock.calls.length).toBe(sendAfterFirst + 3); // start 首投 + b + c
+    expect(extract.mock.calls.length).toBe(forksAfterFirst); // 快捷放行不再烧 fork
   });
 
   it('中间节点 autoFire：自然回合触发出边（when 拦噪）；未标记的不触发', async () => {
@@ -1274,25 +1320,75 @@ describe('P0：fork 预算 + pending 陈滞超时', () => {
   });
 });
 
-describe('P1：条件边整批判定（一次 fork 出全边路由）', () => {
-  it('两条条件边只烧一次 fork：批量回答逐键生效，no 的边拦下', async () => {
+describe('扇入证据并置（2026-11-12 裁决）', () => {
+  it('fan-in 目标的出边判断证据并置其余未消费投递正文（deliverer 在途行）', async () => {
+    const ask = vi.fn(async () => ({ 'b-c': 0.9 }));
+    const { d, engine } = setup({ decisionModel: { ask } });
+    for (const id of ['b', 'c']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'fanin',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('b'), sNode('c')],
+      edges: [{ ...edge('b', 'c'), condition: '两路是否都齐了？' }],
+    }).id;
+    await engine.start(id, 'manual');
+    // b 收到首投后有两条在途投递（模拟 fan-in 另一路已送达未消费）
+    d.setLastOutput({ output: '第一路上游的产出结论', at: new Date().toISOString() });
+    d.setPendingTexts('b', ['第一路上游的产出结论', '第二路上游的产出结论']);
+    idleOf(engine, 'b'); // b 回合收盘（消费首投）→ 出边判断
+    await flush();
+    expect(d.pendingTextsOf).toHaveBeenCalledWith('b');
+    const state = ask.mock.calls[0]![0].upstream ?? '';
+    expect(state).toContain('fan-in context');
+    expect(state).toContain('第一路上游的产出结论');
+    expect(state).toContain('第二路上游的产出结论');
+  });
+
+  it('无在途正文或 webhook 载荷入口 → 不并置（证据 = 单边 {upstream}）', async () => {
+    const ask = vi.fn(async () => ({ 'b-c': 0.9 }));
+    const { d, engine } = setup({ decisionModel: { ask } });
+    for (const id of ['b', 'c']) sessions.touch(id, projectId);
+    const id = orchestrations.insert({
+      name: 'fanin-none',
+      projectId,
+      startText: 'go',
+      nodes: [sNode('b'), sNode('c')],
+      edges: [{ ...edge('b', 'c'), condition: '需要发吗' }],
+    }).id;
+    await engine.start(id, 'manual');
+    d.setLastOutput({ output: '上游单边结论', at: new Date().toISOString() });
+    idleOf(engine, 'b');
+    await flush();
+    const state = ask.mock.calls[0]![0].upstream ?? '';
+    expect(state).not.toContain('fan-in context');
+    expect(state).toBe('上游单边结论');
+    expect(d.pendingTextsOf).toHaveBeenCalledWith('b');
+  });
+});
+
+describe('P1：判提合一批量档（一次组合 fork 出全边路由）', () => {
+  it('两条条件边 + 一条提炼边 → 一次组合 fork 出齐 answers+briefs，no 的边拦下', async () => {
     let forkCount = 0;
+    const prompts: string[] = [];
     const { d, engine } = setup({
       supportsExtract: () => true,
-      extract: async () => {
+      extract: async (input) => {
         forkCount++;
-        return '{"ab":true,"ac":false}';
+        prompts.push(input.prompt);
+        return '{"answers":{"ab":true,"ac":false},"briefs":{"ae":"提炼结果"}}';
       },
     });
-    for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
+    for (const id of ['a', 'b', 'c', 'e']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
       name: 'batch-cond',
       projectId,
       startText: 'go',
-      nodes: [sNode('a'), sNode('b'), sNode('c')],
+      nodes: [sNode('a'), sNode('b'), sNode('c'), sNode('e')],
       edges: [
         { id: 'ab', from: 'a', to: 'b', text: 'to b', condition: '需要发 b 吗' },
         { id: 'ac', from: 'a', to: 'c', text: 'to c', condition: '需要发 c 吗' },
+        { id: 'ae', from: 'a', to: 'e', text: '{summary}', extract: '提炼' },
       ],
     }).id;
     const result = await engine.start(id, 'manual');
@@ -1300,32 +1396,36 @@ describe('P1：条件边整批判定（一次 fork 出全边路由）', () => {
     await flush();
     idleOf(engine, 'b');
     await flush();
-    expect(forkCount).toBe(1); // 两条条件边一次 fork
+    expect(forkCount).toBe(1); // 判断 + 提炼一次 fork 出齐
+    expect(prompts[0]).toContain('需要发 b 吗');
+    expect(prompts[0]).toContain('需要发 c 吗');
+    expect(prompts[0]).toContain('提炼');
     const run = runs.getById((result as { runId: number }).runId)!;
     const targets = d.send.mock.calls.map((c) => c[0].toSessionId);
     expect(targets).toContain('b');
     expect(targets).not.toContain('c');
+    const texts = d.send.mock.calls.map((c) => c[0].text);
+    expect(texts).toContain('提炼结果');
     expect(run.state.events.find((e) => e.edgeId === 'ac' && e.stage === 'condition')).toMatchObject({
       ok: false,
     });
   });
 
-  it('judgeBatch 抛错 → 回落逐条判定（行为不变）', async () => {
+  it('组合 fork 回 JSON 坏 → 回落逐边（单键组合 prompt），全照常出结论', async () => {
     let calls = 0;
+    const responses = [
+      'not a json', // 批量组合一次：坏
+      '{"answers":{"ab":true}}', // 逐边回落：ab
+      '{"answers":{"ac":true}}', // 逐边回落：ac
+    ];
     const { d, engine } = setup({
       supportsExtract: () => true,
       extract: async () => {
+        const answer = responses[calls];
         calls++;
-        return 'yes';
+        return answer ?? null;
       },
     });
-    // 注入一个 judgeBatch 恒抛的引擎
-    (engine as unknown as { deps: { conditionJudge?: unknown } }).deps.conditionJudge = {
-      judge: async () => ({ ok: true }),
-      judgeBatch: async () => {
-        throw new Error('boom');
-      },
-    };
     for (const id of ['a', 'b', 'c']) sessions.touch(id, projectId);
     const id = orchestrations.insert({
       name: 'batch-fallback',
@@ -1343,6 +1443,7 @@ describe('P1：条件边整批判定（一次 fork 出全边路由）', () => {
     idleOf(engine, 'b');
     idleOf(engine, 'c');
     await flush();
+    expect(calls).toBe(3); // 1 批量（坏） + 2 逐边
     const targets = d.send.mock.calls.map((c) => c[0].toSessionId);
     expect(targets).toContain('b');
     expect(targets).toContain('c');
@@ -1391,5 +1492,109 @@ describe('P2：人在场闸（deferWhenUserPresent）', () => {
     }).id;
     await engine.start(id, 'manual');
     expect(d.send).toHaveBeenCalledTimes(1); // 首投照常
+  });
+});
+
+describe('记忆出口（批 3，2026-11-12：判提合一写项目记忆文件）', () => {
+  const mNode = (id = 'm:1'): OrchestrationNode => ({ id, kind: 'memory' });
+  const memGraph = (name: string): number =>
+    orchestrations.insert({
+      name,
+      projectId,
+      startText: 'go',
+      nodes: [sNode('a'), mNode()],
+      edges: [edge('a', 'm:1')],
+    }).id;
+
+  it('模型放行 → fork 只提炼：写盘面收到判决文本、stage:memory 落痕、run 收尾', async () => {
+    const ask = vi.fn(async () => ({ 'm:1': 0.9 }));
+    const extract = vi.fn(async () => '{"briefs":{"m:1":"判决：X 由此走 Y 通道"}}');
+    const deliverVerdict = vi.fn(async () => ({ ok: true, files: ['/p/CLAUDE.local.md'] }));
+    const { engine } = setup({
+      supportsExtract: () => true,
+      extract,
+      decisionModel: { ask },
+      deliverVerdict,
+    });
+    sessions.touch('a', projectId);
+    const id = memGraph('mem-model-clear');
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    // 判提合一：模型已放行，组合 fork 只挂提炼节（prompt 有 brief 无 judgment）
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(extract.mock.calls[0]![0].prompt).toContain('briefs');
+    expect(extract.mock.calls[0]![0].prompt).not.toContain('Judgments');
+    expect(deliverVerdict).toHaveBeenCalledTimes(1);
+    expect(deliverVerdict.mock.calls[0]![0]).toMatchObject({ projectId, text: '判决：X 由此走 Y 通道' });
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done'); // 记忆出口不进 pending，链路即时收尾
+    const event = run.state.events.find((e) => e.stage === 'memory');
+    expect(event).toMatchObject({ ok: true, to: 'm:1', detail: '/p/CLAUDE.local.md' });
+  });
+
+  it('模型拦下（P≤0.3）→ 连 fork 都不烧：不写盘、stage:memory 落痕、run 照常 done', async () => {
+    const ask = vi.fn(async () => ({ 'm:1': 0.05 }));
+    const extract = vi.fn(async () => 'never');
+    const deliverVerdict = vi.fn(async () => ({ ok: true, files: [] }));
+    const { engine } = setup({
+      supportsExtract: () => true,
+      extract,
+      decisionModel: { ask },
+      deliverVerdict,
+    });
+    sessions.touch('a', projectId);
+    const id = memGraph('mem-model-block');
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    expect(extract).not.toHaveBeenCalled();
+    expect(deliverVerdict).not.toHaveBeenCalled();
+    const run = runs.getById((result as { runId: number }).runId)!;
+    expect(run.status).toBe('done');
+    const event = run.state.events.find((e) => e.stage === 'memory');
+    expect(event).toMatchObject({ ok: true, source: 'decision-model' });
+    expect(event?.detail).toContain('P(yes)=0.05');
+  });
+
+  it('模型缺席 → 组合 fork 判提合一（answers+briefs 一次出）', async () => {
+    const extract = vi.fn(async () => '{"answers":{"m:1":true},"briefs":{"m:1":"组合判决文本"}}');
+    const deliverVerdict = vi.fn(async () => ({ ok: true, files: ['/p/AGENTS.md'] }));
+    const { engine } = setup({ supportsExtract: () => true, extract, deliverVerdict });
+    sessions.touch('a', projectId);
+    const id = memGraph('mem-combined');
+    await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(deliverVerdict.mock.calls[0]![0]).toMatchObject({ text: '组合判决文本' });
+  });
+
+  it('模型与 fork 都不在 → 不判，正文原样落盘', async () => {
+    const deliverVerdict = vi.fn(async () => ({ ok: true, files: ['/p/CLAUDE.local.md'] }));
+    const { engine } = setup({ deliverVerdict });
+    sessions.touch('a', projectId);
+    const id = memGraph('mem-raw');
+    await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    expect(deliverVerdict).toHaveBeenCalledTimes(1);
+    expect(deliverVerdict.mock.calls[0]![0]).toMatchObject({ text: 'msg to m:1' });
+  });
+
+  it('写盘失败 → 如实记失败并走一次投递重试', async () => {
+    const deliverVerdict = vi.fn(async () => ({ ok: false, files: [], error: 'project not found' }));
+    const { engine } = setup({ deliverVerdict });
+    sessions.touch('a', projectId);
+    const id = memGraph('mem-fail');
+    const result = await engine.start(id, 'manual');
+    idleOf(engine, 'a');
+    await flush();
+    await flush(); // 重试隔一个 0ms 退避拍
+    expect(deliverVerdict).toHaveBeenCalledTimes(2); // deliver 的一次退避重试
+    const run = runs.getById((result as { runId: number }).runId)!;
+    const events = run.state.events.filter((e) => e.stage === 'memory');
+    expect(events).toHaveLength(2);
+    expect(events.every((e) => e.ok === false && e.error === 'project not found')).toBe(true);
   });
 });

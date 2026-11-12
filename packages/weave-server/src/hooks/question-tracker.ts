@@ -124,15 +124,15 @@ export class QuestionTracker {
         // 静默模式（名单归 harness 规格，如 claude 的 bypassPermissions）不弹对话框。
         const mode = this.permissionMode.get(sessionId);
         if (mode != null && spec.silentPermissionModes.includes(mode)) return;
-        // 阻塞工具自己等输入期间补发的噪声提醒：问题面已在，别覆盖（见类注释）。
-        // 判据两条件同时成立才压——只压「正卡在阻塞工具里、且这条提醒就是该工具自己」的
-        // 情形；真权限对话框（lastPreTool = 待批工具）照常置位，不会被误吞。
+        // 阻塞工具自己等输入期间补发的噪声提醒：别改写问题面（见类注释）。
+        // 判据 = lastPreTool 是阻塞工具：真权限对话框归属的是要批的那个工具
+        // （PreToolUse(PowerShell) → permission_prompt → PostToolUse(PowerShell)），
+        // 归属非阻塞工具，照常置位，不会被误吞。不要求 pending 里还是 question 态——
+        // daemon 重启重放（SEED_WINDOW 截窗）或中断摘面之后，噪声提醒一到就会把
+        // AskUserQuestion 的 JSON 预览当成工具参数盖上合成权限面（2026-11-11 实测：
+        // bypass 会话问答中途弹「Permission (bypass mode) + Yes/No」，真问答面被顶掉）。
         const last = this.lastPreTool.get(sessionId);
-        if (
-          this.pending.get(sessionId)?.kind === 'question' &&
-          last != null &&
-          spec.blockingTools.includes(last.toolName)
-        ) {
+        if (last != null && spec.blockingTools.includes(last.toolName)) {
           return;
         }
         const ctx = this.lastPreTool.get(sessionId) ?? { toolName: null, toolInput: null };

@@ -1,4 +1,5 @@
-import type { ConditionDecision, ConditionJudge } from './decision-kernel.js';
+import { judgeByNoul, type ConditionDecision, type ConditionJudge, type DecisionModelTier } from './decision-kernel.js';
+import { askNoul, askNoulBatch } from './noul-ask.js';
 
 /**
  * 编排条件边的决策模型判断（Jev 兼容 / System One 接口）：`POST {baseUrl}/v1/systemone`
@@ -8,17 +9,36 @@ import type { ConditionDecision, ConditionJudge } from './decision-kernel.js';
  * ——System 1 拿不准的交给 System 2，两层都拦下才拦下。
  */
 
-/** ≥此值认 yes（放行）。 */
-const YES_THRESHOLD = 0.7;
-/** ≤此值认 no（拦下）。 */
-const NO_THRESHOLD = 0.3;
-/** 决策调用上限：一次前向传递理应秒回，超时即回落（fork 自己还有 120s 预算）。 */
-const DECISION_TIMEOUT_MS = 10_000;
 
 export interface DecisionJudgeConfig {
   baseUrl: string;
   model: string;
   apiKey: string;
+}
+
+/**
+ * 决策模型**裸通道**（判断三级链档一，内核 evaluateBatch 消费）：只取数、不裁决
+ * ——未配置 / 网络 / 超时 / 坏响应一律 null，降级链由内核收口。与
+ * `createDecisionConditionJudge`（单问语义、自带 fork 回落）共用同一传输实现。
+ */
+export function createDecisionModelTier(deps: {
+  /** 每次调用现读（settings 表 + key 文件）——改配置即时生效。 */
+  config: () => DecisionJudgeConfig | null | Promise<DecisionJudgeConfig | null>;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): DecisionModelTier {
+  return {
+    async ask({ questions, upstream }) {
+      const cfg = await deps.config();
+      if (!cfg) return null;
+      return askNoulBatch(
+        cfg,
+        questions,
+        upstream,
+        deps as { fetchImpl?: typeof fetch; timeoutMs?: number },
+      );
+    },
+  };
 }
 
 export function createDecisionConditionJudge(deps: {
@@ -38,8 +58,9 @@ export function createDecisionConditionJudge(deps: {
     ...(noul !== null ? { detail: `P(yes)=${noul}` } : {}),
   });
   const byThreshold = (noul: number): ConditionDecision => {
-    if (noul >= YES_THRESHOLD) return tag({ ok: true }, noul);
-    if (noul <= NO_THRESHOLD) {
+    const verdict = judgeByNoul(noul);
+    if (verdict === 'yes') return tag({ ok: true }, noul);
+    if (verdict === 'no') {
       return tag(
         { ok: false, reason: `condition answered no` },
         noul,
@@ -142,60 +163,4 @@ export function createDecisionConditionJudge(deps: {
       );
     },
   };
-}
-
-/** 一次 noul 判断（单问）；任何失败以 null 出（调用方回落），不抛。 */
-async function askNoul(
-  cfg: DecisionJudgeConfig,
-  instructions: string,
-  upstream: string,
-  deps: { fetchImpl?: typeof fetch; timeoutMs?: number },
-): Promise<number | null> {
-  const answers = await askNoulBatch(
-    cfg,
-    { proceed: { type: 'noul', instructions } },
-    upstream,
-    deps,
-  );
-  return answers?.proceed ?? null;
-}
-
-/** 一次 noul 判断（多问，questions 按键展开）；任何失败以 null 出，不抛。 */
-async function askNoulBatch(
-  cfg: DecisionJudgeConfig,
-  questions: Record<string, { type: 'noul'; instructions: string }>,
-  upstream: string,
-  deps: { fetchImpl?: typeof fetch; timeoutMs?: number },
-): Promise<Record<string, number> | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DECISION_TIMEOUT_MS);
-  try {
-    const res = await (deps.fetchImpl ?? fetch)(
-      `${cfg.baseUrl.replace(/\/+$/, '')}/v1/systemone`,
-      {
-        method: 'POST',
-        headers: { authorization: `Bearer ${cfg.apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: cfg.model,
-          state: upstream,
-          questions,
-        }),
-        signal: controller.signal,
-      },
-    );
-    if (!res.ok) return null;
-    const parsed = (await res.json()) as {
-      answers?: Record<string, { noul?: unknown }>;
-    };
-    const raw = parsed.answers;
-    if (!raw || typeof raw !== 'object') return null;
-    const out: Record<string, number> = {};
-    for (const [key, value] of Object.entries(raw)) {
-      const noul = (value as { noul?: unknown })?.noul;
-      if (typeof noul === 'number' && Number.isFinite(noul)) out[key] = noul;
-    }
-    return Object.keys(out).length > 0 ? out : null;
-  } finally {
-    clearTimeout(timer);
-  }
 }

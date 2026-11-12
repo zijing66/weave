@@ -14,9 +14,9 @@ import { readBody, readJson, sendJson } from '../http.js';
 
 /** 跨会话编排的定义体：图规模/成环/方向形状由 `validateOrchestration` 判（错误文案归它）。 */
 const OrchestrationNodeBody = z.object({
-  /** session 节点 = sessionId；webhook = `w:<uuid>`；手动触发 = `t:<uuid>`。 */
+  /** session 节点 = sessionId；webhook = `w:<uuid>`；手动触发 = `t:<uuid>`；记忆出口 = `m:<uuid>`。 */
   id: z.string().min(1).max(128),
-  kind: z.enum(['session', 'webhook', 'trigger']),
+  kind: z.enum(['session', 'webhook', 'trigger', 'memory']),
   /** webhook 入口的触发 token（省略由仓储补发；回存已有 token 原样保留）。 */
   webhookToken: z.string().min(1).max(200).optional(),
   /** webhook 出口的出站目标与可选 HMAC 密钥。 */
@@ -78,6 +78,69 @@ function intParam(url: URL, key: string): number | undefined {
   if (raw == null || raw === '') return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
+}
+
+// ---- 决策模型（条件边判断链）的观察与试判面：MCP `judge_condition` /
+// `get_decision_model` 的转发目标。判断配置每次现读（settings + key 文件），
+// 这里只消费注入的 ConditionJudge——不复制判断逻辑。----
+
+const DecisionJudgeBody = z.object({
+  condition: z.string().min(1).max(4_000),
+  /** 上游这一轮最终输出（{upstream} 同源）；缺省 null（fork 链才吃会话上下文）。 */
+  upstream: z.string().max(60_000).nullish(),
+  sessionId: z.string().min(1).max(128).nullish(),
+});
+
+/** GET /decision/status — 判断链的可用性画像（配置读得到与否；不探网络）。 */
+export function decisionStatusOf(deps: WeaveServerDeps): {
+  available: boolean;
+  reason: string | null;
+} {
+  if (!deps.conditionJudge) {
+    return { available: false, reason: 'No condition judge wired (engine not started)' };
+  }
+  return { available: true, reason: null };
+}
+
+function handleDecisionRoutes(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WeaveServerDeps,
+  pathname: string,
+): Promise<boolean> | boolean {
+  if (pathname === '/decision/status' && req.method === 'GET') {
+    sendJson(res, 200, decisionStatusOf(deps));
+    return true;
+  }
+  if (pathname === '/decision/judge' && req.method === 'POST') {
+    if (!deps.conditionJudge) {
+      sendJson(res, 503, { error: 'Condition judge unavailable' });
+      return true;
+    }
+    return (async () => {
+      let body: z.infer<typeof DecisionJudgeBody>;
+      try {
+        body = DecisionJudgeBody.parse(await readJson(req));
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid body' });
+        return true;
+      }
+      try {
+        const decision = await deps.conditionJudge!.judge({
+          sessionId: body.sessionId ?? '',
+          condition: body.condition,
+          upstream: body.upstream ?? null,
+        });
+        sendJson(res, 200, { decision });
+      } catch (err) {
+        sendJson(res, 502, {
+          error: err instanceof Error ? err.message : 'Condition judge failed',
+        });
+      }
+      return true;
+    })();
+  }
+  return false;
 }
 
 /** 编排行的对外形状：补一个「下次 cron 触发时刻」（现算，不落库）。 */
@@ -183,6 +246,10 @@ export async function handleOrchestrationRoutes(
   pathname: string,
   url: URL,
 ): Promise<boolean> {
+  // ---- 决策模型观察/试判（/decision/*）：条件边判断链的 MCP 依赖面 ----
+  if (pathname === '/decision/status' || pathname === '/decision/judge') {
+    return handleDecisionRoutes(req, res, deps, pathname);
+  }
   if (pathname === '/messaging/orchestrations') {
     if (!deps.orchestrations) {
       sendJson(res, 503, { error: 'Messaging subsystem unavailable' });

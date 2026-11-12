@@ -177,6 +177,38 @@ describe('validateDraft', () => {
       ),
     ).toEqual({ ok: true });
   });
+
+  it('记忆出口节点：纯出口（有出边拒、不连通拒、只入则过）', () => {
+    const memoryNode = { id: 'm:1', kind: 'memory' as const };
+    // 有出边 = 有下游可站，拒。
+    expect(
+      errorOf(
+        draft({
+          nodes: [sessionNode('a'), memoryNode, sessionNode('b')],
+          edges: [
+            { id: '1', from: 'a', to: 'm:1', text: 'go' },
+            { id: '2', from: 'm:1', to: 'b', text: 'go' },
+          ],
+        }),
+      ),
+    ).toContain('Memory nodes cannot have outbound edges');
+    // 不连通，拒。
+    expect(
+      errorOf(draft({ nodes: [sessionNode('a'), memoryNode], edges: [] })),
+    ).toContain('A memory node is not connected');
+    // 只入必连，过。
+    expect(
+      validateDraft(
+        draft({
+          nodes: [sessionNode('a'), sessionNode('b'), memoryNode],
+          edges: [
+            { id: '1', from: 'a', to: 'b', text: 'go' },
+            { id: '2', from: 'b', to: 'm:1', text: '沉淀' },
+          ],
+        }),
+      ),
+    ).toEqual({ ok: true });
+  });
 });
 
 describe('mergeOrchestrations（总览合并图）', () => {

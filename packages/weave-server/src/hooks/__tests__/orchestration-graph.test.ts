@@ -185,4 +185,47 @@ describe('validateOrchestration', () => {
       error: expect.stringContaining(String(ORCH_MAX_EDGES)),
     });
   });
+
+  it('memory 节点：id 前缀、纯出口形状、必连、autoFire 各自判据', () => {
+    const memoryNode = (id = 'm:1'): OrchestrationNode => ({ id, kind: 'memory' });
+    // id 前缀
+    expect(
+      validateOrchestration({
+        nodes: [sessionNode('a'), { id: 'mem', kind: 'memory' }],
+        edges: [edge('a', 'mem')],
+      }),
+    ).toMatchObject({ error: expect.stringContaining('"m:"') });
+    // 合法：session → memory（webhook 出口同构，站图尾）
+    expect(
+      validateOrchestration({
+        nodes: [sessionNode('a'), memoryNode()],
+        edges: [edge('a', 'm:1')],
+      }),
+    ).toEqual({ ok: true });
+    // 合法：载荷型入口（trigger）直连 memory
+    expect(
+      validateOrchestration({
+        nodes: [{ id: 't:1', kind: 'trigger' }, memoryNode()],
+        edges: [edge('t:1', 'm:1')],
+      }),
+    ).toEqual({ ok: true });
+    // 纯出口：不能有出边
+    expect(
+      validateOrchestration({
+        nodes: [sessionNode('a'), sessionNode('b'), memoryNode()],
+        edges: [edge('a', 'm:1'), edge('m:1', 'b')],
+      }),
+    ).toMatchObject({ error: expect.stringContaining('cannot have outbound edges') });
+    // 必连：孤悬的 memory 拒绝
+    expect(
+      validateOrchestration({ nodes: [sessionNode('a'), memoryNode()], edges: [] }),
+    ).toMatchObject({ error: expect.stringContaining('not connected') });
+    // autoFire 无意义
+    expect(
+      validateOrchestration({
+        nodes: [sessionNode('a'), { id: 'm:1', kind: 'memory', autoFire: true }],
+        edges: [edge('a', 'm:1')],
+      }),
+    ).toMatchObject({ error: expect.stringContaining('cannot have autoFire') });
+  });
 });
