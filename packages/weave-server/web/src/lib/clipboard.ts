@@ -3,7 +3,8 @@
  * `navigator.clipboard` **整个不存在**（同 Notifications 的 insecure 成因）——直接调
  * 它会抛 TypeError、按钮看起来「点了没反应」。故：有 API 走 API（可能被权限/焦点
  * 拒绝），否则/失败回落 `document.execCommand('copy')`，两条路都不行才返回 false
- * 让调用方报出去（失败不静默）。
+ * 让调用方报出去（失败不静默）。`execCommand` 的文本回落仍然有效；**图片不走
+ * 这条回落**（现代 Chromium 里它只落死标记，见 `copyImage`）。
  */
 export async function copyText(text: string): Promise<boolean> {
   if (navigator.clipboard?.writeText) {
@@ -20,71 +21,59 @@ export async function copyText(text: string): Promise<boolean> {
 /** 复制图片的结果：区分「地址不安全」与「浏览器不支持」——两者文案不同。 */
 export type CopyImageResult = 'ok' | 'insecure' | 'unsupported' | 'failed';
 
-/**
- * 复制图片（分享图片用）：先走异步剪贴板，不行再走老式的「选中一枚 `<img>` 再
- * `execCommand('copy')`」——Chromium / Firefox 的「复制图片」就是后者，剪贴板里
- * 落的是 image/png（**它不受安全上下文限制**，`execCommand` 没有那层门）。
- *
- * 三条路依次：`navigator.clipboard.write`（安全上下文才有，可能被权限拒）→ 老式
- * 图片复制 → 如实报原因。**局域网 HTTP 下 `navigator.clipboard` 整个不存在**（非
- * 安全上下文），以前这里直接报「换 HTTPS」；现在多数浏览器老式路能成，只有它也
- * 不行才让用户去换 HTTPS 地址。
- */
-export async function copyImage(blob: Blob): Promise<CopyImageResult> {
-  const insecure =
-    globalThis.isSecureContext !== true || typeof navigator === 'undefined' || !navigator.clipboard;
-  const clip = insecure ? null : navigator.clipboard;
-  if (clip?.write && typeof ClipboardItem !== 'undefined') {
-    try {
-      await clip.write([new ClipboardItem({ [blob.type || 'image/png']: blob })]);
-      return 'ok';
-    } catch {
-      // 权限被拒 / 非用户手势 —— 再试老路
-    }
+/** 系统分享面板（Web Share）能不能发图片：移动端「把图发出去」的正路——
+ *  Android 上 web 剪贴板写图片不可靠（write 拒 + execCommand 只落死 blob URL 标记），
+ *  分享面板直接触达微信/保存到相册。 */
+export function canShareImage(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') return false;
+  try {
+    const probe = new File([new Blob()], 'weave.png', { type: 'image/png' });
+    return navigator.canShare({ files: [probe] });
+  } catch {
+    return false;
   }
-  if (await legacyCopyImage(blob)) return 'ok';
-  if (insecure) return 'insecure';
-  return clip?.write && typeof ClipboardItem !== 'undefined' ? 'failed' : 'unsupported';
 }
 
 /**
- * 老式图片复制：把 `<img>` 摆进一枚离屏可编辑容器、选中它整个节点再 `execCommand`。
- * img 必须先解码——没加载出来的 `<img>` 复制出去只有 URL、没有位图。收尾无论成败
- * 都撤销选区、摘容器、releaseObjectURL。
+ * 复制图片（分享图片用）：吃**渲染函数**而非现成 Blob——`navigator.clipboard.write`
+ * 必须在用户手势内落子，而激活窗口等不起慢渲染（手机上全选一开就是好几秒）；
+ * `ClipboardItem` 允许值是 Promise，把渲染 promise 直接喂进去，write 在手势内
+ * 先调、引擎自己等料（2026-11-10 实测：等渲染完再 write 会 NotAllowedError →
+ * 掉进老式路，粘出来的就是 ￼）。
+ *
+ * 没有异步剪贴板（局域网 HTTP / 缺 ClipboardItem）→ **不渲染**直接如实报
+ * （`insecure` / `unsupported`）——别让人白等十几秒再告诉他发不了。Android
+ * Chromium 上图片 write 可能两连拒：如实报 `failed` 引导分享/下载，**绝不落
+ * `execCommand` 老式路**——2026-11-10 实测它在 Chromium 156 已死透（落的是一枚
+ * 已被撤销的 blob: URL 标记，粘贴即 ￼，而它还回 true 的假成功）。文本复制的
+ * `execCommand` 回落不受影响（文本那路仍然有效）。渲染失败原样上抛（调用方
+ * 另有文案），不算剪贴板的账。
  */
-async function legacyCopyImage(blob: Blob): Promise<boolean> {
-  if (
-    typeof document === 'undefined' ||
-    typeof window === 'undefined' ||
-    typeof URL === 'undefined' ||
-    typeof URL.createObjectURL !== 'function'
-  ) {
-    return false;
-  }
-  const url = URL.createObjectURL(blob);
-  const holder = document.createElement('div');
-  holder.contentEditable = 'true';
-  holder.setAttribute('aria-hidden', 'true');
-  holder.style.cssText = 'position:fixed;left:-10000px;top:0;width:1px;height:1px;overflow:hidden;';
-  const img = document.createElement('img');
-  img.src = url;
-  img.alt = '';
-  holder.appendChild(img);
-  document.body.appendChild(holder);
+export async function copyImage(render: () => Promise<Blob>): Promise<CopyImageResult> {
+  const insecure =
+    globalThis.isSecureContext !== true || typeof navigator === 'undefined' || !navigator.clipboard;
+  const clip = navigator.clipboard;
+  if (insecure) return 'insecure';
+  if (!clip?.write || typeof ClipboardItem === 'undefined') return 'unsupported';
+  const renderP = render();
   try {
-    await img.decode?.().catch(() => {});
-    const range = document.createRange();
-    range.selectNode(img);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-    return document.execCommand('copy');
+    await clip.write([new ClipboardItem({ 'image/png': renderP })]);
+    return 'ok';
   } catch {
-    return false;
-  } finally {
-    window.getSelection()?.removeAllRanges();
-    holder.remove();
-    URL.revokeObjectURL(url);
+    /* promise 形被拒（激活过期 / 老引擎构造即抛）→ 先把料等出来再补一枪 */
+  }
+  let blob: Blob;
+  try {
+    blob = await renderP;
+  } catch (e) {
+    throw e; // 渲染失败：原样上抛，调用方按「生成图片失败」报
+  }
+  try {
+    await clip.write([new ClipboardItem({ 'image/png': blob })]);
+    return 'ok';
+  } catch {
+    return 'failed';
   }
 }
 

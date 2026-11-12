@@ -66,8 +66,11 @@ const TAG_GAP = 6;
 /** 气泡内容区从 meta 行之后开始（绘制与断言都要这半个偏移）。 */
 export const META_ROW_H = META_LH + META_GAP;
 
-/** 画布总像素上限（iOS Safari 约 1670 万）：超了降倍率，不缩内容。 */
+/** 画布两个硬顶：iOS Safari 约 1670 万像素；Chromium 单边最大 65535（全选超长
+ *  对话高度轻易破十万，2026-11-10 实测 880×104390 → `toBlob` 直接 null）。超了
+ *  压倍率出图，不硬失败。 */
 const MAX_CANVAS_PIXELS = 16_000_000;
+const MAX_CANVAS_DIM = 65_535;
 
 export type ConvFont = 'meta' | 'body' | 'small' | 'strong' | 'em' | 'strongEm' | 'h1' | 'h3' | 'mono';
 
@@ -639,12 +642,15 @@ function layoutBlocks(
   return out;
 }
 
-/** 倍率：默认 2 倍（高分屏清晰），画布总像素顶到上限就降 1 倍。 */
+/** 倍率：默认 2 倍（高分屏清晰），画布顶到任一硬顶就降 1 倍；1 倍仍超（超长
+ *  对话）按更紧的那个顶继续压——再小也出一图（糊点总比「生成失败」诚实）。 */
 export function pickScale(width: number, height: number, preferred = 2): number {
   for (const s of [preferred, 1]) {
     if (width * s * height * s <= MAX_CANVAS_PIXELS) return s;
   }
-  return 1;
+  const byPixels = Math.sqrt(MAX_CANVAS_PIXELS / (width * height));
+  const byDim = MAX_CANVAS_DIM / Math.max(width, height);
+  return Math.max(0.1, Math.min(1, byPixels, byDim));
 }
 
 export function variantOf(e: ConvImageEntry): BubbleVariant {

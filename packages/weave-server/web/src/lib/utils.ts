@@ -16,3 +16,14 @@ const twMergeWithScales = extendTailwindMerge({
 export function cn(...inputs: ClassValue[]): string {
   return twMergeWithScales(clsx(inputs));
 }
+
+/** absPath 的显示形：家目录内的路径显示成 `~/…`（posix 分隔），其余原样。
+ *  `home` 缺失（路由未带）时退回绝对路径原样。 */
+export function tildePath(absPath: string, home: string | null): string {
+  if (!home) return absPath;
+  const norm = absPath.replaceAll('\\', '/');
+  const homeNorm = home.replaceAll('\\', '/').replace(/\/$/, '');
+  if (norm === homeNorm) return '~';
+  if (norm.startsWith(`${homeNorm}/`)) return `~/${norm.slice(homeNorm.length + 1)}`;
+  return absPath;
+}

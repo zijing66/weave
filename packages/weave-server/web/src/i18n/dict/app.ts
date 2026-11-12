@@ -2,9 +2,9 @@
 export const appZh = {
   // —— App 壳 ——
   'app.settingsTooltip': '设置',
-  'app.themeDark': '主题：深色（点击切换到浅色）',
-  'app.themeLight': '主题：浅色（点击切换到跟随系统）',
-  'app.themeAuto': '主题：跟随系统（点击切换到深色）',
+  'app.themeDark': '主题：深色',
+  'app.themeLight': '主题：浅色',
+  'app.themeAuto': '主题：跟随系统',
   'app.resizeLeft': '拖拽调整左侧宽度',
   'app.resizePreview': '拖拽调整预览宽度',
   'app.resizeTaskHeight': '拖拽调整任务区高度',
@@ -20,6 +20,8 @@ export const appZh = {
   'app.updateKindFile': '文件',
   'app.updateKindTemplate': '插件模板',
   'app.updateKindInit': '初始化文件',
+  'app.updateKindInitVersion': '初始化版本',
+  'app.updateInitLagOnly': 'init 待更新',
   'app.syncAllTooltip': '同步全部 {n} 项：更新过期、装回缺失',
   'app.syncAll': '全部同步',
   'app.scopeCoverageTooltip':
@@ -56,41 +58,67 @@ export const appZh = {
   'project.sectionHeader': '项目',
   'project.noneRegistered': '尚未注册任何项目',
   'project.openInExplorer': '在资源管理器中打开',
+  'project.runInit': '重跑 weave init（修复 init 版本落后 / 生成物漂移）',
   'project.copyPath': '复制项目路径',
   'project.openInTerminal': '在终端中打开',
-  'project.filesBrowser': '浏览项目文件（只读）',
+  'project.filesBrowser': '浏览项目文件',
   'project.dragToReorder': '拖动调整顺序',
   'project.terminalsOpen': '{n} 个终端已打开',
+  'project.terminalsHidden': '{n} 个终端已隐藏',
   'project.terminalMenu': '唤出或新开终端',
   'project.terminalListUnavailable': '当前终端不支持列出已开窗口——只能新开一个',
   // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
   'project.syncNow': '立即同步',
   'project.syncPending': '有更新待同步（{n}）— 点击立即同步',
+  // 同步按钮 tooltip（用户裁决三态）：有更新红字列分类、init 落后琥珀警示、无更新 k:v
+  'project.syncKvUpdates': '待同步: {n}',
+  'project.syncKvInit': 'init: {v}{suffix}',
+  'project.syncCat.skills': '技能 {n} 项待更新',
+  'project.syncCat.mcp': 'MCP {n} 项待更新',
+  'project.syncCat.files': '文件 {n} 项待更新',
+  'project.syncCat.templates': '插件模板 {n} 项待更新',
+  'project.syncCat.init': 'init 生成物 {n} 项待更新（可代写）',
+  'project.syncManualHint': '以上须点击更新（或全部同步）才会写入',
   // 会进 git 的 init 文件漂移了：同步域不代写，只提醒用户去终端跑 init
   'project.needsInit': '待 init',
   'project.needsInitTip': '有会进 git 的 init 文件变了，同步不会代写——请在终端执行 weave init',
+  // init 落档版本落后于当前 weave（托管块等内容只在升级后变）：提醒重跑 init
+  'project.initVersionLag': 'init 落后',
+  'project.initVersionLagTip': '上次 weave init 的版本落后于当前 weave——请在终端对该项目执行 weave init',
+  'project.initVersionLagDetail': '上次 init 是 {from}，当前 weave 是 {to}——请在终端执行 weave init',
   // 项目行会话徽标（跑马灯）：动态图标 = 运行中，静态图标 = 打开
   'project.sessionsRunning': '{n} 个会话运行中',
-  'project.sessionsOpen': '{n} 个会话就绪（等输入）',
+  'project.sessionsOpen': '{n} 个会话就绪',
   'project.questionsPending': '本项目的会话有 {n} 个待答问题',
   // 已接入 harness 标签（init 选择结果）
   'project.harnessesTip': '本项目 init 时选择接入的 harness',
   // —— 归档（右键归档 + 归档面查看/恢复）——
   'project.archive': '归档项目',
+  'project.superagentProtected': '超级代理项目 · 置顶常驻，功能随 weave 版本更新',
   'project.archiveConfirm': '归档「{name}」？历史会话将立即清空；基础信息保留，可随时恢复。',
   'project.archivedSection': '归档项目',
   'project.archivedCount': '{n} 个归档项目 — 点击查看',
   'project.archivedOn': '归档于 {date}',
   'project.restore': '恢复',
-  'project.restoreTooltip': '恢复为活跃项目（历史会话已清空，不会回来）',
+  'project.restoreTooltip': '恢复为活跃项目',
   'toast.projectArchived': '已归档「{name}」（清除 {sessions} 个会话 / {events} 条事件）',
   'toast.projectRestored': '已恢复「{name}」',
   'errors.archiveFailed': '归档失败：{error}',
   'errors.restoreFailed': '恢复失败：{error}',
 
   // —— 项目存储路径（项目卡设置按钮）——
-  'project.storageButton': '存储路径（对话附件的图片/文件落盘目录）',
-  'project.storageTitle': '存储路径 — {name}',
+  'project.storageButton': '项目设置',
+  // —— G6 角色可见桥（项目行出征徽章 + 关联角色折叠区）——
+  'project.expeditionsTip': '{n} 位角色正在为本项目出征',
+  'project.bridgeTip': '关联角色 · {n} 位出征中',
+  'project.bridgeNoRoles': '这栋房还没有角色成员——在游戏视图的 Home 控制台角色 tab 创建。',
+  'project.bridgeExpedition': '出征·{target}',
+  'project.bridgeStandby': '待命',
+  'project.bridgeAttention': '待裁 · 看信箱',
+  'project.storageTitle': '项目配置 — {name}',
+  'project.hideWindowLabel': '打开终端后自动隐藏窗口',
+  'project.hideWindowHint':
+    '开启后，打开/唤出该项目的终端窗口时会系统级隐藏（任务栏与 Alt+Tab 都不出现，进程照常运行）；找回入口 = 终端弹层的「显示」按钮。',
   'project.storageIntro':
     '配置本项目的对话附件（图片/文件）落盘目录。留空 = 使用全局默认；已上传的文件留在原处，新上传走这里的配置。',
   'project.storageImages': '图片存储路径',
@@ -101,7 +129,7 @@ export const appZh = {
   'project.storageNotes':
     '说明：改路径不影响已上传的文件（它们留在原处）；图片按扩展名识别（png/jpg/gif/webp），宿主按路径读取；codex 会话不支持图片附件。',
   'project.storageKeepHint': '存量文件留原处，新上传走新路径',
-  'project.storageSaved': '存储路径已保存',
+  'project.storageSaved': '项目配置已保存',
   'project.storageLoadFailed': '读取存储配置失败：{error}',
   'project.storageSaveFailed': '保存失败：{error}',
 
@@ -136,22 +164,28 @@ export const appZh = {
   'toast.sessionDeleted': '已删除会话（{n} 条事件）',
   'toast.sessionPaneClosed': '已关闭该会话（历史保留）',
   'toast.terminalsClosed': '已关闭 {n} 个终端',
+  'toast.initDone': 'weave init 已完成，生成物请自行复核入库',
 
   'errors.syncFailed': '同步失败：{error}',
+  'errors.initFailed': 'weave init 失败：{error}',
   'errors.updateFailed': '更新失败：{error}',
   'errors.pluginToggleFailed': '插件启用状态更新失败：{error}',
   'errors.openFailed': '打开失败：{error}',
   'errors.closeTerminalFailed': '关闭终端失败：{error}',
   'errors.listTerminalsFailed': '读取已开终端失败：{error}',
   'errors.focusTerminalFailed': '唤出终端失败：{error}',
+  'errors.terminalVisibilityFailed': '切换窗口可见性失败：{error}',
+  // —— 终端弹层卡片操作 ——
+  'tasks.terminalTargetHide': '系统级隐藏窗口（任务栏与 Alt+Tab 都不出现；找回 = 此处再点）',
+  'tasks.terminalTargetShow': '恢复显示窗口',
 };
 
 export const appEn: Record<keyof typeof appZh, string> = {
   // —— App shell ——
   'app.settingsTooltip': 'Settings',
-  'app.themeDark': 'Theme: dark (tap for light)',
-  'app.themeLight': 'Theme: light (tap for follow-system)',
-  'app.themeAuto': 'Theme: follow system (tap for dark)',
+  'app.themeDark': 'Theme: dark',
+  'app.themeLight': 'Theme: light',
+  'app.themeAuto': 'Theme: follow system',
   'app.resizeLeft': 'Drag to resize the left pane',
   'app.resizePreview': 'Drag to resize the preview pane',
   'app.resizeTaskHeight': 'Drag to resize the task area height',
@@ -167,6 +201,8 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'app.updateKindFile': 'File',
   'app.updateKindTemplate': 'Plugin template',
   'app.updateKindInit': 'Init file',
+  'app.updateKindInitVersion': 'Init version',
+  'app.updateInitLagOnly': 'init outdated',
   'app.syncAllTooltip': 'Sync all {n}: update outdated, reinstall missing',
   'app.syncAll': 'Sync all',
   'app.scopeCoverageTooltip':
@@ -203,41 +239,67 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.sectionHeader': 'Projects',
   'project.noneRegistered': 'No projects registered',
   'project.openInExplorer': 'Open in Explorer',
+  'project.runInit': 'Re-run weave init (fixes outdated init version / drifted files)',
   'project.copyPath': 'Copy project path',
   'project.openInTerminal': 'Open in terminal',
-  'project.filesBrowser': 'Browse project files (read-only)',
+  'project.filesBrowser': 'Browse project files',
   'project.dragToReorder': 'Drag to reorder',
   'project.terminalsOpen': '{n} terminal(s) open',
+  'project.terminalsHidden': '{n} terminal(s) hidden',
   'project.terminalMenu': 'Bring a terminal up or open a new one',
   'project.terminalListUnavailable':
     "This terminal preset can't list open windows — open a new one instead",
   'project.syncNow': 'Sync now',
   'project.syncPending': '{n} update(s) pending — click to sync now',
+  'project.syncKvUpdates': 'Pending updates: {n}',
+  'project.syncKvInit': 'init: {v}{suffix}',
+  'project.syncCat.skills': '{n} skill(s) outdated',
+  'project.syncCat.mcp': '{n} MCP entr(ies) outdated',
+  'project.syncCat.files': '{n} file asset(s) outdated',
+  'project.syncCat.templates': '{n} plugin template(s) outdated',
+  'project.syncCat.init': '{n} init artefact(s) outdated (auto-writable)',
+  'project.syncManualHint': 'The above are written only when you click update (or sync all)',
   'project.needsInit': 'needs init',
   'project.needsInitTip':
     'An init file that enters git changed — sync will not write it. Run `weave init` in a terminal.',
+  'project.initVersionLag': 'init behind',
+  'project.initVersionLagTip':
+    'The recorded weave init version predates the current weave — run `weave init` for this project in a terminal.',
+  'project.initVersionLagDetail':
+    'Last init was {from}, current weave is {to} — run `weave init` in a terminal.',
   // Project-row session badges (marquee): animated icon = running, static = open
   'project.sessionsRunning': '{n} session(s) running',
-  'project.sessionsOpen': '{n} session(s) ready (awaiting input)',
+  'project.sessionsOpen': '{n} session(s) ready',
   'project.questionsPending': '{n} pending question(s) in this project',
   'project.harnessesTip': 'Harness integrated for this project at init',
   // —— Archive (context-menu archive + archived view/restore) ——
   'project.archive': 'Archive project',
+  'project.superagentProtected': 'Superagent project · pinned; features update with weave versions',
   'project.archiveConfirm':
     'Archive "{name}"? Session history is cleared immediately; basic info is kept — restore anytime.',
   'project.archivedSection': 'Archived projects',
   'project.archivedCount': '{n} archived — click to view',
   'project.archivedOn': 'Archived {date}',
   'project.restore': 'Restore',
-  'project.restoreTooltip': 'Restore as an active project (session history is gone)',
+  'project.restoreTooltip': 'Restore as an active project',
   'toast.projectArchived': 'Archived "{name}" (purged {sessions} session(s) / {events} event(s))',
   'toast.projectRestored': 'Restored "{name}"',
   'errors.archiveFailed': 'Archive failed: {error}',
   'errors.restoreFailed': 'Restore failed: {error}',
 
   // —— Project storage paths (card settings button) ——
-  'project.storageButton': 'Storage paths (where chat attachments land)',
-  'project.storageTitle': 'Storage paths — {name}',
+  'project.storageButton': 'Project settings',
+  // —— G6 role visibility bridge (project-row expedition badge + members fold) ——
+  'project.expeditionsTip': '{n} roles on expedition for this project',
+  'project.bridgeTip': 'House roles · {n} on expedition',
+  'project.bridgeNoRoles': 'No role members yet — create roles in the Home console of the game view.',
+  'project.bridgeExpedition': 'Expedition·{target}',
+  'project.bridgeStandby': 'Standby',
+  'project.bridgeAttention': 'Needs you · inbox',
+  'project.storageTitle': 'Project settings — {name}',
+  'project.hideWindowLabel': 'Auto-hide terminal window on open',
+  'project.hideWindowHint':
+    'When enabled, opening / focusing this project’s terminal hides its OS window system-wide (gone from taskbar and Alt+Tab; the process keeps running). Bring it back with the “show” button in the terminal popup.',
   'project.storageIntro':
     'Where this project’s chat attachments (images / files) are stored. Leave empty for the global default; uploaded files stay where they are, new uploads follow this setting.',
   'project.storageImages': 'Image storage path',
@@ -248,7 +310,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.storageNotes':
     'Notes: changing the path does not move already-uploaded files; images are recognized by extension (png/jpg/gif/webp) and read by path; codex sessions do not support image attachments.',
   'project.storageKeepHint': 'Existing files stay put; new uploads follow the new path',
-  'project.storageSaved': 'Storage paths saved',
+  'project.storageSaved': 'Project settings saved',
   'project.storageLoadFailed': 'Failed to load storage settings: {error}',
   'project.storageSaveFailed': 'Failed to save: {error}',
 
@@ -283,12 +345,19 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'toast.sessionDeleted': 'Session deleted ({n} events)',
   'toast.sessionPaneClosed': 'Session closed (history kept)',
   'toast.terminalsClosed': 'Closed {n} terminal(s)',
+  'toast.initDone': 'weave init finished — review generated files before committing',
 
   'errors.syncFailed': 'Sync failed: {error}',
+  'errors.initFailed': 'weave init failed: {error}',
   'errors.updateFailed': 'Update failed: {error}',
   'errors.pluginToggleFailed': 'Plugin toggle failed: {error}',
   'errors.openFailed': 'Open failed: {error}',
   'errors.closeTerminalFailed': 'Close terminal failed: {error}',
   'errors.listTerminalsFailed': 'Reading open terminals failed: {error}',
   'errors.focusTerminalFailed': 'Bringing the terminal to the front failed: {error}',
+  'errors.terminalVisibilityFailed': 'Toggling window visibility failed: {error}',
+  // —— Terminal popup card actions ——
+  'tasks.terminalTargetHide':
+    'Hide window system-wide (gone from taskbar and Alt+Tab; click again here to restore)',
+  'tasks.terminalTargetShow': 'Restore window',
 };

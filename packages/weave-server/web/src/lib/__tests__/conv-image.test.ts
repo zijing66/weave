@@ -48,6 +48,16 @@ describe('pickScale', () => {
     expect(pickScale(IMG_WIDTH, 3000)).toBe(2);
     expect(pickScale(IMG_WIDTH, 12000)).toBe(1);
   });
+
+  it('1 倍仍超（全选超长对话）→ 继续压倍率出图，不硬失败', () => {
+    // 880×104390（全选 821 条气泡的实测尺寸）：Chromium 单边 65535 上限 +
+    // iOS 16.7M 像素预算，两顶都破 → 取更紧的像素预算
+    const s = pickScale(IMG_WIDTH, 104390);
+    expect(s).toBeGreaterThan(0.1);
+    expect(s).toBeLessThan(1);
+    expect(Math.round(IMG_WIDTH * s) * Math.round(104390 * s)).toBeLessThanOrEqual(16_000_000);
+    expect(Math.round(104390 * s)).toBeLessThanOrEqual(65_535);
+  });
 });
 
 describe('wrapSpans', () => {

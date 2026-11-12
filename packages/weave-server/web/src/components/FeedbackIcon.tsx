@@ -22,6 +22,8 @@ export function FeedbackIcon({
   return (
     <span className="pointer-events-none inline-flex items-center">
       {state === 'loading' ? (
+        // loading 恒用 Loader2 转圈（2026-11-12 用户裁决：旋转原图标会被读成
+        // 「点坏了」，FolderOpen 这类几何不对的图标转起来完全不像加载）。
         <Loader2 className={cn('animate-spin', className)} />
       ) : state === 'success' ? (
         <Check className={cn('text-emerald-400', className)} />

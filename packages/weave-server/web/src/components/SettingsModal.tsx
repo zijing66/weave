@@ -66,6 +66,7 @@ import { sessionLabel } from '@/lib/hook-payload';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { NotifyChannelsSection } from '@/components/NotifyChannelsSection';
 import { FederationSection } from '@/components/FederationSection';
+import { BackupSection } from '@/components/BackupSection';
 import { useToast } from '@/components/Toast';
 import {
   ensurePushSubscribed,
@@ -820,6 +821,27 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </span>
             </div>
           </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Terminal className="h-3.5 w-3.5 text-neutral-500" />
+              <label className="flex items-center text-xs font-medium text-neutral-300">
+                {t('settings.focusOnOpen')}
+                <FieldHint>{t('settings.focusOnOpenHint')}</FieldHint>
+              </label>
+              <span className="ml-auto">
+                <Switch
+                  checked={settings?.terminalFocus?.focusOnOpen ?? true}
+                  onChange={(v) =>
+                    setSettings((s) =>
+                      s ? { ...s, terminalFocus: { focusOnOpen: v } } : s,
+                    )
+                  }
+                  title={t('settings.focusOnOpen')}
+                />
+              </span>
+            </div>
+          </div>
           </SettingsSection>
 
           <SettingsSection id="data" icon={Database} title={t('settings.sectionData')}>
@@ -1152,6 +1174,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             </div>
           </div>
           </SettingsSection>
+
+          {/* 每日自动备份：设置 + 手动触发 + 包列表；备份中全屏 loading 由 App 层盖 */}
+          <BackupSection />
 
           <SettingsSection id="notify" icon={Bell} title={t('settings.sectionNotify')}>
 

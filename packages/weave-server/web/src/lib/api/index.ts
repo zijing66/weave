@@ -203,6 +203,12 @@ export type {
   AccessUrl,
   DaemonSettingsBundle,
   CaptureRow,
+  BackupSettings,
+  BackupProgress,
+  BackupStatus,
+  BackupPackage,
+  BackupStatusBundle,
+  BackupResult,
 } from './settings';
 export type { SearchMessageHit, SearchFileHit, SearchResult } from './search';
 export type { VisualizationFragment } from './visualizations';
@@ -236,5 +242,12 @@ export type {
   RpgHouseView,
   RpgHouseMemberView,
   RpgCropView,
+  RpgRoutingDecisionView,
+  RpgRoutingStatsView,
+  RpgExpeditionView,
+  RpgGoalView,
+  RoutingProfileVersionView,
+  HandbookEntryView,
+  RpgLadderRowView,
 } from './rpg';
 export type { PeerRow, DiscoveredPeer, PairingOfferResult, RpgInvitationView, PeerSessionsView } from './federation';

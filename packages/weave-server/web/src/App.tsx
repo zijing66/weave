@@ -28,6 +28,7 @@ import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
+import { Badge } from '@/components/ui/badge';
 // G2.6 收尾硬项：rpg 域懒加载——weave 启动不载游戏场景元素，切到游戏视图才
 // 拉独立 chunk（验收 = 主 chunk 不含 rpg 符号）。
 const RpgView = lazy(() => import('@/rpg/RpgView').then((m) => ({ default: m.RpgView })));
@@ -56,6 +57,7 @@ import { logout, refreshAuth, useAuthState } from '@/lib/auth';
 import { WEAVE_REPO_URL, formatStars, useRepoStars } from '@/lib/github';
 import { LoginPage } from '@/components/LoginPage';
 import { BootSplash } from '@/components/BootSplash';
+import { BackupOverlay } from '@/components/BackupOverlay';
 import { WeaveLogo } from '@/components/WeaveLogo';
 import { AiAssistant } from '@/components/AiAssistant';
 import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
@@ -63,6 +65,28 @@ import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
 const LEFT_MIN = 176;
 const LEFT_MAX = 320;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+/**
+ * RPG chunk 下载期的全屏装载面（G2.6 收尾 + 参考首屏 BootSplash 口径）：此前
+ * Suspense fallback 为 null——首次进 /rpg 那拍世界模块在下载、主区整屏空白，
+ * 用户看到「没有任何加载指示」。与 BootSplash 分工：这里只盖 chunk 下载，
+ * 模块挂载后交给 RpgView 内部的六格启动浮层（真实请求计数与失败重试在那边）。
+ * 样式走 RPG 深底 + 像素格脉动（rpg-chunk-fallback），无 min-show——缓存命中
+ * 时只是一闪，不做戏。
+ */
+function RpgChunkFallback() {
+  const t = useT();
+  return (
+    <div className="rpg-chunk-fallback fixed inset-0 z-[80] flex flex-col items-center justify-center" role="status" aria-label={t('rpg.chunkLoading')}>
+      <div className="rpg-chunk-cells" aria-hidden>
+        {Array.from({ length: 6 }, (_, i) => (
+          <span key={i} style={{ animationDelay: `${i * 120}ms` }} />
+        ))}
+      </div>
+      <p className="mt-3 text-[11px] text-[var(--w-text-dim)]">{t('rpg.chunkLoading')}</p>
+    </div>
+  );
+}
 
 /** 启动页各路信号的兜底窗：某一路挂住也不能把启动页焊在屏上。 */
 const BOOT_STAGE_FALLBACK_MS = 8_000;
@@ -118,7 +142,7 @@ interface UpdateRow {
   scope: AssetScope | null;
   note: string | null;
 }
-const UPDATE_SCOPE_KEY = { project: 'skillGrid.scopeProject', user: 'skillGrid.scopeUser' } as const;
+const UPDATE_SCOPE_KEY = { project: 'skillGrid.scopeProject', local: 'skillGrid.scopeLocal', user: 'skillGrid.scopeUser' } as const;
 
 /**
  * 认证门：未探测 → 启动页（不闪内容）；未登录 → **默认落登录页**（仅密码，
@@ -147,6 +171,7 @@ export default function App() {
     <>
       {anonymous && <LoginPage />}
       {auth === 'authenticated' && <Dashboard onBootReady={handleBootReady} />}
+      <BackupOverlay />
       <BootSplash
         ready={anonymous || dataReady}
         progress={anonymous ? 1 : progress}
@@ -173,6 +198,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   // RPG 游戏视图模式（/rpg/<scene>）：顶掉常规卡片面，整块主区交给 RpgView。
   const [rpgMode, setRpgMode] = useState(false);
   const [assets, setAssets] = useState<AssetEntry[]>([]);
+  /** 用户家目录（资产路由随行）：文件树 tooltip 把 absPath 显示成 `~/…` 形。 */
+  const [homeDir, setHomeDir] = useState<string | null>(null);
   // Machine-level harness files (~/.claude, ~/.codex) — fetched lazily, only
   // when the global 资源管理 page is opened.
   const [globalAssets, setGlobalAssets] = useState<AssetEntry[]>([]);
@@ -295,10 +322,13 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   // 归档面与 SSE/变更刷新的说明见顶部查询块（['projects'] 前缀两面齐刷）。
 
   // 项目卡终端角标 + 开终端放行闸（push 帧驱动），见 useTerminalCounts。
-  const { terminalCounts, countsRef, terminalGate } = useTerminalCounts();
+  const { terminalCounts, hiddenCounts, countsRef, terminalGate } = useTerminalCounts();
 
   const refreshAssets = useCallback((p: ProjectRow) => {
-    api.listAssets(p.path).then(setAssets).catch(() => {});
+    api.listAssets(p.path).then((r) => {
+      setAssets(r.assets);
+      setHomeDir(r.home);
+    }).catch(() => {});
   }, []);
 
   const refreshMcp = useCallback((projectId: number) => {
@@ -311,7 +341,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     if (selected && updates) {
       setUpdatesMap((prev) => ({
         ...prev,
-        [selected.id]: { available: updates.available, needsInit: updates.needsInit },
+        [selected.id]: {
+          available: updates.available,
+          needsInit: updates.needsInit,
+          initVersionBehind: updates.initVersionBehind,
+        },
       }));
     }
   }, [updates, selected]);
@@ -338,6 +372,15 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       ...(updates.initFiles ?? [])
         .filter((u) => u.outdated && u.syncClass === 'auto')
         .map((u): UpdateRow => ({ kind: 'app.updateKindInit', name: u.relPath, scope: null, note: null })),
+      // init 版本滞后：不是可同步项，是「请去终端重跑 weave init」的提醒行。
+      ...(updates.initVersionBehind
+        ? [{
+            kind: 'app.updateKindInitVersion' as MessageKey,
+            name: `${updates.initVersion ?? '—'} → ${updates.weaveVersion}`,
+            scope: null,
+            note: null,
+          }]
+        : []),
     ];
   }, [updates]);
 
@@ -362,7 +405,13 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       setInitialSessionId(null);
       setStatuslineSource(null);
       setError(null);
-      api.listAssets(p.path).then(setAssets).catch((e) => setError(String(e)));
+      api
+        .listAssets(p.path)
+        .then((r) => {
+          setAssets(r.assets);
+          setHomeDir(r.home);
+        })
+        .catch((e) => setError(String(e)));
       refreshMcp(p.id);
       refreshUpdates(p.id);
       refreshGlobalSkills(p.id);
@@ -391,7 +440,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     // run on every entry, and it keeps the 资源管理 card count honest.
     api
       .listGlobalFileAssets()
-      .then(setGlobalAssets)
+      .then((r) => {
+        setGlobalAssets(r.assets);
+        setHomeDir(r.home);
+      })
       .catch((e) => setError(String(e)));
     // 全局装面也走项目路由，但服务端对这几个 id 只当占位：技能面板不认它
     // （无项目时 0 号照取），插件/MCP/更新认（404 → 空态），无锚点时用 0。
@@ -735,7 +787,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   // 资产装卸 handler 域（安装/卸载/启停/同步），见 useAssetMutations。
   const {
     handleInstallSkill, handleInstallFileAsset, handleInstallMcp, handleInstallPlugin,
-    handleUninstallSkill, handleUninstallMcp,
+    handleUninstallSkill, handleUninstallFileAsset, handleUninstallMcp, handleUninstallPluginMarket,
     handleCycleMcpEnable, handleSyncAll, handleCyclePluginState, handleUninstallPlugin,
     uninstallSkillSafely,
   } = useAssetMutations({
@@ -751,12 +803,38 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
         `sync:${p.id}`,
         async () => {
           const { updated } = await handleSyncAll(p);
+          // 一键都触发：init 落后或生成物漂移时，同步完顺带重跑 init（同步不代写
+          // init 生成物，这两条路在同一个按钮里串行收口）。「没有需要同步的项」
+          // 只在文件面真空且 init 也不需要时才说——init 需要时那不是「没有」。
+          const summary = updatesMap[p.id];
+          const initNeeded = summary?.initVersionBehind === true || summary?.needsInit === true;
           if (updated > 0) show('success', t('toast.synced', { n: updated }));
-          else show('info', t('toast.nothingToSync'));
+          else if (!initNeeded) show('info', t('toast.nothingToSync'));
+          if (initNeeded) {
+            await api.runProjectInit(p.id);
+            show('success', t('toast.initDone'));
+            ensureUpdates(p.id, true);
+          }
         },
         { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
       ),
-    [fb, handleSyncAll, show, t],
+    [fb, handleSyncAll, show, t, updatesMap, ensureUpdates],
+  );
+
+  // 重跑 init（dashboard 触发）：initVersionBehind / needsInit 的自愈入口——
+  // 子进程跑 CLI（与终端里那条命令同一层），跑完刷新 updates 拿真账。
+  const runInitWithFeedback = useCallback(
+    (p: ProjectRow) =>
+      fb.run(
+        `init:${p.id}`,
+        async () => {
+          await api.runProjectInit(p.id);
+          show('success', t('toast.initDone'));
+          ensureUpdates(p.id, true);
+        },
+        { fail: (e) => t('errors.initFailed', { error: errorText(e) }) },
+      ),
+    [fb, ensureUpdates, show, t],
   );
 
   const selectCategory = useCallback(
@@ -842,13 +920,13 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       openTerminalStateOf={openTerminalProjectStateOf}
       onCloseTerminal={closeProjectTerminal}
       onHoverProject={ensureUpdates}
-      updatesOf={(id) => updatesMap[id]?.available}
-      needsInitOf={(id) => updatesMap[id]?.needsInit}
+      updateSummaryOf={(id) => updatesMap[id]}
       syncStateOf={syncActionStateOf}
       onSyncNow={(p) => void syncNowWithFeedback(p)}
       sessionStatsOf={(id) => projectStats.get(id)}
       pendingQuestionsOf={(id) => pendingQuestionsByProject.get(id) ?? 0}
       terminalsOf={(id) => terminalCounts[id] ?? 0}
+      terminalsHiddenOf={(id) => hiddenCounts[id] === true}
       onReorder={reorderProjects}
       archivedProjects={archivedProjects}
       onArchive={handleArchiveProject}
@@ -1015,7 +1093,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 // 头部行全部退场，主区 100% 给满屏世界；返回项目视图收进 HUD
                 // 左上角徽章（RpgView 内部浮层，onBack 回 App 既有的选中项目出口）。
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <Suspense fallback={null}>
+                  <Suspense fallback={<RpgChunkFallback />}>
                     <RpgView
                     sceneKey={(() => {
                       const r = parseRoute(path);
@@ -1035,8 +1113,13 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                 <>
                   <div className="relative px-4 py-2 border-b border-edge/[0.06] flex flex-wrap items-center gap-x-3 gap-y-1">
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-sm font-semibold truncate">
-                        {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
+                      <h2 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+                        <span className="min-w-0 truncate">
+                          {globalMode ? t('app.globalTitle') : (selected?.name ?? '')}
+                        </span>
+                        {!globalMode && selected?.superagent && (
+                          <Badge variant="superagent">superagent</Badge>
+                        )}
                       </h2>
                       <p className="flex min-w-0 items-center gap-0.5 text-11 text-neutral-500">
                         <span className="min-w-0 truncate">
@@ -1045,7 +1128,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         {!globalMode && selected && <CopyPathButton path={selected.path} />}
                       </p>
                     </div>
-                    {!globalMode && updates && updates.available > 0 && (
+                    {!globalMode && updates && (updates.available > 0 || updates.initVersionBehind) && (
                       // 窄屏外层 display:contents（无盒子，面板退回按表头定位于整行宽），
                       // 桌面才成为定位盒让面板挂在这枚标签上。
                       <span className="contents lg:relative lg:inline-block lg:shrink-0">
@@ -1058,9 +1141,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                             updatesOpen && 'ring-1 ring-orange-500/50',
                           )}
                         >
-                          {updates.available === 1
-                            ? t('app.updateCountOne')
-                            : t('app.updateCount', { n: updates.available })}
+                          {updates.available > 0
+                            ? updates.available === 1
+                              ? t('app.updateCountOne')
+                              : t('app.updateCount', { n: updates.available })
+                            : t('app.updateInitLagOnly')}
                           <ChevronDown
                             className={cn('h-3 w-3 transition-transform', updatesOpen && 'rotate-180')}
                           />
@@ -1122,14 +1207,43 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         </button>
                       </Tooltip>
                     )}
-                    {/* 会进 git 的 init 文件漂移了：同步域不代写，提醒去终端跑 init。 */}
+                    {/* 会进 git 的 init 文件漂移了：第二更新入口（点击即重跑 init，
+                        与「全部同步」并列、各管各的——同步不代写 init 生成物）。 */}
                     {!globalMode && updates?.needsInit && (
-                      <span
-                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium"
-                        title={t('project.needsInitTip')}
+                      <Tooltip label={t('project.needsInitTip')} side="top">
+                        <button
+                          onClick={() => selected && void runInitWithFeedback(selected)}
+                          className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium hover:bg-amber-900/60"
+                        >
+                          <FeedbackIcon
+                            state={fb.stateOf(`init:${selected?.id}`)}
+                            className="h-3 w-3"
+                          />
+                          {t('project.needsInit')}
+                        </button>
+                      </Tooltip>
+                    )}
+                    {/* init 版本落后于当前 weave（托管块等只在升级后变的内容，漂移检测
+                        看不见版本差异）：同上，点击即重跑。 */}
+                    {!globalMode && updates?.initVersionBehind && (
+                      <Tooltip
+                        label={`${t('project.initVersionLagDetail', {
+                          from: updates.initVersion ?? '—',
+                          to: updates.weaveVersion,
+                        })}\n\n${t('project.runInit')}`}
+                        side="top"
                       >
-                        {t('project.needsInit')}
-                      </span>
+                        <button
+                          onClick={() => selected && void runInitWithFeedback(selected)}
+                          className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium hover:bg-amber-900/60"
+                        >
+                          <FeedbackIcon
+                            state={fb.stateOf(`init:${selected?.id}`)}
+                            className="h-3 w-3"
+                          />
+                          {t('project.initVersionLag')}
+                        </button>
+                      </Tooltip>
                     )}
                     {!globalMode && selected && (
                       <span
@@ -1174,6 +1288,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         statuslineNonce={statuslineNonce}
                         assets={assets}
                         globalAssets={globalAssets}
+                        homeDir={homeDir}
                         mcpRows={mcpRows}
                         updates={updates}
                         globalSkillGroups={globalSkillGroups}
@@ -1241,6 +1356,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                     setDrawerSkill(null);
                   }}
                   onClose={() => setDrawerSkill(null)}
+                  home={homeDir}
                 />
               )}
             </main>
@@ -1306,12 +1422,15 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
         <MarketModal
           onClose={() => setMarketOpen(false)}
           projects={projects}
-          defaultProjectId={selected?.id ?? null}
           capabilities={installCaps}
           onInstallSkill={(skill, scope, agent, target) => handleInstallSkill(skill, scope, agent, target)}
           onInstallMcp={(name, config, scope, agent, target) => handleInstallMcp(name, config, scope, agent, target)}
           onInstallFileAsset={(file, scope, target) => handleInstallFileAsset(file, scope, target)}
           onInstallPlugin={(plugin, target) => handleInstallPlugin(plugin, target)}
+          onUninstallSkill={(name, scope, agent, target) => handleUninstallSkill(name, scope, agent, target)}
+          onUninstallMcp={(name, scope, agent, target) => handleUninstallMcp(name, scope, agent, target)}
+          onUninstallFileAsset={(file, scope, target) => handleUninstallFileAsset(file, scope, target)}
+          onUninstallPlugin={(plugin, target) => handleUninstallPluginMarket(plugin, target)}
           onJumpToProject={(projectId) => {
             setMarketOpen(false);
             // null = 全局伪项目；行点击即跳对应项目的资源管理卡（'files' = 资源管理）

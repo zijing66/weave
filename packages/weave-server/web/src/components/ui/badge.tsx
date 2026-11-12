@@ -9,6 +9,7 @@ const variants: Record<string, string> = {
   helper: 'bg-amber-900/40 text-amber-300',
   mcp: 'bg-pink-900/40 text-pink-300',
   settings: 'bg-cyan-900/40 text-cyan-300',
+  superagent: 'bg-purple-900/40 text-purple-300',
   warning: 'bg-orange-900/40 text-orange-300',
   other: 'bg-neutral-800 text-neutral-400',
 };

@@ -397,6 +397,41 @@
 .boot-splash-exit {
   animation: boot-fade-out 320ms ease-in forwards;
 }
+/* ---- RPG 进入装载面（chunk 下载 + 六格启动浮层）：RPG 深底 + 像素格脉动，
+   与 BootSplash 分工（那边是首屏品牌动效，这边是游戏装载感） ---- */
+.rpg-chunk-fallback {
+  background: #17141f;
+}
+@keyframes rpg-cell-pulse {
+  0%,
+  100% {
+    background: #3a3444;
+  }
+  50% {
+    background: #d9a441;
+  }
+}
+.rpg-chunk-cells {
+  display: flex;
+  gap: 4px;
+}
+.rpg-chunk-cells span {
+  width: 16px;
+  height: 10px;
+  background: #3a3444;
+  box-shadow: inset 0 0 0 1px #1a1721;
+  animation: rpg-cell-pulse 1s steps(2) infinite;
+}
+/* 六格启动浮层（RpgView 内）：满格整层淡出，复用 boot-fade-out */
+.rpg-boot-overlay {
+  background: #17141f;
+}
+.rpg-boot-overlay-enter {
+  animation: boot-fade-in 240ms ease-out;
+}
+.rpg-boot-overlay-exit {
+  animation: boot-fade-out 320ms ease-in forwards;
+}
 /* 启动页阶段文字：随阶段切换轻淡入（文字本身换内容，动效只给一拍呼吸感） */
 .boot-stage-label {
   animation: boot-stage-in 600ms ease-out;
@@ -813,6 +848,35 @@
 .rpg-selected-mark {
   box-shadow: 0 0 0 2px #4ec9b0;
   border-radius: 1px;
+}
+/* 上帝化身高亮：脚底一枚轻微青色亮条（G2.6 规格：用户操纵的主角的选中标记；
+ *   不描全身框——那是角色点选后的语义，两者不能混用）。 */
+.rpg-god-mark::after {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: -3px;
+  height: 2px;
+  background: rgba(78, 201, 176, 0.55);
+}
+/* 行走两帧动画：两脚交替提起（提脚 -2px），CSS 帧切换（steps）无缓动——
+ *   节拍 320ms ≈ 两倍步进间隔（STEP_MS=160），走一格恰换一次脚。 */
+@keyframes rpg-step-lift {
+  0%,
+  49.9% {
+    transform: translateY(0);
+  }
+  50%,
+  100% {
+    transform: translateY(-2px);
+  }
+}
+.rpg-walking .rpg-foot-l {
+  animation: rpg-step-lift 320ms steps(1, end) infinite;
+}
+.rpg-walking .rpg-foot-r {
+  animation: rpg-step-lift 320ms steps(1, end) infinite reverse;
 }
 /* 六维细长像素条（详情 HUD ②区）：4px 高、格状刻度 = repeating-linear-gradient
    分小格（G2.6 参考图：像素条带刻度），无圆角 + 描边。 */

@@ -37,6 +37,7 @@ export const libraryZh = {
   'category.emptySkillsGlobal': '未安装全局 skills',
   'category.emptySkillsProject': '该项目未安装 skills',
   'category.emptyMcpCodex': '未配置 Codex MCP（~/.codex/config.toml）',
+  'category.emptyMcpLocal': '该项目仅本人档未配置 MCP',
   'category.emptyMcpGlobal': '未配置全局 MCP',
   'category.emptyMcpProject': '该项目未配置 MCP',
   'category.codexFilesPlaceholder': '该项目暂无 Codex 资源',
@@ -124,6 +125,8 @@ export const libraryZh = {
   'market.installTo': '安装到',
   'market.chooseProject': '选择项目',
   'market.pluginProjectOnly': '插件包按项目安装（CC 包全局安装、项目启用）',
+  'market.projectCapsulesTip': '点击胶囊切换该项目内的安装状态',
+  'market.chooseProjectCapsule': '暂无项目可安装',
   'market.packNotFound': '工具包扫描未发现该插件包（{name}），请刷新源后重试',
 };
 
@@ -166,6 +169,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'category.emptySkillsGlobal': 'No global skills installed',
   'category.emptySkillsProject': 'No skills installed in this project',
   'category.emptyMcpCodex': 'No Codex MCP configured (~/.codex/config.toml)',
+  'category.emptyMcpLocal': "No MCP in this project's local scope",
   'category.emptyMcpGlobal': 'No global MCP configured',
   'category.emptyMcpProject': 'No MCP configured in this project',
   'category.codexFilesPlaceholder': 'This project has no Codex resources yet',
@@ -254,5 +258,7 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'market.installTo': 'Install to',
   'market.chooseProject': 'Choose a project',
   'market.pluginProjectOnly': 'Plugin packs install per project (CC packs install globally, enable per project)',
+  'market.projectCapsulesTip': 'Click a capsule to toggle installation in that project',
+  'market.chooseProjectCapsule': 'No projects available',
   'market.packNotFound': 'Toolkit scan did not find this plugin pack ({name}); refresh sources and retry',
 };
