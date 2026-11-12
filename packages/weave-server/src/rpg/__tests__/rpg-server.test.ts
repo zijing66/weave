@@ -44,8 +44,10 @@ describe('POST /rpg/* + 建角色全链（REST，不依赖 MCP）', () => {
       locale: 'zh-CN',
       hooks: { enabled: true },
     });
-    rolesRoot = mkdtempSync(path.join(tmpdir(), 'weave-rpg-e2e-roles-'));
-    tmpDirs.push(rolesRoot);
+    // 测试根仿生产结构：<sa>/（超级代理仓）下挂 roles/（角色仓根）。
+    const saRoot = mkdtempSync(path.join(tmpdir(), 'weave-rpg-e2e-sa-'));
+    tmpDirs.push(saRoot);
+    rolesRoot = path.join(saRoot, 'roles');
     const hooksTmp = mkdtempSync(path.join(tmpdir(), 'weave-rpg-e2e-hooks-'));
     tmpDirs.push(hooksTmp);
     runDirs = [];
@@ -66,6 +68,8 @@ describe('POST /rpg/* + 建角色全链（REST，不依赖 MCP）', () => {
       rpgRoles: new RpgRoleRepository(db),
       rpgGrowth: new RpgGrowthRepository(db),
       rpgRolesRoot: rolesRoot,
+      // 超级代理仓根跟测试根走（生产缺省 = <data>/superagent/weave，不随 rolesRoot 漂）。
+      superagentRoot: saRoot,
       messageDeliverer: new MessageDeliverer({
         sessions: new SessionRepository(db),
         projects,
@@ -90,7 +94,8 @@ describe('POST /rpg/* + 建角色全链（REST，不依赖 MCP）', () => {
     const body = (await res.json()) as { ok: boolean; created: string[]; path: string };
     expect(body.ok).toBe(true);
     expect(body.created).toEqual(['teams', 'roles', 'playbooks', 'state']);
-    expect(path.dirname(body.path)).toBe(path.dirname(rolesRoot));
+    // 2026-11-11 起游戏域全住超级代理仓：coordinator = <sa>/、角色仓根 = <sa>/roles。
+    expect(path.join(body.path, 'roles')).toBe(rolesRoot);
   });
 
   it('② 建角色：POST /rpg/roles → 仓库目录 + 项目注册 + RPG 行', async () => {
@@ -122,6 +127,30 @@ describe('POST /rpg/* + 建角色全链（REST，不依赖 MCP）', () => {
 
   it('非法角色名 400 / RPG 关（无 rpgRoles）503', async () => {
     expect((await call('POST', '/rpg/roles', { name: 'Bad!' })).status).toBe(400);
+  });
+
+  it('非法 gender / appearanceSeed 400；合法值透传到读侧', async () => {
+    expect((await call('POST', '/rpg/roles', { name: 'bad-gender', gender: 'other' })).status).toBe(400);
+    expect((await call('POST', '/rpg/roles', { name: 'bad-seed', appearanceSeed: -1 })).status).toBe(400);
+    expect(
+      (await call('POST', '/rpg/roles', { name: 'bad-seed2', appearanceSeed: 2147483648 })).status,
+    ).toBe(400);
+    expect(
+      (await call('POST', '/rpg/roles', { name: 'bad-seed3', appearanceSeed: 1.5 })).status,
+    ).toBe(400);
+
+    const res = await call('POST', '/rpg/roles', { name: 'gendered', gender: 'male', appearanceSeed: 777 });
+    expect(res.status).toBe(201);
+    const role = (await res.json()) as { gender: string; appearanceSeed: number };
+    expect(role.gender).toBe('male');
+    expect(role.appearanceSeed).toBe(777);
+
+    const list = (await (await call('GET', '/rpg/roles')).json()) as {
+      roles: Array<{ name: string; gender: string | null; appearanceSeed: number | null }>;
+    };
+    const row = list.roles.find((r) => r.name === 'gendered')!;
+    expect(row.gender).toBe('male');
+    expect(row.appearanceSeed).toBe(777);
   });
 
   it('成长记录只读面：GET /rpg/roles/:id/growth', async () => {

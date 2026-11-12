@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -15,8 +15,9 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { api, type HarnessCheck, type ProjectRow, type TerminalTarget } from '@/lib/api';
+import { api, type HarnessCheck, type ProjectRow, type TerminalTarget, type RpgExpeditionView, type RpgRoleView } from '@/lib/api';
 import { AgentBadge } from '@/components/AgentBadge';
+import { Badge } from '@/components/ui/badge';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { cssPx } from '@/lib/font-scale';
 import { useBackPop } from '@/lib/back-pop';
@@ -31,20 +32,25 @@ import { StorageSettingsModal } from '@/components/StorageSettingsModal';
 import { useToast } from '@/components/Toast';
 import { CopyPathButton } from '@/components/ui/copy-button';
 import { errorText, type ActionState } from '@/lib/action-feedback';
+import type { ProjectUpdateSummary } from '@/lib/api';
 import type { HarnessSessionCounts } from '@/components/tasks/session-status';
 import {
   Archive,
   ArchiveRestore,
   ArrowUpRight,
+  Eye,
+  EyeOff,
   FolderOpen,
-  FolderCog,
   Globe,
   GripVertical,
+  Loader2,
   Plus,
   Power,
   RefreshCw,
+  Settings,
   Terminal,
   TriangleAlert,
+  Users,
   X,
 } from 'lucide-react';
 
@@ -61,10 +67,9 @@ interface ProjectListProps {
   onOpenTerminal: (p: ProjectRow) => void;
   /** Row hover → lazily fetch + cache that project's pending-update count. */
   onHoverProject?: (projectId: number) => void;
-  /** Row quick action: pending update count (undefined until hover-loaded). */
-  updatesOf?: (projectId: number) => number | undefined;
-  /** 「待 init」提示：会进 git 的 init 文件有漂移（undefined until hover-loaded）。 */
-  needsInitOf?: (projectId: number) => boolean | undefined;
+  /** Row quick action: full update summary (undefined until hover-loaded) —
+   *  badge + rich tooltip on the sync button all read from this one source. */
+  updateSummaryOf?: (projectId: number) => ProjectUpdateSummary | undefined;
   /** Row quick action: run one sync for the row's project. */
   onSyncNow?: (p: ProjectRow) => void;
   /** 行内按钮反馈态（loading → ✅ → 2s 复原），由 App 的 useActionFeedback 供。 */
@@ -80,6 +85,8 @@ interface ProjectListProps {
   pendingQuestionsOf?: (projectId: number) => number;
   /** Row 快速操作：该项目已打开的终端数（可见屏幕，后端自定单位；0 = 无角标）。 */
   terminalsOf?: (projectId: number) => number;
+  /** 该项目是否全部已开终端窗都处于系统级隐藏态（角标换成隐藏小标；探不到不摆）。 */
+  terminalsHiddenOf?: (projectId: number) => boolean;
   /** 拖拽落定后的目标顺序（id 全量列表）——持久化与失败回滚都归 App。 */
   onReorder?: (ids: number[]) => void;
   /** 归档项目（仅基础信息；非空时「项目」标题旁出现查看入口）。 */
@@ -111,6 +118,81 @@ export function visibleProjectsOf(projects: readonly ProjectRow[]): ProjectRow[]
   return projects.filter((p) => !p.hidden);
 }
 
+/* ---- G6 角色可见桥（RPG 稿 §八）派生纯函数：项目行徽章 + 关联角色折叠区 ----
+ * 事实基线：出征会话经 projectOfCwd 归一落「目标项目」名下（expeditions.project_id
+ * 就是目标项目）；驻家修炼会话在隐藏仓刻意不进列表。此处只做渲染层聚合（零新表），
+ * 派生不出的态（修炼中）如实不摆，不猜。 */
+
+/** 项目行出征徽章数 = active 出征指向该项目的会话数（>0 才摆）。 */
+export function expeditionBadgeCountOf(
+  expeditions: readonly { projectId: number; status: string }[],
+  projectId: number,
+): number {
+  return expeditions.filter((e) => e.projectId === projectId && e.status === 'active').length;
+}
+
+/** 关联角色折叠区行：该 house 的 kind:'role' 成员 + 出征态（active 出征 = 出征·目标）。 */
+export interface RoleBridgeRow {
+  roleId: number;
+  name: string;
+  /** active 出征的目标项目名（常态至多一支；无 active = null 待命）。 */
+  expedition: { target: string } | null;
+}
+
+/** 项目行点开的折叠区行（null = 该项目没建房，不摆折叠入口）。 */
+export function houseRoleBridgeRowsOf(input: {
+  houses: readonly { coreProjectId: number; members: readonly { kind: string; roleId: number | null }[] }[];
+  roles: ReadonlyMap<number, { id: number; name: string }>;
+  expeditions: readonly { roleId: number; projectId: number; status: string }[];
+  projectNames: ReadonlyMap<number, string>;
+}, projectId: number): RoleBridgeRow[] | null {
+  const house = input.houses.find((h) => h.coreProjectId === projectId);
+  if (!house) return null;
+  const out: RoleBridgeRow[] = [];
+  for (const m of house.members) {
+    if (m.kind !== 'role') continue;
+    const role = m.roleId != null ? input.roles.get(m.roleId) : undefined;
+    if (!role) continue;
+    const target = input.expeditions.find(
+      (e) => e.roleId === role.id && e.status === 'active' && input.projectNames.has(e.projectId),
+    );
+    out.push({
+      roleId: role.id,
+      name: role.name,
+      expedition: target ? { target: input.projectNames.get(target.projectId)! } : null,
+    });
+  }
+  return out;
+}
+
+/** G6 角色版双路提醒（第二路 = 折叠区角标）：挂在角色头上的待裁态——
+ *  goal 停摆（paused/budget_out = 预算续期/降级等上帝）或信箱 pending 且其
+ *  input 指到该角色的 goal。返回 true 才摆角标（amber）。 */
+export function roleAttentionOf(
+  roleId: number,
+  input: {
+    goals: readonly { id: number; roleId: number; status: string }[];
+    pendingDecisions: readonly { action: string; input: string | null }[];
+  },
+): boolean {
+  if (input.goals.some((g) => g.roleId === roleId && (g.status === 'paused' || g.status === 'budget_out'))) {
+    return true;
+  }
+  return input.pendingDecisions.some((d) => {
+    if (d.action !== 'budget-renew' && d.action !== 'downgrade' && d.action !== 'goal-change') return false;
+    try {
+      const parsed = d.input ? (JSON.parse(d.input) as { goalId?: unknown }) : null;
+      return parsed != null && parsed.goalId != null && goalHasRole(Number(parsed.goalId), roleId, input.goals);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function goalHasRole(goalId: number, roleId: number, goals: readonly { id: number; roleId: number }[]): boolean {
+  return goals.some((g) => g.id === goalId && g.roleId === roleId);
+}
+
 export function ProjectList({
   projects,
   selectedId,
@@ -120,8 +202,7 @@ export function ProjectList({
   onOpenExplorer,
   onOpenTerminal,
   onHoverProject,
-  updatesOf,
-  needsInitOf,
+  updateSummaryOf,
   onSyncNow,
   syncStateOf,
   openExplorerStateOf,
@@ -130,6 +211,7 @@ export function ProjectList({
   sessionStatsOf,
   pendingQuestionsOf,
   terminalsOf,
+  terminalsHiddenOf,
   onReorder,
   archivedProjects = [],
   onArchive,
@@ -156,6 +238,54 @@ export function ProjectList({
     if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
   }, [archivedOpen, archivedProjects.length]);
 
+  // G6 角色可见桥：三份 RPG 端点数据（RPG 未启用 → 503 → 徽章与折叠区如实缺席，
+  // retry:false 不空转）。折叠区 = house 成员的出征态；徽章 = active 出征数。
+  const rpgHouses = useQuery({
+    queryKey: ['rpg-houses'],
+    queryFn: () => api.listHouses(),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const rpgRoles = useQuery({
+    queryKey: ['rpg-roles'],
+    queryFn: () => api.listRoles(),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const rpgExpeditions = useQuery({
+    queryKey: ['rpg-expeditions-bridge'],
+    queryFn: () => api.listExpeditions(),
+    staleTime: 30_000,
+    retry: false,
+  });
+  // G6 角色版双路提醒第二路：goal（交叉表态——budget_out/paused 的待裁角色）
+  // 与信箱 pending（goal 三岔口上报：预算续期/降级呈批）——落在角色头上的
+  // 事件在折叠区角标显形；游戏视图信箱是第一路（同一份 routing 账）。
+  const rpgGoals = useQuery({
+    queryKey: ['rpg-goals'],
+    queryFn: () => api.listGoals(),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const rpgRouting = useQuery({
+    queryKey: ['rpg-routing'],
+    queryFn: () => api.listRoutingDecisions({ limit: 30 }),
+    staleTime: 15_000,
+    retry: false,
+  });
+  const bridgeRoles = useMemo(() => {
+    const map = new Map<number, RpgRoleView>();
+    for (const r of rpgRoles.data?.roles ?? []) map.set(r.id, r);
+    return map;
+  }, [rpgRoles.data]);
+  const bridgeExpeditions: RpgExpeditionView[] = rpgExpeditions.data?.expeditions ?? [];
+  const bridgeProjectNames = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const p of projects) map.set(p.id, p.name);
+    return map;
+  }, [projects]);
+  const [bridgeOpenId, setBridgeOpenId] = useState<number | null>(null);
+
   // 项目行的终端弹层：点终端按钮不再直接开窗，而是先摆出本项目已开的终端卡片
   // （点卡片 = 勾选，右上角图标切到前台 / 关掉这一张），末尾常驻一张「+」开新
   // 终端——没有终端时只剩那张「+」。卡片数据每次现拉（实时枚举，缓存会把刚关掉
@@ -169,6 +299,10 @@ export function ProjectList({
     targets: TerminalTarget[] | null;
     /** 勾选的卡片 id（只收可关的那些）——顶部批量关闭按钮按它算。 */
     selected: string[];
+    /** 各目标所在 OS 窗口的可见性（targetId → visible/hidden/null；null = 探不到不摆态）。 */
+    visibility: Record<string, 'visible' | 'hidden' | null>;
+    /** 正在切可见性的目标（loading 态；防重复点——Win32 那枪要一两秒）。 */
+    visBusy: string | null;
   } | null>(null);
   const termMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -185,15 +319,56 @@ export function ProjectList({
       y: rect.bottom + 4,
       targets: null,
       selected: [],
+      visibility: {},
+      visBusy: null,
     });
     api
       .listProjectTerminals(p.id)
-      .then((targets) =>
-        setTermMenu((cur) => (cur && cur.project.id === p.id ? { ...cur, targets } : cur)),
-      )
+      .then((targets) => {
+        setTermMenu((cur) => (cur && cur.project.id === p.id ? { ...cur, targets } : cur));
+        // 逐目标查窗口可见性（火力全开也只是一枪 powershell/目标；失败项留 null 不摆态）。
+        for (const target of targets) {
+          api
+            .getProjectTerminalVisibility(p.id, target.id)
+            .then((r) =>
+              setTermMenu((cur) =>
+                cur && cur.project.id === p.id
+                  ? { ...cur, visibility: { ...cur.visibility, [target.id]: r.visibility } }
+                  : cur,
+              ),
+            )
+            .catch(() => {});
+        }
+      })
       .catch((e: unknown) => {
         setTermMenu(null);
         show('error', t('errors.listTerminalsFailed', { error: errorText(e) }));
+      });
+  };
+
+  /** 卡片上的「隐藏/显示」系统级窗口切换；回实况就地摆态，失败如实报因。
+   *  切换期间该卡按钮转圈（visBusy）：Win32 那枪 powershell 要一两秒，不挡重复点。 */
+  const toggleTerminalVisibility = (project: ProjectRow, targetId: string): void => {
+    if (termMenu?.visBusy === targetId) return;
+    const cur = termMenu?.visibility[targetId];
+    const next = cur === 'hidden' ? 'show' : 'hide';
+    setTermMenu((c) => (c ? { ...c, visBusy: targetId } : c));
+    api
+      .setProjectTerminalVisibility(project.id, targetId, next)
+      .then((r) =>
+        setTermMenu((c) =>
+          c && c.project.id === project.id
+            ? {
+                ...c,
+                visibility: { ...c.visibility, [targetId]: r.visibility },
+                visBusy: null,
+              }
+            : c,
+        ),
+      )
+      .catch((e: unknown) => {
+        setTermMenu((c) => (c && c.project.id === project.id ? { ...c, visBusy: null } : c));
+        show('error', t('errors.terminalVisibilityFailed', { error: errorText(e) }));
       });
   };
 
@@ -258,12 +433,15 @@ export function ProjectList({
 
   // 项目行拖拽排序：内嵌 DndContext 与 App 级资产拖拽完全隔离（draggable
   // 只绑最近 context）；落定只算目标顺序，持久化/失败回滚都归 App。
+  // 超级代理项目恒置顶（server list() 口径）：端点任一为它即无操作——
+  // 拖拽别行到它上面也不会改变它的位置（setOrder 服务端同样忽略它）。
   const onSortEnd = (e: DragEndEvent): void => {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
     const from = projects.findIndex((p) => p.id === Number(active.id));
     const to = projects.findIndex((p) => p.id === Number(over.id));
     if (from < 0 || to < 0) return;
+    if (projects[from]!.superagent || projects[to]!.superagent) return;
     onReorder?.(arrayMove(projects, from, to).map((p) => p.id));
   };
   const [menu, setMenu] = useState<ProjectMenu | null>(null);
@@ -402,12 +580,35 @@ export function ProjectList({
         <DndContext sensors={sortSensors} onDragEnd={onSortEnd}>
           <SortableContext items={visibleProjects.map((p) => p.id)} strategy={verticalListSortingStrategy}>
         {visibleProjects.map((p) => {
-          const pending = updatesOf?.(p.id);
-          const needsInit = needsInitOf?.(p.id);
+          const summary = updateSummaryOf?.(p.id);
+          const pending = summary?.available;
+          const initVersionLag = summary?.initVersionBehind;
           const stats = sessionStatsOf?.(p.id) ?? [];
           const terminals = terminalsOf?.(p.id) ?? 0;
+          const terminalsHidden = terminalsHiddenOf?.(p.id) === true;
           // 有待答问题 → 边框换成与会话行问答图标同一档 amber（扫一眼就知道哪张卡要人答）
           const pendingQuestions = pendingQuestionsOf?.(p.id) ?? 0;
+          // G6 角色可见桥：出征徽章数（active 出征指向本项目）+ 该 house 成员折叠行。
+          const expeditionBadge = expeditionBadgeCountOf(bridgeExpeditions, p.id);
+          const bridgeRows =
+            (rpgHouses.data?.houses ?? null) != null
+              ? houseRoleBridgeRowsOf(
+                  {
+                    houses: rpgHouses.data?.houses ?? [],
+                    roles: bridgeRoles,
+                    expeditions: bridgeExpeditions,
+                    projectNames: bridgeProjectNames,
+                  },
+                  p.id,
+                )
+              : null;
+          // G6 角色版双路提醒第二路：折叠区行角标（goal 停摆 / 信箱 pending 指到
+          // 该角色的 goal）——信箱先批（信箱 approve 会清 pending，角标随 invalidate 退场）。
+          const bridgeAttention = (roleId: number): boolean =>
+            roleAttentionOf(roleId, {
+              goals: rpgGoals.data?.goals ?? [],
+              pendingDecisions: (rpgRouting.data?.decisions ?? []).filter((d) => d.result === 'pending'),
+            });
           return (
             <SortableProjectLi key={p.id} id={p.id}>
               {({ setNodeRef, style, attributes, listeners, isDragging }) => (
@@ -432,12 +633,17 @@ export function ProjectList({
             >
               <div className="flex items-start">
                 {/* 拖拽手柄：「这张卡可拖」的显式 affordance；listeners 只挂它，
-                    行点选/右键不误触（PointerSensor 5px 位移阈值激活）。 */}
+                    行点选/右键不误触（PointerSensor 5px 位移阈值激活）。
+                    超级代理项目（置顶锁定）不挂 listeners——不可拖。 */}
                 <Tooltip label={t('project.dragToReorder')}>
                   <span
-                    {...attributes}
-                    {...listeners}
-                    className="ml-1 mt-2 shrink-0 cursor-grab touch-none rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-300 active:cursor-grabbing"
+                    {...(p.superagent ? {} : { ...attributes, ...listeners })}
+                    className={
+                      'ml-1 mt-2 shrink-0 touch-none rounded p-0.5 transition-colors ' +
+                      (p.superagent
+                        ? 'text-neutral-700'
+                        : 'cursor-grab text-neutral-600 hover:text-neutral-300 active:cursor-grabbing')
+                    }
                   >
                     <GripVertical className="h-3.5 w-3.5" />
                   </span>
@@ -469,12 +675,22 @@ export function ProjectList({
               >
                 {/* 第一行：名字占满可伸缩宽度，统计徽标贴右不收缩 */}
                 <span className="flex w-full min-w-0 items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm" title={p.name}>
-                    {p.name}
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <span className="min-w-0 truncate text-sm" title={p.name}>
+                      {p.name}
+                    </span>
+                    {p.superagent && <Badge variant="superagent">superagent</Badge>}
                   </span>
                   <span className="ml-auto flex shrink-0 items-center gap-1.5">
                     <SessionBadges counts={stats} />
                     <HealthBadge projectId={p.id} />
+                    {expeditionBadge > 0 && (
+                      <Tooltip label={t('project.expeditionsTip', { n: String(expeditionBadge) })}>
+                        <span className="rounded-full bg-orange-900/40 px-1.5 text-10 leading-4 text-orange-300">
+                          ⚔ {expeditionBadge}
+                        </span>
+                      </Tooltip>
+                    )}
                   </span>
                 </span>
                 {/* 路径与 harness 徽标各占整卡宽度：挤在文字列里会被右侧统计列
@@ -499,20 +715,12 @@ export function ProjectList({
               </button>
               </div>
               {/* 快捷操作簇（批 8）：卡内独立一行换行展示，不与文字同行重叠。
-                  stopPropagation 在 QuickButton 内双保险。 */}
+                  stopPropagation 在 QuickButton 内双保险。提醒全收在同步图标的
+                  角标与 tooltip 上（用户裁决）：待同步 = 橙色脉动点（既有）、
+                  init 落后 = 琥珀色常亮点，两者并存并排；胶囊退役。 */}
               <div className="flex items-center gap-1 px-2 pb-1 pl-9">
-                {needsInit && (
-                  <Tooltip label={t('project.needsInitTip')}>
-                    <span className="shrink-0 rounded-full bg-amber-900/40 px-1.5 text-10 leading-4 text-amber-300">
-                      {t('project.needsInit')}
-                    </span>
-                  </Tooltip>
-                )}
                 <span className="relative">
-                  <QuickButton
-                    tooltip={`${pending ? t('project.syncPending', { n: pending }) : t('project.syncNow')}\n\n${t('app.scopeCoverageTooltip')}`}
-                    onClick={() => onSyncNow?.(p)}
-                  >
+                  <QuickButton tooltip={syncTooltipOf(t, summary)} onClick={() => onSyncNow?.(p)}>
                     <FeedbackIcon
                       state={syncStateOf?.(p.id) ?? 'idle'}
                       className="h-3.5 w-3.5"
@@ -520,7 +728,11 @@ export function ProjectList({
                         <RefreshCw
                           className={cn(
                             'h-3.5 w-3.5',
-                            pending ? 'text-orange-300' : 'text-neutral-400',
+                            initVersionLag
+                              ? 'text-amber-300'
+                              : pending
+                                ? 'text-orange-300'
+                                : 'text-neutral-400',
                           )}
                         />
                       }
@@ -528,6 +740,14 @@ export function ProjectList({
                   </QuickButton>
                   {Boolean(pending) && (
                     <span className="pointer-events-none absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-orange-500" />
+                  )}
+                  {initVersionLag && (
+                    <span
+                      className={cn(
+                        'pointer-events-none absolute h-1.5 w-1.5 rounded-full bg-amber-400',
+                        Boolean(pending) ? '-left-0.5 -top-0.5' : '-right-0.5 -top-0.5',
+                      )}
+                    />
                   )}
                 </span>
                 <QuickButton tooltip={t('project.openInExplorer')} onClick={() => onOpenExplorer(p)}>
@@ -545,7 +765,7 @@ export function ProjectList({
                   <QuickButton
                     tooltip={
                       terminals > 0
-                        ? `${t('project.terminalsOpen', { n: terminals })}\n\n${t('project.terminalMenu')}`
+                        ? `${t(terminalsHidden ? 'project.terminalsHidden' : 'project.terminalsOpen', { n: terminals })}\n\n${t('project.terminalMenu')}`
                         : t('project.openInTerminal')
                     }
                     onClick={(e) => openTermMenu(p, e.currentTarget)}
@@ -561,7 +781,14 @@ export function ProjectList({
                     />
                   </QuickButton>
                   {terminals > 0 && (
-                    <span className="pointer-events-none absolute -top-1 -right-1.5 rounded-full bg-emerald-900/80 px-1 text-9 leading-3 text-emerald-300">
+                    <span
+                      className={cn(
+                        'pointer-events-none absolute -top-1 -right-1.5 rounded-full px-1 text-9 leading-3',
+                        terminalsHidden
+                          ? 'bg-neutral-700/80 text-neutral-300'
+                          : 'bg-emerald-900/80 text-emerald-300',
+                      )}
+                    >
                       {terminals}
                     </span>
                   )}
@@ -570,9 +797,57 @@ export function ProjectList({
                   tooltip={t('project.storageButton')}
                   onClick={() => setStorageTarget(p)}
                 >
-                  <FolderCog className="h-3.5 w-3.5" />
+                  <Settings className="h-3.5 w-3.5" />
                 </QuickButton>
+                {/* G6 角色可见桥：有房才摆（badge = 出征中的成员数；点击开折叠区）。 */}
+                {bridgeRows != null && (
+                  <QuickButton
+                    tooltip={t('project.bridgeTip', { n: String(bridgeRows.filter((r) => r.expedition).length) })}
+                    onClick={() => setBridgeOpenId((cur) => (cur === p.id ? null : p.id))}
+                  >
+                    <Users
+                      className={cn(
+                        'h-3.5 w-3.5',
+                        bridgeRows.some((r) => r.expedition) ? 'text-orange-300' : 'text-neutral-400',
+                        bridgeOpenId === p.id && 'bg-edge/10 rounded',
+                      )}
+                    />
+                  </QuickButton>
+                )}
               </div>
+              {/* G6 关联角色折叠区：house 成员一行一位（出征·目标 / 待命——派生不出
+                  的态不摆，goal 域收获后补三岔口上报）。 */}
+              {bridgeRows != null && bridgeOpenId === p.id && (
+                <div className="flex flex-col gap-0.5 px-2 pb-1 pl-9">
+                  {bridgeRows.length === 0 ? (
+                    <p className="text-10 text-neutral-500">{t('project.bridgeNoRoles')}</p>
+                  ) : (
+                    bridgeRows.map(({ roleId, name, expedition }) => {
+                      const attention = bridgeAttention(roleId);
+                      return (
+                      <div key={roleId} className="flex items-center gap-2 text-11 py-0.5">
+                        <span
+                          className={
+                            'h-1.5 w-1.5 shrink-0 rounded-full ' +
+                            (attention ? 'animate-pulse bg-amber-400' : expedition ? 'animate-pulse bg-orange-400' : 'bg-neutral-600')
+                          }
+                        />
+                        <span className="min-w-0 flex-1 truncate text-neutral-300">{name}</span>
+                        {attention ? (
+                          <span className="shrink-0 text-10 text-amber-300">{t('project.bridgeAttention')}</span>
+                        ) : expedition ? (
+                          <span className="shrink-0 text-10 text-orange-300">
+                            {t('project.bridgeExpedition', { target: expedition.target })}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-10 text-neutral-500">{t('project.bridgeStandby')}</span>
+                        )}
+                      </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </li>
               )}
             </SortableProjectLi>
@@ -681,15 +956,21 @@ export function ProjectList({
               {menu.project.name}
             </p>
             {/* 右键只留归档：开目录/开终端与行内按钮簇重复，行内是快捷路径。
-                破坏性动作（历史会话即清空）：应用内 ConfirmDialog 确认再交 App 执行。 */}
-            <MenuButton
-              icon={<Archive className="h-3.5 w-3.5" />}
-              label={t('project.archive')}
-              onClick={() => {
-                setConfirmTarget(menu.project);
-                setMenu(null);
-              }}
-            />
+                破坏性动作（历史会话即清空）：应用内 ConfirmDialog 确认再交 App 执行。
+                超级代理项目（上帝）不参与归档（server 409，入口同步收掉）。 */}
+            {!menu.project.superagent && (
+              <MenuButton
+                icon={<Archive className="h-3.5 w-3.5" />}
+                label={t('project.archive')}
+                onClick={() => {
+                  setConfirmTarget(menu.project);
+                  setMenu(null);
+                }}
+              />
+            )}
+            {menu.project.superagent && (
+              <p className="px-3 py-1 text-10 text-neutral-500">{t('project.superagentProtected')}</p>
+            )}
           </div>,
           document.body,
         )}
@@ -786,6 +1067,30 @@ export function ProjectList({
                           </span>
                         </button>
                         <span className="flex shrink-0 items-center gap-1 pt-1">
+                          {(() => {
+                            const vis = termMenu.visibility[target.id];
+                            if (vis === null) return null;
+                            const busy = termMenu.visBusy === target.id;
+                            return (
+                              <QuickButton
+                                tooltip={t(
+                                  vis === 'hidden'
+                                    ? 'tasks.terminalTargetShow'
+                                    : 'tasks.terminalTargetHide',
+                                )}
+                                disabled={busy}
+                                onClick={() => toggleTerminalVisibility(termMenu.project, target.id)}
+                              >
+                                {busy ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : vis === 'hidden' ? (
+                                  <Eye className="h-3.5 w-3.5" />
+                                ) : (
+                                  <EyeOff className="h-3.5 w-3.5" />
+                                )}
+                              </QuickButton>
+                            );
+                          })()}
                           <QuickButton
                             tooltip={t('tasks.terminalTargetFocus')}
                             onClick={() => focusTerminal(termMenu.project, target.id)}
@@ -876,26 +1181,91 @@ function MenuButton({
 }
 
 /** Row quick-action icon button — tooltip 与 aria-label 同词，点击不触发行选中。 */
+/**
+ * 「立即同步」按钮的 tooltip（ReactNode，三态）：
+ * - 有更新 → 红字列分类计数（每类须手动点更新或全部同步）
+ * - init 落后 → 琥珀警示行（去终端跑 weave init，同步不代写）
+ * - 无更新 → k: v 说明（待同步 / init 版本）+ 覆盖范围一句
+ */
+function syncTooltipOf(
+  t: (key: MessageKey, p?: Record<string, string | number | boolean>) => string,
+  summary: ProjectUpdateSummary | undefined,
+): React.ReactNode {
+  const cats = summary?.cats;
+  const hasUpdates = (summary?.available ?? 0) > 0;
+  const initLag = summary?.initVersionBehind === true;
+  const kv = (
+    <>
+      <div className="text-neutral-400">
+        {t('project.syncKvUpdates', { n: summary?.available ?? 0 })}
+      </div>
+      <div className="text-neutral-400">
+        {t('project.syncKvInit', {
+          v: initLag ? (summary?.initVersion ?? '—') : (summary?.initVersion ?? '—'),
+          suffix: initLag ? '' : '',
+        })}
+      </div>
+    </>
+  );
+  return (
+    <div className="space-y-1">
+      {hasUpdates && cats ? (
+        <div className="text-red-400">
+          {(
+            [
+              ['skills', cats.skills],
+              ['mcp', cats.mcp],
+              ['files', cats.files],
+              ['templates', cats.templates],
+              ['init', cats.init],
+            ] as const
+          )
+            .filter(([, n]) => n > 0)
+            .map(([k, n]) => (
+              <div key={k}>
+                {t(`project.syncCat.${k}` as MessageKey, { n })}
+              </div>
+            ))}
+          <div className="mt-0.5 text-neutral-400">{t('project.syncManualHint')}</div>
+        </div>
+      ) : (
+        kv
+      )}
+      {initLag && (
+        <div className="text-amber-300">
+          {t('project.initVersionLagTip')}
+        </div>
+      )}
+      <div className="text-neutral-500">{t('app.scopeCoverageTooltip')}</div>
+    </div>
+  );
+}
+
 function QuickButton({
   tooltip,
   pressed,
   onClick,
   danger,
+  disabled,
   children,
 }: {
-  tooltip: string;
+  tooltip: string | React.ReactNode;
   pressed?: boolean;
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   /** 破坏性动作（关终端）：常显红色，不是 hover 才红。 */
   danger?: boolean;
+  /** 在途（切可见性等慢动作）：禁点 + 转圈由调用方给图标。 */
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
+  const label = typeof tooltip === 'string' ? tooltip : '';
   return (
     <Tooltip label={tooltip}>
       <button
         type="button"
-        aria-label={tooltip}
+        aria-label={label || 'action'}
         aria-pressed={pressed}
+        disabled={disabled}
         onClick={(e) => {
           e.stopPropagation();
           onClick(e);
@@ -905,6 +1275,7 @@ function QuickButton({
           danger
             ? 'text-red-400 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300'
             : 'text-neutral-400 hover:text-neutral-100',
+          disabled && 'cursor-not-allowed opacity-60',
         )}
       >
         {children}

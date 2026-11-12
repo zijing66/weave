@@ -16,6 +16,7 @@ import { CLAUDE_NARRATION } from './narration.js';
 import { CLAUDE_COMMANDS } from './commands.js';
 import { CLAUDE_LIVENESS } from './liveness.js';
 import { CLAUDE_TITLES } from './titles.js';
+import { CLAUDE_MEMORY } from './memory.js';
 import { CLAUDE_REWIND } from './rewind.js';
 import { CLAUDE_ACTIVITY } from './activity.js';
 import { CLAUDE_USAGE } from './usage.js';
@@ -59,6 +60,7 @@ export {
 } from './rewind-ui.js';
 export { CLAUDE_COMMANDS, commandExecutions } from './commands.js';
 export { CLAUDE_TITLES, claudeSessionTitleOf } from './titles.js';
+export { CLAUDE_MEMORY } from './memory.js';
 export {
   CLAUDE_LIVENESS,
   claudeLivenessById,
@@ -88,6 +90,7 @@ export {
   generateSettingsJson,
   mergeSettingsJson,
   stripWeaveSettings,
+  statusLineIsWeave,
   type SettingsGeneratorInput,
 } from './settings-gen.js';
 export { mergeMcpJson, stripWeaveMcp } from './mcp-gen.js';
@@ -151,4 +154,5 @@ export const CLAUDE_DRIVER: HarnessDriver = {
   activity: CLAUDE_ACTIVITY,
   usage: CLAUDE_USAGE,
   titles: CLAUDE_TITLES,
+  memorySink: CLAUDE_MEMORY,
 };

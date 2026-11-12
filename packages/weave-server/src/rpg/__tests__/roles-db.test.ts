@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../db/db.js';
 import { ProjectRepository } from '../../repositories/projects.js';
-import { RpgGrowthRepository, RpgRoleRepository, archetypeBaseline } from '../roles.js';
+import { OrchestrationRepository } from '../../repositories/orchestrations.js';
+import { RpgGrowthRepository, RpgRoleRepository, archetypeBaseline, APPEARANCE_SEED_MAX } from '../roles.js';
 import { provisionRole, provisionRoleFromTemplate, scaffoldCoordinator } from '../provisioning.js';
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { WEAVE_VERSION } from '../../version.js';
 
 /** RPG 域表迁移 + 角色仓储 + provisioning（项目注册走既有 ProjectRepository 单点）。 */
 
@@ -28,6 +31,79 @@ describe('rpg schema', () => {
     expect(roles.list()).toHaveLength(1);
     projects.remove(p.id);
     expect(roles.list()).toHaveLength(0);
+    db.close();
+  });
+
+  it('旧库迁移：缺 gender/appearance_seed 列的存量表幂等补列，旧角色读侧 null 不随机洗脸', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'weave-rpg-migrate-'));
+    const file = path.join(dir, 'old.db');
+    // 第一拍：新 schema 建表后剥掉两列，模拟存量旧库 + 塞一行旧角色
+    const db = openDatabase(file);
+    db.exec('ALTER TABLE rpg_roles DROP COLUMN gender; ALTER TABLE rpg_roles DROP COLUMN appearance_seed');
+    const p = new ProjectRepository(db).register({ path: '/tmp/rpg-legacy', name: 'legacy', token: 't', source: 'init' });
+    db.exec(`INSERT INTO rpg_roles (project_id, name, created_at) VALUES (${p.id}, 'legacy', '2026-01-01')`);
+    db.close();
+
+    // 第二拍：openDatabase 走列级兜底迁移 → 补列幂等
+    const db2 = openDatabase(file);
+    const cols = (db2.prepare('PRAGMA table_info(rpg_roles)').all() as Array<{ name: string }>).map((c) => c.name);
+    expect(cols).toEqual(expect.arrayContaining(['gender', 'appearance_seed']));
+    const row = new RpgRoleRepository(db2).getByProjectId(p.id)!;
+    expect(row.gender).toBeNull();
+    expect(row.appearanceSeed).toBeNull();
+    db2.close();
+
+    // 第三拍：再开一次（列已在）不炸 = 幂等
+    expect(() => openDatabase(file).close()).not.toThrow();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('RpgRoleRepository 性别/外貌种子', () => {
+  const seedProject = (db: DatabaseSync): number =>
+    new ProjectRepository(db).register({ path: `/tmp/rpg-gender-${Math.random()}`, name: 'r', token: 't', source: 'init' }).id;
+
+  it('显式 gender/appearanceSeed 持久化；seed 落在 0..2147483647', () => {
+    const db = openDatabase(':memory:');
+    const roles = new RpgRoleRepository(db);
+    const pid = seedProject(db);
+    const row = roles.create({ projectId: pid, name: 'r', gender: 'female', appearanceSeed: 123456789 });
+    expect(row.gender).toBe('female');
+    expect(row.appearanceSeed).toBe(123456789);
+    expect(roles.getByProjectId(pid)!.appearanceSeed).toBe(123456789);
+    db.close();
+  });
+
+  it('缺省随机：gender ∈ {male,female}，seed ∈ [0, 2147483647] 且多次创建有分布', () => {
+    const db = openDatabase(':memory:');
+    const roles = new RpgRoleRepository(db);
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      const pid = seedProject(db);
+      const row = roles.create({ projectId: pid, name: 'r' });
+      expect(['male', 'female']).toContain(row.gender);
+      expect(row.appearanceSeed).toBeGreaterThanOrEqual(0);
+      expect(row.appearanceSeed).toBeLessThanOrEqual(APPEARANCE_SEED_MAX);
+      expect(Number.isInteger(row.appearanceSeed)).toBe(true);
+      seen.add(row.gender!);
+    }
+    expect(seen.size).toBe(2); // 40 次至少两种性别都出现过
+    db.close();
+  });
+
+  it('upsert 未显式给新参数 = 保留已有外貌（不随机洗脸）', () => {
+    const db = openDatabase(':memory:');
+    const roles = new RpgRoleRepository(db);
+    const pid = seedProject(db);
+    const first = roles.create({ projectId: pid, name: 'r', gender: 'male', appearanceSeed: 42 });
+    const second = roles.create({ projectId: pid, name: 'r2', archetype: '思考' });
+    expect(second.gender).toBe('male');
+    expect(second.appearanceSeed).toBe(42);
+    expect(second.id).toBe(first.id);
+    // 显式给 = 覆盖
+    const third = roles.create({ projectId: pid, name: 'r3', gender: 'female', appearanceSeed: 7 });
+    expect(third.gender).toBe('female');
+    expect(third.appearanceSeed).toBe(7);
     db.close();
   });
 });
@@ -55,6 +131,46 @@ describe('provisionRole', () => {
     // 项目注册走既有仓储单点（getByPath 认得它）
     expect(projects.getByPath(r.role.path)?.id).toBe(r.role.projectId);
     db.close();
+  });
+
+  it('性别/外貌种子透传：显式值持久化 + role.json 带外貌元数据；缺省随机填充', async () => {
+    const root2 = mkdtempSync(path.join(tmpdir(), 'weave-rpg-gender-'));
+    try {
+      const db = openDatabase(':memory:');
+      const projects = new ProjectRepository(db);
+      const roles = new RpgRoleRepository(db);
+      const r = await provisionRole(
+        { projects, roles, rolesRoot: root2 },
+        { name: 'seeded-role', gender: 'female', appearanceSeed: 987654321 },
+      );
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.role.gender).toBe('female');
+      expect(r.role.appearanceSeed).toBe(987654321);
+      const row = roles.getByProjectId(r.role.projectId)!;
+      expect(row.gender).toBe('female');
+      expect(row.appearanceSeed).toBe(987654321);
+      const roleJson = JSON.parse(
+        readFileSync(path.join(root2, 'seeded-role', '.weave', 'role.json'), 'utf-8'),
+      ) as { gender: unknown; appearanceSeed: unknown };
+      expect(roleJson.gender).toBe('female');
+      expect(roleJson.appearanceSeed).toBe(987654321);
+
+      // 缺省 = 随机（范围内合法值），DB 与 role.json 一致
+      const r2 = await provisionRole({ projects, roles, rolesRoot: root2 }, { name: 'random-role' });
+      expect(r2.ok).toBe(true);
+      if (!r2.ok) return;
+      expect(['male', 'female']).toContain(r2.role.gender);
+      expect(r2.role.appearanceSeed).toBeGreaterThanOrEqual(0);
+      expect(r2.role.appearanceSeed).toBeLessThanOrEqual(APPEARANCE_SEED_MAX);
+      const roleJson2 = JSON.parse(
+        readFileSync(path.join(root2, 'random-role', '.weave', 'role.json'), 'utf-8'),
+      ) as { appearanceSeed: unknown };
+      expect(roleJson2.appearanceSeed).toBe(r2.role.appearanceSeed);
+      db.close();
+    } finally {
+      rmSync(root2, { recursive: true, force: true });
+    }
   });
 
   it('kebab-case 闸：非法名 400', async () => {
@@ -148,16 +264,87 @@ describe('scaffoldCoordinator', () => {
       if (!first.ok) return;
       expect(first.created).toEqual(['teams', 'roles', 'playbooks', 'state']);
       expect(first.rolesSeeded).toHaveLength(7);
+      expect(first.skillsSeeded).toEqual(['supervise', 'breakout', 'downgrade']);
       expect(existsSync(path.join(root, 'playbooks'))).toBe(true);
       expect(existsSync(path.join(root, 'roles', 'thinker', 'weave-plugin.json'))).toBe(true);
-      expect(projects.getByPath(first.path)?.name).toBe('coordinator');
+      expect(existsSync(path.join(root, '.claude', 'skills', 'supervise', 'SKILL.md'))).toBe(true);
+      expect(projects.getByPath(first.path)?.name).toBe('weave');
       const second = await scaffoldCoordinator({ projects, roles }, root);
       expect(second.reused).toBe(true);
       expect(second.rolesSeeded).toHaveLength(0);
-      // 协调者仓同判据：hidden 登记 + 项目档 .mcp.json（E4 验收⑥）
-      expect(projects.getByPath(first.path)?.hidden).toBe(true);
+      expect(second.skillsSeeded).toHaveLength(0);
+      // 2026-11-11 升格：coordinator = superagent 置顶常驻（不再 hidden）
+      expect(projects.getByPath(first.path)?.superagent).toBe(true);
+      expect(projects.getByPath(first.path)?.hidden).toBe(false);
       expect(existsSync(path.join(root, '.mcp.json'))).toBe(true);
       expect(existsSync(path.join(root, '.gitignore'))).toBe(true);
+      db.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('出厂 skill 不覆盖用户同名（改后的 SKILL.md 幂等跳过）', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'weave-rpg-coord3-'));
+    try {
+      const db = openDatabase(':memory:');
+      const projects = new ProjectRepository(db);
+      const roles = new RpgRoleRepository(db);
+      await scaffoldCoordinator({ projects, roles }, root);
+      const skillFile = path.join(root, '.claude', 'skills', 'supervise', 'SKILL.md');
+      writeFileSync(skillFile, 'user edited', 'utf-8');
+      const again = await scaffoldCoordinator({ projects, roles }, root);
+      expect(again.skillsSeeded).toHaveLength(0);
+      expect(readFileSync(skillFile, 'utf-8')).toBe('user edited');
+      db.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('版本戳不同 = 出厂文件重物化（weave 升级刷新）；同版本不覆盖', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'weave-rpg-coord4-'));
+    try {
+      const db = openDatabase(':memory:');
+      const projects = new ProjectRepository(db);
+      const roles = new RpgRoleRepository(db);
+      await scaffoldCoordinator({ projects, roles }, root);
+      const skillFile = path.join(root, '.claude', 'skills', 'supervise', 'SKILL.md');
+      const stampFile = path.join(root, '.weave', 'scaffold-version');
+      expect(readFileSync(stampFile, 'utf-8').trim()).toBe(WEAVE_VERSION);
+      // 同版本：用户编辑保留（上一用例同判据，这里顺带盖一遍往返）
+      writeFileSync(skillFile, 'user edited', 'utf-8');
+      // 版本变化：出厂 skill 重物化 + stamp 回写当前版本
+      writeFileSync(stampFile, '0.0.0-stale\n', 'utf-8');
+      const refreshed = await scaffoldCoordinator({ projects, roles }, root);
+      expect(refreshed.skillsSeeded).toEqual(['supervise', 'breakout', 'downgrade']);
+      expect(readFileSync(skillFile, 'utf-8')).not.toBe('user edited');
+      expect(readFileSync(stampFile, 'utf-8').trim()).toBe(WEAVE_VERSION);
+      db.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('给了编排仓储 → 出厂示例编排（记忆出口演示，停用态）；同名即用户资产不覆盖', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'weave-rpg-coord5-'));
+    try {
+      const db = openDatabase(':memory:');
+      const projects = new ProjectRepository(db);
+      const roles = new RpgRoleRepository(db);
+      const orchestrations = new OrchestrationRepository(db);
+      await scaffoldCoordinator({ projects, roles, orchestrations }, root);
+      const project = projects.getByPath(path.resolve(root))!;
+      const rows = orchestrations.list().filter((o) => o.projectId === project.id);
+      expect(rows).toHaveLength(1);
+      const row = rows[0]!;
+      expect(row.name).toBe('记忆出口示例');
+      expect(row.enabled).toBe(false); // 出厂即停用：演示形状，用户启用/复制才跑
+      expect(row.nodes.map((n) => n.kind)).toEqual(['trigger', 'memory']);
+      expect(row.edges[0]).toMatchObject({ from: 't:memory-demo', to: 'm:project-verdicts' });
+      // 第二次物化：同名已在 → 幂等不叠
+      await scaffoldCoordinator({ projects, roles, orchestrations }, root);
+      expect(orchestrations.list().filter((o) => o.projectId === project.id)).toHaveLength(1);
       db.close();
     } finally {
       rmSync(root, { recursive: true, force: true });

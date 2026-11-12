@@ -14,6 +14,8 @@ import {
   RpgRoleRepository,
   RpgScoreRepository,
   HEXAGON_DIMS,
+  APPEARANCE_SEED_MAX,
+  ROLE_GENDERS,
   type Hexagon,
 } from './roles.js';
 import { RpgHouseRepository } from './houses.js';
@@ -23,6 +25,12 @@ import { mergeExpeditionViaLadder, startExpeditionSession } from './expedition-s
 import { RpgCropRepository, type CropKind } from './grade.js';
 import { plantCrop, assessCropFromField, harvestCropToSkill } from './training.js';
 import { promoteCrop, type PromotionTier } from './promotion.js';
+import { RpgRoutingDecisionRepository, routeRpgAction } from './routing.js';
+import { assertGoalTerminal, GOAL_STATUSES, RpgGoalRepository, type GoalStatus, type RpgGoalRow } from './goals.js';
+import { RpgProfileRepository, type RoutingProfileParams } from './profile.js';
+import { reviewSignalsOf, proposalGatedOf } from './review.js';
+import { RpgHandbookRepository } from './handbook.js';
+import { getRpgHandbookRoot } from '../db/paths.js';
 import { provisionRole, scaffoldCoordinator } from './provisioning.js';
 import { readPlaybookFile, renderPlaybook, type PlaybookBindings } from './playbook.js';
 import { cultivate, currentHexagonOf, expedition, formTeam, transmit } from './verbs.js';
@@ -112,6 +120,21 @@ export async function handleRpgRoutes(
       sendJson(res, 400, { error: '"name" is required' });
       return true;
     }
+    if (body.gender !== undefined && body.gender !== null && !ROLE_GENDERS.includes(body.gender as never)) {
+      sendJson(res, 400, { error: '"gender" must be one of: male, female' });
+      return true;
+    }
+    if (
+      body.appearanceSeed !== undefined &&
+      body.appearanceSeed !== null &&
+      (typeof body.appearanceSeed !== 'number' ||
+        !Number.isInteger(body.appearanceSeed) ||
+        body.appearanceSeed < 0 ||
+        body.appearanceSeed > APPEARANCE_SEED_MAX)
+    ) {
+      sendJson(res, 400, { error: `"appearanceSeed" must be an integer 0..${APPEARANCE_SEED_MAX}` });
+      return true;
+    }
     const result = await provisionRole(
       { projects: deps.projects, roles, rolesRoot: deps.rpgRolesRoot },
       {
@@ -119,6 +142,8 @@ export async function handleRpgRoutes(
         archetype: typeof body.archetype === 'string' ? body.archetype : undefined,
         persona: typeof body.persona === 'string' ? body.persona : undefined,
         hexagon: parseHexagon(body.hexagon),
+        gender: (body.gender ?? undefined) as 'male' | 'female' | undefined,
+        appearanceSeed: (body.appearanceSeed ?? undefined) as number | undefined,
       },
     );
     if (!result.ok) {
@@ -143,7 +168,7 @@ export async function handleRpgRoutes(
 
   // POST /rpg/coordinator — 协调者项目脚手架（幂等）
   if (pathname === '/rpg/coordinator' && req.method === 'POST') {
-    const result = await scaffoldCoordinator({ projects: deps.projects, roles, rolesRoot: deps.rpgRolesRoot });
+    const result = await scaffoldCoordinator({ projects: deps.projects, roles, rolesRoot: deps.rpgRolesRoot }, deps.superagentRoot);
     deps.dataBus?.emit({ key: 'projects' });
     sendJson(res, 200, result);
     return true;
@@ -685,12 +710,16 @@ export async function handleRpgRoutes(
     return true;
   }
   if (pathname === '/rpg/expeditions' && req.method === 'GET') {
-    const projectId = Number(new URL(req.url ?? '/rpg/expeditions', 'http://x').searchParams.get('projectId') ?? 0);
-    if (!Number.isInteger(projectId) || projectId <= 0) {
-      sendJson(res, 400, { error: '"projectId" query param is required' });
+    // projectId 可选：省略 = 全量（G6 角色可见桥的项目行徽章一次拉齐）。
+    const raw = new URL(req.url ?? '/rpg/expeditions', 'http://x').searchParams.get('projectId');
+    const projectId = raw != null && raw !== '' ? Number(raw) : undefined;
+    if (projectId != null && (!Number.isInteger(projectId) || projectId <= 0)) {
+      sendJson(res, 400, { error: '"projectId" must be a positive integer' });
       return true;
     }
-    sendJson(res, 200, { expeditions: expeditions.listByProject(projectId) });
+    sendJson(res, 200, {
+      expeditions: projectId != null ? expeditions.listByProject(projectId) : expeditions.listAll(),
+    });
     return true;
   }
 
@@ -821,13 +850,485 @@ export async function handleRpgRoutes(
       sendJson(res, result.status, { error: result.error });
       return true;
     }
+    // 级2 裁决落账（G6 决策路由的第一份真实数据源）：晋升 = 上帝当场批
+    // （ConfirmDialog 在 web 已呈过），机械失败不落（那不是裁决失败——执行的
+    // 事实在 api 日志与 crop 状态里）。level/basis 查词表，不散写。
+    const promotedCrop = crops.getById(Number(cropPromote[1]));
+    const route = routeRpgAction('crop-promote');
+    new RpgRoutingDecisionRepository(roles.db).insert({
+      projectId:
+        promotedCrop?.projectId ?? (promotedCrop ? roles.getById(promotedCrop.roleId)?.projectId ?? null : null),
+      sessionId: null,
+      action: 'crop-promote',
+      level: route.level,
+      basis: route.basis,
+      input: JSON.stringify({ cropId: Number(cropPromote[1]), tier: body.tier }),
+      result: 'approved',
+      source: 'god',
+      detail: `tier ${body.tier} → ${result.installedAt}`,
+    });
     sendJson(res, 200, result);
+    return true;
+  }
+
+  // ---- 决策分级路由（G6，G线设计 §六）：信箱面（级2 待批清单）+ 上帝裁决 ----
+
+  // GET /rpg/routing/decisions?projectId=&limit= — 决策轨迹 + 复盘统计。projectId
+  // 省略 = 全局（信箱视角）；web 警报带「级2 待批」读 pending 计数。
+  if (pathname === '/rpg/routing/decisions' && req.method === 'GET') {
+    const url = new URL(req.url ?? '/rpg/routing/decisions', 'http://x');
+    const projectRaw = url.searchParams.get('projectId');
+    const projectId = projectRaw != null && projectRaw !== '' ? Number(projectRaw) : undefined;
+    if (projectId != null && (!Number.isInteger(projectId) || projectId <= 0)) {
+      sendJson(res, 400, { error: '"projectId" must be a positive integer' });
+      return true;
+    }
+    const limit = Number(url.searchParams.get('limit') ?? 50);
+    const routing = new RpgRoutingDecisionRepository(roles.db);
+    sendJson(res, 200, {
+      decisions: routing.list({ projectId, limit: Number.isInteger(limit) && limit > 0 ? limit : 50 }),
+      pending: routing.listPending(projectId).length,
+      stats: routing.stats(projectId),
+    });
+    return true;
+  }
+
+  // POST /rpg/routing/decisions/:id/decide — 上帝裁决（approve=true 批准）。
+  // pending → approved/rejected；非 pending 409（裁决是一次性事实）。批准只落
+  // 账——执行权恒在用户，动作执行归各自端点（协调者预告的批读 input 续跑）。
+  const routingDecide = pathname.match(/^\/rpg\/routing\/decisions\/(\d+)\/decide$/);
+  if (routingDecide && req.method === 'POST') {
+    let body: { approve?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.approve !== 'boolean') {
+      sendJson(res, 400, { error: '"approve" must be a boolean' });
+      return true;
+    }
+    const routing = new RpgRoutingDecisionRepository(roles.db);
+    const row = routing.decide(Number(routingDecide[1]), body.approve);
+    if (!row) {
+      sendJson(res, 409, { error: 'Decision not found or already decided' });
+      return true;
+    }
+    // 批读 input 续跑（批1 既定构型）：批准携带 routingProfile 的策略提案 →
+    // 当场落档（拒绝不落——草稿作废，等下一轮复盘）。input 坏/无参数 = 裁决
+    // 照旧、不落档（审批事实不受执行错误拖累，如实返回 applied:false）。
+    let applied = false;
+    if (body.approve && row.action === 'cross-house-write' && row.input?.includes('routingProfile') === true) {
+      try {
+        const params = (JSON.parse(row.input) as { routingProfile?: Partial<import('./profile.js').RoutingProfileParams> }).routingProfile;
+        if (params) {
+          new RpgProfileRepository(roles.db).commit({
+            ...params,
+            note: row.detail ?? '信箱批准落档',
+            appliedBy: 'proposal',
+            fromDecision: row.id,
+          });
+          applied = true;
+        }
+      } catch {
+        /* input 坏：裁决已落，落档跳过（applied:false 如实报） */
+      }
+    }
+    sendJson(res, 200, { decision: row, applied });
+    return true;
+  }
+
+  // ---- goal 域（G6 批4a，G线设计 §四）：立项终态闸 + CRUD；驱动循环后续批 ----
+
+  const goals = new RpgGoalRepository(roles.db);
+
+  // POST /rpg/goals — 立项（终态闸：terminal 非空才立项；roleId 必填存在）。
+  if (pathname === '/rpg/goals' && req.method === 'POST') {
+    let body: Record<string, unknown>;
+    try {
+      body = (await readJson(req)) as Record<string, unknown>;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const roleId = body.roleId;
+    if (typeof roleId !== 'number' || !Number.isInteger(roleId) || !roles.getById(roleId)) {
+      sendJson(res, 400, { error: '"roleId" must reference an existing role' });
+      return true;
+    }
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    if (title === '') {
+      sendJson(res, 400, { error: '"title" is required' });
+      return true;
+    }
+    const gate = assertGoalTerminal(body.terminal);
+    if (!gate.ok) {
+      sendJson(res, 400, { error: gate.error });
+      return true;
+    }
+    const optNum = (v: unknown): number | null =>
+      typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : null;
+    let goal: RpgGoalRow;
+    try {
+      goal = goals.insert({
+        roleId,
+        title,
+        terminal: String(body.terminal),
+        houseId: typeof body.houseId === 'number' && houses.getById(body.houseId) ? body.houseId : null,
+        projectId: typeof body.projectId === 'number' && deps.projects.getById(body.projectId) ? body.projectId : null,
+        budgetTurns: optNum(body.budgetTurns),
+        budgetTokens: optNum(body.budgetTokens),
+      });
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      return true;
+    }
+    sendJson(res, 201, { goal });
+    return true;
+  }
+
+  // GET /rpg/goals?roleId=&houseId=&projectId=&status=&limit= — 过滤列举。
+  if (pathname === '/rpg/goals' && req.method === 'GET') {
+    const url = new URL(req.url ?? '/rpg/goals', 'http://x');
+    const num = (key: string): number | undefined => {
+      const raw = url.searchParams.get(key);
+      const v = raw == null || raw === '' ? NaN : Number(raw);
+      return Number.isInteger(v) && v > 0 ? v : undefined;
+    };
+    const statusRaw = url.searchParams.get('status');
+    const status =
+      statusRaw != null && statusRaw !== '' && (GOAL_STATUSES as readonly string[]).includes(statusRaw)
+        ? (statusRaw as GoalStatus)
+        : undefined;
+    const limit = num('limit') ?? 200;
+    sendJson(res, 200, { goals: goals.list({ roleId: num('roleId'), houseId: num('houseId'), projectId: num('projectId'), status }, limit) });
+    return true;
+  }
+
+  // GET /rpg/goals/:id/detail — 任务卡详情（G6 批7 三 tab）一次拉齐：goal 本行 +
+  // 角色出征行（现场）+ 决策轨迹（input.goalId 命中的行）+ 合并梯事件（该角色
+  // 出征）。生长 tab 的 crops/成长走既有端点（/listCrops、/progress），不复制。
+  // 「run 历史」v1 = 决策轨迹 + 合并梯代呈现（goal 直投回合不逐拍记账，逐拍账
+  // 留改进项——turnsUsed 汇总已在 goal 行上）。
+  const goalDetail = pathname.match(/^\/rpg\/goals\/(\d+)\/detail$/);
+  if (goalDetail && req.method === 'GET') {
+    const goal = goals.getById(Number(goalDetail[1]));
+    if (!goal) {
+      sendJson(res, 404, { error: 'Goal not found' });
+      return true;
+    }
+    const expeditionRepo = new RpgExpeditionRepository(roles.db);
+    const expeditions = expeditionRepo.listByRole(goal.roleId);
+    const routing = new RpgRoutingDecisionRepository(roles.db);
+    const decisions = routing
+      .list({ limit: 500 })
+      .filter((row) => {
+        if (row.input == null) return false;
+        try {
+          return JSON.parse(row.input)?.goalId === goal.id;
+        } catch {
+          return false;
+        }
+      });
+    const ladderRepo = new MergeLadderRepository(roles.db);
+    const expIds = new Set(expeditions.map((e) => e.id));
+    const ladder = (goal.projectId != null ? ladderRepo.listByProject(goal.projectId, 200) : [])
+      .filter((row) => row.expedition != null && expIds.has(row.expedition));
+    sendJson(res, 200, { goal, expeditions, decisions, ladder });
+    return true;
+  }
+
+  // PATCH /rpg/goals/:id — 目标变更 / 预算续期 / 状态落定。三者都是级2 动作：
+  // 用户经 web 表单/确认对话框直改 = 上帝当场批（落账构型同 promote）；协调者
+  // 预告路径（pending 信箱）待驱动循环批接上再审变动。
+  const goalPatch = pathname.match(/^\/rpg\/goals\/(\d+)$/);
+  if (goalPatch && req.method === 'PATCH') {
+    let body: Record<string, unknown>;
+    try {
+      body = (await readJson(req)) as Record<string, unknown>;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const id = Number(goalPatch[1]);
+    const goal = goals.getById(id);
+    if (!goal) {
+      sendJson(res, 404, { error: 'Goal not found' });
+      return true;
+    }
+    if (body.terminal !== undefined) {
+      const gate = assertGoalTerminal(body.terminal);
+      if (!gate.ok) {
+        sendJson(res, 400, { error: gate.error });
+        return true;
+      }
+    }
+    const statusRaw = body.status;
+    if (statusRaw !== undefined && !(GOAL_STATUSES as readonly string[]).includes(String(statusRaw))) {
+      sendJson(res, 400, { error: `"status" must be one of ${GOAL_STATUSES.join(' | ')}` });
+      return true;
+    }
+    const optNum = (v: unknown): number | null | undefined =>
+      v === null ? null : typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined;
+    let updated: RpgGoalRow | undefined;
+    try {
+      updated = goals.patch(id, {
+        title: typeof body.title === 'string' ? body.title : undefined,
+        terminal: typeof body.terminal === 'string' ? body.terminal : undefined,
+        budgetTurns: optNum(body.budgetTurns),
+        budgetTokens: optNum(body.budgetTokens),
+      });
+    } catch (err) {
+      sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      return true;
+    }
+    if (statusRaw !== undefined && String(statusRaw) !== goal.status) {
+      updated = goals.updateStatus(id, statusRaw as GoalStatus, typeof body.statusNote === 'string' ? body.statusNote : undefined);
+    }
+    // 级2 落账：只调预算 = budget-renew（预算续期）；其余改动 = goal-change
+    // （目标变更/撤销/续预算按词表口径）。level/basis 查词表不散写。
+    const onlyBudget =
+      body.title === undefined && body.terminal === undefined && statusRaw === undefined &&
+      (body.budgetTurns !== undefined || body.budgetTokens !== undefined) &&
+      updated != null;
+    const action = onlyBudget ? 'budget-renew' : 'goal-change';
+    const route = routeRpgAction(action);
+    new RpgRoutingDecisionRepository(roles.db).insert({
+      projectId: updated?.projectId ?? roles.getById(goal.roleId)?.projectId ?? null,
+      sessionId: null,
+      action,
+      level: route.level,
+      basis: route.basis,
+      input: JSON.stringify({ goalId: id, ...body }),
+      result: 'approved',
+      source: 'god',
+      detail: `goal ${id} "${updated?.title ?? goal.title}" → ${updated?.status ?? goal.status}`,
+    });
+    sendJson(res, 200, { goal: updated });
+    return true;
+  }
+
+  // ---- 进化闭环（G6，G线设计 §六「决策进化闭环」）：复盘 → 提案 → 级2 落档 ----
+
+  const profiles = new RpgProfileRepository(roles.db);
+
+  // GET /rpg/routing/review — 复盘面：决策轨迹统计 + goal 收益统计 + 信号与草稿
+  // （纯读侧，不落账不拦不劝——信箱批准是另一回事）。
+  if (pathname === '/rpg/routing/review' && req.method === 'GET') {
+    const routing = new RpgRoutingDecisionRepository(roles.db);
+    const decisions = routing.list({ limit: 500 });
+    const goalRows = goals.list({}, 500);
+    const current = profiles.resolved();
+    const review = reviewSignalsOf({ decisions, goals: goalRows, current });
+    sendJson(res, 200, {
+      stats: routing.stats(),
+      goalStats: {
+        total: goalRows.length,
+        active: goalRows.filter((g) => g.status === 'active').length,
+        achieved: goalRows.filter((g) => g.status === 'achieved').length,
+        abandoned: goalRows.filter((g) => g.status === 'abandoned').length,
+        paused: goalRows.filter((g) => g.status === 'paused').length,
+        budgetOut: goalRows.filter((g) => g.status === 'budget_out').length,
+      },
+      profile: current,
+      signals: review.signals,
+      proposal: review.proposal,
+      gated: proposalGatedOf({ decisions: routing.list({ limit: 500 }) }),
+    });
+    return true;
+  }
+
+  // POST /rpg/routing/review — 生成提案（进化闭环第二拍）：信号命中且过频率闸 →
+  // pending cross-house-write（input 内嵌 routingProfile 草稿）呈信箱；否则如实
+  // 回 null（无信号不硬凑提案）。
+  if (pathname === '/rpg/routing/review' && req.method === 'POST') {
+    const routing = new RpgRoutingDecisionRepository(roles.db);
+    const decisions = routing.list({ limit: 500 });
+    if (proposalGatedOf({ decisions })) {
+      sendJson(res, 200, { proposal: null, reason: 'gated: 已有在堂/24h 内已决的策略提案（进化频率闸）' });
+      return true;
+    }
+    const current = profiles.resolved();
+    const review = reviewSignalsOf({ decisions, goals: goals.list({}, 500), current });
+    if (!review.proposal) {
+      sendJson(res, 200, { proposal: null, reason: review.signals.length > 0 ? 'signals-only（无可调参信号，如实报告）' : 'no-signals' });
+      return true;
+    }
+    const route = routeRpgAction('cross-house-write');
+    const row = routing.insert({
+      projectId: null,
+      sessionId: null,
+      action: 'cross-house-write',
+      level: route.level,
+      basis: route.basis,
+      input: JSON.stringify({ routingProfile: review.proposal.params }),
+      result: 'pending',
+      source: null, // 机制启发式草稿（零智能级0 生成、级2 呈批）——不是 AI 裁决
+      detail: review.proposal.reason,
+    });
+    sendJson(res, 200, { proposal: row, signals: review.signals });
+    return true;
+  }
+
+  // GET /rpg/routing/profile — 当前档 + 版本链（读面）。
+  if (pathname === '/rpg/routing/profile' && req.method === 'GET') {
+    sendJson(res, 200, { current: profiles.current(), resolved: profiles.resolved(), versions: profiles.listVersions() });
+    return true;
+  }
+
+  // POST /rpg/routing/profile — 落档（级2 呈批后的应用步）：两条入口——
+  // ① {decisionId}：信箱批准那条提案裁决（批读 input 续跑：input 内嵌的
+  //    routingProfile 落档）；② {params,note}：上帝直改（构型同 goal PATCH——
+  //    批准只落账、执行走本端点）。都 append-only 一版，红线三进 note。
+  if (pathname === '/rpg/routing/profile' && req.method === 'POST') {
+    let body: { decisionId?: unknown; params?: unknown; note?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const routing = new RpgRoutingDecisionRepository(roles.db);
+    if (typeof body.decisionId === 'number') {
+      const row = routing.get(body.decisionId);
+      if (!row || row.action !== 'cross-house-write' || row.result !== 'pending') {
+        sendJson(res, 409, { error: 'Decision not found, already decided, or not a profile proposal' });
+        return true;
+      }
+      let params: RoutingProfileParams | null = null;
+      try {
+        params = (JSON.parse(row.input ?? '{}') as { routingProfile?: RoutingProfileParams }).routingProfile ?? null;
+      } catch {
+        params = null;
+      }
+      if (!params) {
+        sendJson(res, 400, { error: 'Proposal input has no routingProfile' });
+        return true;
+      }
+      const decided = routing.decide(row.id, true);
+      if (!decided) {
+        sendJson(res, 409, { error: 'Decision not pending' });
+        return true;
+      }
+      const version = profiles.commit({ ...params, note: row.detail ?? '提案落地', appliedBy: 'proposal', fromDecision: row.id });
+      sendJson(res, 200, { decision: decided, version, current: profiles.resolved() });
+      return true;
+    }
+    if (typeof body.params !== 'object' || body.params === null) {
+      sendJson(res, 400, { error: '"params" (or "decisionId") required' });
+      return true;
+    }
+    const route = routeRpgAction('cross-house-write');
+    const decided = routing.insert({
+      projectId: null,
+      sessionId: null,
+      action: 'cross-house-write',
+      level: route.level,
+      basis: route.basis,
+      input: JSON.stringify({ routingProfile: body.params }),
+      result: 'approved',
+      source: 'god',
+      detail: typeof body.note === 'string' ? body.note : null,
+    });
+    const version = profiles.commit({
+      ...(body.params as Partial<RoutingProfileParams>),
+      note: typeof body.note === 'string' ? body.note : undefined,
+      appliedBy: 'god',
+    });
+    sendJson(res, 200, { decision: decided, version, current: profiles.resolved() });
+    return true;
+  }
+
+  // POST /rpg/routing/profile/rollback — 一键回滚（级2：用户在 web 确认 = 上帝
+  // 当场批；append-only 换标记，历史版本留档）。
+  const profileRollback = pathname.match(/^\/rpg\/routing\/profile\/rollback$/);
+  if (profileRollback && req.method === 'POST') {
+    let body: { id?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.id !== 'number') {
+      sendJson(res, 400, { error: '"id" must be a version id' });
+      return true;
+    }
+    const version = profiles.rollbackTo(body.id);
+    if (!version) {
+      sendJson(res, 404, { error: 'Version not found' });
+      return true;
+    }
+    const route = routeRpgAction('cross-house-write');
+    new RpgRoutingDecisionRepository(roles.db).insert({
+      projectId: null,
+      sessionId: null,
+      action: 'cross-house-write',
+      level: route.level,
+      basis: route.basis,
+      input: JSON.stringify({ routingProfile: version.params, rollbackTo: version.id }),
+      result: 'approved',
+      source: 'god',
+      detail: `回滚到版本 #${version.id}`,
+    });
+    sendJson(res, 200, { version, current: profiles.resolved() });
+    return true;
+  }
+
+  // ---- 手法库（G6 批6）：协调者本体跨 house 记忆，文件层即事实 ----
+
+  const handbook = new RpgHandbookRepository(deps.rpgHandbookRoot ?? getRpgHandbookRoot());
+
+  // GET /rpg/handbook — 清点（分身直读目录也行；这是 web 观察面 + 端点外壳）。
+  if (pathname === '/rpg/handbook' && req.method === 'GET') {
+    sendJson(res, 200, await handbook.list());
+    return true;
+  }
+
+  // POST /rpg/handbook — 落/巩固一条手法（分身或上帝；同名重写 = 巩固）。
+  if (pathname === '/rpg/handbook' && req.method === 'POST') {
+    let body: Record<string, unknown>;
+    try {
+      body = (await readJson(req)) as Record<string, unknown>;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const learned = await handbook.learn(body);
+    if (!learned.ok) {
+      sendJson(res, 400, { error: learned.error });
+      return true;
+    }
+    sendJson(res, 200, { entry: learned.entry });
+    return true;
+  }
+
+  // POST /rpg/handbook/prune — 剪枝（上帝手删；复盘闭环的翻案率淘汰走提案通道，另行）。
+  if (pathname === '/rpg/handbook/prune' && req.method === 'POST') {
+    let body: { name?: unknown };
+    try {
+      body = (await readJson(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.name !== 'string') {
+      sendJson(res, 400, { error: '"name" is required' });
+      return true;
+    }
+    const ok = await handbook.prune(body.name);
+    if (!ok) {
+      sendJson(res, 404, { error: 'Entry not found' });
+      return true;
+    }
+    sendJson(res, 200, { ok: true });
     return true;
   }
 
   // 非 API 的 /rpg/<scene> 深链（前端 SPA 路由）放行给静态托管 fallback——
   // API 404 只对未知 /rpg/* 接口生效。
-  if (!pathname.startsWith('/rpg/api-') && !pathname.startsWith('/rpg/roles') && !pathname.startsWith('/rpg/houses') && !pathname.startsWith('/rpg/merge-ladder') && !pathname.startsWith('/rpg/coordinator') && !pathname.startsWith('/rpg/board') && !pathname.startsWith('/rpg/playbook') && !pathname.startsWith('/rpg/expedition') && !pathname.startsWith('/rpg/expeditions') && !pathname.startsWith('/rpg/crops') && !pathname.startsWith('/rpg/kit') && !pathname.startsWith('/rpg/progress')) {
+  if (!pathname.startsWith('/rpg/api-') && !pathname.startsWith('/rpg/roles') && !pathname.startsWith('/rpg/houses') && !pathname.startsWith('/rpg/merge-ladder') && !pathname.startsWith('/rpg/coordinator') && !pathname.startsWith('/rpg/board') && !pathname.startsWith('/rpg/playbook') && !pathname.startsWith('/rpg/expedition') && !pathname.startsWith('/rpg/expeditions') && !pathname.startsWith('/rpg/crops') && !pathname.startsWith('/rpg/kit') && !pathname.startsWith('/rpg/progress') && !pathname.startsWith('/rpg/routing') && !pathname.startsWith('/rpg/goals') && !pathname.startsWith('/rpg/handbook')) {
     return false;
   }
   sendJson(res, 404, { error: 'Not found' });

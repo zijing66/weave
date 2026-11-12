@@ -1,4 +1,4 @@
-import type { EnableOverride, Harness } from '@weavecode/core';
+import type { EnableOverride, Harness, ToolScope } from '@weavecode/core';
 import type { InitContext, InitPipeline } from './init/pipeline.js';
 import type { FileAssetCategory } from './shared/file-specs.js';
 
@@ -226,31 +226,32 @@ export interface AssetSurface {
   userConfigFile(homedir: string): string;
 
   /**
-   * MCP 服务器的可配置范围（project = 项目 `.mcp.json` / user = 用户级配置），
-   * 空数组 = 该 harness 无 MCP 面。安装属性矩阵与 web 能力判定共源。
+   * MCP 服务器的可配置范围（project = 项目 `.mcp.json` / local = 宿主运行时
+   * 的项目私有段 / user = 用户级配置），空数组 = 该 harness 无 MCP 面。
+   * 安装属性矩阵与 web 能力判定共源。
    */
-  mcpScopes(): Array<'project' | 'user'>;
+  mcpScopes(): ToolScope[];
 
   /**
    * MCP 配置落点（安装属性矩阵的范围落点提示数据源）：project = 项目内文件
-   * 相对路径（posix）、user = 用户级配置文件绝对路径；该 harness 无此 scope
-   * 的 MCP 面 → undefined。web 按行渲染提示，不自拼 harness 路径。
+   * 相对路径（posix）、local/user = 用户级配置文件绝对路径；该 harness 无此
+   * scope 的 MCP 面 → undefined。web 按行渲染提示，不自拼 harness 路径。
    */
-  mcpDest(scope: 'project' | 'user', homedir: string): string | undefined;
+  mcpDest(scope: ToolScope, homedir: string): string | undefined;
 
   /**
    * 读某 scope 的 MCP 服务器映射（该 harness 无此 scope / 文件缺失 → 空对象）。
    * 表示法归实现方：调用方只认名字与 `McpServerConfig`，不碰文件。
    */
   mcpRead(
-    scope: 'project' | 'user',
+    scope: ToolScope,
     projectPath: string,
     homedir: string,
   ): Promise<Record<string, McpServerConfig>>;
 
   /** 写/覆盖一条（scope 必须在 `mcpScopes()` 内，否则抛）。 */
   mcpWrite(
-    scope: 'project' | 'user',
+    scope: ToolScope,
     projectPath: string,
     homedir: string,
     name: string,
@@ -259,7 +260,7 @@ export interface AssetSurface {
 
   /** 删一条；返回是否真删掉了（false → 调用方给 404）。 */
   mcpRemove(
-    scope: 'project' | 'user',
+    scope: ToolScope,
     projectPath: string,
     homedir: string,
     name: string,
@@ -329,6 +330,24 @@ export interface ResumeCommandSpec {
    * harness 无需引导（claude 启动即发 SessionStart）。
    */
   bootstrapText?(projectName: string): string;
+}
+
+/**
+ * 边级提取的 app-server fork 通道（`ResumeCommandSpec.extractArgs` 的 CLI 形
+ * 并列）：对上游会话 fork 一个一次性会话跑一轮提炼、取回合输出。宿主分配
+ * fork id ⇒ `onForkId` 在回合开跑**之前**回调（server 先登记合成会话名单再放
+ * 行事件）。失败/超时 = null（调用方回落 `{upstream}`），绝不当替代来源猜。
+ */
+export interface ForkExtractSpec {
+  run(input: {
+    /** 源会话 id（宿主自己的标识；codex = thread_id，与 hook 载荷同源）。 */
+    sessionId: string;
+    /** 提炼/判断的 prompt 全文（判提合一的组合 JSON prompt 也走这里）。 */
+    prompt: string;
+    timeoutMs?: number;
+    /** fork id 落定且回合开跑之前回调（合成会话登记用）。 */
+    onForkId(id: string): void;
+  }): Promise<string | null>;
 }
 
 /** 消息通道名——支持矩阵与原因文案的键。 */
@@ -621,6 +640,12 @@ export interface BlockingPromptSpec {
    * （没在提问 / 提问前没写字）。
    */
   preQuestion?(transcriptPath: string | null): Promise<PreQuestionText | null>;
+  /**
+   * 阻塞工具的 PostToolUse toolResponse → 用户的作答（对话面板回显：TUI 里
+   * 「User answered …」那段，hook 域没有 UPS，不解析就整段不可见）。null =
+   * 该落定笔不含可解析的作答（不摆）。载荷 = 归一化视图（toolResponse 在顶层）。
+   */
+  parseAnswers?(toolName: string, toolResponse: unknown): Array<{ question: string; answer: string }> | null;
 }
 
 /**
@@ -681,6 +706,14 @@ export interface MessagingSurface {
   readonly inject: InjectChannelSpec | null;
   /** 无头强制回合通道（闲投）；null = 不支持。引用 resume 槽规格对象，不复制。 */
   readonly headless: ResumeCommandSpec | null;
+  /**
+   * 边级提取的 app-server fork 通道（`ResumeCommandSpec.extractArgs` 的 CLI 形
+   * 并列：不拼命令行，fork 承继会话历史跑一轮取输出）。codex = `thread/fork`
+   * RPC（ephemeral，回合通知流收输出）；缺省缺席 = 该 harness 只有 CLI 形可用。
+   * server 的 EdgeExtract 按面分流（有 spec 走这里、有 extractArgs 走 headless
+   * runner），键形与传输归 harness，server 只传语义参数。
+   */
+  readonly forkExtract?: ForkExtractSpec;
   /** 空闲信号事件名（watch 触发源）；空数组 = 不支持空闲订阅。 */
   readonly idleSignals: readonly string[];
   /** 会话 pane 定位 env 的信源（hook 旁路上报 vs weave 起会话的 spawn 回执起点）。 */
@@ -720,6 +753,8 @@ export interface InstalledPluginRecord {
   version?: string;
   installedAt?: string;
   lastUpdated?: string;
+  /** project 记录的所属项目（project-scope 卸载按它定 cwd——宿主按 cwd 匹配）。 */
+  projectPath?: string;
 }
 
 /** 安装 scope（宿主三分：user / project / local）——每条安装记录按自己的 scope 卸。 */
@@ -1360,10 +1395,25 @@ export interface SessionTitleSurface {
 }
 
 /**
- * 会话活动面：子 agent / 任务清单 / 后台 shell 三类运行态的快照与详情读法。
- * 「运行态账本」的权威在 server 的 tracker（事件驱动），本面只答文件面事实
- * （subagents 目录、tasks 目录、shell 输出文件）——两边在端点处合账。
+ * 项目记忆文件面（编排记忆出口的写入端）：harness 专属的「这个 harness 的
+ * 会话开工时读哪个项目文件」知识——claude = CLAUDE.local.md（私有备注）、
+ * codex = AGENTS.md（惯例入库）。文件身份、认领区块文法、滑动窗口都归本面，
+ * server 只传语义参数（项目路径 + 判决文本）。每项目各一份，跟项目的 harness
+ * 接入集合走（superagent 仓不是写入落点，只是示例编排的家）。
  */
+export interface MemorySinkSurface {
+  readonly harness: Harness;
+  /**
+   * 往项目记忆文件的认领区块追加一条机器判决：区块外用户内容字节不动，
+   * 区块内按滑动窗口裁旧。落点文件随行返回（画布/日志显示）。
+   */
+  appendVerdict(req: {
+    projectPath: string;
+    text: string;
+  }): Promise<{ ok: true; file: string } | { ok: false; error: string }>;
+}
+
+
 export interface ActivityAgentRow {
   agentId: string;
   agentType?: string;
@@ -1461,6 +1511,8 @@ export interface HarnessDriver {
   usage?: UsageSurface;
   /** 不入 capabilities 清单——无 web 面，消费点仅 server 两处（dispatcher diff 采纳 / PATCH rename RPC）。 */
   titles?: SessionTitleSurface;
+  /** 不入 capabilities 清单——无 web 面，消费点仅编排引擎的记忆出口（memory-exit 分发）。 */
+  memorySink?: MemorySinkSurface;
 }
 
 /**

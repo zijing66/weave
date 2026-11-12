@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -33,6 +34,10 @@ export interface RpgRoleRow {
   persona: string | null;
   /** JSON 解析后的六维基线；坏 JSON = null（读侧如实回缺省）。 */
   hexagon: Hexagon | null;
+  /** male | female；NULL = 旧角色（迁移前建的），读侧如实回 null、不随机洗脸。 */
+  gender: 'male' | 'female' | null;
+  /** 外貌种子 0..2147483647；NULL = 旧角色。 */
+  appearanceSeed: number | null;
   createdAt: string;
 }
 
@@ -40,6 +45,17 @@ export function archetypeBaseline(archetype: string | null | undefined): Hexagon
   const base: Hexagon =
     (archetype != null ? ARCHETYPE_BASELINES[archetype] : undefined) ?? ARCHETYPE_BASELINES['适配']!;
   return { ...base };
+}
+
+/** 性别封闭词表；创建侧非法值由路由 400，仓储层只认这两枚。 */
+export const ROLE_GENDERS = ['male', 'female'] as const;
+export type RoleGender = (typeof ROLE_GENDERS)[number];
+
+/** 外貌种子上限（含）：0..2147483647，创建 UI 预览与读侧回放同一枚种子。 */
+export const APPEARANCE_SEED_MAX = 2147483647;
+
+export function randomAppearanceSeed(): number {
+  return randomInt(0, APPEARANCE_SEED_MAX + 1);
 }
 
 // ---- 六维派生（读侧纯函数，RPG 稿 §5.3.2：素材全派生、无本地运行时）----
@@ -90,15 +106,28 @@ export class RpgRoleRepository {
     archetype?: string | null;
     persona?: string | null;
     hexagon?: Hexagon | null;
+    /** 缺省随机（node crypto randomInt）；upsert 未显式给时保留已有值。 */
+    gender?: RoleGender | null;
+    /** 整数 0..2147483647；缺省随机。upsert 未显式给时保留已有值。 */
+    appearanceSeed?: number | null;
   }): RpgRoleRow {
     const hex = input.hexagon ?? archetypeBaseline(input.archetype);
+    const existing = this.getByProjectId(input.projectId);
+    // upsert 未显式给新参数 = 保留已有外貌（已有角色不随机洗脸）；新行才随机。
+    const gender =
+      input.gender !== undefined ? input.gender : (existing?.gender ?? (randomInt(0, 2) === 0 ? 'male' : 'female'));
+    const seed =
+      input.appearanceSeed !== undefined
+        ? input.appearanceSeed
+        : (existing?.appearanceSeed ?? randomAppearanceSeed());
     this.db
       .prepare(
-        `INSERT INTO rpg_roles (project_id, name, archetype, persona, hexagon, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO rpg_roles (project_id, name, archetype, persona, hexagon, gender, appearance_seed, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(project_id) DO UPDATE SET
            name = excluded.name, archetype = excluded.archetype,
-           persona = excluded.persona, hexagon = excluded.hexagon`,
+           persona = excluded.persona, hexagon = excluded.hexagon,
+           gender = excluded.gender, appearance_seed = excluded.appearance_seed`,
       )
       .run(
         input.projectId,
@@ -106,6 +135,8 @@ export class RpgRoleRepository {
         input.archetype ?? null,
         input.persona ?? null,
         JSON.stringify(hex),
+        gender,
+        seed,
         new Date().toISOString(),
       );
     return this.getByProjectId(input.projectId)!;
@@ -157,6 +188,8 @@ function toRole(row: Record<string, unknown>): RpgRoleRow {
     archetype: row.archetype == null ? null : String(row.archetype),
     persona: row.persona == null ? null : String(row.persona),
     hexagon,
+    gender: row.gender === 'male' || row.gender === 'female' ? row.gender : null,
+    appearanceSeed: row.appearance_seed == null ? null : Number(row.appearance_seed),
     createdAt: String(row.created_at),
   };
 }

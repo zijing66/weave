@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS projects (
   meta          TEXT,
   sort_order    INTEGER,
   archived_at   TEXT,
-  hidden        INTEGER
+  hidden        INTEGER,
+  superagent    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS hook_events (
@@ -288,6 +289,8 @@ CREATE TABLE IF NOT EXISTS rpg_roles (
   archetype   TEXT,                      -- 七型模板（能量/思考/创造/连接/审核/执行/适配；NULL = 自定义）
   persona     TEXT,                      -- 提示词人设（角色插件 manifest 素材实例化时的快照）
   hexagon     TEXT,                      -- JSON 六维基线 {力量:5,...}
+  gender      TEXT,                      -- male | female（NULL = 旧角色未生成外貌，不随机洗脸）
+  appearance_seed  INTEGER,              -- 外貌种子 0..2147483647（创建 UI 预览用）
   created_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rpg_teams (
@@ -444,6 +447,67 @@ CREATE TABLE IF NOT EXISTS rpg_invitations (
 );
 CREATE INDEX IF NOT EXISTS idx_rpg_invitations_peer ON rpg_invitations(peer_id, id);
 
+-- 决策分级路由账（G6，G线设计 §六）：每次「路由裁决」一行——级2 呈上帝
+-- （pending → approved/rejected）、级1 AI 放行/拦下、级3 机制熔断拦截。级0 零智能
+-- 直行不落账（记账是噪声）。source/detail 沿 ConditionDecision 形状（谁判的、
+-- 依据）。保留期 = 会话生命周期：session_id 非空的行随会话 purge 级联清，
+-- NULL 行（用户当场批的，如晋升）不清。overturned = 上帝翻案位（推翻已生效的
+-- AI 自动裁决——复盘翻案率的扫描信号，行不删只翻位）。
+CREATE TABLE IF NOT EXISTS rpg_routing_decisions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id  INTEGER REFERENCES projects(id) ON DELETE CASCADE, -- 裁决语境（动作主体归属项目；可空）
+  session_id  TEXT,
+  action      TEXT NOT NULL,      -- RPG_ROUTED_ACTIONS 词表键（routing.ts 唯一权威）
+  level       INTEGER NOT NULL,  -- 1 | 2 | 3（级0 不落账）
+  basis       TEXT NOT NULL,     -- 路由判据码（irreversible|boundary|value|reversible|mechanism，| 连接）
+  input       TEXT,              -- 输入摘要（JSON 串：动作参数快照）
+  result      TEXT NOT NULL,     -- pending | approved | rejected | allowed | blocked | tripped
+  source      TEXT,              -- decision-model | fork | god（谁裁的；级3 机制 = NULL）
+  detail      TEXT,              -- 判断/呈报依据原文（ConditionDecision.reason/detail 同形）
+  overturned  INTEGER NOT NULL DEFAULT 0,
+  at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rpg_routing_decisions_project ON rpg_routing_decisions(project_id, id);
+CREATE INDEX IF NOT EXISTS idx_rpg_routing_decisions_session ON rpg_routing_decisions(session_id, id);
+
+-- goal 域（G6，G线设计 §四）：goal = 角色朝目标怎么活（长期驻留直到达成/预算尽/
+-- 撤销），区别于跑完即止的普通编排图。本表是事实源；驱动循环（三岔口/自主推进
+-- 边）与预算消耗统计是后续批挂上来的执行层。立项即过终态闸——无明确可终止
+-- 条件不立项（§二 修订⑤，闸在 goals.ts 与路由入口双设）。
+CREATE TABLE IF NOT EXISTS rpg_goals (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  house_id      INTEGER REFERENCES rpg_houses(id) ON DELETE CASCADE,  -- 语境（可空）
+  role_id       INTEGER NOT NULL REFERENCES rpg_roles(id) ON DELETE CASCADE,  -- 执行者
+  project_id    INTEGER REFERENCES projects(id) ON DELETE CASCADE,  -- 行动落点（可空 = 角色仓）
+  title         TEXT NOT NULL,
+  terminal      TEXT NOT NULL,               -- 终态条件：可验收的自然语言标准（终态闸非空即明）
+  budget_turns  INTEGER,                     -- 回合预算上限（NULL = 不设）
+  budget_tokens INTEGER,                     -- token 预算上限（NULL = 不设）
+  turns_used    INTEGER NOT NULL DEFAULT 0,  -- 已耗回合数（批4b：收尾事件计数，落库事实）
+  stall_streak  INTEGER NOT NULL DEFAULT 0,   -- 连续零进展拍数（重置条件 = 拍内发生过工具事件）
+  status        TEXT NOT NULL DEFAULT 'active',  -- 词表见 goals.ts GOAL_STATUSES
+  status_note   TEXT,                       -- 状态落定原因（终态如何命中/谁裁的）
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rpg_goals_role ON rpg_goals(role_id, id);
+CREATE INDEX IF NOT EXISTS idx_rpg_goals_house ON rpg_goals(house_id, id);
+
+-- 路由策略档（G6 进化闭环，G线设计 §六「决策进化闭环」）：复盘 → 提案 →
+-- 级2 裁决 → 落档。append-only 版本链（is_current 唯一标记当前生效），一键回滚
+-- = 换标记。参数词表含在 params JSON（routingProfile：熔断拍数/推进冷却等），
+-- 级2 八条清单永不入 params——提案永不触碰安全边界（红线一）。
+CREATE TABLE IF NOT EXISTS rpg_profile_versions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  params       TEXT NOT NULL,             -- JSON（RoutingProfileParams，部分键合法）
+  note         TEXT,
+  applied_by   TEXT NOT NULL,             -- god | proposal（呈批提案落地 or 上帝直改）
+  from_decision INTEGER,                 -- 提案落地的裁决行（可空 = 手改）
+  created_at   TEXT NOT NULL,
+  is_current   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_rpg_profile_versions_current ON rpg_profile_versions(is_current, id);
+
 -- 联邦 peer 注册表（E3，RPG 稿 §六 + D8 预留）：手动 host:port 是基础、mDNS 自动
 -- 发现是增强。per-peer token 不落本表——落 <local>/peer-tokens/（0600，同 localToken
 -- 纪律）；last_seen_at 是心跳事实，online/offline 由 peerLiveness 派生不存列。
@@ -461,7 +525,7 @@ CREATE TABLE IF NOT EXISTS peers (
 `;
 
 /** schema 版本（写进 PRAGMA user_version）：结构有变就递增，迁移前据此备份。 */
-const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 1;
 /** 迁移备份保留份数（`<dataDir>/backups/`，每份按库大小计）。 */
 const BACKUP_KEEP = 3;
 
@@ -596,6 +660,8 @@ function openAndMigrate(dbPath: string): DatabaseSync {
     migrateSessionWatchesColumns(db);
     migrateUploadsColumns(db);
     migrateExtensionBindingsColumns(db);
+    migrateRpgGoalsColumns(db);
+    migrateRpgRolesColumns(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     return db;
   } catch (err) {
@@ -672,6 +738,9 @@ function migrateProjectsColumns(db: DatabaseSync): void {
   if (!cols.has('hidden')) {
     db.exec('ALTER TABLE projects ADD COLUMN hidden INTEGER');
   }
+  if (!cols.has('superagent')) {
+    db.exec('ALTER TABLE projects ADD COLUMN superagent INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 /**
@@ -723,6 +792,23 @@ function migrateExtensionBindingsColumns(db: DatabaseSync): void {
 }
 
 /**
+ * 与 migrateExtensionBindingsColumns 同款列级兜底：rpg_goals 批4a 先行落表、
+ * 批4b 补「已耗回合数 / 连续零进展拍数」两列——既有 CREATE TABLE IF NOT EXISTS
+ * 不会给已建库补列，PRAGMA 探测 + ALTER 补上（幂等）。
+ */
+function migrateRpgGoalsColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(rpg_goals)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列）
+  if (!cols.has('turns_used')) db.exec('ALTER TABLE rpg_goals ADD COLUMN turns_used INTEGER NOT NULL DEFAULT 0');
+  if (!cols.has('stall_streak')) db.exec('ALTER TABLE rpg_goals ADD COLUMN stall_streak INTEGER NOT NULL DEFAULT 0');
+}
+
+/**
  * 无迁移基建下的列级兜底：`CREATE TABLE IF NOT EXISTS` 不会给既有库补列，
  * hook_rules 的 origin/plugin_id（D3 插件来源标记）对旧库用
  * `PRAGMA table_info` 探测 + `ALTER TABLE ADD COLUMN` 补上。
@@ -732,6 +818,19 @@ function migrateExtensionBindingsColumns(db: DatabaseSync): void {
  * `CREATE INDEX ... ON hook_rules(plugin_id)` 遇到缺列旧库会直接报
  * `no such column`，故该索引也在此处、列补齐后创建。
  */
+/** rpg_roles 补「性别 / 外貌种子」两列（既有库 CREATE TABLE IF NOT EXISTS 不补列；幂等）。 */
+function migrateRpgRolesColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(rpg_roles)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return; // 表尚不存在（SCHEMA 已含新列）
+  if (!cols.has('gender')) db.exec('ALTER TABLE rpg_roles ADD COLUMN gender TEXT');
+  if (!cols.has('appearance_seed')) db.exec('ALTER TABLE rpg_roles ADD COLUMN appearance_seed INTEGER');
+}
+
 function migrateHookRulesColumns(db: DatabaseSync): void {
   const cols = new Set(
     db

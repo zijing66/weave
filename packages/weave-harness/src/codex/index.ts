@@ -17,6 +17,7 @@ import { CODEX_COMMANDS } from './commands.js';
 import { CODEX_LIVENESS } from './liveness.js';
 import { CODEX_TITLES } from './titles.js';
 import { CODEX_USAGE } from './usage.js';
+import { CODEX_MEMORY } from './memory.js';
 
 export { CODEX_DETECTOR } from './detect.js';
 export { CODEX_PLUGIN_STATE } from './plugin-state.js';
@@ -44,6 +45,8 @@ export {
   type LockProbe,
 } from './liveness.js';
 export { CODEX_TITLES, codexSessionTitleOf, codexSetSessionTitle } from './titles.js';
+export { CODEX_FORK_EXTRACT, createCodexForkExtract } from './fork.js';
+export { CODEX_MEMORY } from './memory.js';
 
 /**
  * Codex 接入模块的驱动：批 4a 补 assets 槽、批 5 补 detect、P2 补 pluginState
@@ -56,8 +59,9 @@ export { CODEX_TITLES, codexSessionTitleOf, codexSetSessionTitle } from './title
  * 的版本漂移警告，见 `provision.ts`）、**images 补入站图**（rollout 的
  * UserMessage 条目，见 `images.ts`）、**questions 补阻塞式交互**（审批对话框
  * 的 PermissionRequest hook 采集 + 稳定键位作答，见 `questions.ts`）、**titles 补
- * 会话标题读写**（session_index 读 + thread/name/set 写，见 `titles.ts`）——init
- * 槽不在此（由 cli init/wiring 携带）。
+ * 会话标题读写**（session_index 读 + thread/name/set 写，见 `titles.ts`）、
+ * **messaging 的 `forkExtract` 补边级提取 fork 面**（app-server `thread/fork`
+ * ephemeral + 回合通知流收输出，见 `fork.ts`）——init 槽不在此（由 cli init/wiring 携带）。
  */
 export const CODEX_DRIVER: HarnessDriver = {
   id: 'codex',
@@ -99,4 +103,5 @@ export const CODEX_DRIVER: HarnessDriver = {
   questions: CODEX_QUESTIONS,
   usage: CODEX_USAGE,
   titles: CODEX_TITLES,
+  memorySink: CODEX_MEMORY,
 };
