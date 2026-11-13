@@ -258,7 +258,7 @@ describe('provisionRole', () => {
 });
 
 describe('scaffoldCoordinator', () => {
-  it('四目录骨架 + 基础七型物化进 roles/ + 项目注册，幂等（二次调用 reused / 不覆盖）', async () => {
+  it('目录骨架 + 基础七型物化进 agents/roles/ + 项目注册，幂等（二次调用 reused / 不覆盖）', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'weave-rpg-coord-'));
     try {
       const db = openDatabase(':memory:');
@@ -267,11 +267,11 @@ describe('scaffoldCoordinator', () => {
       const first = await scaffoldCoordinator({ projects, roles }, root);
       expect(first.ok).toBe(true);
       if (!first.ok) return;
-      expect(first.created).toEqual(['teams', 'roles', 'playbooks', 'state']);
+      expect(first.created).toEqual(['teams', 'playbooks', 'state', 'agents', 'projects']);
       expect(first.rolesSeeded).toHaveLength(7);
       expect(first.skillsSeeded).toEqual(['supervise', 'breakout', 'downgrade']);
       expect(existsSync(path.join(root, 'playbooks'))).toBe(true);
-      expect(existsSync(path.join(root, 'roles', 'thinker', 'weave-plugin.json'))).toBe(true);
+      expect(existsSync(path.join(root, 'agents', 'roles', 'thinker', 'weave-plugin.json'))).toBe(true);
       expect(existsSync(path.join(root, '.claude', 'skills', 'supervise', 'SKILL.md'))).toBe(true);
       expect(projects.getByPath(first.path)?.name).toBe('weave');
       const second = await scaffoldCoordinator({ projects, roles }, root);
@@ -307,7 +307,7 @@ describe('scaffoldCoordinator', () => {
     }
   });
 
-  it('版本戳不同 = 出厂文件重物化（weave 升级刷新）；同版本不覆盖', async () => {
+  it('版本戳不同 = 出厂待更新不自动覆盖；force 刷新才重物化', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'weave-rpg-coord4-'));
     try {
       const db = openDatabase(':memory:');
@@ -319,9 +319,14 @@ describe('scaffoldCoordinator', () => {
       expect(readStampVersion(stampFile)).toBe(WEAVE_VERSION);
       // 同版本：用户编辑保留（上一用例同判据，这里顺带盖一遍往返）
       writeFileSync(skillFile, 'user edited', 'utf-8');
-      // 版本变化：出厂 skill 重物化 + stamp 回写当前版本
+      // 版本变化：**不自动覆盖**（2026-11-13 裁决——更新不覆盖，手动按钮驱动），
+      // 只标 factoryOutdated；用户点按钮（force）才重物化 + stamp 回写。
       writeFileSync(stampFile, '0.0.0-stale\n', 'utf-8');
-      const refreshed = await scaffoldCoordinator({ projects, roles }, root);
+      const stale = await scaffoldCoordinator({ projects, roles }, root);
+      expect(stale.factoryOutdated).toBe(true);
+      expect(readFileSync(skillFile, 'utf-8')).toBe('user edited');
+      const refreshed = await scaffoldCoordinator({ projects, roles }, root, { force: true });
+      expect(refreshed.factoryOutdated).toBeUndefined();
       expect(refreshed.skillsSeeded).toEqual(['supervise', 'breakout', 'downgrade']);
       expect(readFileSync(skillFile, 'utf-8')).not.toBe('user edited');
       expect(readStampVersion(stampFile)).toBe(WEAVE_VERSION);
@@ -329,7 +334,7 @@ describe('scaffoldCoordinator', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('给了编排仓储 → 出厂示例编排（记忆出口演示，停用态）；同名即用户资产不覆盖', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'weave-rpg-coord5-'));
@@ -366,7 +371,7 @@ describe('scaffoldCoordinator', () => {
       await scaffoldCoordinator({ projects, roles }, root);
       const r = await provisionRoleFromTemplate(
         { projects, roles, rolesRoot },
-        { name: 'my-auditor', pluginDir: path.join(root, 'roles', 'auditor') },
+        { name: 'my-auditor', pluginDir: path.join(root, 'agents', 'roles', 'auditor') },
       );
       expect(r.ok).toBe(true);
       if (!r.ok) return;
@@ -381,7 +386,7 @@ describe('scaffoldCoordinator', () => {
       rmSync(root, { recursive: true, force: true });
       rmSync(rolesRoot, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 describe('RpgGrowthRepository', () => {

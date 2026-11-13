@@ -47,6 +47,7 @@ import {
   Plus,
   Power,
   RefreshCw,
+  Wrench,
   Settings,
   Terminal,
   TriangleAlert,
@@ -97,6 +98,12 @@ interface ProjectListProps {
   onRestore?: (p: ProjectRow) => void;
   /** 恢复按钮三态（键 = 项目 id）。 */
   restoreStateOf?: (projectId: number) => ActionState;
+  /** 超级代理仓出厂内容待更新（stamp ≠ weave 版本）：true 时项目卡出「更新出厂内容」胶囊。 */
+  factoryOutdated?: boolean;
+  /** 手动更新出厂内容（force 重物化 + 补 git 提交）。 */
+  onRefreshFactory?: (p: ProjectRow) => void;
+  /** 更新出厂内容按钮三态（键 = 项目 id）。 */
+  factoryStateOf?: (projectId: number) => ActionState;
 }
 
 /** One open context-menu instance: screen position + target project. */
@@ -217,6 +224,9 @@ export function ProjectList({
   onArchive,
   onRestore,
   restoreStateOf,
+  factoryOutdated,
+  onRefreshFactory,
+  factoryStateOf,
 }: ProjectListProps) {
   const t = useT();
   const { show } = useToast();
@@ -750,6 +760,19 @@ export function ProjectList({
                     />
                   )}
                 </span>
+                {/* 超级代理仓出厂内容待更新（更新不覆盖裁决）：点击才重物化 */}
+                {p.superagent && factoryOutdated && (
+                  <QuickButton
+                    tooltip={t('project.refreshFactoryTip')}
+                    onClick={() => onRefreshFactory?.(p)}
+                  >
+                    <FeedbackIcon
+                      state={factoryStateOf?.(p.id) ?? 'idle'}
+                      className="h-3.5 w-3.5"
+                      icon={<Wrench className="h-3.5 w-3.5 text-amber-400" />}
+                    />
+                  </QuickButton>
+                )}
                 <QuickButton tooltip={t('project.openInExplorer')} onClick={() => onOpenExplorer(p)}>
                   <FeedbackIcon
                     state={openExplorerStateOf?.(p.id) ?? 'idle'}

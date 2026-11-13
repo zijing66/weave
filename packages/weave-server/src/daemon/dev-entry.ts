@@ -97,7 +97,7 @@ import {
   RpgScoreRepository,
   RpgHexagramRepository,
 } from '../rpg/roles.js';
-import { scaffoldCoordinator } from '../rpg/provisioning.js';
+import { scaffoldCoordinator, syncProjectDirs } from '../rpg/provisioning.js';
 import { RpgAchievementRepository, RpgXpRepository } from '../rpg/progress-store.js';
 import { RpgExpeditionRepository } from '../rpg/expedition-repo.js';
 import { RpgGoalRepository } from '../rpg/goals.js';
@@ -299,9 +299,11 @@ async function main(): Promise<void> {
   // 此前漏挂 → /rpg/* 在 dev 下恒 503（游戏视图停在「…」）。
   const rpgRoles = new RpgRoleRepository(db);
   // 超级代理项目物化（与 start.ts 同装配）：daemon 启动即建/刷新，失败不拦。
-  void scaffoldCoordinator({ projects, roles: rpgRoles, orchestrations }).catch((err) => {
-    console.error('[weave] superagent scaffold failed:', err instanceof Error ? err.message : err);
-  });
+  void scaffoldCoordinator({ projects, roles: rpgRoles, orchestrations })
+    .catch((err) => {
+      console.error('[weave] superagent scaffold failed:', err instanceof Error ? err.message : err);
+    })
+    .then(() => syncProjectDirs(projects).catch(() => {}));
   const rpgGrowth = new RpgGrowthRepository(db);
   const rpgScores = new RpgScoreRepository(db);
   const rpgHexagram = new RpgHexagramRepository(db);

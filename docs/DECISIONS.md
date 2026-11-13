@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-11-13
+
+- **超级代理仓三连改（用户裁决）**：① **游戏资产收进 `agents/` 命名空间**（用户问「roles 为什么在根下、能进 .weave 吗」→ 裁决「需要搬迁，我加一个 project 目录」）——`agents/roles/` + `agents/handbook/`，存量启动整档 rename 迁入（rename 从不删、目标已在 = 已迁）；**不进 `.weave` 的理由**：角色仓 = 独立注册项目（自带 `.weave`、token、会话），`.weave` 的既有语义是「可覆写可弃的机器状态」（init 写策略、数据三档），资产是有状态的消费者本体，塞进去等于把资产挂在随时可能被 init 重写的目录上。teams/playbooks/state 留仓根（协调工作面）。② **`project/` = 主项目管理**（二轮改定名 `projects/`，同日用户裁决「当前project改成projects」；会话产物层 `projects/<项目>/<会话>/` 收各项目所有历史会话的全局产物，与编排写盘正交）：每个活跃普通项目一个子目录（目录名 = 项目名，非项目名时按 `[^\\w.-]` slug 化），带占位 README + `.project-id` marker（改名后靠 marker 找回旧目录整档 rename——用户自建目录无 marker 不被误搬）；档案内容**归 superagent 会话维护**（COORDINATOR_PERSONA 载明约束，weave 只物化骨架）；`syncProjectDirs` 挂 daemon 启动（scaffold 同拍）。③ **git 化 + 更新不覆盖**：无 `.git` 时 `git init` + 全量首提交（内置仓默认提交）；**出厂物化只在首装跑**，weave 升级后不自动重写——`factoryOutdated` 置位，项目卡出「更新出厂内容」扳手按钮（`POST /rpg/coordinator/refresh-factory` force）或 superagent 会话指挥 AI 覆盖（用户原话：「要求用户手动点击更新按钮，或者走superagent会话指挥ai覆盖更新」）；force 刷新后补一笔 git 提交。推翻 2026-11-11 的「版本重物化随启动自动跑」。
+
 ## 2026-11-12
 
 - **「请重跑 init」的提醒判据 = 版本号落后（用户口径原话：「对比就是版本号落后就提醒」）**：起因 = 会话引用文法（`#<id>「名」`）进了托管块但存量块不会自动刷新，用户会话里发引用不识别——内容漂移检测看不见这类「进 git 且内容只在升级后变」的文件（版本标记被 drift 比对刻意剥掉，旧块与新版期望相同时零漂移）。定案：`.weave/config.yaml` 的 `initVersion` 数值落后于当前 weave 即提醒（`initVersionBehind`，无版本戳的极旧 init 也算、没跑过 init 不算），提醒面 = 更新列表行（`旧 → 新`）+ 同步图标双色角标与富 tooltip；同步域照旧不代写。

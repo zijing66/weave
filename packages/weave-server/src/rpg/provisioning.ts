@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { generateToken } from '../daemon/auth.js';
@@ -280,20 +281,24 @@ export async function provisionRole(
 // ---- 协调者仓库脚手架（RPG 稿 §四）----
 
 /**
- * 协调者目录结构（teams / roles / playbooks / state）。协调者 = 普通 weave 会话，
- * 没有专属运行时——这里只生成仓库骨架 + README（会话本身走既有 new-session）。
+ * 协调者目录结构（teams / playbooks / state 在根——协调工作面；agents/ 收游戏
+ * 资产（roles + handbook，2026-11-13 用户裁决）；projects/ 收主项目管理目录）。
+ * 协调者 = 普通 weave 会话，没有专属运行时——这里只生成仓库骨架 + README。
  */
-export const COORDINATOR_DIRS = ['teams', 'roles', 'playbooks', 'state'] as const;
+export const COORDINATOR_DIRS = ['teams', 'playbooks', 'state', 'agents', 'projects'] as const;
 
 export interface ScaffoldCoordinatorResult {
   ok: true;
   path: string;
   created: string[];
-  /** 本次物化进 roles/ 的内置角色模板清单（幂等：已有目录跳过）。 */
+  /** 本次物化进 agents/roles/ 的内置角色模板清单（幂等：已有目录跳过）。 */
   rolesSeeded: string[];
   /** 本次物化进 .claude/skills/ 的出厂 skill 清单（幂等：已有文件跳过）。 */
   skillsSeeded: string[];
   reused: boolean;
+  /** weave 升级后出厂内容待更新（stamp ≠ 当前版本）：前端据此出「更新出厂内容」
+   *  按钮；用户点击（refreshFactory）或 superagent 会话指挥 AI 覆盖才重物化。 */
+  factoryOutdated?: boolean;
 }
 
 /** 出厂物化版本戳（`<dir>/.weave/scaffold-version`）：与 WEAVE_VERSION 不同
@@ -303,7 +308,7 @@ export interface ScaffoldCoordinatorResult {
  *  读的就是这个口径，超级代理仓升级后能被同一张提醒网兜住。 */
 const SCAFFOLD_STAMP_FILE = 'scaffold-version';
 /** 兼容读：无 `initVersion` 键的旧 stamp 整行就是版本号（旧格式第一行 = 版本）。 */
-async function readStamp(dir: string): Promise<string | null> {
+export async function readFactoryStamp(dir: string): Promise<string | null> {
   try {
     const raw = (await readFile(path.join(dir, '.weave', SCAFFOLD_STAMP_FILE), 'utf-8')).trim();
     const m = /^initVersion:\s*(\S+)$/m.exec(raw);
@@ -318,24 +323,71 @@ async function readStamp(dir: string): Promise<string | null> {
  * coordinator）：目录骨架 + 出厂文件物化 + 项目注册（superagent 置顶常驻）。
  * singleton（同根复用即刷新）。
  *
- * 版本重物化（「功能随 weave 升版本更新」）：stamp 与当前 WEAVE_VERSION 不同
- * → 出厂文件全部重写（roles/ 模板、MPU skill、CLAUDE.md 人设、README）；
- * 相同版本走「已有不覆盖」幂等（用户改过的同名文件在版本不变时不被动）。
+ * **更新不覆盖（2026-11-13 用户裁决）**：出厂物化只在首装跑一次（stamp 缺失）；
+ * weave 升级后（stamp ≠ 当前版本）**不自动重写**——`factoryOutdated` 置 true
+ * 交前端出「更新出厂内容」按钮，用户点击（`refreshFactory`）或 superagent 会话
+ * 指挥 AI 覆盖（再调本函数带 `force`）才重物化。
+ *
+ * git 化（同日裁决）：仓无 `.git` 时 `git init` + 首次全量提交（内置仓默认提交，
+ * 用户在 IDE 里看 diff 也能回退）；已有仓不碰（提交与否归用户）。
  * root 缺省 = `<data>/superagent/weave`（getSuperagentRoot，2026-11-11 裁决：
  * 不挂 rpg 域——weave 出厂项目，不是游戏资产）。
  */
 export async function scaffoldCoordinator(
   deps: ProvisionDeps,
   root?: string,
+  opts?: { force?: boolean },
 ): Promise<ScaffoldCoordinatorResult> {
   const dir = root ?? getSuperagentRoot();
   const created: string[] = [];
   const rolesSeeded: string[] = [];
   const skillsSeeded: string[] = [];
   const existing = deps.projects.getByPath(dir);
-  // 版本重物化判据：stamp 缺失（首装/旧库）或 ≠ 当前 weave 版本。
-  const stamp = await readStamp(dir);
-  const refresh = stamp !== WEAVE_VERSION;
+  // 出厂物化判据：首装（stamp 缺失）= 立即物化；版本不同 = 只标待更新（手动按钮）。
+  const stamp = await readFactoryStamp(dir);
+  const firstInstall = stamp === null;
+  const refresh = firstInstall || opts?.force === true;
+  const factoryOutdated = !firstInstall && stamp !== WEAVE_VERSION && opts?.force !== true;
+  // 旧布局搬迁（2026-11-13）：roles/handbook 从仓根整档 rename 进 agents/（rename
+  // 从不删；目标已在则逐项并入——目标往往已被出厂模板占住，整档 rename 会把
+  // 存量角色留在根下成孤儿）。逐项 rename 失败就留下原样，只有搬空（目录已空）
+  // 才删壳——绝不静默吞用户内容。
+  for (const [legacy, target] of [
+    ['roles', path.join(dir, 'agents', 'roles')],
+    ['handbook', path.join(dir, 'agents', 'handbook')],
+  ] as const) {
+    const from = path.join(dir, legacy);
+    try {
+      await stat(from);
+      try {
+        await stat(target);
+        // 目标已在（多半被出厂模板占住）：无同名 → rename；目标已占且源是出厂
+        // 模板（无 .weave 标记 = 非用户角色仓，内容与刚重物化的目标同源）→ 删
+        // 源；用户角色仓（有 .weave）目标被占时留在原地，绝不删。
+        for (const entry of await readdir(from).catch(() => [] as string[])) {
+          const src = path.join(from, entry);
+          const dst = path.join(target, entry);
+          if (!(await stat(dst).then(() => true, () => false))) {
+            await rename(src, dst).catch(() => {});
+            continue;
+          }
+          if (legacy === 'roles') {
+            const isUserRole = await stat(path.join(src, '.weave')).then(() => true, () => false);
+            if (!isUserRole) await rm(src, { recursive: true, force: true }).catch(() => {});
+          }
+        }
+        // 搬空（或只剩已并入的出厂模板）才删壳。
+        if ((await readdir(from).catch(() => ['x'])).length === 0) {
+          await rm(from, { force: true }).catch(() => {});
+        }
+      } catch {
+        await mkdir(path.dirname(target), { recursive: true });
+        await rename(from, target).catch(() => {});
+      }
+    } catch {
+      /* 旧目录不存在 = 新装或已迁 */
+    }
+  }
   for (const sub of COORDINATOR_DIRS) {
     const target = path.join(dir, sub);
     try {
@@ -346,7 +398,7 @@ export async function scaffoldCoordinator(
     }
   }
   for (const tpl of BUILTIN_ROLE_TEMPLATES) {
-    const roleDir = path.join(dir, 'roles', tpl.id);
+    const roleDir = path.join(dir, 'agents', 'roles', tpl.id);
     const manifestPath = path.join(roleDir, 'weave-plugin.json');
     const exists = (p: string) => stat(p).then(() => true, () => false);
     // 目录被同名用户角色仓占住（2026-11-11 起角色仓与模板同层）：整条让位——
@@ -430,7 +482,7 @@ export async function scaffoldCoordinator(
   });
   await writeFile(
     path.join(dir, 'README.md'),
-    '# 超级代理仓库（上帝）\n\nteams/ 团队声明 · roles/ 内置角色插件 · playbooks/ 任务剧本 · state/ 运行素材\n',
+    '# 超级代理仓库（上帝）\n\nteams/ 团队声明 · agents/roles/ 内置角色插件 · agents/handbook/ 手法库 · playbooks/ 任务剧本 · state/ 运行素材 · projects/ 主项目管理（projects/<项目>/<会话>/ 收各项目所有会话的全局产物）\n',
     'utf-8',
   ).catch(() => {
     /* 写不进不挡脚手架 */
@@ -449,8 +501,129 @@ export async function scaffoldCoordinator(
   ).catch(() => {
     /* stamp 写不进：下次启动会再刷新一遍（重复物化无害） */
   });
+  // git 化（2026-11-13 用户裁决）：内置仓默认进版本管理——无 .git 时 init +
+  // 全量首提交（出厂内容此后可 diff 可回退）；已有仓不碰（提交与否归用户）。
+  await ensureGitRepo(dir, refresh).catch(() => {});
   void existing; // 存量与否只影响 reused 报告；升格路径已由 register+mark 收敛
-  return { ok: true, path: projectKey(dir), created, rolesSeeded, skillsSeeded, reused: existing != null };
+  return {
+    ok: true,
+    path: projectKey(dir),
+    created,
+    rolesSeeded,
+    skillsSeeded,
+    reused: existing != null,
+    ...(factoryOutdated ? { factoryOutdated: true } : {}),
+  };
+}
+
+/**
+ * 内置仓 git 化：无 `.git` 时 `git init` + `add -A` + 首次提交（出厂物完整可
+ * 回退的基线）；已有仓不动（用户的提交节奏归用户）。失败静默——git 缺席不该
+ * 挡脚手架。`commitAll` = force 刷新后把重物化的出厂文件补一笔提交（同裁决：
+ * 默认提交；用户自己提交过的中间态不强制，add -A 会带上用户的未暂存改动，
+ * 刷新是用户主动点的、可接受）。
+ */
+async function ensureGitRepo(dir: string, commitAll: boolean): Promise<void> {
+  const git = (args: string[]): Promise<boolean> =>
+    new Promise((resolve) => {
+      const child = spawn('git', ['-C', dir, ...args], {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      child.on('error', () => resolve(false));
+      child.on('close', (code) => resolve(code === 0));
+    });
+  if (!(await stat(path.join(dir, '.git')).then(() => true, () => false))) {
+    if (!(await git(['init']))) return;
+    // 身份 fallback（本机 2026-11-13 实测：daemon 子进程 env 无 GIT_AUTHOR_*、
+    // 全局 user.name 缺失时 commit 静默失败 exit≠0）——写 local config，只兜
+    // 缺席（已有全局身份的用户配置原样保留，local 缺省跟随全局）。
+    await git(['config', 'user.name', 'weave']).catch(() => {});
+    await git(['config', 'user.email', 'weave@local']).catch(() => {});
+    await git(['add', '-A']);
+    await git(['commit', '-m', 'chore: weave 出厂内容初始化']);
+  } else if (commitAll) {
+    await git(['add', '-A']);
+    await git(['commit', '-m', `chore: weave ${WEAVE_VERSION} 出厂内容更新`]);
+  }
+}
+
+/**
+ * projects/ 目录对齐（2026-11-13 用户裁决：主项目管理收进超级代理仓 projects/，
+ * 2026-11-13 二轮改名 project/ → projects/ + 会话层）：每个活跃普通项目一个
+ * 子目录（目录名 = 项目名，非法字符换 `-`），带一页占位档案；**会话产物层
+ * `projects/<项目>/<会话>/` 归上帝会话维护**（weave 只物化项目层，会话目录由
+ * superagent 会话按约定建——会话名/id，全局产物集中地）。项目改名 → 子目录跟着
+ * rename（旧名目录有用户内容也搬——改名是用户的明确动作）。归档/hidden/
+ * superagent（自身）不出目录。daemon 启动时与 scaffoldCoordinator 同拍跑一次
+ * （start.ts / dev-entry.ts），失败静默。
+ */
+export async function syncProjectDirs(projects: ProjectRepository, root?: string): Promise<void> {
+  const saRoot = root ?? getSuperagentRoot();
+  const base = path.join(saRoot, 'projects');
+  await mkdir(base, { recursive: true }).catch(() => {});
+  // 旧名搬迁（2026-11-13 二轮：project/ → projects/）：rename 从不删、目标已在 =
+  // 已迁。旧目录若有内容而 projects/ 为空壳（COORDINATOR_DIRS 先 mkdir 过），
+  // 把旧内容逐项并进新目录再让位。
+  const legacy = path.join(saRoot, 'project');
+  try {
+    await stat(legacy);
+    const targetEmpty = (await readdir(base).catch(() => [])).length === 0;
+    if (targetEmpty) {
+      await rename(legacy, base).catch(() => {});
+    } else {
+      const entries = await readdir(legacy).catch(() => [] as string[]);
+      let allMoved = entries.length > 0;
+      for (const entry of entries) {
+        try {
+          await rename(path.join(legacy, entry), path.join(base, entry));
+        } catch {
+          allMoved = false;
+        }
+      }
+      if (allMoved && (await readdir(legacy).catch(() => ['x'])).length === 0) {
+        await rm(legacy, { force: true }).catch(() => {});
+      }
+    }
+  } catch {
+    /* 旧目录不存在 = 新装或已迁 */
+  }
+  for (const p of projects.list()) {
+    if (p.archivedAt || p.hidden || p.superagent) continue;
+    const slug = p.name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || `project-${p.id}`;
+    const dir = path.join(base, slug);
+    try {
+      await stat(dir);
+      continue; // 已在：不碰内容（档案归上帝会话维护）
+    } catch {
+      /* 不存在 = 物化 */
+    }
+    // 旧名目录在（项目改过名）→ 按 .project-id marker 找回并整目录 rename；都
+    // 没有才新建。marker 是 weave 物化标记——用户自己建的目录不被误搬。
+    const oldDirs = await readdir(base).catch(() => [] as string[]);
+    let moved = false;
+    for (const old of oldDirs) {
+      if (old === slug) continue;
+      const marker = path.join(base, old, '.project-id');
+      try {
+        if ((await readFile(marker, 'utf-8')).trim() === String(p.id)) {
+          await rename(path.join(base, old), dir).catch(() => {});
+          moved = true;
+          break;
+        }
+      } catch {
+        /* 无 marker = 不是 we weave 物化的目录 */
+      }
+    }
+    if (moved) continue;
+    await mkdir(dir, { recursive: true }).catch(() => {});
+    await writeFile(path.join(dir, '.project-id'), `${p.id}\n`, 'utf-8').catch(() => {});
+    await writeFile(
+      path.join(dir, 'README.md'),
+      `# ${p.name}\n\n- 路径：${p.path}\n- 注册：${p.registeredAt}\n\n（项目档案归超级代理会话维护：目标、关键决定、会话纪要。）\n`,
+      'utf-8',
+    ).catch(() => {});
+  }
 }
 
 // ---- 从角色模板实例化（协调者「创建角色」动词的输入）----

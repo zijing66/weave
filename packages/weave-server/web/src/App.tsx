@@ -784,6 +784,36 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   );
   const restoreActionStateOf = useCallback((id: number) => fb.stateOf(`restore:${id}`), [fb]);
 
+  // 超级代理仓出厂内容（2026-11-13 更新不覆盖）：待更新态只在挂载/版本变化时查一次，
+  // 手动更新（force 重物化 + 补 git 提交）成功后随 stamp 回写自然翻 false。
+  const [factoryOutdated, setFactoryOutdated] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .factoryStatus()
+      .then((s) => {
+        if (!cancelled) setFactoryOutdated(s.factoryOutdated);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const factoryStateOf = useCallback((id: number) => fb.stateOf(`factory:${id}`), [fb]);
+  const refreshFactoryWithFeedback = useCallback(
+    (p: ProjectRow) =>
+      fb.run(
+        `factory:${p.id}`,
+        async () => {
+          await api.refreshFactory();
+          setFactoryOutdated(false);
+          show('success', t('toast.factoryRefreshed'));
+        },
+        { fail: (e) => t('errors.factoryRefreshFailed', { error: errorText(e) }) },
+      ),
+    [fb, show, t],
+  );
+
   // 资产装卸 handler 域（安装/卸载/启停/同步），见 useAssetMutations。
   const {
     handleInstallSkill, handleInstallFileAsset, handleInstallMcp, handleInstallPlugin,
@@ -932,6 +962,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       onArchive={handleArchiveProject}
       onRestore={handleRestoreProject}
       restoreStateOf={restoreActionStateOf}
+      factoryOutdated={factoryOutdated}
+      onRefreshFactory={(p) => void refreshFactoryWithFeedback(p)}
+      factoryStateOf={factoryStateOf}
     />
   ) : (
     <SkeletonRows rows={7} />

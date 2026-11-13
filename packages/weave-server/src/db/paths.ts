@@ -70,22 +70,23 @@ export function getSuperagentRoot(dir?: string): string {
 }
 
 /**
- * 角色仓库默认根（`<data>/superagent/weave/roles/<role>/`；2026-11-11 用户裁决
- * 从 `<data>/rpg/` 整档迁入）。自定义根 = settings 键 `rpg.rolesRoot`（RPG 稿
+ * 角色仓库默认根（`<data>/superagent/weave/agents/roles/<role>/`；2026-11-13
+ * 用户裁决：游戏资产收进 `agents/` 根级命名空间——仓根让给 teams/playbooks/
+ * project/ 这类协调工作面）。自定义根 = settings 键 `rpg.rolesRoot`（RPG 稿
  * §三），缺省走这里。出厂七型模板也物化在同一层（scaffoldCoordinator）——用户
  * 角色名与模板 id 撞名由 provisionRole 的 stat 409 挡住。
  */
 export function getRpgRolesRoot(dir?: string): string {
-  return path.join(getSuperagentRoot(dir), 'roles');
+  return path.join(getSuperagentRoot(dir), 'agents', 'roles');
 }
 
 /**
- * 全局手法库根（`<data>/superagent/weave/handbook/`，G6 批6）：协调者本体跨
+ * 全局手法库根（`<data>/superagent/weave/agents/handbook/`，G6 批6）：协调者本体跨
  * house 记忆，memory 目录同构（MEMORY.md 索引 + 单事实单文件）；data 档 ⇒
  * 随迁移整档带走。仓储写入时自建目录。
  */
 export function getRpgHandbookRoot(dir?: string): string {
-  return path.join(getSuperagentRoot(dir), 'handbook');
+  return path.join(getSuperagentRoot(dir), 'agents', 'handbook');
 }
 
 /** Absolute path to the daemon auth file (password hash + secrets, 0600). */

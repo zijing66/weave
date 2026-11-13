@@ -31,7 +31,8 @@ import { RpgProfileRepository, type RoutingProfileParams } from './profile.js';
 import { reviewSignalsOf, proposalGatedOf } from './review.js';
 import { RpgHandbookRepository } from './handbook.js';
 import { getRpgHandbookRoot } from '../db/paths.js';
-import { provisionRole, scaffoldCoordinator } from './provisioning.js';
+import { provisionRole, readFactoryStamp, scaffoldCoordinator } from './provisioning.js';
+import { WEAVE_VERSION } from '../version.js';
 import { readPlaybookFile, renderPlaybook, type PlaybookBindings } from './playbook.js';
 import { cultivate, currentHexagonOf, expedition, formTeam, transmit } from './verbs.js';
 import {
@@ -171,6 +172,33 @@ export async function handleRpgRoutes(
     const result = await scaffoldCoordinator({ projects: deps.projects, roles, rolesRoot: deps.rpgRolesRoot }, deps.superagentRoot);
     deps.dataBus?.emit({ key: 'projects' });
     sendJson(res, 200, result);
+    return true;
+  }
+
+  // POST /rpg/coordinator/refresh-factory — 手动更新出厂内容（项目卡按钮）：
+  // force 重物化（weave 升级后的出厂文件重写 + 补一笔 git 提交）。用户点了才跑，
+  // daemon 启动永不自动覆盖（2026-11-13 裁决）。
+  if (pathname === '/rpg/coordinator/refresh-factory' && req.method === 'POST') {
+    const result = await scaffoldCoordinator(
+      { projects: deps.projects, roles, rolesRoot: deps.rpgRolesRoot },
+      deps.superagentRoot,
+      { force: true },
+    );
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  // GET /rpg/coordinator/factory-status — 出厂内容待更新？（web「更新出厂内容」
+  // 按钮的显隐数据源；stamp 读盘，无缓存）。
+  if (pathname === '/rpg/coordinator/factory-status' && req.method === 'GET') {
+    const root = deps.superagentRoot;
+    const stamp = root ? await readFactoryStamp(root) : null;
+    sendJson(res, 200, {
+      factoryOutdated: stamp !== null && stamp !== WEAVE_VERSION,
+      stamp,
+      weaveVersion: WEAVE_VERSION,
+    });
     return true;
   }
 

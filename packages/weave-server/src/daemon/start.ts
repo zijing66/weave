@@ -60,7 +60,7 @@ import { RpgRoutingDecisionRepository } from '../rpg/routing.js';
 import { RpgExpeditionRepository } from '../rpg/expedition-repo.js';
 import { RpgGoalRepository } from '../rpg/goals.js';
 import { RpgGoalEngine } from '../rpg/goal-engine.js';
-import { scaffoldCoordinator } from '../rpg/provisioning.js';
+import { scaffoldCoordinator, syncProjectDirs } from '../rpg/provisioning.js';
 import { RpgProfileRepository } from '../rpg/profile.js';
 import { MergeLadderRepository } from '../rpg/merge-ladder.js';
 import { mergeSessionWorktreeViaLadder, rebindExpeditionOnClaim } from '../rpg/expedition-session.js';
@@ -315,9 +315,11 @@ export function startDaemon(): void {
   // 超级代理项目（上帝 = coordinator 仓，2026-11-11 用户裁决）：启动物化 =
   // 首装脚手架 + weave 版本变化时重写出厂文件（用户自建文件不碰）。
   // 失败不拦 daemon（项目面少一座房，其余照常）。
-  void scaffoldCoordinator({ projects, roles: rpgRoles, orchestrations }).catch((err) => {
-    console.error('[weave] superagent scaffold failed:', err instanceof Error ? err.message : err);
-  });
+  void scaffoldCoordinator({ projects, roles: rpgRoles, orchestrations })
+    .catch((err) => {
+      console.error('[weave] superagent scaffold failed:', err instanceof Error ? err.message : err);
+    })
+    .then(() => syncProjectDirs(projects).catch(() => {}));
   const rpgGrowth = new RpgGrowthRepository(db);
   const rpgScores = new RpgScoreRepository(db);
   const rpgHexagram = new RpgHexagramRepository(db);

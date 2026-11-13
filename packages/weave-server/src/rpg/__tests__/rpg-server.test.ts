@@ -47,7 +47,7 @@ describe('POST /rpg/* + 建角色全链（REST，不依赖 MCP）', () => {
     // 测试根仿生产结构：<sa>/（超级代理仓）下挂 roles/（角色仓根）。
     const saRoot = mkdtempSync(path.join(tmpdir(), 'weave-rpg-e2e-sa-'));
     tmpDirs.push(saRoot);
-    rolesRoot = path.join(saRoot, 'roles');
+    rolesRoot = path.join(saRoot, 'agents', 'roles');
     const hooksTmp = mkdtempSync(path.join(tmpdir(), 'weave-rpg-e2e-hooks-'));
     tmpDirs.push(hooksTmp);
     runDirs = [];
@@ -88,14 +88,14 @@ describe('POST /rpg/* + 建角色全链（REST，不依赖 MCP）', () => {
     for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('① 协调者脚手架：POST /rpg/coordinator 建出 teams/roles/playbooks/state + 项目行', async () => {
+  it('① 协调者脚手架：POST /rpg/coordinator 建出 teams/agents/playbooks/state/project + 项目行', async () => {
     const res = await call('POST', '/rpg/coordinator');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; created: string[]; path: string };
     expect(body.ok).toBe(true);
-    expect(body.created).toEqual(['teams', 'roles', 'playbooks', 'state']);
-    // 2026-11-11 起游戏域全住超级代理仓：coordinator = <sa>/、角色仓根 = <sa>/roles。
-    expect(path.join(body.path, 'roles')).toBe(rolesRoot);
+    expect(body.created).toEqual(['teams', 'playbooks', 'state', 'agents', 'projects']);
+    // 2026-11-13 起游戏资产收进 agents/ 命名空间：coordinator = <sa>/、角色仓根 = <sa>/agents/roles。
+    expect(path.join(body.path, 'agents', 'roles')).toBe(rolesRoot);
   });
 
   it('② 建角色：POST /rpg/roles → 仓库目录 + 项目注册 + RPG 行', async () => {

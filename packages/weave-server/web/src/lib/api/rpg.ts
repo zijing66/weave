@@ -342,6 +342,15 @@ export const rpgApi = {
     post<{ entry: HandbookEntryView }>('/rpg/handbook', input),
   /** 剪枝（上帝手删）。 */
   pruneHandbookEntry: (name: string) => post<{ ok: true }>('/rpg/handbook/prune', { name }),
+
+  // ---- 超级代理仓出厂内容（2026-11-13 更新不覆盖裁决）----
+  /** 出厂内容待更新？（stamp ≠ 当前 weave = true；「更新出厂内容」按钮显隐源） */
+  factoryStatus: () =>
+    apiFetch<{ factoryOutdated: boolean; stamp: string | null; weaveVersion: string }>(
+      '/rpg/coordinator/factory-status',
+    ),
+  /** 手动更新出厂内容（force 重物化 + 补一笔 git 提交）。 */
+  refreshFactory: () => post<{ ok: true; rolesSeeded: string[]; skillsSeeded: string[] }>('/rpg/coordinator/refresh-factory', {}),
   // ---- 任务卡详情（G6 批7，G线设计 §八三 tab）----
   /** 一次拉齐：goal 本行 + 出征行（现场）+ 决策轨迹 + 合并梯事件。 */
   getGoalDetail: (id: number) =>
