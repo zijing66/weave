@@ -830,7 +830,7 @@
    G2.6：HUD 统一样式收敛（参考图 A 色板）：rgba 深面 + 浅灰描边 + 文字浅灰，
    边角微像素化（2px，不是大圆角）——rpg-hud-face 是唯一 HUD 面样式。 */
 .rpg-overlay-surface {
-  background: color-mix(in srgb, var(--w-surface-1, #17141f) 88%, transparent);
+  background: rgb(var(--w-neutral-950, 10 10 10) / 0.88);
   backdrop-filter: blur(6px);
 }
 .rpg-hud-face {
@@ -936,8 +936,8 @@
   align-items: center;
   justify-content: center;
   padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px));
-  background: var(--w-surface-1, #17141f);
-  border-top: 1px solid var(--w-border, #2c2735);
+  background: rgb(var(--w-neutral-950, 10 10 10));
+  border-top: 1px solid rgb(var(--w-edge, 255 255 255) / 0.3);
 }
 .rpg-pixel-viewport {
   order: 1;
@@ -952,18 +952,24 @@
     width: 180px;
     align-self: stretch;
     border-top: none;
-    border-left: 1px solid var(--w-border, #2c2735);
+    border-left: 1px solid var(--w-edge, 255 255 255);
   }
 }
 
 /* 终端分块「已隐藏」态：网格透明背景（形态差异不靠色深——隐藏窗只剩骨架的
-   隐喻同形；颜色走语义变量，深浅主题都成立）。 */
+   隐喻同形；颜色走语义变量，深浅主题都成立）。网格只衬块身、行卡自身底色
+   （bg-neutral-900/50）半透明压上，斜纹透出但文字不受干扰；低对比不抢行内容。 */
 .terminal-block-hidden {
   background:
     repeating-linear-gradient(
-      45deg,
-      var(--w-border, #2c2735) 0 1px,
-      transparent 1px 8px
+      135deg,
+      rgb(var(--w-edge, 255 255 255) / 0.05) 0 1px,
+      transparent 1px 14px
     ),
-    var(--w-surface-1, #17141f);
+    repeating-linear-gradient(
+      45deg,
+      rgb(var(--w-edge, 255 255 255) / 0.05) 0 1px,
+      transparent 1px 14px
+    ),
+    rgb(var(--w-neutral-950, 10 10 10));
 }

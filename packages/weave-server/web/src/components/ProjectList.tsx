@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
+import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -300,6 +301,7 @@ export function ProjectList({
   // （点卡片 = 勾选，右上角图标切到前台 / 关掉这一张），末尾常驻一张「+」开新
   // 终端——没有终端时只剩那张「+」。卡片数据每次现拉（实时枚举，缓存会把刚关掉
   // 的终端列出来）。
+  const { terminalVisibility } = useSessionStatus();
   const [termMenu, setTermMenu] = useState<{
     project: ProjectRow;
     anchor: HTMLElement;
@@ -1087,8 +1089,12 @@ export function ProjectList({
                           picked
                             ? 'border-blue-500 bg-blue-500/10'
                             : 'border-edge/[0.06] bg-edge/[0.02]',
-                          // 与会话列表终端分块同一套显隐语言：隐藏窗 = 网格透明背景
-                          termMenu.visibility[target.id] === 'hidden' && 'terminal-block-hidden',
+                          // 与会话列表终端分块同一套显隐语言：隐藏窗 = 网格透明背景。
+                          // 背景走全局快照（开层即有、零延迟）；逐目标的现查慢一拍，
+                          // 只留给眼睛图标作落定后的权威态。
+                          (termMenu.visibility[target.id] ??
+                            terminalVisibility.get(`${termMenu.project.id}|${target.id}`)) ===
+                            'hidden' && 'terminal-block-hidden',
                         )}
                       >
                         <button
