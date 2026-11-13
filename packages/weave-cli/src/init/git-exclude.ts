@@ -1,16 +1,18 @@
 import path from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { LOCAL_INSTRUCTION_FILES, logger } from '@weavecode/core';
+import { HARNESS_KEYS, HARNESS_DIRS, LOCAL_INSTRUCTION_FILES, logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import { findGitRepoRoot } from './git-commit.js';
 
 /**
- * 本机私有指令文件的 git 免登记（`.git/info/exclude`）。
+ * weave 生成物的 git 免登记（`.git/info/exclude`，2026-11-13 用户裁决「init
+ * 完全无污染」）。
  *
- * `CLAUDE.local.md` / `AGENTS.override.md` 是**机器本地的**（用户手编、weave
- * 从不写内容）——与嵌套 gitignore「要随仓传播」的需求相反，exclude 的
- * per-clone 语义恰好正确：本机不进 git status、协作者不受影响。用户自己的
- * `.gitignore` 永不碰（既有裁决），git 仓缺席时静默跳过。
+ * 生成目录（`.claude/` / `.codex/` / `.weave/`）与本机私有指令文件
+ * （`CLAUDE.local.md` / `AGENTS.override.md`）全部登记 exclude——git status
+ * 零痕迹、用户的根 `.gitignore` 永不碰、也不再有嵌套 `.gitignore` 待提交项。
+ * exclude 的 per-clone 语义恰好正确：机器本地、可再生，协作者自己跑 weave init
+ * 时各自拿到自己的 exclude 块。git 仓缺席时静默跳过。
  *
  * 写入走 `# weave:start/end` 标记块（与 CLAUDE.md 管理块同约定）：重跑 init
  * 原地替换，幂等。
@@ -19,9 +21,13 @@ import { findGitRepoRoot } from './git-commit.js';
 export const EXCLUDE_BLOCK_START = '# weave:start';
 export const EXCLUDE_BLOCK_END = '# weave:end';
 
-/** 免登记名单：local 指令文件 + `.weave/token`（本机凭据，config.yaml 仍可提交）。 */
+/** 免登记名单：生成目录（harness 注册表派生）+ local 指令文件。 */
 export function excludeEntries(): readonly string[] {
-  return [...LOCAL_INSTRUCTION_FILES, '.weave/token'];
+  return [
+    ...HARNESS_KEYS.map((h) => `${HARNESS_DIRS[h].projectDir}/`),
+    '.weave/',
+    ...LOCAL_INSTRUCTION_FILES,
+  ];
 }
 
 /**

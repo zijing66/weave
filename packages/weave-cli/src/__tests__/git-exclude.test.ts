@@ -18,11 +18,15 @@ const excludeOf = async (repo = tmpDir): Promise<string> =>
   readFile(path.join(repo, '.git', 'info', 'exclude'), 'utf-8');
 
 describe('excludeEntries', () => {
-  it('lists the local instruction file of every harness plus .weave/token', () => {
+  it('lists generated dirs of every harness plus local instruction files', () => {
     const entries = excludeEntries();
+    expect(entries).toContain('.claude/');
+    expect(entries).toContain('.codex/');
+    expect(entries).toContain('.weave/');
     expect(entries).toContain('CLAUDE.local.md');
     expect(entries).toContain('AGENTS.override.md');
-    expect(entries).toContain('.weave/token');
+    // 旧条目已退役：.weave/ 整目录进 exclude 后，单列 token 冗余
+    expect(entries).not.toContain('.weave/token');
   });
 });
 

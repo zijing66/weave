@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import {
   type InitOptions,
   type InitResult,
@@ -9,7 +9,6 @@ import {
   resolveComponents,
   DEFAULT_HOOKS,
   DEFAULT_MCP,
-  HARNESS_DIRS,
   HARNESS_KEYS,
   ensureDir,
   fileExists,
@@ -165,16 +164,12 @@ export async function executeInit(
   }
 
   // ---- Step 10: Keep weave's generated dirs out of version control ----
-  // `.claude/`（或 codex 选择时的 `.codex/`）与 `.weave/` hold machine-local,
-  // regenerable content (a statusline script embedding this machine's absolute
-  // paths, init metadata). Each gets a self-ignoring `.gitignore` rather than an
-  // entry in the user's root `.gitignore`: the nested file is itself committed,
-  // so a teammate who clones inherits the rule without weave ever editing a
-  // file the user owns.
-  for (const h of selected) {
-    await ensureNestedGitignore(targetDir, path.join(targetDir, HARNESS_DIRS[h].projectDir), created);
-  }
-  await ensureNestedGitignore(targetDir, path.join(targetDir, '.weave'), created);
+  // 2026-11-13 用户裁决「init 完全无污染」：免登记走 `.git/info/exclude`
+  // （Step 10.5 同拍），新装不再写嵌套 `.gitignore`——它本身是待提交项，
+  // 提交前 git status 就有 .claude/.weave 两条 untracked（用户实测反馈）。
+  // 存量目录里**用户编辑过的**嵌套 gitignore（带窄例外）原样保留——那是
+  // 用户有意要提交部分生成物，weave 不猜不动；weave 出厂的标准形（无例外）
+  // 也留着不拆（已提交的文件拆掉反而制造 diff）。
 
   // ---- Step 10.5: 本机私有指令文件（CLAUDE.local.md / AGENTS.override.md）与
   // .weave/token 登记 `.git/info/exclude`——先于提交询问，git status 才不把它们
@@ -227,41 +222,15 @@ export async function executeInit(
 }
 
 /**
- * Self-ignoring `.gitignore` contents written into each weave-generated dir.
+ * Self-ignoring `.gitignore` contents (legacy form, 2026-11-13 前的出厂形).
  *
- * `*` ignores everything beside the file itself; the `!` line keeps this file
- * tracked so the rule travels with the repository.
+ * 退役为只读兼容：新装不再写（免登记改走 `.git/info/exclude`，见 Step 10）；
+ * 存量已提交的不拆。保留常量供漂移检测与旧仓对照。
  */
 export const NESTED_GITIGNORE = `# weave — generated; do not commit
 *
 !.gitignore
 `;
-
-/**
- * Write a self-ignoring `.gitignore` into a weave-generated directory.
- *
- * The user's own root `.gitignore` is never touched (`.git/info/exclude` is not
- * used either — it is machine-local, so a teammate cloning the repo would not
- * inherit the rule). A file that already exists — the constant or a version the
- * user edited (e.g. a narrow `!plugins/` exception to track project plugin
- * sources) — is left alone: weave never clobbers a `.gitignore`. Idempotent; a
- * no-op outside a git repository, matching the previous behaviour for projects
- * weave is run in before `git init`.
- */
-async function ensureNestedGitignore(
-  targetDir: string,
-  dir: string,
-  created: { directories: string[]; files: string[] },
-): Promise<void> {
-  if (!(await findGitRepoRoot(targetDir))) return;
-
-  const file = path.join(dir, '.gitignore');
-  if ((await readTextIfPresent(file)) !== null) return;
-
-  await ensureDir(dir);
-  await writeFile(file, NESTED_GITIGNORE, 'utf-8');
-  created.files.push(file);
-}
 
 /**
  * Enable `git rerere` in the project's repo config (design 6.5-1: rerere
@@ -287,18 +256,4 @@ export async function ensureRerereEnabled(targetDir: string): Promise<void> {
   } catch (err) {
     logger.warn(t('init.rerere.failed', { error: (err as Error).message }));
   }
-}
-
-/** Read a file's text, or null when absent. Any other error propagates. */
-async function readTextIfPresent(filePath: string): Promise<string | null> {
-  try {
-    return await readFile(filePath, 'utf-8');
-  } catch (err) {
-    if (isMissingFileError(err)) return null;
-    throw err;
-  }
-}
-
-function isMissingFileError(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT';
 }

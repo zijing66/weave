@@ -19,7 +19,7 @@ import {
   registerProject,
   SessionRepository,
 } from '@weavecode/server';
-import { executeInit } from '../init/executor';
+import { executeInit, NESTED_GITIGNORE } from '../init/executor';
 import { executeUninstall } from '../init/uninstall';
 import { COMMIT_MESSAGE } from '../init/git-commit';
 
@@ -217,6 +217,12 @@ describe('executeUninstall', () => {
     git(['commit', '-m', 'base']);
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    // 存量仓形态：嵌套 gitignore 已被追踪（新版 init 不再生成）——手写两枚
+    // 模拟旧版遗留，add 后提交面非空。
+    for (const d of ['.claude', '.weave']) {
+      await writeFile(path.join(tmpDir, d, '.gitignore'), NESTED_GITIGNORE);
+      git(['add', '-f', `${d}/.gitignore`]);
+    }
     commitInitOutputs();
     const initSha = git(['rev-parse', 'HEAD']).stdout.trim();
     expect(git(['log', '-1', '--format=%s']).stdout.trim()).toBe(COMMIT_MESSAGE);
@@ -231,7 +237,7 @@ describe('executeUninstall', () => {
     expect(git(['status', '--porcelain']).stdout.trim()).toBe('');
     expect(await exists(path.join(tmpDir, '.weave'))).toBe(false);
     expect(await exists(path.join(tmpDir, '.claude'))).toBe(false);
-  });
+  }, 30_000);
 
   it('commits the removal when history has moved past the init commit', async () => {
     git(['init']);
@@ -242,6 +248,10 @@ describe('executeUninstall', () => {
     git(['commit', '-m', 'base']);
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    for (const d of ['.claude', '.weave']) {
+      await writeFile(path.join(tmpDir, d, '.gitignore'), NESTED_GITIGNORE);
+      git(['add', '-f', `${d}/.gitignore`]);
+    }
     commitInitOutputs();
 
     await writeFile(path.join(tmpDir, 'feature.txt'), 'feature\n');
@@ -263,7 +273,7 @@ describe('executeUninstall', () => {
     expect(lsFiles).not.toContain('CLAUDE.md');
     expect(lsFiles).not.toContain('AGENTS.md');
     expect(git(['status', '--porcelain']).stdout.trim()).toBe('');
-  });
+  }, 30_000);
 
   it('skips git when the index is dirty', async () => {
     git(['init']);

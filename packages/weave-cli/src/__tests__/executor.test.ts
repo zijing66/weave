@@ -127,16 +127,30 @@ describe('executeInit', () => {
     expect(content).toBe(original);
   });
 
-  // ---- Step 10: generated dirs carry a self-ignoring .gitignore ----
-  it('writes a self-ignoring .gitignore into .claude/ and .weave/', async () => {
+  // ---- Step 10（2026-11-13 无污染裁决）：生成目录免登记全走 info/exclude，
+  // 新装不再写嵌套 .gitignore（它本身是待提交项）----
+  it('writes no nested .gitignore; generated dirs go to .git/info/exclude', async () => {
     await mkdir(path.join(tmpDir, '.git'), { recursive: true });
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
     for (const dir of ['.claude', '.weave']) {
-      const content = await readFile(path.join(tmpDir, dir, '.gitignore'), 'utf-8');
-      expect(content).toContain('*');
-      expect(content).toContain('!.gitignore');
+      await expect(readFile(path.join(tmpDir, dir, '.gitignore'), 'utf-8')).rejects.toThrow();
     }
+    const exclude = await readFile(path.join(tmpDir, '.git', 'info', 'exclude'), 'utf-8');
+    expect(exclude).toContain('.claude/');
+    expect(exclude).toContain('.weave/');
+    expect(exclude).not.toContain('.weave/token');
+  });
+
+  it('keeps a user-edited nested .gitignore (narrow exceptions survive re-init)', async () => {
+    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
+    const edited = '# weave — generated; do not commit\n*\n!.gitignore\n!plugins/\n!plugins/**\n';
+    const nested = path.join(tmpDir, '.weave');
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(nested, '.gitignore'), edited);
+
+    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
+    expect(await readFile(path.join(nested, '.gitignore'), 'utf-8')).toBe(edited);
   });
 
   it('still never creates or touches the root .gitignore', async () => {
@@ -165,26 +179,14 @@ describe('executeInit', () => {
     expect(await readFile(excludePath, 'utf-8')).toBe(text);
   });
 
-  it('is idempotent — re-init keeps the nested .gitignore byte-identical', async () => {
+  it('is idempotent — re-init keeps the exclude block identical', async () => {
     await mkdir(path.join(tmpDir, '.git'), { recursive: true });
 
     await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    const first = await readFile(path.join(tmpDir, '.claude', '.gitignore'), 'utf-8');
+    const first = await readFile(path.join(tmpDir, '.git', 'info', 'exclude'), 'utf-8');
     const second = await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(await readFile(path.join(tmpDir, '.claude', '.gitignore'), 'utf-8')).toBe(first);
-    // already-correct file is not reported as recreated
-    expect(second.created.files).not.toContain(path.join(tmpDir, '.claude', '.gitignore'));
-  });
-
-  it('leaves a user-edited nested .gitignore alone (narrow exceptions survive re-init)', async () => {
-    await mkdir(path.join(tmpDir, '.git'), { recursive: true });
-    const edited = '# weave — generated; do not commit\n*\n!.gitignore\n!plugins/\n!plugins/**\n';
-    const nested = path.join(tmpDir, '.weave');
-    await mkdir(nested, { recursive: true });
-    await writeFile(path.join(nested, '.gitignore'), edited);
-
-    await executeInit({ ...BASE_OPTIONS, targetDir: tmpDir });
-    expect(await readFile(path.join(nested, '.gitignore'), 'utf-8')).toBe(edited);
+    expect(await readFile(path.join(tmpDir, '.git', 'info', 'exclude'), 'utf-8')).toBe(first);
+    expect(second.created.files).not.toContain(path.join(tmpDir, '.git', 'info', 'exclude'));
   });
 
   // ---- Step 6b: plugin templates bypass the core component switches ----
@@ -487,7 +489,7 @@ describe('executeInit — 询问 commit（真实 git 集成）', () => {
     }
   }
 
-  it.skipIf(!hasGit)('confirm=y → 仅 init 产物入库（嵌套 gitignore 裁剪生效）', async () => {
+  it.skipIf(!hasGit)('confirm=y → 仅 init 产物入库（exclude 无污染：候选全被挡，零提交零提问）', async () => {
     const dir = await makeRepo();
     try {
       const prompt = makePrompt(true);
@@ -496,23 +498,16 @@ describe('executeInit — 询问 commit（真实 git 集成）', () => {
         executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, prompt),
       );
       expect(out.success).toBe(true);
-      expect(prompt.confirm).toHaveBeenCalledTimes(1);
-      expect(head(dir)).not.toBe(before);
-
-      const files = git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean);
-      expect(files).toEqual(
-        expect.arrayContaining(['.claude/.gitignore', '.weave/.gitignore']),
-      );
-      // local-first：指令文件落本机文件（exclude 挡住），共享文件不再生成
-      expect(files).not.toContain('CLAUDE.md');
-      expect(files).not.toContain('AGENTS.md');
-      // 嵌套 .gitignore 内容（* / !.gitignore）阻止其余产物入库
-      expect(files).not.toContain('.claude/settings.json');
-      expect(files).not.toContain('.weave/config.yaml');
-      // 提交后候选路径工作区干净
+      // 生成目录与指令文件全在 exclude 里 → status 候选为空 → 不提问不提交
+      expect(prompt.confirm).not.toHaveBeenCalled();
+      expect(head(dir)).toBe(before);
+      // 生成物在盘上、但 git status 零痕迹（完全无污染）
       expect(
         git(dir, 'status', '--porcelain', '--', 'CLAUDE.local.md', 'AGENTS.override.md', '.claude', '.weave').trim(),
       ).toBe('');
+      const exclude = git(dir, 'status', '--porcelain', '--ignored=matching', '--', '.claude', '.weave');
+      void exclude;
+      expect(await readFile(path.join(dir, '.claude', 'settings.json'), 'utf-8')).toBeTruthy();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -526,7 +521,7 @@ describe('executeInit — 询问 commit（真实 git 集成）', () => {
       await withTTY(() =>
         executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, prompt),
       );
-      expect(prompt.confirm).toHaveBeenCalledTimes(1);
+      expect(prompt.confirm).not.toHaveBeenCalled();
       expect(head(dir)).toBe(before);
       expect(
         spawnSync('git', ['diff', '--cached', '--quiet'], { cwd: dir }).status,
@@ -549,22 +544,22 @@ describe('executeInit — 询问 commit（真实 git 集成）', () => {
     }
   });
 
-  it.skipIf(!hasGit)('二次 init 幂等 → 候选路径无变化，confirm 不再被调用（只问一次）', async () => {
+  it.skipIf(!hasGit)('二次 init 幂等 → 候选路径恒空，两次都不提问（exclude 生效零候选）', async () => {
     const dir = await makeRepo();
     try {
       const first = makePrompt(true);
       await withTTY(() =>
         executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, first),
       );
-      expect(first.confirm).toHaveBeenCalledTimes(1);
+      expect(first.confirm).not.toHaveBeenCalled();
       const afterFirst = head(dir);
 
       const second = makePrompt(true);
       await withTTY(() =>
         executeInit({ ...BASE_OPTIONS, targetDir: dir, interactive: true }, second),
       );
-      expect(second.confirm).not.toHaveBeenCalled(); // status 对候选路径为空 → 不提问
-      expect(head(dir)).toBe(afterFirst); // 也没有产生空 commit
+      expect(second.confirm).not.toHaveBeenCalled();
+      expect(head(dir)).toBe(afterFirst);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
