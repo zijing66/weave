@@ -34,6 +34,13 @@ export const ATTACH_MEDIA_ATTR = 'data-attach-media';
 export const SESSION_ATTR = 'data-session-target';
 export const SESSION_NAME_ATTR = 'data-session-name';
 
+/** 项目目标胶囊（`#` 引用的项目半边）：值 = 项目 id。**纯标注**——序列化成
+ *  `#p<id>「项目名」`（`p` 前缀与会话 id 区分），模型看到后自己读项目文件；
+ *  weave 不代做任何动作（与「引用会话」同构：标注进正文，发送仍是本会话的
+ *  prompt）。id 是标识（改名不影响），名字单独存供还原胶囊。 */
+export const PROJECT_ATTR = 'data-project-target';
+export const PROJECT_NAME_ATTR = 'data-project-name';
+
 /** `nodeType` 的取值写死成字面量：测试环境是 node（没有 `Node` 全局），
  *  而这些数与 DOM 规范同寿，不会变。 */
 const ELEMENT_NODE = 1;
@@ -44,13 +51,14 @@ const TEXT_NODE = 3;
 const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3']);
 
 /** 输入框 DOM 摊平后的片段：一段文本、一枚引用胶囊、一枚命令胶囊、一枚附件占位
- *  胶囊或一枚会话目标胶囊。 */
+ *  胶囊、一枚会话目标胶囊或一枚项目目标胶囊。 */
 type DraftToken =
   | { text: string }
   | { ref: string; path: string; kind: PickTarget['kind']; lines?: { start: number; end: number } }
   | { cmd: string; sigil?: CmdSigil; source?: CmdSource }
   | { attach: string; name: string; path: string; mediaType: string }
-  | { session: string; name: string };
+  | { session: string; name: string }
+  | { project: string; name: string };
 
 /** composer DOM → 线性 token。**换行规则只说这一处**：
  *  - `<br>` = 一个换行；
@@ -109,6 +117,11 @@ function draftTokensOf(root: Node | null): DraftToken[] {
       out.push({ session, name: el.getAttribute(SESSION_NAME_ATTR) ?? '' });
       return;
     }
+    const project = el.getAttribute(PROJECT_ATTR);
+    if (project != null) {
+      out.push({ project, name: el.getAttribute(PROJECT_NAME_ATTR) ?? '' });
+      return;
+    }
     if (el.tagName === 'BR') {
       text('\n');
       return;
@@ -135,6 +148,11 @@ function draftTokensOf(root: Node | null): DraftToken[] {
       const session = el.getAttribute(SESSION_ATTR);
       if (session != null) {
         out.push({ session, name: el.getAttribute(SESSION_NAME_ATTR) ?? '' });
+        return;
+      }
+      const project = el.getAttribute(PROJECT_ATTR);
+      if (project != null) {
+        out.push({ project, name: el.getAttribute(PROJECT_NAME_ATTR) ?? '' });
         return;
       }
       const inner = Array.from(el.childNodes);
@@ -164,6 +182,9 @@ export function serializeDraft(root: Node | null): string {
       // 影响判断），名字是宿主 SendMessage 唯一能寻址的形态：它的解析器只认
       // 名字 / `名字 [ref]` / agent id / uds|bridge，session id 不是地址
       if ('session' in t) return t.name ? `#${t.session}「${t.name}」` : `#${t.session}`;
+      // 项目目标胶囊 = 纯上下文标注：`#p<id>「<项目名>」`（p 前缀与会话 id 区分，
+      // 模型据此知道指向的是整个项目；weave 不代做动作）
+      if ('project' in t) return t.name ? `#p${t.project}「${t.name}」` : `#p${t.project}`;
       // 附件胶囊：文件 = 路径；图片 = 独立成行的路径（前后补行边界）
       if (!isImageUpload({ mediaType: t.mediaType })) return t.path;
       // 行边界 = 没有邻居，或邻居是文本且贴着的那头已是换行；胶囊邻居（序列化成
@@ -191,6 +212,7 @@ export interface DraftSnapshot {
     | { c: string; s?: CmdSource; g?: CmdSigil }
     | { a: string; p: string; n: string; m: string }
     | { ss: string; n: string }
+    | { sp: string; n: string }
   >;
   /** 已落盘、还没发出去的文件（同一条草稿的附件）。 */
   staged: UploadFile[];
@@ -253,6 +275,8 @@ export function draftSnapshotOf(
       parts.push({ a: token.attach, p: token.path, n: token.name, m: token.mediaType });
     } else if ('session' in token) {
       parts.push({ ss: token.session, n: token.name });
+    } else if ('project' in token) {
+      parts.push({ sp: token.project, n: token.name });
     } else {
       parts.push({ r: token.ref, path: token.path, kind: token.kind, ...(token.lines ? { lines: token.lines } : {}) });
     }
@@ -269,6 +293,7 @@ export function applyDraftSnapshot(
   buildCmdChip?: (name: string, source?: CmdSource, sigil?: CmdSigil) => HTMLElement,
   buildAttachChip?: (part: { a: string; p: string; n: string; m: string }) => HTMLElement,
   buildSessionChip?: (sessionId: string, name: string) => HTMLElement,
+  buildProjectChip?: (projectId: string, name: string) => HTMLElement,
 ): void {
   root.replaceChildren();
   for (const part of snap.parts) {
@@ -283,6 +308,14 @@ export function applyDraftSnapshot(
       else
         root.appendChild(
           document.createTextNode(part.n ? `#${part.ss}「${part.n}」` : `#${part.ss}`),
+        );
+      continue;
+    }
+    if ('sp' in part) {
+      if (buildProjectChip) root.appendChild(buildProjectChip(part.sp, part.n));
+      else
+        root.appendChild(
+          document.createTextNode(part.n ? `#p${part.sp}「${part.n}」` : `#p${part.sp}`),
         );
       continue;
     }
@@ -471,7 +504,11 @@ const CMD_CHIP_CLASS = `${CHIP_BASE} max-w-none whitespace-nowrap border-amber-5
 const SKILL_CHIP_CLASS = `${CHIP_BASE} max-w-none whitespace-nowrap border-red-500/40 bg-red-500/15 text-red-200`;
 
 /** 会话目标胶囊：紫色系（跨会话这个概念全站一色）。 */
-export const SESSION_CHIP_CLASS = `${CHIP_BASE} max-w-[14rem] border-violet-500/40 bg-violet-500/15 text-violet-200`;
+export const SESSION_CHIP_CLASS = `${CHIP_BASE} max-w-[14rem] border-violet-500/60 bg-violet-500/25 text-violet-200`;
+
+/** 项目目标胶囊：青色系——同为 `#` 引用但语义不同（上下文 vs 收件人），同色系
+ *  会让人误读成会话；深浅主题两套主题令牌自动翻转（100–400 字侧 / 800+ 底侧）。 */
+export const PROJECT_CHIP_CLASS = `${CHIP_BASE} max-w-[14rem] border-cyan-500/60 bg-cyan-500/25 text-cyan-200`;
 
 export type CmdSource = HarnessCommandRow['source'];
 export type CmdSigil = '/' | '$';

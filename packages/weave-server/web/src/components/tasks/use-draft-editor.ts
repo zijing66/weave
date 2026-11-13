@@ -31,6 +31,9 @@ import {
   SESSION_ATTR,
   SESSION_NAME_ATTR,
   SESSION_CHIP_CLASS,
+  PROJECT_ATTR,
+  PROJECT_NAME_ATTR,
+  PROJECT_CHIP_CLASS,
   type CmdQueryHit,
   type CmdSigil,
   type CmdSource,
@@ -275,12 +278,28 @@ const buildSessionChip = (sessionId: string, name: string): HTMLElement => {
   return chip;
 };
 
+/** 造一枚项目目标胶囊：值 = 项目 id，展示 = 项目名。纯上下文标注——发送时
+ *  序列化成 `#p<id>「项目名」`，模型自己读项目文件，weave 不代做动作。 */
+const buildProjectChip = (projectId: string, name: string): HTMLElement => {
+  const chip = document.createElement('span');
+  chip.setAttribute('contenteditable', 'false');
+  chip.setAttribute(PROJECT_ATTR, projectId);
+  chip.setAttribute(PROJECT_NAME_ATTR, name);
+  chip.className = PROJECT_CHIP_CLASS;
+  chip.textContent = `#${name}`;
+  chip.title = name;
+  return chip;
+};
+
 /** 落定引用目标：**多目标**——与 `@` 引用胶囊同构，在触发 `#` 的位置追加一枚，
  *  已有的不摘（一处正文里可以标注多个收件人）。前邻居非空白时先补一个空格
  *  （胶囊粘在字上序列化出 `字#…` 会把标注并进正文）；胶囊后恒补一个空格，
  *  光标停其后（正文接着敲就行）。走 `insertNodesUndoably` 与 `@` 回填同一条
  *  撤销语义（独立撤销步，不并进打字组）。 */
-const insertSessionTarget = (sessionId: string, name: string): void => {
+/** 落定的公共尾：前邻居非空白补空格 + 胶囊 + 尾随空格，光标停其后（正文接着敲
+ *  就行）。走 `insertNodesUndoably` 与 `@` 回填同一条撤销语义（独立撤销步，不并
+ *  进打字组）。会话/项目两枚胶囊共用，`hashRange` 消费一次（那枚 `#` 已被吃掉）。 */
+const insertTargetChip = (chip: HTMLElement): void => {
   const el = draftRef.current;
   if (!el) return;
   const saved = hashRange.current;
@@ -295,11 +314,16 @@ const insertSessionTarget = (sessionId: string, name: string): void => {
       ? [document.createTextNode(' ')]
       : [];
   })();
-  insertNodesUndoably(
-    el,
-    [...lead, buildSessionChip(sessionId, name), document.createTextNode(' ')],
-    saved,
-  );
+  insertNodesUndoably(el, [...lead, chip, document.createTextNode(' ')], saved);
+};
+
+const insertSessionTarget = (sessionId: string, name: string): void => {
+  insertTargetChip(buildSessionChip(sessionId, name));
+};
+
+/** 落定项目目标：与会话同构（多目标、前置空格、尾随空格全同一套）。 */
+const insertProjectTarget = (projectId: string, name: string): void => {
+  insertTargetChip(buildProjectChip(projectId, name));
 };
 
 /** 附件占位胶囊：图 = 微缩略图 + 截短名，文件 = 图标 + 截短名。
@@ -446,7 +470,7 @@ useEffect(() => {
   const el = draftRef.current;
   const snap = readDraftSnapshot(sessionId);
   if (!el || !snap) return;
-  applyDraftSnapshot(el, snap, buildChip, buildCmdChip, buildAttachChip, buildSessionChip);
+  applyDraftSnapshot(el, snap, buildChip, buildCmdChip, buildAttachChip, buildSessionChip, buildProjectChip);
   setDraft(serializeDraft(el));
   if (snap.staged.length > 0)
     setStaged(
@@ -618,9 +642,19 @@ const maybeOpenTrigger = (
 const maybeOpenPicker = (el: HTMLDivElement, native: InputEvent): boolean =>
   maybeOpenTrigger(el, native, '@', atRange, () => setPicker({ chip: null }));
 
-/** 敲 `#` 唤出会话选择器（`\#` 除外）。返回 true = 这次输入已被接管。 */
-const maybeOpenSessionPicker = (el: HTMLDivElement, native: InputEvent): boolean =>
-  maybeOpenTrigger(el, native, '#', hashRange, () => setSessionPickerOpen(true));
+/** 敲 `#` 唤出会话选择器（`\#` 除外；补回字面 `#` 的那一拍被抑制）。返回 true =
+ *  这次输入已被接管。 */
+const maybeOpenSessionPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
+  if (suppressHashTrigger.current) {
+    setDraft(serializeDraft(el));
+    return true;
+  }
+  return maybeOpenTrigger(el, native, '#', hashRange, () => setSessionPickerOpen(true));
+};
+
+/** 补回的 `#` 不该再唤出选择器：insertText 的 input 事件会同步再进
+ *  maybeOpenSessionPicker（重开 + 重记账 → 关一次冒两枚 `#`），用标志抑制一拍。 */
+const suppressHashTrigger = useRef(false);
 
 /** 关掉会话选择器：把那枚 `#` 补回原位（markdown 标题撞的就是这枚键，不补回去
  *  标题就丢字了——想引用会话就选中一个目标，而不是关掉它）。 */
@@ -635,7 +669,10 @@ const closeSessionPicker = (): void => {
   const sel = window.getSelection();
   sel?.removeAllRanges();
   sel?.addRange(saved);
+  suppressHashTrigger.current = true;
   insertText('#');
+  suppressHashTrigger.current = false;
+  hashRange.current = null;
 };
 
 /** 整段写回（出队编辑 / 发走清空）：DOM 与镜像一起换。胶囊在这里退化回
@@ -706,6 +743,7 @@ const onChipDragEnd = (): void => {
     insertRefs, insertRichText,
     closePicker, openChip, maybeOpenPicker,
     buildSessionChip, insertSessionTarget, maybeOpenSessionPicker, closeSessionPicker,
+    buildProjectChip, insertProjectTarget,
     onChipDragOver, onChipDrop, onChipDragEnd, onChipDragStart,
     setDraftText,
   };

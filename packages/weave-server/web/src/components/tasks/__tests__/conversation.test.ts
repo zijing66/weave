@@ -845,6 +845,20 @@ describe('serializeDraft（composer DOM → 要发出去的原文）', () => {
     expect(serializeDraft(draft([bare]))).toBe('#sess-c');
   });
 
+  it('⑨-b 项目目标胶囊：序列化展开成 `#p<id>「<名>」`（p 前缀区分会话）、进快照（sp/n）——纯标注，weave 不代做动作', () => {
+    const chip = el('SPAN', [text('#weave')], {
+      'data-project-target': '42',
+      'data-project-name': 'weave',
+    });
+    expect(serializeDraft(draft([chip, text('看看这个项目')]))).toBe('#p42「weave」看看这个项目');
+    const root = draft([text('对比 '), chip, text(' 与本仓')]);
+    const snap = draftSnapshotOf(root as unknown as HTMLElement, []);
+    expect(snap?.parts).toEqual([{ t: '对比 ' }, { sp: '42', n: 'weave' }, { t: ' 与本仓' }]);
+    // 没有名字（老快照/异常）时退回裸 `#p<id>`
+    const bare = el('SPAN', [text('#x')], { 'data-project-target': '7' });
+    expect(serializeDraft(draft([bare]))).toBe('#p7');
+  });
+
   it('⑩ placeholder 的触发符只摆 harness 真能敲的：`#` 恒有、`@` 看能力面、`$` 随候选清单', () => {
     const modes = [
       { kind: 'slash', sigil: '/', named: true },

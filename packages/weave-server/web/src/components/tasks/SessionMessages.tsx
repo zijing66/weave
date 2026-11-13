@@ -343,6 +343,7 @@ export function SessionMessages({
     insertRefs, insertRichText,
     closePicker, openChip, maybeOpenPicker,
     buildSessionChip, insertSessionTarget, maybeOpenSessionPicker, closeSessionPicker,
+    insertProjectTarget,
     onChipDragOver, onChipDrop, onChipDragEnd, onChipDragStart,
     setDraftText,
   } = useDraftEditor({
@@ -386,6 +387,37 @@ export function SessionMessages({
       setSessionPickerOpen(false);
     },
     [insertSessionTarget, setSessionPickerOpen],
+  );
+  /** 整批落定（Space 多选）：按勾选序逐枚插入（每枚自带前后空格，连排也合法）。 */
+  const handleShuttlePickBatch = useCallback(
+    (items: ReadonlyArray<{ sessionId: string; name: string }>) => {
+      for (const it of items) insertSessionTarget(it.sessionId, it.name);
+      setSessionPickerOpen(false);
+    },
+    [insertSessionTarget, setSessionPickerOpen],
+  );
+  /** 引用整个项目（青色标注胶囊 `#p<id>「名」`，纯上下文——模型自己读项目）。 */
+  const handleShuttlePickProject = useCallback(
+    (projectId: number, name: string) => {
+      insertProjectTarget(String(projectId), name);
+      setSessionPickerOpen(false);
+    },
+    [insertProjectTarget, setSessionPickerOpen],
+  );
+  /** 项目整批落定（Space 多选项目后 Enter）：按勾选序逐枚插入。 */
+  const handleShuttlePickProjectsBatch = useCallback(
+    (items: ReadonlyArray<{ projectId: number; name: string }>) => {
+      for (const it of items) insertProjectTarget(String(it.projectId), it.name);
+      setSessionPickerOpen(false);
+    },
+    [insertProjectTarget, setSessionPickerOpen],
+  );
+  /** 标题换 superagent 版（「引用项目/会话」）：当前会话属于内建超级代理仓才换。 */
+  const superagentTitle = useMemo(
+    () => sessions?.find((s) => s.sessionId === sessionId) != null
+      ? (projects ?? []).some((p) => p.superagent && p.id === shuttleProjectId)
+      : false,
+    [sessions, sessionId, projects, shuttleProjectId],
   );
 
   /** placeholder 上的引用块触发符：只摆这个 harness 真能敲出来的（`@` 看
@@ -2529,6 +2561,10 @@ export function SessionMessages({
             statuses={statuses}
             currentProjectId={shuttleProjectId}
             onPick={handleShuttlePick}
+            onPickBatch={handleShuttlePickBatch}
+            onPickProject={handleShuttlePickProject}
+            onPickProjectsBatch={handleShuttlePickProjectsBatch}
+            superagentTitle={superagentTitle}
             onClose={closeSessionPicker}
           />
         )}

@@ -6,6 +6,11 @@ import { OrchestrationRepository } from '../../repositories/orchestrations.js';
 import { RpgGrowthRepository, RpgRoleRepository, archetypeBaseline, APPEARANCE_SEED_MAX } from '../roles.js';
 import { provisionRole, provisionRoleFromTemplate, scaffoldCoordinator } from '../provisioning.js';
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+
+const readStampVersion = (stampFile: string): string => {
+  const raw = readFileSync(stampFile, 'utf-8').trim();
+  return /^initVersion:\s*(\S+)$/m.exec(raw)?.[1] ?? raw;
+};
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WEAVE_VERSION } from '../../version.js';
@@ -311,7 +316,7 @@ describe('scaffoldCoordinator', () => {
       await scaffoldCoordinator({ projects, roles }, root);
       const skillFile = path.join(root, '.claude', 'skills', 'supervise', 'SKILL.md');
       const stampFile = path.join(root, '.weave', 'scaffold-version');
-      expect(readFileSync(stampFile, 'utf-8').trim()).toBe(WEAVE_VERSION);
+      expect(readStampVersion(stampFile)).toBe(WEAVE_VERSION);
       // 同版本：用户编辑保留（上一用例同判据，这里顺带盖一遍往返）
       writeFileSync(skillFile, 'user edited', 'utf-8');
       // 版本变化：出厂 skill 重物化 + stamp 回写当前版本
@@ -319,7 +324,7 @@ describe('scaffoldCoordinator', () => {
       const refreshed = await scaffoldCoordinator({ projects, roles }, root);
       expect(refreshed.skillsSeeded).toEqual(['supervise', 'breakout', 'downgrade']);
       expect(readFileSync(skillFile, 'utf-8')).not.toBe('user edited');
-      expect(readFileSync(stampFile, 'utf-8').trim()).toBe(WEAVE_VERSION);
+      expect(readStampVersion(stampFile)).toBe(WEAVE_VERSION);
       db.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
