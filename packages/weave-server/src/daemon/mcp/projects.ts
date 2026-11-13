@@ -179,7 +179,7 @@ export const PROJECTS_TOOLS = [
   {
     name: 'new_session',
     description:
-      "Start a new harness session in the project's terminal (bin from the resume surface; no resume args). Opens a terminal itself if none exists; optional worktree=true isolates the session in a fresh git worktree; optional target = a targetId from list_terminals to attach into that exact tab as a split (enumerable presets only — wezterm/wt; a gone or full target fails with the reason instead of silently moving elsewhere). Returns { ok, command, cwd, worktree? }; 501 when the harness cannot start, 409 when not integrated.",
+      "Start a new harness session in the project's terminal (bin from the resume surface; no resume args). Opens a terminal itself if none exists; optional worktree=true isolates the session in a fresh git worktree; optional target = a targetId from list_terminals to attach into that exact tab as a split (enumerable presets only — wezterm/wt; a gone or full target fails with the reason instead of silently moving elsewhere); optional title renames the session after it registers (pass the current task, e.g. 'fix login race'). Sessions started via MCP are hidden from the taskbar by default — bring them back with set_terminal_visibility {visibility:'show'}. Returns { ok, command, cwd, worktree? }; 501 when the harness cannot start, 409 when not integrated.",
     inputSchema: {
       type: 'object',
       required: ['projectId', 'harness'],
@@ -188,6 +188,7 @@ export const PROJECTS_TOOLS = [
         harness: { type: 'string', enum: ['claude', 'codex'] },
         worktree: { type: 'boolean' },
         target: { type: 'string', description: 'targetId from list_terminals — attach into that tab as a split' },
+        title: { type: 'string', description: 'rename the session to this after it registers (use the current task)' },
       },
     },
     outputSchema: { type: 'object', additionalProperties: true },
@@ -319,6 +320,8 @@ export function toolRequest(name: string, args: Args): McpToolRequest {
           harness: args.harness,
           ...(args.worktree === undefined ? {} : { worktree: args.worktree }),
           ...(args.target === undefined ? {} : { target: args.target }),
+          ...(args.title === undefined ? {} : { title: args.title }),
+          __viaMcp: true,
         },
       };
     case 'list_terminals':

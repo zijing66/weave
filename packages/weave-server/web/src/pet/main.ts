@@ -847,10 +847,11 @@ document.addEventListener('contextmenu', (e) => {
     });
   };
   const visRow = (label: string, pillBg: string, pillColor: string, countKey: 'visible' | 'hidden', vis: 'hide' | 'show'): HTMLDivElement => {
-    const row = item(label, () => toggleTerminals(vis));
     const pill = document.createElement('span');
     pill.textContent = '…';
-    pill.style.cssText = `float:right;margin-left:10px;padding:0 7px;border-radius:99px;font-size:10px;line-height:16px;background:${pillBg};color:${pillColor}`;
+    pill.style.cssText = `flex:none;margin-left:10px;padding:0 7px;border-radius:99px;font-size:10px;line-height:16px;background:${pillBg};color:${pillColor}`;
+    const row = item(label, () => toggleTerminals(vis));
+    row.style.cssText += 'display:flex;align-items:center;white-space:nowrap';
     row.appendChild(pill);
     void fetchJson<{ visible: number; hidden: number }>(`/terminals/visibility`).then((r) => {
       const n = r?.[countKey] ?? 0;

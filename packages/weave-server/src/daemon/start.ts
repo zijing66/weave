@@ -21,7 +21,7 @@ import { createEdgeExtract } from '../hooks/edge-extract.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { defaultWorktreeGitExec, startWorktreeMergeSweeper, type SessionWorktreeEntry } from './worktree.js';
-import { readTerminalHidden } from './opener.js';
+import { readTerminalHidden, readTerminalVisibility } from './opener.js';
 import { hooksRoot } from '../hooks/mirror.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
@@ -421,6 +421,7 @@ export function startDaemon(): void {
     async () => ({
       counts: await readTerminalCounts(projects.list()),
       hidden: await readTerminalHidden(projects.list()),
+      visibilities: Object.fromEntries((await readTerminalVisibility(projects.list())).byTarget),
       terminals: await messageDeliverer.sessionTerminals(),
     }),
     dataBus,

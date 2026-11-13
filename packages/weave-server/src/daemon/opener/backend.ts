@@ -177,6 +177,17 @@ export abstract class TerminalBackend {
     return null;
   }
 
+  /**
+   * 自动隐藏的精确通道：spawn 落子时按「进程号 → 窗口」差集认出新窗、按窗口句柄
+   * 直打，**不读窗口标题**（宿主 OSC 持续改名，标题认窗时灵时不灵）。返回 true =
+   * 已藏掉；false = 无精确通道（复用窗 / 认窗未成 / 本后端无 spawn 记账），调用方
+   * 退标题认窗。OS 差异归各实现（win32 = EnumWindows 差集；macOS/Linux 未来用
+   * CGWindowList ownerPid / wmctrl 同形接入，不动本面）。
+   */
+  async hideSpawnedWindow(_dir: string): Promise<boolean> {
+    return false;
+  }
+
   /** prompt 层② 兜底：枚举可注入文本的 pane；无通道的后端空表（不谎报）。 */
   async listPromptPanes(): Promise<PromptPaneTarget[]> {
     return [];

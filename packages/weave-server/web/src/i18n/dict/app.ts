@@ -119,7 +119,7 @@ export const appZh = {
   'project.storageTitle': '项目配置 — {name}',
   'project.hideWindowLabel': '打开终端后自动隐藏窗口',
   'project.hideWindowHint':
-    '开启后，打开/唤出该项目的终端窗口时会系统级隐藏（任务栏与 Alt+Tab 都不出现，进程照常运行）；找回入口 = 终端弹层的「显示」按钮。',
+    '默认开启：打开/唤出该项目的终端窗口时系统级隐藏（任务栏与 Alt+Tab 都不出现，进程照常运行），找回入口 = 终端弹层的「显示」按钮。仅显式关闭才不隐藏。',
   'project.storageIntro':
     '配置本项目的对话附件（图片/文件）落盘目录。留空 = 使用全局默认；已上传的文件留在原处，新上传走这里的配置。',
   'project.storageImages': '图片存储路径',
@@ -303,7 +303,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.storageTitle': 'Project settings — {name}',
   'project.hideWindowLabel': 'Auto-hide terminal window on open',
   'project.hideWindowHint':
-    'When enabled, opening / focusing this project’s terminal hides its OS window system-wide (gone from taskbar and Alt+Tab; the process keeps running). Bring it back with the “show” button in the terminal popup.',
+    'On by default: opening / focusing this project’s terminal hides its OS window system-wide (gone from taskbar and Alt+Tab; the process keeps running). Bring it back with the “show” button in the terminal popup. Only an explicit off keeps windows visible.',
   'project.storageIntro':
     'Where this project’s chat attachments (images / files) are stored. Leave empty for the global default; uploaded files stay where they are, new uploads follow this setting.',
   'project.storageImages': 'Image storage path',

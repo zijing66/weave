@@ -440,6 +440,13 @@ const DISMISS_GUARD_MAX = 200;
 /** pane 定位 env 落盘文件名（放 `<dataDir>/hooks/` 下，与 inbox 凭据同目录同口径）。 */
 const PANE_ENVS_FILE = 'pane-envs.json';
 const PENDING_ORIGINS_FILE = 'pending-origins.json';
+
+/** socket 比较键：统一斜杠、win 压大小写（同 mux 两形分隔符的既有口径）。 */
+function normalizeSocketKey(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.replace(/\\/g, '/');
+  return process.platform === 'win32' ? s.toLowerCase() : s;
+}
 /** 起点等到被认领的窗口：起完会话没人发消息 / rollout 采集失效就过期释放，不常驻。 */
 const PENDING_ORIGIN_TTL_MS = 15 * 60_000;
 
@@ -1002,6 +1009,30 @@ export class MessageDeliverer {
   /** 该会话的终端定位是否被另一个会话占着（fork 继承同一 pane）；有值 = 不可投递。 */
   paneEnvConflictOf(sessionId: string): string | null {
     return this.paneEnvConflicts.get(sessionId) ?? null;
+  }
+
+  /**
+   * 按 spawn 回执的起点 env 反查 sessionId（new-session 的 title 认领用）：paneEnvs
+   * 里的 env 与起点同源（claude = hook 旁路上报、codex = claimPendingOrigin 认领
+   * 同一份 env）。**不整串比对**——同一 socket 两种分隔符形状（mux 实测坑），按
+   * pane id 精确 + socket 归一（统一斜杠、win 压大小写）判等。找不到 = 还没上报
+   * （null，调用方再等）。
+   */
+  sessionIdOfPaneEnv(env: Record<string, string>): string | null {
+    const paneId = env['WEZTERM_PANE'];
+    const socketKey = normalizeSocketKey(env['WEZTERM_UNIX_SOCKET']);
+    if (paneId == null && socketKey == null) return null;
+    for (const [sessionId, other] of this.paneEnvs) {
+      if (paneId != null && other['WEZTERM_PANE'] !== paneId) continue;
+      if (
+        socketKey != null &&
+        normalizeSocketKey(other['WEZTERM_UNIX_SOCKET']) !== socketKey
+      ) {
+        continue;
+      }
+      return sessionId;
+    }
+    return null;
   }
 
   /**

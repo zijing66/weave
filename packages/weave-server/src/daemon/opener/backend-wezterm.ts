@@ -2,6 +2,7 @@ import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
 import {
   MAX_PANES_PER_SCREEN,
   countWindowsByDir,
+  hideSpawnedWeztermWindow,
   listAttachTargets,
   maximizeWeztermWindow,
   openInWezterm,
@@ -210,6 +211,12 @@ export class WeztermBackend extends TerminalBackend {
       guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
       titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
     });
+  }
+
+  /** 自动隐藏精确通道（win32）：spawn 差集认出的 HWND 直打，不读标题。 */
+  override hideSpawnedWindow(dir: string): Promise<boolean> {
+    if (this.platform !== 'win32') return Promise.resolve(false);
+    return hideSpawnedWeztermWindow(dir);
   }
 
   /** prompt 层②：跨 mux 摊平全部 pane（实时枚举——落点决策必须看实时世界）。 */

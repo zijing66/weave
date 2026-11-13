@@ -3,6 +3,7 @@ import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from './server.js';
 import { readDaemonSettings, type TerminalSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
+import { hideWindowOf, scheduleHideWindow, type ProjectStorage } from './routes/projects.js';
 import { combinedLivenessOf } from './liveness.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 
@@ -178,11 +179,18 @@ export async function openSessionTerminal(
       const origin = await opener.runInTerminal(runCwd, argv, settings.terminal);
       noteLaunchOrigin(deps, src, sessionId, origin);
     }
-    // 可见性兜底：项目开了 hideWindow 就别跟它的自动隐藏打架（延迟一拍后它自己藏）。
-    const hideWindow =
-      (deps.projects.getMeta(session.projectId) as { storage?: { hideWindow?: boolean } } | null)
-        ?.storage?.hideWindow === true;
-    if (!hideWindow) restoreVisibilityIfHidden(session.projectId, runCwd, settings.terminal);
+    // 可见性兜底：hideWindow 判据（未设置 = 默认藏，唯一出处 hideWindowOf）命中
+    // 就别跟自动隐藏打架（延迟一拍后它自己藏）。
+    const hideWindow = hideWindowOf(
+      (deps.projects.getMeta(session.projectId) as { storage?: ProjectStorage } | null)?.storage,
+    );
+    if (hideWindow) {
+      // hideWindow 的隐藏动作这里也要做（之前只在 /open 与 new-session 路由有，
+      // ensureOpen 拉起的窗口从不藏——设置无效的成因），不做 show 兜底。
+      scheduleHideWindow(deps as unknown as WeaveServerDeps, session.projectId, runCwd);
+    } else {
+      restoreVisibilityIfHidden(session.projectId, runCwd, settings.terminal);
+    }
     // 角标对账：新 pane 的 cwd 上报有一拍延迟（立即探看不到增量），600ms 后补一枪。
     setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
     return {

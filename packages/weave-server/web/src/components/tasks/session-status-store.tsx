@@ -44,6 +44,9 @@ interface SessionStatusValue {
   questions: Map<string, PendingQuestionEntry>;
   /** harness → 模型别名表（别名 → 真名）：模型下拉两个都摆，真名也认回别名那档。 */
   modelCatalog: Record<string, ModelAliasTarget[]>;
+  /** `<projectId>|<targetId>` → 终端窗口实况可见性（terminalTopology 帧随推；
+   *  会话列表终端分块组头的「眼睛」同源读它，不再自己打 N 枪）。 */
+  terminalVisibility: Map<string, 'visible' | 'hidden'>;
   /** 首屏三路（sessions/dispatches/questions）各自是否已响应过至少一拍（含失败）。 */
   settled: { sessions: boolean; dispatches: boolean; questions: boolean };
   /** 手动重拉（刷新按钮；SSE 之外兜底）。resolve = 会话列表拉取失败的原因，成功为 null。 */
@@ -124,6 +127,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     interrupted?: Record<string, number>;
     effort?: Record<string, string>;
   }>({});
+  /** 窗口可见性：terminalTopology 帧整包替换（30s 对账的绝对值快照，无合并语义）。 */
+  const [terminalVisibility, setTerminalVisibility] = useState(
+    () => new Map<string, 'visible' | 'hidden'>(),
+  );
 
   /** 行级补丁：只重算这几行的判据并就地换行（其余行保持原引用，不重渲染）。
    *  一条 hook 事件只改它自己那条会话的「最新事件 / 回合开合」，不必整套重拉。 */
@@ -248,8 +255,13 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
         // 待答面由服务端在这一拍上判掉，本地不重拉就永远停在那条已经不存在的问题上。
         void refreshWithToast();
       }),
-      subscribePush<{ terminals?: Record<string, SessionTerminal | null> }>('terminalTopology', (p) => {
+      subscribePush<{
+        terminals?: Record<string, SessionTerminal | null>;
+        visibilities?: Record<string, 'visible' | 'hidden'>;
+      }>('terminalTopology', (p) => {
         if (p.terminals) rowPush.current.terminal = p.terminals;
+        if (p.visibilities)
+          setTerminalVisibility(new Map(Object.entries(p.visibilities)));
         land();
       }),
       subscribePush<{ efforts?: Record<string, string> }>('sessionEffort', (p) => {
@@ -454,8 +466,9 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       modelCatalog,
       settled,
       refresh: refreshWithToast,
+      terminalVisibility,
     }),
-    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, settled, refreshWithToast],
+    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, settled, refreshWithToast, terminalVisibility],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

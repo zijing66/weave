@@ -5,7 +5,12 @@ import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
 import type { LaunchOrigin } from '../opener.js';
 import { joinCmd } from './shared.js';
-import { winListOwnedHwnds, winMaximizeByHwnd, winMaximizeTerminalWindow } from './win-raise.js';
+import {
+  winListOwnedHwnds,
+  winMaximizeByHwnd,
+  winMaximizeTerminalWindow,
+  winSetVisibilityByHwnd,
+} from './win-raise.js';
 
 export interface WeztermPaneInfo {
   windowId: number;
@@ -665,6 +670,17 @@ export class SocketProbeGate {
 /** 进程内的探活失败记忆（见 SocketProbeGate）。 */
 export const probeGate = new SocketProbeGate();
 
+/**
+ * 各 socket 最近一次成功枚举的 pane 快照（light 探测的「陈旧兜底」数据源）。
+ * 半死实例每次重探都 5s 超时 → 探活闸冷却 60s，冷却窗里它缺席枚举表——counts/
+ * hidden 是整包替换的，窗口数与隐藏态跟着周期性丢失（用户可见的角标闪没）。
+ * light（只服务计数/分组这类展示面）探不到时回退这份快照：显示滞后无感，
+ * run 落点决策恒走实时全量、不吃它。
+ */
+const lastGoodPanes = new Map<string, WeztermPaneInfo[]>();
+const lastGoodAt = new Map<string, number>();
+const LAST_GOOD_MAX_AGE_MS = 10 * 60_000;
+
 
 /**
  * 逐候选探活（单次 5s 超时兜底挂死的 GUI）；返回活 mux 与候选清单（报错用）。
@@ -696,11 +712,25 @@ export async function weztermLiveMuxes(
           const guiPid = weztermGuiPidOf(socket);
           if (listed && !listed.timedOut && guiPid !== null && !(await weztermGuiAlive(guiPid))) {
             probeGate.failed(socket);
+            lastGoodPanes.delete(socket);
           } else probeGate.cooledDown(socket);
+          // light（计数/分组）：探不到但进程还活着 → 回退最近一次成功的 pane 快照，
+          // 别让半死实例的窗口数与隐藏态在冷却窗里周期性闪没。快照过期才当没有。
+          if (light && listed) {
+            const snapAt = lastGoodAt.get(socket) ?? 0;
+            const snap = lastGoodPanes.get(socket);
+            if (snap && Date.now() - snapAt < LAST_GOOD_MAX_AGE_MS) {
+              return { socket, panes: snap, workspace: null, idleMs: Number.POSITIVE_INFINITY } satisfies WeztermMux;
+            }
+          }
           return null;
         }
         probeGate.succeeded(socket);
         const panes = parseWeztermPanes(listed.out);
+        if (panes.length > 0) {
+          lastGoodPanes.set(socket, panes);
+          lastGoodAt.set(socket, Date.now());
+        }
         if (light) return { socket, panes, workspace: null, idleMs: Number.POSITIVE_INFINITY } satisfies WeztermMux;
         const clients = await weztermCli(['cli', 'list-clients', '--format', 'json'], socket);
         const active = weztermActiveClient(clients?.ok ? clients.out : null);
@@ -767,7 +797,19 @@ export async function runInWezterm(dir: string, argv: string[]): Promise<LaunchO
   }
   // 无命中 → 在最近活跃（idle 最小）的 mux 开新窗
   chosen ??= muxes.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
-  return weztermSpawnAndSend(chosen.socket, dir, argv, split, chosen.workspace);
+  try {
+    return await weztermSpawnAndSend(chosen.socket, dir, argv, split, chosen.workspace);
+  } catch (err) {
+    // 半死实例（进程活着但 mux 答不上话，实测 cli 挂 120s+、GUI 日志刷
+    // os error 10054）会吃满 5s 超时——落点决策是按「探活通过」选的，超时
+    // 说明探活的结论已过期。换下一个健康实例重试一次（分屏换新窗），再失败
+    // 才把真相抛给上层（投递路径报「自动打开失败」，前端可手动重发）。
+    const others = muxes.filter((m) => m.socket !== chosen!.socket);
+    if (others.length === 0) throw err;
+    const next = others.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
+    probeGate.cooledDown(chosen.socket);
+    return weztermSpawnAndSend(next.socket, dir, argv, null, next.workspace);
+  }
 }
 
 /**
@@ -780,6 +822,12 @@ export async function weztermSpawnPane(
   split: WeztermSplitTarget | null,
   workspace: string | null,
 ): Promise<string> {
+  // win32 新窗场景：spawn 前先拍 HWND 快照——spawn 后新增的那个就是刚开的窗，
+  // 差集唯一命中即锁定（自动隐藏按 HWND 直打的依据，见 hideSpawnedWeztermWindow）。
+  const hwndBefore =
+    !split && process.platform === 'win32'
+      ? await ownedHwndSnapshot(socket)
+      : null;
   const spawnArgs = split
     ? ['cli', 'split-pane', '--pane-id', String(split.paneId), `--${split.direction}`, '--cwd', dir]
     : planWeztermNewWindow(dir, workspace);
@@ -789,7 +837,120 @@ export async function weztermSpawnPane(
   if (!/^\d+$/.test(paneId)) {
     throw new Error(`wezterm[${basename(socket)}] ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);
   }
+  noteSpawnedPane(socket, paneId, dir, hwndBefore);
+  if (split) noteSplitPane(socket, paneId);
   return paneId;
+}
+
+/** spawn 差集认窗（win32 新窗）：pane → OS 窗口 HWND。标题认窗的病根是宿主 OSC
+ *  持续改写窗口标题（spinner 前缀、会话名），认窗时对不上 = 自动隐藏时灵时不灵、
+ *  角标隐藏小标时隐时现的真凶——差集在落子那一刻锁定 HWND，此后永不读标题。 */
+const paneHwnds = new Map<string, number>();
+/** mux window → OS 窗口 HWND（新窗记账时从 mux 枚举顺手登记 windowId；split 落进
+ *  已有窗时按 windowId 命中窗级记账——同窗任一 pane 认过窗，整窗可用）。 */
+const windowHwnds = new Map<string, number>();
+/** cwd → 最近落子的 pane（自动隐藏的查询入口：三个 hide 调用点只有 cwd，/open
+ *  的 openTerminal 不回 spawn 回执）。最新覆盖，超量裁旧。 */
+const spawnedPaneByCwd = new Map<string, { socket: string; paneId: string; at: number }>();
+const SPAWNED_CWD_MAX = 32;
+
+function ownedHwndSnapshot(socket: string): Promise<number[]> {
+  const guiPid = weztermGuiPidOf(socket);
+  if (guiPid === null) return Promise.resolve([]);
+  return winListOwnedHwnds(guiPid).catch(() => []);
+}
+
+function trimPaneHwnds(): void {
+  if (paneHwnds.size > 128) {
+    const first = paneHwnds.keys().next().value;
+    if (first !== undefined) paneHwnds.delete(first);
+  }
+  if (windowHwnds.size > 128) {
+    const first = windowHwnds.keys().next().value;
+    if (first !== undefined) windowHwnds.delete(first);
+  }
+}
+
+function noteSpawnedPane(
+  socket: string,
+  paneId: string,
+  dir: string,
+  hwndBefore: readonly number[] | null,
+): void {
+  const key = normalizeDirKey(dir, process.platform);
+  if (key) {
+    spawnedPaneByCwd.set(key, { socket, paneId, at: Date.now() });
+    if (spawnedPaneByCwd.size > SPAWNED_CWD_MAX) {
+      const oldest = [...spawnedPaneByCwd.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) spawnedPaneByCwd.delete(oldest[0]);
+    }
+  }
+  if (hwndBefore === null || hwndBefore.length === 0) return; // 非 win32 / split（不开新窗）/ 快照失败不认窗
+  void (async () => {
+    try {
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 400));
+        const guiPid = weztermGuiPidOf(socket);
+        if (guiPid === null) continue;
+        const added = (await winListOwnedHwnds(guiPid)).filter((h) => !hwndBefore.includes(h));
+        if (added.length === 1) {
+          paneHwnds.set(`${socket}|${paneId}`, added[0]!);
+          // 窗级记账：split 到这扇窗的后续 pane 直接命中（split 自己无差集可用）
+          const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
+          const panes = parseWeztermPanes(listed?.ok ? listed.out : null);
+          const windowId = panes.find((p) => String(p.paneId) === paneId)?.windowId;
+          if (windowId !== undefined) windowHwnds.set(`${socket}|w${windowId}`, added[0]!);
+          trimPaneHwnds();
+          return;
+        }
+        if (added.length > 1) return; // 歧义（用户同拍手开窗）不猜，退标题路径
+      }
+    } catch {
+      // 认不出就退标题路径，尽力而为
+    }
+  })();
+}
+
+/** split 落子（复用窗）：新 pane 无差集（窗已存在），窗的 HWND 从窗级记账继承。 */
+function noteSplitPane(socket: string, paneId: string): void {
+  void (async () => {
+    try {
+      const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
+      const panes = parseWeztermPanes(listed?.ok ? listed.out : null);
+      const windowId = panes.find((p) => String(p.paneId) === paneId)?.windowId;
+      if (windowId === undefined) return;
+      const hwnd = windowHwnds.get(`${socket}|w${windowId}`);
+      if (hwnd !== undefined) {
+        paneHwnds.set(`${socket}|${paneId}`, hwnd);
+        trimPaneHwnds();
+      }
+    } catch {
+      // 继承不到就退标题路径
+    }
+  })();
+}
+
+/**
+ * 自动隐藏的精确通道：按 cwd 找最近落子的 pane，用 spawn 差集认出的 HWND 直打
+ * SW_HIDE——不枚举、不读标题、不受 cwd 上报延迟与 OSC 改写影响。返回 true =
+ * 已藏掉（调用方到此为止）；false = 无精确通道（复用窗 / 认窗未成 / 非 wezterm
+ * 落子），调用方退标题认窗的旧路径。轮询上限盖过认窗的差集窗口。
+ */
+export async function hideSpawnedWeztermWindow(dir: string): Promise<boolean> {
+  if (process.platform !== 'win32') return false;
+  const key = normalizeDirKey(dir, process.platform);
+  const spawned = key ? spawnedPaneByCwd.get(key) : undefined;
+  if (!spawned) return false;
+  const deadline = Date.now() + 8_000;
+  for (;;) {
+    const hwnd = paneHwnds.get(`${spawned.socket}|${spawned.paneId}`);
+    if (hwnd !== undefined) {
+      await winSetVisibilityByHwnd(hwnd, 'hide');
+      return true;
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 500));
+  }
 }
 
 /**

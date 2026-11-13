@@ -25,7 +25,7 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
   const [loaded, setLoaded] = useState<ProjectStorageResult | null>(null);
   const [images, setImages] = useState('');
   const [files, setFiles] = useState('');
-  const [hideWindow, setHideWindow] = useState(false);
+  const [hideWindow, setHideWindow] = useState(true);
   const [saving, setSaving] = useState(false);
   /** 正在为哪一档选目录（null = 选择器关着）。 */
   const [picking, setPicking] = useState<'images' | 'files' | null>(null);
@@ -39,7 +39,7 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
         setLoaded(r);
         setImages(r.storage.images ?? '');
         setFiles(r.storage.files ?? '');
-        setHideWindow(r.storage.hideWindow === true);
+        setHideWindow(r.storage.hideWindow !== false);
       })
       .catch((e: unknown) => {
         show('error', t('project.storageLoadFailed', { error: errorText(e) }));
@@ -51,7 +51,7 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
     loaded !== null &&
     (images !== (loaded.storage.images ?? '') ||
       files !== (loaded.storage.files ?? '') ||
-      hideWindow !== (loaded.storage.hideWindow === true));
+      hideWindow !== (loaded.storage.hideWindow !== false));
 
   const save = (): void => {
     if (!project || !dirty) return;
@@ -66,7 +66,7 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
         setLoaded(r);
         setImages(r.storage.images ?? '');
         setFiles(r.storage.files ?? '');
-        setHideWindow(r.storage.hideWindow === true);
+        setHideWindow(r.storage.hideWindow !== false);
         show('success', t('project.storageSaved'));
       })
       .catch((e: unknown) => show('error', t('project.storageSaveFailed', { error: errorText(e) })))

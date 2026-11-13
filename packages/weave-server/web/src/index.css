@@ -955,3 +955,15 @@
     border-left: 1px solid var(--w-border, #2c2735);
   }
 }
+
+/* 终端分块「已隐藏」态：网格透明背景（形态差异不靠色深——隐藏窗只剩骨架的
+   隐喻同形；颜色走语义变量，深浅主题都成立）。 */
+.terminal-block-hidden {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      var(--w-border, #2c2735) 0 1px,
+      transparent 1px 8px
+    ),
+    var(--w-surface-1, #17141f);
+}

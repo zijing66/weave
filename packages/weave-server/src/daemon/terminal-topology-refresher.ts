@@ -29,6 +29,11 @@ export interface TerminalTopology {
    * GUI 没了），缺 = 这轮没探到或没上报过定位——web 据此保留上次分块，不摘行。
    */
   terminals: Record<string, SessionTerminal | null>;
+  /**
+   * `<projectId>|<targetId>` → 该终端窗口此刻可见性（30s 对账顺带；会话列表
+   * 终端分块组头的「眼睛」与终端弹层的显隐态同源，不再各自打 N 枪 powershell）。
+   */
+  visibilities?: Record<string, 'visible' | 'hidden'>;
 }
 
 export interface TerminalTopologyRefresherOptions {
@@ -122,6 +127,7 @@ export class TerminalTopologyRefresher {
         counts: topology.counts,
         hidden: topology.hidden,
         terminals: mergedTerminals,
+        ...(topology.visibilities ? { visibilities: topology.visibilities } : {}),
       };
       this.last = merged;
       const fingerprint = JSON.stringify(merged);

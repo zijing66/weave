@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { TerminalTarget } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { useSessionStatus } from './session-status-store';
+import { cn } from '@/lib/utils';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useBackPop } from '@/lib/back-pop';
 
@@ -70,16 +72,20 @@ function PickerShell({
 export function TerminalPicker({
   targets,
   busy,
+  projectId,
   onPick,
   onClose,
 }: {
   targets: TerminalTarget[];
   /** 选定后请求在途：禁二次点击（防重复 spawn）。 */
   busy?: boolean;
+  /** 所属项目：候选卡片的显隐背景按全局可见性快照摆（缺 = 不摆网格）。 */
+  projectId?: number | null;
   onPick: (targetId: string) => void;
   onClose: () => void;
 }) {
   const t = useT();
+  const { terminalVisibility } = useSessionStatus();
 
   return (
     <PickerShell title={t('tasks.terminalPickTitle')} onClose={onClose}>
@@ -91,7 +97,11 @@ export function TerminalPicker({
               disabled={busy || target.full}
               onClick={() => onPick(target.id)}
               title={target.full ? t('tasks.terminalTargetFullTip') : undefined}
-              className="w-full rounded-lg border border-edge/[0.06] bg-edge/[0.02] px-2.5 py-2 text-left transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.06] disabled:opacity-50"
+              className={cn(
+                'w-full rounded-lg border border-edge/[0.06] bg-edge/[0.02] px-2.5 py-2 text-left transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.06] disabled:opacity-50',
+                // 与会话列表终端分块同一套显隐语言：隐藏窗 = 网格透明背景
+                projectId != null && terminalVisibility.get(`${projectId}|${target.id}`) === 'hidden' && 'terminal-block-hidden',
+              )}
             >
               <span className="flex items-center gap-1.5">
                 <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">

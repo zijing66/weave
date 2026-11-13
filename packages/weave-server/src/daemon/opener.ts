@@ -63,6 +63,7 @@ export {
   planWeztermReuse,
   sessionScreensFromEnvs,
   SocketProbeGate,
+  hideSpawnedWeztermWindow,
   weztermActiveWorkspaceOf,
   weztermCliArgs,
   weztermMuxKey,
@@ -194,6 +195,10 @@ class AutoBackend extends TerminalBackend {
 
   override closePane(paneId: string): Promise<void> {
     return this.attachBackend().closePane(paneId);
+  }
+
+  override hideSpawnedWindow(dir: string): Promise<boolean> {
+    return this.attachBackend().hideSpawnedWindow(dir);
   }
 }
 
@@ -477,35 +482,52 @@ export async function readTerminalHidden(
   projects: readonly { id: number; path: string }[],
   opener: ProjectOpener | undefined = undefined,
 ): Promise<Record<number, boolean>> {
+  const { byTarget } = await readTerminalVisibility(projects, opener);
+  const out: Record<number, boolean> = {};
+  for (const [key, vis] of byTarget) {
+    const projectId = Number(key.split('|')[0]);
+    if (vis === 'hidden') out[projectId] = true;
+    else delete out[projectId];
+  }
+  return out;
+}
+
+/**
+ * 逐目标可见性明细（targetId → visible/hidden）：`readTerminalHidden` 同一趟
+ * 探测的另一半——30s 对账循环本来就在逐目标查，明细顺手带出（全局状态总线
+ * terminalTopology 帧随推，会话列表终端分块组头的「眼睛」免自己再打 N 枪）。
+ */
+export async function readTerminalVisibility(
+  projects: readonly { id: number; path: string }[],
+  opener: ProjectOpener | undefined = undefined,
+): Promise<{ byTarget: Map<string, 'visible' | 'hidden'> }> {
   const backends = enumerableBackends().filter(
     (b) => b.targetVisibility !== TerminalBackend.prototype.targetVisibility,
   );
-  if (backends.length === 0) return {};
+  if (backends.length === 0) return { byTarget: new Map() };
   void opener;
-  const out: Record<number, boolean> = {};
+  const byTarget = new Map<string, 'visible' | 'hidden'>();
   await Promise.all(
     projects.map(async (project) => {
       try {
         // 合并面：每个有显隐通道的后端各枚举各的目标（id 前缀天然区分归属）。
-        const perBackend = await Promise.all(
+        await Promise.all(
           backends.map(async (backend) => {
             const targets = await backend.listTargets(project.path);
-            if (targets.length === 0) return null;
-            const vis = await Promise.all(
-              targets.map((t) => backend.targetVisibility(project.path, t.id)),
+            await Promise.all(
+              targets.map(async (t) => {
+                const vis = await backend.targetVisibility(project.path, t.id);
+                if (vis !== null) byTarget.set(`${project.id}|${t.id}`, vis);
+              }),
             );
-            return vis.length > 0 && vis.every((v) => v === 'hidden');
           }),
         );
-        const checks = perBackend.filter((v): v is boolean => v !== null);
-        if (checks.length === 0) return;
-        if (checks.every((v) => v)) out[project.id] = true;
       } catch {
         // 枚举/查询失败 = 不摆态（与 count 探测失败的口径一致）
       }
     }),
   );
-  return out;
+  return { byTarget };
 }
 
 /**
@@ -587,6 +609,10 @@ export interface ProjectOpener {
     targetId: string,
     terminal: TerminalSettings,
   ): Promise<'visible' | 'hidden' | null>;
+  /** 自动隐藏的精确通道（可选）：按 spawn 差集认出的窗口句柄直打，不读窗口标题
+   *  （能力归后端，按 preset 分发）。返回 false = 无精确通道（复用窗/认窗未成/
+   *  非本后端落子），调用方退标题认窗。 */
+  hideSpawnedWindow?(dir: string, terminal: TerminalSettings): Promise<boolean>;
 }
 
 export const defaultProjectOpener: ProjectOpener = {
@@ -615,4 +641,5 @@ export const defaultProjectOpener: ProjectOpener = {
     backendForTargetId(targetId, terminal).setTargetVisibility(dir, targetId, visibility),
   terminalVisibility: (dir, targetId, terminal) =>
     backendForTargetId(targetId, terminal).targetVisibility(dir, targetId),
+  hideSpawnedWindow: (dir, terminal) => terminalBackendFor(terminal).hideSpawnedWindow(dir),
 };

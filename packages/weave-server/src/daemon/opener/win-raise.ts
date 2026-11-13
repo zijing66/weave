@@ -116,6 +116,15 @@ export async function winMaximizeByHwnd(hwnd: number): Promise<void> {
   }
 }
 
+/** 按已知 HWND 隐藏/恢复（spawn 差集认窗的直打通道——不读窗口标题）。失败 throw
+ *  由调用方退标题认窗路径。 */
+export async function winSetVisibilityByHwnd(
+  hwnd: number,
+  visibility: 'hide' | 'show',
+): Promise<void> {
+  await winRaiseOnce({ hwnd, visibility }, []);
+}
+
 /** PowerShell 脚本（base64/UTF-16，`-EncodedCommand` 免引号转义）；纯函数，单测覆盖。 */
 export function winRaiseEncodedScript(): string {
   const script = `$ErrorActionPreference = 'Stop'
@@ -127,12 +136,19 @@ ${WIN_RAISE_CS}
 if ($env:WEAVE_RAISE_LIST -eq '1') {
   foreach ($w in [WeaveRaise]::Owned(
     (@(($env:WEAVE_RAISE_PIDS + '') -split ',' | Where-Object { $_ }) | ForEach-Object { [uint32]$_ }),
-    '')) { '{0}' -f [int64]$w.Handle }
+    '')) {
+    # wgl 探测辅助窗随每个新窗同拍出现（不可见、有标题）——不过滤会让
+    # spawn 差集恒为 2（真窗 + 探测窗），差集认窗恒歧义。
+    if ($w.Title -match 'probing window') { continue }
+    '{0}' -f [int64]$w.Handle
+  }
   exit 0
 }
 if ($env:WEAVE_RAISE_HWND -ne '') {
   $h = [int64]$env:WEAVE_RAISE_HWND
   if ($env:WEAVE_RAISE_VIS -eq 'query') { [Console]::Out.WriteLine('vis|' + [WeaveRaise]::VisibleOf($h)); exit 0 }
+  if ($env:WEAVE_RAISE_VIS -eq 'hide') { [WeaveRaise]::SetHidden([int64]$h); 'hidden ' + [int64]$h; exit 0 }
+  if ($env:WEAVE_RAISE_VIS -eq 'show') { [WeaveRaise]::SetShown([int64]$h); 'shown ' + [int64]$h; exit 0 }
   [void][WeaveRaise]::ShowZoomed($h)
   'zoomed ' + $h
   exit 0

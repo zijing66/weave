@@ -8,9 +8,11 @@ import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Bell, BellRing, Check, Copy, FileWarning, HelpCircle, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
+import { Bell, BellRing, Check, Copy, Eye, EyeOff, FileWarning, HelpCircle, Loader2, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
+import { api } from '@/lib/api';
+import { useSessionStatus } from './session-status-store';
 import { copyText } from '@/lib/clipboard';
 import type { ActionState } from '@/lib/feedback-core';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
@@ -304,6 +306,19 @@ export function SessionList({
 }) {
   const t = useT();
   const { show } = useToast();
+  /** 窗口可见性（全局总线 terminalTopology 帧随推）+ 本地切换在途的目标：块头
+   *  「眼睛」与网格背景同源读它——切换打完 API 后由下一帧对账回来（30s 内的
+   *  在途态用 visBusy 摆）。 */
+  const { terminalVisibility } = useSessionStatus();
+  const [visBusy, setVisBusy] = useState<string[]>([]);
+  const toggleBlockVisibility = (projectId: number, targetId: string, cur: 'visible' | 'hidden'): void => {
+    if (visBusy.includes(targetId)) return;
+    setVisBusy((prev) => [...prev, targetId]);
+    api
+      .setProjectTerminalVisibility(projectId, targetId, cur === 'hidden' ? 'show' : 'hide')
+      .then(() => setVisBusy((prev) => prev.filter((x) => x !== targetId)))
+      .catch(() => setVisBusy((prev) => prev.filter((x) => x !== targetId)));
+  };
   /** 块头文案：同窗口多个 tab 时才标 Tab 号（单 tab 窗口标了只是噪音）。 */
   const blockTitle = (terminal: SessionTerminal): string =>
     terminal.tabsInWindow > 1
@@ -729,9 +744,21 @@ export function SessionList({
           </li>
         ) : (
           // 块头：这一块可见屏幕的标识 + 会话数——同屏会话靠它分成一组。
+          (() => {
+            const projectId = entry.rows[0]?.projectId;
+            const vis =
+              projectId != null
+                ? (terminalVisibility.get(`${projectId}|${entry.terminal.id}`) ?? 'visible')
+                : 'visible';
+            const hidden = vis === 'hidden';
+            return (
           <li
             key={`terminal:${entry.terminal.id}`}
-            className="rounded-xl border border-edge/[0.06] bg-edge/[0.02] p-2"
+            className={cn(
+              'rounded-xl border border-edge/[0.06] p-2',
+              // 隐藏窗 = 网格透明背景（形态差异不靠色深——「藏起来」的隐喻同形）
+              hidden ? 'terminal-block-hidden bg-edge/[0.02]' : 'bg-edge/[0.02]',
+            )}
           >
             <div className="mb-1.5 flex items-center gap-1.5 text-10 text-neutral-400">
               <SquareTerminal className="h-3 w-3 shrink-0 text-neutral-500" />
@@ -739,6 +766,28 @@ export function SessionList({
               <span className="text-neutral-500">
                 {t('tasks.terminalBlockSessions', { n: entry.rows.length })}
               </span>
+              {projectId != null && (() => {
+                const busy = visBusy.includes(entry.terminal.id);
+                return (
+                  <Tooltip label={t(hidden ? 'tasks.terminalTargetShow' : 'tasks.terminalTargetHide')} side="top">
+                    <button
+                      type="button"
+                      aria-label={t(hidden ? 'tasks.terminalTargetShow' : 'tasks.terminalTargetHide')}
+                      disabled={busy}
+                      onClick={() => toggleBlockVisibility(projectId, entry.terminal.id, vis)}
+                      className="ml-auto rounded p-0.5 text-neutral-500 transition-colors hover:bg-edge/[0.08] hover:text-neutral-200 disabled:opacity-50"
+                    >
+                      {busy ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : hidden ? (
+                        <Eye className="h-3 w-3" />
+                      ) : (
+                        <EyeOff className="h-3 w-3" />
+                      )}
+                    </button>
+                  </Tooltip>
+                );
+              })()}
             </div>
             <ul className="space-y-1.5">
               {entry.rows.map((s) => (
@@ -748,6 +797,8 @@ export function SessionList({
               ))}
             </ul>
           </li>
+            );
+          })()
         ),
       )}
       {answerFor &&

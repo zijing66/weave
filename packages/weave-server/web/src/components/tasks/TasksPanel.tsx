@@ -687,6 +687,14 @@ export function TasksPanel({
         runOpenTerminal(sessionId);
         return;
       }
+      // 快路：会话已有屏幕定位（全局总线 terminalTopology 帧的会话→可见屏幕）
+      // = 该项目必然有开着的终端，直接开（自动落点后端自己挑放得下的 tab）——
+      // 省掉点击路径上的实时枚举（spawn wezterm cli ~1s）。无定位才现拉候选判断。
+      const row = sessions?.find((s) => s.sessionId === sessionId);
+      if (row?.terminal) {
+        runOpenTerminal(sessionId);
+        return;
+      }
       api
         .listProjectTerminals(projectId)
         .then((targets) => {
@@ -1552,6 +1560,7 @@ export function TasksPanel({
         <TerminalPicker
           targets={terminalPicker.targets}
           busy={fb.stateOf(`openTerm:${terminalPicker.sessionId}`) === 'loading'}
+          projectId={sessions?.find((s) => s.sessionId === terminalPicker.sessionId)?.projectId ?? null}
           onPick={(targetId) => {
             const { sessionId } = terminalPicker;
             setTerminalPicker(null);

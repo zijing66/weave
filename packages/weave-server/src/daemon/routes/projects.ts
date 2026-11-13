@@ -21,12 +21,103 @@ import { scheduleBootstrapInjection } from '../session-open.js';
 import { getUploadsDir } from '../../db/paths.js';
 import { PENDING_WT_PREFIX, createSessionWorktree, upsertWorktreeEntry } from '../worktree.js';
 
+/** GET /terminals/visibility 的短 TTL 缓存（桌宠菜单频繁开关不打爆逐窗探测）。 */
+let visCountCache: { at: number; value: { visible: number; hidden: number } } | null = null;
+const VIS_COUNT_TTL_MS = 15_000;
+
 /** 项目配置（projects.meta.storage）：存储目录 + 终端窗口行为。 */
 export interface ProjectStorage {
   images?: string | null;
   files?: string | null;
-  /** 打开/唤出终端窗口后是否顺手系统级隐藏（SW_HIDE）。缺省 false = 不隐藏。 */
+  /** 打开/唤出终端窗口后是否顺手系统级隐藏（SW_HIDE）。未设置 = 默认隐藏。 */
   hideWindow?: boolean;
+}
+
+/** hideWindow 判据（唯一出处）：未设置 = 默认隐藏（2026-11-13 用户裁决：默认都开）。 */
+export function hideWindowOf(storage: ProjectStorage | undefined): boolean {
+  return storage?.hideWindow !== false;
+}
+
+/**
+ * 项目配置 hideWindow：终端窗口落定后系统级隐藏。「打开终端 / new-session /
+ * ensureOpen 自动拉起」三处共用；尽力而为，失败静默。
+ *
+ * 精确通道优先：spawn 落子时已按 HWND 差集认出新窗（见 hideSpawnedWindow），
+ * 直接按 HWND 直打——不读窗口标题。标题认窗的病根是宿主 OSC 持续改写标题
+ * （spinner / 会话名），加上 cwd 进 mux 枚举有延迟，固定延迟一枪时常打空或认错
+ * 窗，表现为「设置过却没藏」时灵时不灵。差集拿不到（复用窗 / legacy start /
+ * 认窗超时）才退老路径：延迟一拍枚举 + 标题认窗。
+ */
+export function scheduleHideWindow(
+  deps: WeaveServerDeps,
+  projectId: number,
+  cwd: string,
+  delayMs = 2500,
+  /** MCP 建会话强制隐藏（2026-11-13 用户裁决：批量建会话不刷一排窗）。 */
+  force = false,
+): void {
+  const hideWindow =
+    force ||
+    hideWindowOf(
+      (deps.projects.getMeta(projectId) as { storage?: ProjectStorage } | null)?.storage,
+    );
+  if (!hideWindow) return;
+  void (async () => {
+    const opener = deps.opener ?? defaultProjectOpener;
+    let settings: Awaited<ReturnType<typeof readDaemonSettings>> | null = null;
+    try {
+      settings = await readDaemonSettings();
+      // 精确通道自带轮询（认窗差集要一拍），命中即藏——比固定延迟更早，闪烁更少
+      const hideExact = opener.hideSpawnedWindow ?? defaultProjectOpener.hideSpawnedWindow;
+      if (hideExact && (await hideExact(cwd, settings.terminal))) return;
+    } catch {
+      // 精确通道失败 = 退老路径，不算错
+    }
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const terminal = (settings ?? (await readDaemonSettings())).terminal;
+          const list = opener.listTerminals ?? defaultProjectOpener.listTerminals!;
+          const targets = await list(cwd, terminal);
+          const setVis = opener.setTerminalVisibility ?? defaultProjectOpener.setTerminalVisibility;
+          if (targets[0] && setVis) {
+            await setVis(cwd, targets[0].id, 'hide', terminal);
+          }
+        } catch {
+          // 尽力而为：藏不成就保持可见
+        }
+      })();
+    }, delayMs);
+  })();
+}
+
+/**
+ * 按任务重命名（new-session 可选 title）：spawn 时 sessionId 未定（宿主自己生成）
+ * ——等首条 hook 事件把 pane env 报上来（或 codex 认领起点候选），按 env 与 spawn
+ * 回执相等反查 sessionId，命中即挂 setPendingTitle。走 pending 而非 setTitle：
+ * 宿主派生名（derived）会随后续事件经 diff 通道把 title 冲回——pending 在场时
+ * diff 臂忽略外部值，且名字经 hook 下发宿主同步（终端 tab 名也跟着变）。
+ * 限时 30s 放弃；轮询 fire-and-forget。
+ */
+function scheduleSessionTitle(
+  deps: WeaveServerDeps,
+  origin: { env: Record<string, string> } | null,
+  title: string,
+): void {
+  if (!origin || !deps.messageDeliverer) return;
+  const deadline = Date.now() + 30_000;
+  const poll = (): void => {
+    setTimeout(() => {
+      const sessionId = deps.messageDeliverer!.sessionIdOfPaneEnv(origin.env);
+      if (sessionId) {
+        deps.hookSessions?.setPendingTitle(sessionId, title);
+        return;
+      }
+      if (Date.now() < deadline) poll();
+      // 超时放弃：会话照常跑，只是没改名
+    }, 500);
+  };
+  poll();
 }
 
 /**
@@ -68,26 +159,7 @@ export async function handleProjectRoutes(
         const settings = await readDaemonSettings();
         await opener.openTerminal(project.path, settings.terminal);
         // 项目配置 hideWindow：开完顺手系统级隐藏（延迟一拍——窗要起来才藏得着）。
-        const hideWindow =
-          (deps.projects.getMeta(project.id) as { storage?: ProjectStorage } | null)?.storage
-            ?.hideWindow === true;
-        if (hideWindow) {
-          setTimeout(() => {
-            void (async () => {
-              try {
-                const list = opener.listTerminals ?? defaultProjectOpener.listTerminals!;
-                const targets = await list(project.path, settings.terminal);
-                const setVis =
-                  opener.setTerminalVisibility ?? defaultProjectOpener.setTerminalVisibility;
-                if (targets[0] && setVis) {
-                  await setVis(project.path, targets[0].id, 'hide', settings.terminal);
-                }
-              } catch {
-                // 尽力而为：藏不成就保持可见
-              }
-            })();
-          }, 2500);
-        }
+        scheduleHideWindow(deps, project.id, project.path);
         // 角标对账：新窗 pane 的 cwd 上报有一拍延迟，立即探也看不到增量——
         // 600ms 后对一次账（原先由前端 setTimeout 拉 GET，改服务端自对账）。
         setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
@@ -244,11 +316,15 @@ export async function handleProjectRoutes(
       sendJson(res, 404, { error: 'Project not found' });
       return true;
     }
-    let body: { harness?: unknown; worktree?: unknown; target?: unknown };
+    let body: { harness?: unknown; worktree?: unknown; target?: unknown; title?: unknown; __viaMcp?: unknown };
     try {
       body = JSON.parse((await readBody(req)) || '{}') as { harness?: unknown };
     } catch {
       sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim())) {
+      sendJson(res, 400, { error: 'Invalid "title" (non-empty string)' });
       return true;
     }
     if (body.worktree !== undefined && typeof body.worktree !== 'boolean') {
@@ -346,6 +422,14 @@ export async function handleProjectRoutes(
       }
       // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
       setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+      // MCP 建的会话强制隐藏（调用方是编排/协调链，人不在终端跟前——刷一排窗
+      // 只会淹任务栏）；dashboard 手动建的仍按项目 hideWindow 配置走。
+      scheduleHideWindow(deps, project.id, cwd, 2500, body.__viaMcp === true);
+      // 按任务重命名（可选 title）：spawn 时 sessionId 未定（宿主自己生成）——
+      // 等首个会话事件把行建出来（inbox touch）再落 setTitle，限时放弃。
+      if (typeof body.title === 'string' && body.title.trim()) {
+        scheduleSessionTitle(deps, origin, body.title.trim());
+      }
       sendJson(res, 200, { ok: true, command: argv.join(' '), cwd, ...(worktreePath ? { worktree: worktreePath } : {}) });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
@@ -532,29 +616,43 @@ export async function handleProjectRoutes(
   }
 
   // GET /terminals/visibility — 全部已开终端窗的实况可见性计数（桌宠菜单胶囊）：
-  // 合并面枚举目标后逐个查实况；探不到的目标不进计数。
+  // 合并面枚举目标后逐个查实况；探不到的目标不进计数。每目标一枪 powershell
+  //（实测整档 ~14s），15s TTL 缓存——菜单频繁开关不打爆探测，陈旧半分钟无感。
   if (pathname === '/terminals/visibility' && req.method === 'GET') {
+    if (visCountCache && Date.now() - visCountCache.at < VIS_COUNT_TTL_MS) {
+      sendJson(res, 200, visCountCache.value);
+      return true;
+    }
     const opener = deps.opener ?? defaultProjectOpener;
     const settings = await readDaemonSettings();
     const list = opener.listTerminals ?? defaultProjectOpener.listTerminals!;
     const getVis = opener.terminalVisibility ?? defaultProjectOpener.terminalVisibility!;
-    let visible = 0;
-    let hidden = 0;
     const seen = new Set<string>();
-    for (const project of deps.projects.list()) {
-      try {
-        for (const t of await list(project.path, settings.terminal)) {
-          if (seen.has(t.id)) continue;
-          seen.add(t.id);
-          const v = await getVis(project.path, t.id, settings.terminal);
-          if (v === 'visible') visible += 1;
-          else if (v === 'hidden') hidden += 1;
+    const targets: { dir: string; id: string }[] = [];
+    await Promise.all(
+      deps.projects.list().map(async (project) => {
+        try {
+          for (const t of await list(project.path, settings.terminal)) {
+            if (seen.has(t.id)) continue;
+            seen.add(t.id);
+            targets.push({ dir: project.path, id: t.id });
+          }
+        } catch {
+          // 单项目枚举失败隔离：计数照常回
         }
-      } catch {
-        // 单项目枚举失败隔离：计数照常回
-      }
-    }
-    sendJson(res, 200, { visible, hidden });
+      }),
+    );
+    const vis = await Promise.all(
+      targets.map((t) => getVis(t.dir, t.id, settings.terminal).catch(() => null)),
+    );
+    visCountCache = {
+      at: Date.now(),
+      value: {
+        visible: vis.filter((v) => v === 'visible').length,
+        hidden: vis.filter((v) => v === 'hidden').length,
+      },
+    };
+    sendJson(res, 200, visCountCache.value);
     return true;
   }
 
@@ -598,6 +696,7 @@ export async function handleProjectRoutes(
       }
     }
     setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+    visCountCache = null; // 切换后计数即失真，下一拍重探
     sendJson(res, 200, { ok: true, changed, failed });
     return true;
   }

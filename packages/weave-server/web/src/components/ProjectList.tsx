@@ -313,6 +313,8 @@ export function ProjectList({
     visibility: Record<string, 'visible' | 'hidden' | null>;
     /** 正在切可见性的目标（loading 态；防重复点——Win32 那枪要一两秒）。 */
     visBusy: string | null;
+    /** 正在关的目标（关闭请求在途：卡片还在、Power 钮转圈——窗口真没了卡片才摘）。 */
+    closeBusy: string[];
   } | null>(null);
   const termMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -331,6 +333,7 @@ export function ProjectList({
       selected: [],
       visibility: {},
       visBusy: null,
+      closeBusy: [],
     });
     api
       .listProjectTerminals(p.id)
@@ -404,21 +407,43 @@ export function ProjectList({
   };
 
   /** 关掉这些卡片上属于本项目的 pane（loading / 角标对账 / toast 都归 App）；
-   *  卡片先从列表摘掉，剩下的照常可操作。 */
+   *  卡片在关闭完成（后端 killed 回来）后才摘——关闭中转圈置灰，窗口真消失与
+   *  卡片消失同拍，不再「点了按钮卡片先没、窗还挂着」。 */
   const closeTargets = (project: ProjectRow, targets: TerminalTarget[]): void => {
     const paneIds = targets.flatMap((target) => target.paneIds ?? []);
     if (paneIds.length === 0) return;
-    const gone = new Set(targets.map((target) => target.id));
+    const busyIds = targets.map((target) => target.id);
     setTermMenu((cur) =>
       cur && cur.project.id === project.id
         ? {
             ...cur,
-            targets: (cur.targets ?? []).filter((t) => !gone.has(t.id)),
-            selected: cur.selected.filter((id) => !gone.has(id)),
+            closeBusy: [...new Set([...cur.closeBusy, ...busyIds])],
+            selected: cur.selected.filter((id) => !busyIds.includes(id)),
           }
         : cur,
     );
-    onCloseTerminal?.(project, paneIds);
+    api
+      .closeProjectTerminal(project.id, paneIds)
+      .then(() => {
+        const gone = new Set(busyIds);
+        setTermMenu((cur) =>
+          cur && cur.project.id === project.id
+            ? {
+                ...cur,
+                targets: (cur.targets ?? []).filter((t) => !gone.has(t.id)),
+                closeBusy: cur.closeBusy.filter((id) => !gone.has(id)),
+              }
+            : cur,
+        );
+      })
+      .catch((e: unknown) => {
+        setTermMenu((cur) =>
+          cur && cur.project.id === project.id
+            ? { ...cur, closeBusy: cur.closeBusy.filter((id) => !busyIds.includes(id)) }
+            : cur,
+        );
+        show('error', t('errors.closeTerminalFailed', { error: errorText(e) }));
+      });
   };
 
   // 点外面 / Esc / 滚动都收——按钮自己那一击不在这里收（留给 onClick 做开合切换，
@@ -1025,13 +1050,18 @@ export function ProjectList({
               {pickedPaneCount > 0 && onCloseTerminal && (
                 <button
                   type="button"
+                  disabled={termMenu.closeBusy.length > 0}
                   onClick={() => {
                     closeTargets(termMenu.project, pickedTargets);
                     setTermMenu(null);
                   }}
-                  className="flex shrink-0 items-center gap-1 rounded-lg bg-red-600 px-2 py-1 text-xs text-white transition-colors hover:bg-red-500"
+                  className="flex shrink-0 items-center gap-1 rounded-lg bg-red-600 px-2 py-1 text-xs text-white transition-colors hover:bg-red-500 disabled:opacity-60"
                 >
-                  <Power className="h-3.5 w-3.5" />
+                  {termMenu.closeBusy.length > 0 ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Power className="h-3.5 w-3.5" />
+                  )}
                   {t('tasks.closeTerminalConfirmLabel', { n: pickedPaneCount })}
                 </button>
               )}
@@ -1057,6 +1087,8 @@ export function ProjectList({
                           picked
                             ? 'border-blue-500 bg-blue-500/10'
                             : 'border-edge/[0.06] bg-edge/[0.02]',
+                          // 与会话列表终端分块同一套显隐语言：隐藏窗 = 网格透明背景
+                          termMenu.visibility[target.id] === 'hidden' && 'terminal-block-hidden',
                         )}
                       >
                         <button
@@ -1125,9 +1157,14 @@ export function ProjectList({
                             <QuickButton
                               danger
                               tooltip={t('tasks.terminalTargetClose')}
+                              disabled={termMenu.closeBusy.includes(target.id)}
                               onClick={() => closeTargets(termMenu.project, [target])}
                             >
-                              <Power className="h-3.5 w-3.5" />
+                              {termMenu.closeBusy.includes(target.id) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Power className="h-3.5 w-3.5" />
+                              )}
                             </QuickButton>
                           )}
                         </span>
