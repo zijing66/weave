@@ -30,8 +30,6 @@ function whitelistRoots(deps: WeaveServerDeps): string[] {
     path.join(home, HARNESS_DIRS.codex.userDir, 'visualizations'),
     path.join(home, HARNESS_DIRS.claude.userDir),
     path.join(home, HARNESS_DIRS.codex.userDir, 'plugins'),
-    // `<tmp>/weave`：宿主兜底通道（weave 面板外的宿主 UI 渲染 fragment 的落点），
-    // 三档口径外的第四落点——可弃语义同 cache，daemon 不清不迁（见 DECISIONS/§20）。
     path.join(os.tmpdir(), 'weave'),
     visualizationsRootOf(deps),
   ];

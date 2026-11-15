@@ -8,7 +8,7 @@ import {
   fileAssetTargetDir,
   type FileAssetCategory,
 } from './file-assets.js';
-import { assetSurfaceFor, harnessDisplayName } from '../surfaces.js';
+import { assetSurfaceFor } from '../surfaces.js';
 import { forgetInstalled, recordInstalled } from './install-ledger.js';
 import { installForm, removeInstalled } from '../market/install-link.js';
 
@@ -83,7 +83,7 @@ export async function installSkill(
     // lstat 判存在：断链也算已装（access 会穿链报不存在，再 cp 就撞 EEXIST）。
     if ((await installForm(path.join(projectPath, r, name))) !== 'absent') {
       throw new InstallConflictError(
-        `Skill "${name}" is already installed (${harnessDisplayName(agent)})`,
+        `Skill "${name}" is already installed${agent === 'codex' ? ' (Codex)' : ''}`,
       );
     }
   }
@@ -111,7 +111,7 @@ export async function uninstallSkill(
   }
   if (!target) {
     throw new AssetNotFoundError(
-      `Skill "${name}" is not installed (${harnessDisplayName(agent)})`,
+      `Skill "${name}" is not installed${agent === 'codex' ? ' (Codex)' : ''}`,
     );
   }
   // 链接只 unlink（共用根/市场源里的真身不删），复制体才递归删。

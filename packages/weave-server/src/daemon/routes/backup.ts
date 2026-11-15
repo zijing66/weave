@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { getBackupsDir } from '../../db/paths.js';
+import { getDataRoot } from '../../db/paths.js';
 import { readDaemonSettings, writeDaemonSettings } from '../settings.js';
 import { readBody, sendJson } from '../http.js';
 import type { WeaveServerDeps } from '../server.js';
@@ -88,11 +88,11 @@ export async function handleBackupRoutes(
   return false;
 }
 
-/** `<cache>/backups/` 包清单（新→旧；只认本引擎命名，迁移 bak 不混入）。 */
+/** `data/backups/` 包清单（新→旧；只认本引擎命名，迁移 bak 不混入）。 */
 async function listPackages(): Promise<Array<{ name: string; bytes: number; at: string }>> {
   let names: string[] = [];
   try {
-    names = await readdir(getBackupsDir());
+    names = await readdir(path.join(getDataRoot(), 'backups'));
   } catch {
     return [];
   }
@@ -101,7 +101,7 @@ async function listPackages(): Promise<Array<{ name: string; bytes: number; at: 
     const m = name.match(/^weave-backup-(\d{4}-\d{2}-\d{2}-\d{6})\.tar\.gz$/);
     if (!m) continue;
     try {
-      const st = await stat(path.join(getBackupsDir(), name));
+      const st = await stat(path.join(getDataRoot(), 'backups', name));
       rows.push({ name, bytes: st.size, at: m[1]! });
     } catch {
       // 列表态读不到就略过

@@ -267,13 +267,6 @@ export interface AssetSurface {
   ): Promise<boolean>;
 
   /**
-   * MCP 启停覆盖面（哪些 scope 有「装了还能整体开关」的宿主语义；缺省 = 无——
-   * 装了即生效）。claude = `['project']`（settings.json 的 enabledMcpjsonServers
-   * 族）；行装配据此决定挂不挂 enable 列，不再按 harness 名硬判。
-   */
-  mcpEnableScopes?(): ToolScope[];
-
-  /**
    * 宿主插件缓存根（Claude `~/.claude/plugins/cache`；Codex `~/.codex/plugins/cache`）；
    * 无插件机制的 harness 返回 undefined。全局技能枚举与「某路径归属谁」消费。
    */

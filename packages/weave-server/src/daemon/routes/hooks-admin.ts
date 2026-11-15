@@ -5,7 +5,6 @@ import {
   HookDispatchStatusSchema,
   HookRuleFilterSchema,
   HookRuleSourceSchema,
-  INJECTABLE_EVENTS,
 } from '@weavecode/core';
 import type { WeaveServerDeps } from '../server.js';
 import { readJson, sendJson } from '../http.js';
@@ -46,16 +45,6 @@ export async function handleHookAdminRoutes(
   pathname: string,
   url: URL,
 ): Promise<boolean> {
-  // GET /hooks/injectable — 派生面：inject 处理器的合法事件表按 harness 下发
-  //（权威表 = core `INJECTABLE_EVENTS`），web 不留镜像（规则面板事件候选消费）。
-  if (pathname === '/hooks/injectable' && req.method === 'GET') {
-    sendJson(res, 200, {
-      harnesses: Object.fromEntries(
-        Object.entries(INJECTABLE_EVENTS).map(([h, events]) => [h, events]),
-      ),
-    });
-    return true;
-  }
   // ---- 规则 CRUD ----
   if (pathname === '/hooks/rules') {
     if (!deps.hookRegistry) {

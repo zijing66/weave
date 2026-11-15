@@ -7,8 +7,8 @@ import type { InitOptions, PlatformInfo } from '@weavecode/core';
 export type InitContext = InitOptions & { platform: PlatformInfo };
 
 /**
- * init 的模板方法（全仓两处 abstract class 之一，另一处 = server `TerminalBackend`）：
- * `runSurface()` final 锁死 1→2→3→4→5→6→6b→7 顺序，子类只覆写钩子。
+ * init 唯一模板方法（全仓唯一 abstract class）：`runSurface()` final 锁死
+ * 1→2→3→4→5→6→6b→7 顺序，子类只覆写钩子。
  */
 export abstract class InitPipeline {
   protected readonly ctx: InitContext;

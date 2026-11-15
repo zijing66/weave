@@ -17,7 +17,6 @@ export {
   getAuthPath,
   getInitialPasswordPath,
   getVisualizationsDir,
-  getPluginsDir,
 } from './db/paths.js';
 export { ensureDataLayout, migrateDataLayout } from './db/layout.js';
 export type { LayoutMigration } from './db/layout.js';

@@ -298,11 +298,10 @@ export function pipePathSegments(pipeText: string, images: readonly UploadFile[]
 }
 
 /**
- * 渲染块引用行（weave 渲染块协议）。行级解析的唯一实现在 core
- * `parseVisualizationRef`——web 运行时不能 import core 值（import type 纪律，
- * lifecycle.ts 同款说辞），此处是它的**声明式镜像**（常量 + 解析骨架逐行对应；
- * 改 core 侧判据须同步这里）：U+E200 + `visualize` + U+E202 + JSON + 可选
- * U+E201，独立成行出现在 assistant 最终回复里，指向 HTML fragment 绝对路径。
+ * 渲染块引用行（weave 渲染块协议，文法常量镜像自 core `VISUALIZATION_PROTOCOL`
+ * ——web 运行时不能 import core 值，import type 纪律，见 lifecycle.ts 同款说辞）：
+ * U+E200 + `visualize` + U+E202 + JSON + 可选 U+E201，独立成行出现在 assistant
+ * 最终回复里，指向一个 HTML fragment 文件的绝对路径。
  */
 const VIZ_REF_PREFIX = '\u{e200}visualize\u{e202}';
 const VIZ_REF_SUFFIX = '\u{e201}';

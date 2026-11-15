@@ -197,8 +197,7 @@ export const CLAUDE_HOOK_EVENTS = [
   'PostModelSwitch',
 ] as const;
 
-/** inject 事件候选：`GET /hooks/injectable`（权威表 core `INJECTABLE_EVENTS` 的派生面）。
- *  拉不到时回落 claude 表——规则面板的兜底形态，服务端 400 仍会把越界事件挡住。 */
+/** mirror of `INJECTABLE_EVENTS.claude` — inject 处理器只允许这些事件（服务端 400）。 */
 export const INJECTABLE_HOOK_EVENTS = [
   'PostToolUse',
   'UserPromptSubmit',
@@ -207,9 +206,16 @@ export const INJECTABLE_HOOK_EVENTS = [
   'SubagentStop',
 ] as const;
 
+/** mirror of `INJECTABLE_EVENTS.codex`（0.164 的 output schema 实证：Stop 无该字段）。 */
+export const CODEX_INJECTABLE_HOOK_EVENTS = [
+  'UserPromptSubmit',
+  'SessionStart',
+  'PostToolUse',
+] as const;
+
 /** 面板按 harness 给 inject 事件的候选（'any' 的 inject 服务端会拒，按 claude 列）。 */
-export function injectableEventsOf(harness: string, table?: Record<string, readonly string[]>): readonly string[] {
-  return table?.[harness] ?? (harness === 'codex' ? INJECTABLE_HOOK_EVENTS : INJECTABLE_HOOK_EVENTS);
+export function injectableEventsOf(harness: string): readonly string[] {
+  return harness === 'codex' ? CODEX_INJECTABLE_HOOK_EVENTS : INJECTABLE_HOOK_EVENTS;
 }
 
 export const hooksApi = {
@@ -234,10 +240,6 @@ export const hooksApi = {
     apiFetch<{ rules: HookRule[] }>(
       `/hooks/rules${projectId === undefined ? '' : `?projectId=${projectId}`}`,
     ).then((r) => r.rules),
-  listInjectableEvents: (): Promise<Record<string, readonly string[]>> =>
-    apiFetch<{ harnesses: Record<string, readonly string[]> }>('/hooks/injectable').then(
-      (r) => r.harnesses,
-    ),
   createHookRule: (body: HookRuleInput): Promise<HookRule> =>
     apiFetch<{ rule: HookRule }>('/hooks/rules', {
       method: 'POST',

@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { DatabaseSync } from 'node:sqlite';
-import { getBackupsDir, getDataRoot, getUploadsDir } from '../db/paths.js';
+import { getDataRoot, getUploadsDir } from '../db/paths.js';
 import { SCHEMA_VERSION } from '../db/db.js';
 import { marketDir } from '../market/manifest.js';
 import { WEAVE_VERSION } from '../version.js';
@@ -13,7 +13,7 @@ import { defaultWorktreeGitExec, type WorktreeGitExec } from './worktree.js';
  * 管理文件（`git ls-files`，未跟踪/被忽略的不进——保证干净仓）+ manifest。
  * 历史会话域（hook_events/sessions/side_questions/event_images + uploads 目录）
  * 勾了 includeHistory 才随包（气泡与图同进同退）。
- * 包落 `<cache>/backups/weave-backup-<时刻>.tar.gz`（getBackupsDir，可弃语义），滚动保留 7 天。
+ * 包落 `data/backups/weave-backup-<时刻>.tar.gz`，滚动保留 7 天。
  *
  * 不新增依赖：tar 头手写（ustar），gzip 用 node:zlib 一次缓冲——默认包
  * （配置面 + market 干净仓）量级在几十 MB 内；includeHistory 的 DB 行与
@@ -333,7 +333,7 @@ export class BackupEngine {
       mtime,
     });
 
-    const backupsDir = getBackupsDir(dataRoot);
+    const backupsDir = path.join(dataRoot, 'backups');
     await mkdir(backupsDir, { recursive: true });
     const stamp = stampOf(mtime);
     const file = path.join(backupsDir, `weave-backup-${stamp}.tar.gz`);

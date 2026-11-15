@@ -473,20 +473,21 @@ export async function readTerminalCounts(
 }
 
 /**
- * 每项目隐藏窗数（项目卡角标的隐藏小标）：逐项目枚举目标后查窗口可见性——
- * hidden 目标计数（0 不进表 = 前端不摆；探不到的目标不计入）。逐目标一枪
- * visibility 查询有 powershell 开销，只配 30s 一拍的对账循环、不进请求关键路径；
- * 单项目失败隔离跳过。显示数 = counts − hidden（前端现算，不另探一趟）。
+ * 每项目「全部已开窗都隐藏」半边（项目卡角标的隐藏小标）：逐项目枚举目标后查
+ * 窗口可见性——count>0 且**每一窗都 hidden** 才记 true（部分隐藏不算；count=0
+ * 或探不到的目标不进表 = 前端不摆态）。逐目标一枪 visibility 查询有 powershell
+ * 开销，只配 30s 一拍的对账循环、不进请求关键路径；单项目失败隔离跳过。
  */
 export async function readTerminalHidden(
   projects: readonly { id: number; path: string }[],
   opener: ProjectOpener | undefined = undefined,
-): Promise<Record<number, number>> {
+): Promise<Record<number, boolean>> {
   const { byTarget } = await readTerminalVisibility(projects, opener);
-  const out: Record<number, number> = {};
+  const out: Record<number, boolean> = {};
   for (const [key, vis] of byTarget) {
     const projectId = Number(key.split('|')[0]);
-    if (vis === 'hidden') out[projectId] = (out[projectId] ?? 0) + 1;
+    if (vis === 'hidden') out[projectId] = true;
+    else delete out[projectId];
   }
   return out;
 }

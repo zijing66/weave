@@ -438,9 +438,12 @@ export async function resolveGlobalSkillDir(
     const dir = path.join(rec.installPath, 'skills', name);
     return (await isDirectoryFollow(dir)) ? dir : null;
   }
-  // codex-plugin: 键形拆解经 harness 面（parsePluginKey），不裸 split。
+  // codex-plugin: pluginKey = "<plugin>@<marketplace>"
   if (!pluginKey) return null;
-  const { name: plugin, market: marketplace } = pluginSurfaceFor('codex').parsePluginKey(pluginKey);
+  const at = pluginKey.lastIndexOf('@');
+  if (at <= 0) return null;
+  const plugin = pluginKey.slice(0, at);
+  const marketplace = pluginKey.slice(at + 1);
   const plDir = path.join(codexPluginsCachePath(), marketplace, plugin);
   if (!(await isDirectoryFollow(plDir))) return null;
   let versions: import('node:fs').Dirent[];
