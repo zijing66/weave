@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { useSessionStatus } from './session-status-store';
 import { copyText } from '@/lib/clipboard';
 import type { ActionState } from '@/lib/feedback-core';
+import { errorText } from '@/lib/action-feedback';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
 import { WatchPicker } from './WatchPicker';
 import { QuestionAnswer } from './QuestionAnswer';
@@ -311,13 +312,36 @@ export function SessionList({
    *  在途态用 visBusy 摆）。 */
   const { terminalVisibility } = useSessionStatus();
   const [visBusy, setVisBusy] = useState<string[]>([]);
+  /** 切换落定覆盖：**回包才写**（loading 期间斜纹/图标保持原态——切换的感知 =
+   *  「点下去 → 转圈 → 落定一拍翻」，不提前变）；全局帧追上同值后由 effect 让位。 */
+  const [visOverride, setVisOverride] = useState<Map<string, 'visible' | 'hidden'>>(new Map());
+  useEffect(() => {
+    setVisOverride((prev) => {
+      let changed = false;
+      const next = new Map<string, 'visible' | 'hidden'>();
+      for (const [k, v] of prev) {
+        if (terminalVisibility.get(k) === v) changed = true;
+        else next.set(k, v);
+      }
+      return changed ? next : prev;
+    });
+  }, [terminalVisibility]);
+  const blockVisibilityOf = (projectId: number, targetId: string): 'visible' | 'hidden' =>
+    visOverride.get(`${projectId}|${targetId}`) ?? terminalVisibility.get(`${projectId}|${targetId}`) ?? 'visible';
   const toggleBlockVisibility = (projectId: number, targetId: string, cur: 'visible' | 'hidden'): void => {
     if (visBusy.includes(targetId)) return;
+    const key = `${projectId}|${targetId}`;
     setVisBusy((prev) => [...prev, targetId]);
     api
       .setProjectTerminalVisibility(projectId, targetId, cur === 'hidden' ? 'show' : 'hide')
-      .then(() => setVisBusy((prev) => prev.filter((x) => x !== targetId)))
-      .catch(() => setVisBusy((prev) => prev.filter((x) => x !== targetId)));
+      .then((r) => {
+        setVisOverride((prev) => new Map(prev).set(key, r.visibility));
+        setVisBusy((prev) => prev.filter((x) => x !== targetId));
+      })
+      .catch((e: unknown) => {
+        setVisBusy((prev) => prev.filter((x) => x !== targetId));
+        show('error', t('errors.terminalVisibilityFailed', { error: errorText(e) }));
+      });
   };
   /** 块头文案：同窗口多个 tab 时才标 Tab 号（单 tab 窗口标了只是噪音）。 */
   const blockTitle = (terminal: SessionTerminal): string =>
@@ -748,7 +772,7 @@ export function SessionList({
             const projectId = entry.rows[0]?.projectId;
             const vis =
               projectId != null
-                ? (terminalVisibility.get(`${projectId}|${entry.terminal.id}`) ?? 'visible')
+                ? blockVisibilityOf(projectId, entry.terminal.id)
                 : 'visible';
             const hidden = vis === 'hidden';
             return (
