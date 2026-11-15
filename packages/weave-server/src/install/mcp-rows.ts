@@ -24,10 +24,11 @@ export async function readMcpRows(projectPath: string): Promise<McpToolRow[]> {
   const rows: McpToolRow[] = [];
   for (const surface of assetSurfaces()) {
     const scopes = surface.mcpScopes();
+    // 启停覆盖面归 surface 声明（mcpEnableScopes；缺省 = 装了即生效）。
+    const enableScopes = surface.mcpEnableScopes?.() ?? [];
     for (const scope of scopes) {
-      // 启停面只在 claude 项目档存在（覆写落 `.claude/settings.json`）；null = 装了即生效。
       const enable: McpEnableMap | null =
-        surface.harness === 'claude' && scope === 'project' ? enableMap : null;
+        enableScopes.includes(scope) && scope === 'project' ? enableMap : null;
       const servers = await surface.mcpRead(scope, projectPath, homedir()).catch(() => ({}));
       for (const [name, config] of Object.entries(servers)) {
         rows.push({

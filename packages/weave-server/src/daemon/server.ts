@@ -223,6 +223,8 @@ export interface WeaveServerDeps {
   worktreeGitExec?: WorktreeGitExec;
   /** 批 10 工具包服务；/projects/:id/toolkit 依赖它。 */
   toolkit?: ToolkitService;
+  /** 插件面解析器（market 路由全域的 surface 取用缝）；缺省经 registry 按名取，测试注入 fake 面。 */
+  pluginSurfaceOf?: (harness: Harness) => PluginSurface;
   /** 插件安装面（plugins/uninstall 依赖它）；缺省经 registry 取 Claude 面，测试注入 fake exec。 */
   pluginSurface?: PluginSurface;
   /** dashboard 平面认证（见 auth.ts）。缺省不装 = 开放（存量测试口径），生产由 start/dev-entry 装配。 */

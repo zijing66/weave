@@ -207,3 +207,12 @@ export function getExtensionStatePath(dir?: string): string {
 export function getNarrationCursorsPath(dir?: string): string {
   return path.join(dataRoots(dir).cache, 'narration-cursors.json');
 }
+
+/**
+ * 备份包滚动目录（`<cache>/backups/`，7 天滚动保留）：可弃语义——包由库+uploads
+ * 现打现取，放 data/ 会被当作实体数据随迁移整档带走（体积翻倍），放 cache/ 丢了
+ * 也能重打。
+ */
+export function getBackupsDir(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'backups');
+}

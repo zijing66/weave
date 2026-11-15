@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { lstat, readFile, readlink, access } from 'node:fs/promises';
-import { HARNESS_KEYS, HARNESS_LOCAL_INSTRUCTION_FILES } from './harness.js';
+import { HARNESS_KEYS, HARNESS_LOCAL_INSTRUCTION_FILES } from '@weavecode/core';
 
 /**
  * Health checks over the state `weave init` produced, as structured results.

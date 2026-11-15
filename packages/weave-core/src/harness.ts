@@ -361,6 +361,33 @@ export const VISUALIZATION_PROTOCOL = {
 } as const;
 
 /**
+ * 引用行的**行级解析唯一实现**（server 读取口与 web 切段同判据：前缀 + 可选
+ * 后缀 + 合法 JSON；调用方各自再叠自己的语义——server 只认 path，web 另认
+ * title/mode 与「带协议标记的坏行渲染占位」）。认不出返回 null（调用方当普通
+ * 文本）。
+ */
+export function parseVisualizationRef(line: string): { path: string; title?: string; mode?: 'wide' } | null {
+  const prefixes = [VISUALIZATION_PROTOCOL.referencePrefix, ...VISUALIZATION_PROTOCOL.referencePrefixAliases];
+  const suffixes = [VISUALIZATION_PROTOCOL.referenceSuffix, ...VISUALIZATION_PROTOCOL.referenceSuffixAliases];
+  const prefix = prefixes.find((p) => line.startsWith(p));
+  if (!prefix) return null;
+  let body = line.slice(prefix.length);
+  const suffix = suffixes.find((s) => body.endsWith(s));
+  if (suffix) body = body.slice(0, -suffix.length);
+  try {
+    const parsed = JSON.parse(body) as { path?: unknown; title?: unknown; mode?: unknown };
+    if (typeof parsed.path !== 'string' || !parsed.path) return null;
+    return {
+      path: parsed.path,
+      ...(typeof parsed.title === 'string' && parsed.title ? { title: parsed.title } : {}),
+      ...(parsed.mode === 'wide' ? { mode: 'wide' as const } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 宠物精灵契约——桌面宠物窗的资产文法与动画时长表（跨 harness 统一，
  * 模型侧由 skill 教；资产格式与 codex 的 v2 pet 兼容，社区现成资产可直接导入）。
  * 网格/行号/帧时长与 codex TUI 的 default_animations 对齐（2026-10-31 考证）；

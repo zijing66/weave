@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-11-15
+
+- **架构评审（四维并行子 Agent 方案）与 D-1 pet SSE 豁免（用户裁决「d1先豁免挂账」）**：评审方案 = 四个只读子 Agent 并行、各领一张可核对检查单（A 分层依赖 / B 能力面装配 / C 数据持久化 / D web 前端协议），产出 severity 分级发现清单 + 通过项 + 修复顺序；方案本体已转交「weave skill集成制作」会话泛化成通用 skill。中危发现当日修复：api-log REDACT 补 push 订阅 `keys.auth`、backup 归档 `getBackupsDir`（cache 档）、market 插件面收敛 `pluginSurfaceOf` 解析器缝、ExtensionBindingsPanel 30s 轮询改吃 `session.renamed` 帧、槽清单 21→22 文档同步、`AssetSurface.mcpEnableScopes` 启停面声明化。**豁免挂账**：`pet/main.ts`（桌宠独立 WebView2 入口）自建 `EventSource` + 15s 兜底轮询——§9「SSE 单通道」的明文例外范围不含它，但 pet 是独立页面壳（非 dashboard 主应用）、WebView2 后台节流下 SSE 心跳不可靠，轮询是刻意的对账兜底（注释自证）；**不改**，后续若 pet 收编进主应用再迁 `lib/sse.ts`。
+
 ## 2026-11-14
 
 - **联邦跨机输入面评估（同日问答定案；③①同日落地 b47f923c，②缓）**：场景 = superagent 派 n 本机会话 + 1 跨机会话打包部署、回传 changelog——主链路核对通（编排节点 id 原生认 `peer:<name>/<sessionId>`、MessageDeliverer 分流 sendToPeer、对端起会话 sessions.create 已落地；编排引擎对远端完成态是盲的，扇入闭环靠消息回传非状态回传——对端 webhook 出口 POST 回本机 `/webhooks/extensions/<token>` 是免配对回传捷径）。三处结论与处置：① **`#` 会话引用选择器跨机已点亮**（左栏尾段「联邦机器」分组 = peers + 逐 peer 只读会话代理 `GET /federation/peers/:id/sessions`，离线灰置；对端会话落定 = `peer:<名>/<id>` 目标形胶囊——session chip 值直接携带该形、序列化层零改动；服务端 referencedSessionIds 正则天然不认 `#peer:` 形 ⇒ 远程会话不进本机 ensureOpen 名单，走投递层 peer: 分流）；② **`@` 文件引用不支持跨机，缓**（数据源 = 本机 projectFileIndex；call 门 projects.files 通道已有，web 无跨机项目入口——等 ① 验证联邦输入面模式后再评估）；③ **SendMessage 经对端 superagent 代理可行且零代码**（本机 → MCP send_message 写 `peer:` 目标 → inject 进对端 superagent → 对端用自己原生 SendMessage/MCP 分发 → 原路回传；宿主原生 SendMessage 本身跨机够不着，weave 不代投是 §4 既有裁决；工具描述已补跨机语义）。

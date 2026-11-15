@@ -1,4 +1,4 @@
-import { checkHarness as checkHarnessCore, type HarnessCheck as StructuredCheck } from '@weavecode/core';
+import { checkHarness as checkHarnessCore, type HarnessCheck as StructuredCheck } from '@weavecode/harness';
 import { t } from '../i18n/index.js';
 import type { MessageKey } from '../i18n/dict/index.js';
 

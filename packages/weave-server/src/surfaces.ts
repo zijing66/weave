@@ -52,6 +52,11 @@ export function assetSurfaces(): AssetSurface[] {
     .filter((s): s is AssetSurface => s !== undefined);
 }
 
+/** harness 的显示名（driver 注册表取；错误文案/提示用，不散写名字分支）。 */
+export function harnessDisplayName(harness: Harness): string {
+  return registry.get(harness)?.displayName ?? harness;
+}
+
 /** 按 harness 取插件安装面（批 3）；未注册或未补 plugins 槽抛错。 */
 export function pluginSurfaceFor(harness: Harness): PluginSurface {
   const surface = registry.get(harness)?.plugins;
