@@ -12,11 +12,13 @@ import type { MessageKey } from '@/i18n/dict';
 import {
   Check,
   ChevronLeft,
+  Copy,
   Download,
   FileText,
   Folder,
   FolderPlus,
   HardDrive,
+  History,
   Home,
   Library,
   ListX,
@@ -24,6 +26,11 @@ import {
   Monitor,
   X,
 } from 'lucide-react';
+import { copyText } from '@/lib/clipboard';
+import { loadDirHistory, pushDirHistory, type FileHistoryEntry } from '@/lib/file-history';
+import { HistoryPanel } from '@/components/FileBrowserModal';
+import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { useActionFeedback } from '@/lib/action-feedback';
 
 interface DirectoryPickerModalProps {
   open: boolean;
@@ -149,6 +156,10 @@ export function DirectoryPickerModal({
   /** 顶部完整路径行：树里勾选时显示该文件夹，也可直接粘贴一个路径加入选择。 */
   const [pathInput, setPathInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  /** 复制/历史（与文件浏览器统一：路径文本右侧两枚小按钮）；历史 = 最近选择的目录。 */
+  const fb = useActionFeedback();
+  const [dirHistory, setDirHistory] = useState<FileHistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   /** 用户自加的快访项（行右键添加、右键移除；内置根不可移除）。 */
   const [quickAccess, setQuickAccess] = useState<string[]>([]);
   const [quickMenu, setQuickMenu] = useState<QuickMenu | null>(null);
@@ -162,11 +173,13 @@ export function DirectoryPickerModal({
   useEffect(() => {
     if (!open) return;
     setQuickAccess(loadQuickAccess());
+    setDirHistory(loadDirHistory());
     setCurDir(null);
     setFocused(null);
     setSelected([]);
     setPathInput('');
     setError(null);
+    setHistoryOpen(false);
   }, [open]);
 
   useEffect(() => {
@@ -606,7 +619,8 @@ export function DirectoryPickerModal({
         </header>
 
         {/* 完整绝对路径行：树里勾选后在这里显示（树内的名字会被截断），也可直接
-            粘贴一个路径加入选择，不必逐层展开。 */}
+            粘贴一个路径加入选择，不必逐层展开。复制/历史按钮在文本右侧（与文件
+            浏览器统一排布）；历史 = 最近选择的目录，点条目即回填输入框。 */}
         <div className="shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-edge/[0.06] max-lg:px-3">
           <input
             value={pathInput}
@@ -618,6 +632,56 @@ export function DirectoryPickerModal({
             spellCheck={false}
             className="flex-1 min-w-0 bg-neutral-900 rounded px-2 py-1 text-xs font-mono text-neutral-200"
           />
+          <Tooltip label={t('tasks.fileCopyAbsPath')} side="top">
+            <button
+              type="button"
+              aria-label={t('tasks.fileCopyAbsPath')}
+              onClick={() => {
+                const text = selected[0] ?? pathInput;
+                if (!text) return;
+                void fb.run(
+                  'copy-path',
+                  async () => {
+                    const ok = await copyText(text);
+                    if (!ok) throw new Error('copy failed');
+                  },
+                  { fail: () => t('common.copyFailed') },
+                );
+              }}
+              className="flex shrink-0 items-center rounded p-1 text-neutral-500 hover:text-neutral-200 max-lg:p-2"
+            >
+              <FeedbackIcon
+                state={fb.stateOf('copy-path')}
+                className="h-3.5 w-3.5"
+                icon={<Copy className="h-3.5 w-3.5" />}
+              />
+            </button>
+          </Tooltip>
+          <div className="relative shrink-0">
+            <Tooltip label={t('tasks.fileHistoryTitle')} side="top">
+              <button
+                type="button"
+                aria-label={t('tasks.fileHistoryTitle')}
+                onClick={() => setHistoryOpen((v) => !v)}
+                className={cn(
+                  'flex items-center rounded p-1 transition-colors max-lg:p-2',
+                  historyOpen ? 'text-neutral-200' : 'text-neutral-500 hover:text-neutral-200',
+                )}
+              >
+                <History className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <HistoryPanel
+              open={historyOpen}
+              history={dirHistory}
+              alive={null}
+              onClose={() => setHistoryOpen(false)}
+              onOpen={(e) => {
+                setHistoryOpen(false);
+                setPathInput(e.path);
+              }}
+            />
+          </div>
           <Tooltip label={t('picker.addPathTip')}>
             <button
               onClick={commitPath}
@@ -787,6 +851,8 @@ export function DirectoryPickerModal({
           <button
             onClick={() => {
               onConfirm(selected);
+              // 最近选择账（复制/历史按钮的数据源）：确认才算「选择过」。
+              for (const p of selected) setDirHistory(pushDirHistory({ path: p, name: nameOf(p) }));
               setSelected([]);
               setPathInput('');
             }}

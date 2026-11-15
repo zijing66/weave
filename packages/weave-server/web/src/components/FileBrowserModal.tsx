@@ -1582,9 +1582,14 @@ export function FileBrowserModal({
             </button>
           </Tooltip>
           {/* 面包屑恒显（首屏=高亮项目的绝对路径）：搜索范围就是它指的这棵子树，
-              它本身就是范围说明。超宽跑马灯来回滚；复制/历史按钮在行头（路径前方），
-              复制按钮同右键菜单口径（含空格包引号）。 */}
+              它本身就是范围说明。超宽跑马灯来回滚；复制/历史按钮在文本右侧
+              （与选择器统一），复制按钮同右键菜单口径（含空格包引号）。 */}
           <div className="flex min-w-0 flex-1 items-center gap-1">
+            <MarqueeText
+              text={headerPath}
+              grow={false}
+              className="font-mono text-11 text-neutral-400"
+            />
             <Tooltip label={t('tasks.fileCopyAbsPath')} side="top">
               <button
                 type="button"
@@ -1634,11 +1639,6 @@ export function FileBrowserModal({
                 }}
               />
             </div>
-            <MarqueeText
-              text={headerPath}
-              grow={false}
-              className="font-mono text-11 text-neutral-400"
-            />
           </div>
           {/* 搜索框：窄屏收成图标（点图标展开聚焦），桌面恒 224px 全宽。
               容器宽度随展开态切换——展开后 176px 收在头部 flex 里（标题 truncate 让位），
@@ -1905,7 +1905,8 @@ export function FileBrowserModal({
 /** 「最近打开」下拉面板：头部 History 图标点开。打开那一拍对每条路径惰性
  *  校验（按其父目录子树现查），失效条目置灰标「已失效」不可点——不自动剔除，
  *  账还留着（目录改回来还能用）。 */
-function HistoryPanel({
+/** 历史下拉面板（文件浏览器与目录选择器共用；落点按锚按钮视口钳制，移动端不溢出）。 */
+export function HistoryPanel({
   open,
   history,
   alive,
@@ -1919,7 +1920,36 @@ function HistoryPanel({
   onClose: () => void;
 }) {
   const t = useT();
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
   const ref = useRef<HTMLDivElement>(null);
+  /** 展开那一拍定宽与水平落点。面板是 absolute，坐标系 = 按钮的小 relative 容器
+   *  而非视口——视口目标坐标要减去容器自身的偏移才是 style.left。桌面 = 与路径行
+   *  同宽贴行左缘（「和标题宽度一致」）；移动端 = 横向占满屏宽（左右各 8px 边）。
+   *  落点恒钳视口内，任何屏宽都不溢出。 */
+  const [pos, setPos] = useState<{ left: number; width: number } | null>(null);
+  useEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const host = ref.current?.parentElement;
+    const hostRect = host?.getBoundingClientRect();
+    // 锚 = 容器外层的路径行（再上一层才是与标题同宽的行）。
+    const anchor =
+      host?.parentElement ?? host ?? null;
+    const a = anchor?.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const toHost = (viewLeft: number): number =>
+      hostRect ? viewLeft - hostRect.left : viewLeft;
+    if (isDesktop && a) {
+      const width = Math.max(a.width, 320);
+      const viewLeft = Math.max(8, Math.min(a.left, vw - width - 8));
+      setPos({ left: toHost(viewLeft), width });
+    } else {
+      const width = vw - 16;
+      setPos({ left: toHost(8), width });
+    }
+  }, [open, isDesktop]);
   // 点外面收面板（Esc 归弹窗自己的退层链管，面板不抢）。
   useEffect(() => {
     if (!open) return;
@@ -1937,7 +1967,8 @@ function HistoryPanel({
     <div
       ref={ref}
       data-history-panel
-      className="absolute right-0 top-full z-[60] mt-1 w-80 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
+      className="absolute top-full z-[60] mt-1 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
+      style={pos ?? undefined}
     >
       <p className="px-3 pb-1 pt-1 text-10 font-medium uppercase tracking-wide text-neutral-500">
         {t('tasks.fileHistoryTitle')}

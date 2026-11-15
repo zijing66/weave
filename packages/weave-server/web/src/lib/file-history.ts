@@ -45,3 +45,30 @@ export function pushFileHistory(
   }
   return next;
 }
+
+/** 目录选择器的「最近选择」：绝对路径不分项目一桶，与文件历史同形同限。 */
+const DIR_KEY = 'weave:dir-picker-history';
+
+export function loadDirHistory(): FileHistoryEntry[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(DIR_KEY) ?? '[]') as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (e): e is FileHistoryEntry =>
+        !!e && typeof e === 'object' && typeof (e as FileHistoryEntry).path === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function pushDirHistory(entry: { path: string; name: string }): FileHistoryEntry[] {
+  const prev = loadDirHistory().filter((e) => e.path !== entry.path);
+  const next = [{ ...entry, at: Date.now() }, ...prev].slice(0, MAX);
+  try {
+    localStorage.setItem(DIR_KEY, JSON.stringify(next));
+  } catch {
+    // 存不进去就只活这一局
+  }
+  return next;
+}
