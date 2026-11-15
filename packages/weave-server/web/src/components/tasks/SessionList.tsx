@@ -249,6 +249,7 @@ export function SessionList({
   closePaneStateOf,
   capabilities,
   inflightOf,
+  failedOf,
   questionOf,
   onAnswer,
   answerStateOf,
@@ -280,6 +281,8 @@ export function SessionList({
   capabilities: ReadonlyMap<Harness, MessagingCapability> | null;
   /** 该会话在途消息条数（服务端 SSE push 快照）——有则行首挂 amber 角标。 */
   inflightOf: (sessionId: string) => number;
+  /** 该会话常驻失败投递行条数（同帧 failed 快照）——failed 优先于在途展示（错误色）。 */
+  failedOf: (sessionId: string) => number;
   /** 该会话的待答阻塞问题（无 = 不挂起）。 */
   questionOf?: (sessionId: string) => PendingQuestionEntry | undefined;
   /** 远程作答（整 call 一次提交：问题键 + 选项下标 + 自定义输入文本；键序由
@@ -432,6 +435,7 @@ export function SessionList({
     const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
     const watch = watchOf?.(s.sessionId);
     const inflight = inflightOf(s.sessionId);
+    const failed = failedOf(s.sessionId);
     const openTermState = openTerminalStateOf?.(s.sessionId) ?? 'idle';
     const closePaneState = closePaneStateOf?.(s.sessionId) ?? 'idle';
     // 待答问题数不含收尾屏（那不是宿主的问题 tab，是整 call 的落定动作）
@@ -507,10 +511,18 @@ export function SessionList({
               {sessionLabel(s.title, s.sessionId)}
             </span>
             <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
-              {/* 消息信号同一格（与动作按钮同行、贴在按钮组左侧）：在途 amber
-                  （服务端计数）与草稿 blue（纯前端——草稿只存 sessionStorage）。
+              {/* 消息信号同一格（与动作按钮同行、贴在按钮组左侧）：失败红、在途
+                  amber（服务端计数）与草稿 blue（纯前端——草稿只存 sessionStorage）。
+                  失败优先于在途（状态机从后往前：failed 是更靠后的态）。
                   纯指示、不可点：对话入口就是行本身。 */}
-              {inflight > 0 && (
+              {failed > 0 ? (
+                <Tooltip label={t('tasks.messageFailed', { n: failed })}>
+                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-red-400/40 bg-red-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-red-300">
+                    <MessageSquareText className="h-3 w-3" />
+                    {failed > 9 ? '9+' : failed}
+                  </span>
+                </Tooltip>
+              ) : inflight > 0 && (
                 <Tooltip label={t('tasks.messageInflight', { n: inflight })}>
                   <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-amber-300">
                     <MessageSquareText className="h-3 w-3" />

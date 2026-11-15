@@ -532,6 +532,7 @@ export function startDaemon(): void {
   // 帧到即重算、值变才推绝对值快照；新 SSE 客户端接入补一份首帧。
   const inflightRefresher = new InflightCountsRefresher(
     () => messageDeliverer.listInflightCounts(),
+    () => messageDeliverer.listFailedCounts(),
     dataBus,
     hookBus,
   );

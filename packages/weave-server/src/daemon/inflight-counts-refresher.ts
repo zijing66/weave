@@ -2,7 +2,7 @@ import type { DataBus } from './data-bus.js';
 import type { HookEventBus } from '../hooks/bus.js';
 
 /**
- * InflightCountsRefresher — 会话行「在途消息」角标的数据面（SSE 推送）。
+ * InflightCountsRefresher — 会话行「在途消息」与「投递失败」角标的数据面（SSE 推送）。
  *
  * 与 TerminalTopologyRefresher 同形状（指纹去重、值变才推），但**没有定时器**：
  * 在途计数的变化源全是事件（`message.*` 帧），所以由 hook 帧驱动重算即可——
@@ -17,6 +17,8 @@ export class InflightCountsRefresher {
   constructor(
     /** 现算一份在途计数（sessionId → 条数）。 */
     private readonly snapshot: () => Map<string, number>,
+    /** 现算一份常驻失败行计数（sessionId → 条数）。 */
+    private readonly failedSnapshot: () => Map<string, number>,
     private readonly bus: DataBus,
     hookBus: HookEventBus,
   ) {
@@ -32,14 +34,16 @@ export class InflightCountsRefresher {
 
   private push(): void {
     // 键序排序：指纹去重靠稳定序列化，Map 的插入序会随落点变化而抖
-    const snapshot = this.snapshot();
-    const counts: Record<string, number> = {};
-    for (const sessionId of [...snapshot.keys()].sort()) {
-      counts[sessionId] = snapshot.get(sessionId)!;
-    }
-    const fingerprint = JSON.stringify(counts);
+    const sorted = (m: Map<string, number>): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (const sessionId of [...m.keys()].sort()) out[sessionId] = m.get(sessionId)!;
+      return out;
+    };
+    const counts = sorted(this.snapshot());
+    const failed = sorted(this.failedSnapshot());
+    const fingerprint = JSON.stringify({ counts, failed });
     if (fingerprint === this.lastFingerprint) return;
     this.lastFingerprint = fingerprint;
-    this.bus.emit({ key: 'inflightCounts', payload: { counts } });
+    this.bus.emit({ key: 'inflightCounts', payload: { counts, failed } });
   }
 }

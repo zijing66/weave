@@ -494,6 +494,7 @@ async function main(): Promise<void> {
   // 在途消息角标（会话行）：无定时器——message.* 帧驱动重算、值变才推快照。
   const inflightRefresher = new InflightCountsRefresher(
     () => messageDeliverer.listInflightCounts(),
+    () => messageDeliverer.listFailedCounts(),
     dataBus,
     hookBus,
   );

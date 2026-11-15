@@ -46,6 +46,19 @@ import {
 const WEZTERM_PROMPT_CHUNK_BYTES = 16_384;
 
 /**
+ * send-text 超时自动补一枪（实测 5s 超时偶发命中：mux IPC 停顿可达秒级甚至几十秒、
+ * 空闲 pane 也中——首枪超时通常只是连接没建起来、文本没写进去，重发不会重复注入；
+ * rc≠0 不重试，那是明确的失败语义，交给上层报错）。
+ */
+async function retryOnTimeout(
+  fire: () => ReturnType<typeof weztermCli>,
+): Promise<ReturnType<typeof weztermCli>> {
+  const first = await fire();
+  if (first?.timedOut !== true) return first;
+  return fire();
+}
+
+/**
  * 探活结果短缓存（10s）：角标的周期探测 + 开窗后对账 + GET 后台对账会在
  * 瞬间打多枪，缓存挡掉重复 spawn——一枪要对**每个存活 socket** spawn 一次
  * `wezterm cli list`（实测 wall ~180ms / CPU 62–125ms；残留幽灵 GUI 会把
@@ -396,7 +409,7 @@ export class WeztermBackend extends TerminalBackend {
     const pane = String(parsed.paneId);
     const send = async (payload: string, noPaste: boolean) => {
       const args = ['cli', 'send-text', '--pane-id', pane, ...(noPaste ? ['--no-paste'] : []), payload];
-      const r = await weztermCli(args, mux.socket);
+      const r = await retryOnTimeout(() => weztermCli(args, mux.socket));
       if (!r?.ok) {
         const shown = ['cli', 'send-text', '--pane-id', pane, ...(noPaste ? ['--no-paste'] : []), '<prompt text>'];
         throw new Error(weztermStepError(shown, mux.socket, r));
@@ -428,9 +441,8 @@ export class WeztermBackend extends TerminalBackend {
     const mux = await weztermMuxForId(parsed.muxKey);
     if (!mux) throw new Error('wezterm instance is gone — cannot send keys to the pane');
     const pane = String(parsed.paneId);
-    const sent = await weztermCli(
-      ['cli', 'send-text', '--pane-id', pane, '--no-paste', keys],
-      mux.socket,
+    const sent = await retryOnTimeout(() =>
+      weztermCli(['cli', 'send-text', '--pane-id', pane, '--no-paste', keys], mux.socket),
     );
     if (!sent?.ok) {
       throw new Error(

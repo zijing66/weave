@@ -130,6 +130,7 @@ export function TasksPanel({
     dispatches,
     statuses,
     inflight: inflightCounts,
+    failedDeliveries,
     questions,
     refresh: refreshStatus,
   } = useSessionStatus();
@@ -402,6 +403,11 @@ export function TasksPanel({
   const inflightOf = useCallback(
     (sessionId: string) => inflightCounts.get(sessionId) ?? 0,
     [inflightCounts],
+  );
+  /** 常驻失败行条数（同帧 failed 快照）：会话行消息图标的红 = 错误色（优先展示）。 */
+  const failedOf = useCallback(
+    (sessionId: string) => failedDeliveries.get(sessionId) ?? 0,
+    [failedDeliveries],
   );
   /** 待答阻塞问题（总线随帧刷新）：会话行问答图标的 amber + 角标。 */
   const questionOf = useCallback(
@@ -1450,6 +1456,7 @@ export function TasksPanel({
             closePaneStateOf={closePaneStateOf}
             capabilities={messagingCaps === null ? null : capabilityMap}
             inflightOf={inflightOf}
+            failedOf={failedOf}
             questionOf={questionOf}
             onAnswer={onAnswerQuestion}
             answerStateOf={answerStateOf}

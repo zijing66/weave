@@ -956,7 +956,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       sessionStatsOf={(id) => projectStats.get(id)}
       pendingQuestionsOf={(id) => pendingQuestionsByProject.get(id) ?? 0}
       terminalsOf={(id) => terminalCounts[id] ?? 0}
-      terminalsHiddenOf={(id) => hiddenCounts[id] === true}
+      terminalsHiddenOf={(id) => hiddenCounts[id] ?? 0}
       onReorder={reorderProjects}
       archivedProjects={archivedProjects}
       onArchive={handleArchiveProject}

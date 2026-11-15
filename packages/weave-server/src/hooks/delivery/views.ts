@@ -106,6 +106,20 @@ export function listInflightCounts(
 }
 
 /**
+ * 失败计数（sessionId → 条数）：内存里常驻的 failed/timeout 行。会话行错误
+ * 角标用——与在途计数同一帧推（failed 是状态机更靠后的态，优先展示）。
+ */
+export function listFailedCounts(memory: ReadonlyMap<string, PipeMessage>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const msg of memory.values()) {
+    if (msg.status === 'failed' || msg.status === 'timeout') {
+      counts.set(msg.sessionId, (counts.get(msg.sessionId) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/**
  * 会话 → 所在可见屏幕（会话列表分块的数据面）。旁路 env 与投递路径共用同一份
  * 缓存，不另采一次；后端没有反查能力 = 空表（那些会话不分组）。顺手摘掉已判死
  * 会话的 env：那是上一次见到它时的快照，它不会再来报一次，留着只会让死会话常占块头。

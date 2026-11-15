@@ -203,7 +203,7 @@ export function SessionMessages({
     error,
     threadRef,
     contentRef,
-    stick, atBottom, lastScroll, lastAnchor, anchorAtTop,
+    stick, atBottom, lastScroll, lastAnchor, anchorAtTop, userScrolled,
     status,
     compacting, interrupted, generating, failed, liveText,
     pull,
@@ -986,16 +986,29 @@ export function SessionMessages({
             if (el && el.clientHeight > 0) {
               const bottom = atBottom();
               lastScroll.current = { top: el.scrollTop, atBottom: bottom };
-              stick.current = bottom;
+              // 布局性 scroll（迟加载内容撑高把视口顶走）不是用户意图：用户没
+              // 滚过时 stick 维持 true，贴底补拍才能接住迟加载（hook userScrolled 注）
+              if (!userScrolled.current) stick.current = true;
+              else stick.current = bottom;
               // 锚抓拍与 lastScroll 同拍：切走那刻布局盒已拆、事后抓不到，只能滚动时记
               lastAnchor.current = anchorAtTop();
             }
             cancelTap(); // 手指在滑 = 这一击不算轻点
             pull.syncEdge();
           }}
-          onWheel={(e) => pull.wheel(e.deltaY, e.deltaMode)}
-          onTouchStart={(e) => pull.touchStart(e.touches[0]?.clientY ?? 0)}
-          onTouchMove={(e) => pull.touchMove(e.touches[0]?.clientY ?? 0)}
+          onWheel={(e) => {
+            // 用户手势滚动（滚轮/触摸）才置位：布局性 scroll 不带手势（hook userScrolled 注）
+            userScrolled.current = true;
+            pull.wheel(e.deltaY, e.deltaMode);
+          }}
+          onTouchStart={(e) => {
+            userScrolled.current = true;
+            pull.touchStart(e.touches[0]?.clientY ?? 0);
+          }}
+          onTouchMove={(e) => {
+            userScrolled.current = true;
+            pull.touchMove(e.touches[0]?.clientY ?? 0);
+          }}
           onTouchEnd={pull.touchEnd}
           onTouchCancel={pull.touchEnd}
           // 嵌入右栏时右栏本身没有卡片壳（见上面的面板类），气泡区就成了「白底上
@@ -1665,22 +1678,21 @@ export function SessionMessages({
         {/* 分界拖拽手柄：贴在**对话区的下边线**上（拖动 = 调对话区大小，输入区
             让位/收回），不再挂在输入编辑器顶边——两件事的语义在一条线上才对
             （2026-11-11 用户实测：拖动条应在上方气泡框的边线上）。负边距吃掉
-            flex gap，常显不添空隙；触屏同样可用（pointer capture + touch-none）。 */}
-        {isDesktop && (
-          <div
-            role="separator"
-            aria-label={t('tasks.msgResizeInput')}
-            onPointerDown={onRowsDown}
-            onPointerMove={onRowsMove}
-            onPointerUp={onRowsUp}
-            onPointerCancel={onRowsUp}
-            className="group -my-1 flex h-3 shrink-0 cursor-ns-resize touch-none items-center justify-center"
-          >
-            <Tooltip label={t('tasks.msgResizeInput')} side="top">
-              <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
-            </Tooltip>
-          </div>
-        )}
+            flex gap，常显不添空隙；pointer capture + touch-none，移动端同款
+            （2026-11-15 用户反馈：移动端也缺大小调整）。 */}
+        <div
+          role="separator"
+          aria-label={t('tasks.msgResizeInput')}
+          onPointerDown={onRowsDown}
+          onPointerMove={onRowsMove}
+          onPointerUp={onRowsUp}
+          onPointerCancel={onRowsUp}
+          className="group -my-1 flex h-3 shrink-0 cursor-ns-resize touch-none items-center justify-center"
+        >
+          <Tooltip label={t('tasks.msgResizeInput')} side="top">
+            <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
+          </Tooltip>
+        </div>
 
         {error && (
           <p className="mt-1 shrink-0 rounded border border-red-500/30 bg-red-950/30 px-2 py-1 text-11 text-red-300">

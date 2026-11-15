@@ -64,8 +64,7 @@ export const appZh = {
   'project.openInTerminal': '在终端中打开',
   'project.filesBrowser': '浏览项目文件',
   'project.dragToReorder': '拖动调整顺序',
-  'project.terminalsOpen': '{n} 个终端已打开',
-  'project.terminalsHidden': '{n} 个终端已隐藏',
+  'project.terminalsSplit': '{visible} 个显示 / {hidden} 个隐藏',
   'project.terminalMenu': '唤出或新开终端',
   'project.terminalListUnavailable': '当前终端不支持列出已开窗口——只能新开一个',
   // 行内快捷操作（批 8）：打开两项复用上方 project.openIn* 词条，不重复新增。
@@ -248,8 +247,7 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'project.openInTerminal': 'Open in terminal',
   'project.filesBrowser': 'Browse project files',
   'project.dragToReorder': 'Drag to reorder',
-  'project.terminalsOpen': '{n} terminal(s) open',
-  'project.terminalsHidden': '{n} terminal(s) hidden',
+  'project.terminalsSplit': '{visible} visible / {hidden} hidden',
   'project.terminalMenu': 'Bring a terminal up or open a new one',
   'project.terminalListUnavailable':
     "This terminal preset can't list open windows — open a new one instead",

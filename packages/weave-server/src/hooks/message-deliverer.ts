@@ -64,6 +64,7 @@ import {
   type RewindPrepareResult,
 } from './delivery/rewind.js';
 import {
+  listFailedCounts as listFailedCountsIn,
   listInflightCounts as listInflightCountsIn,
   listVisible as listVisibleIn,
   sessionTerminals as sessionTerminalsIn,
@@ -964,6 +965,11 @@ export class MessageDeliverer {
    */
   listInflightCounts(): Map<string, number> {
     return listInflightCountsIn(this.hooksDir, this.memory);
+  }
+
+  /** 常驻失败行计数（sessionId → 条数）：会话行错误角标用。 */
+  listFailedCounts(): Map<string, number> {
+    return listFailedCountsIn(this.memory);
   }
 
   /** 层② 终端 send-text 通道是否装配（能力矩阵 prompt 列合成用）。 */

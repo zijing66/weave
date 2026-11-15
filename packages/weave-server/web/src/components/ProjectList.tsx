@@ -87,8 +87,8 @@ interface ProjectListProps {
   pendingQuestionsOf?: (projectId: number) => number;
   /** Row 快速操作：该项目已打开的终端数（可见屏幕，后端自定单位；0 = 无角标）。 */
   terminalsOf?: (projectId: number) => number;
-  /** 该项目是否全部已开终端窗都处于系统级隐藏态（角标换成隐藏小标；探不到不摆）。 */
-  terminalsHiddenOf?: (projectId: number) => boolean;
+  /** 该项目处于系统级隐藏态的终端窗数（角标的隐藏小标；0/探不到不摆）。 */
+  terminalsHiddenOf?: (projectId: number) => number;
   /** 拖拽落定后的目标顺序（id 全量列表）——持久化与失败回滚都归 App。 */
   onReorder?: (ids: number[]) => void;
   /** 归档项目（仅基础信息；非空时「项目」标题旁出现查看入口）。 */
@@ -622,7 +622,8 @@ export function ProjectList({
           const initVersionLag = summary?.initVersionBehind;
           const stats = sessionStatsOf?.(p.id) ?? [];
           const terminals = terminalsOf?.(p.id) ?? 0;
-          const terminalsHidden = terminalsHiddenOf?.(p.id) === true;
+          const terminalsHidden = terminalsHiddenOf?.(p.id) ?? 0;
+          const terminalsVisible = Math.max(0, terminals - terminalsHidden);
           // 有待答问题 → 边框换成与会话行问答图标同一档 amber（扫一眼就知道哪张卡要人答）
           const pendingQuestions = pendingQuestionsOf?.(p.id) ?? 0;
           // G6 角色可见桥：出征徽章数（active 出征指向本项目）+ 该 house 成员折叠行。
@@ -815,7 +816,7 @@ export function ProjectList({
                   <QuickButton
                     tooltip={
                       terminals > 0
-                        ? `${t(terminalsHidden ? 'project.terminalsHidden' : 'project.terminalsOpen', { n: terminals })}\n\n${t('project.terminalMenu')}`
+                        ? `${t('project.terminalsSplit', { visible: terminalsVisible, hidden: terminalsHidden })}\n\n${t('project.terminalMenu')}`
                         : t('project.openInTerminal')
                     }
                     onClick={(e) => openTermMenu(p, e.currentTarget)}
@@ -831,15 +832,17 @@ export function ProjectList({
                     />
                   </QuickButton>
                   {terminals > 0 && (
-                    <span
-                      className={cn(
-                        'pointer-events-none absolute -top-1 -right-1.5 rounded-full px-1 text-9 leading-3',
-                        terminalsHidden
-                          ? 'bg-neutral-700/80 text-neutral-300'
-                          : 'bg-emerald-900/80 text-emerald-300',
+                    <span className="pointer-events-none absolute -top-1 -right-1.5 flex items-center gap-0.5 rounded-full px-1 text-9 leading-3">
+                      {terminalsVisible > 0 && (
+                        <span className="rounded-full bg-emerald-900/80 px-1 text-emerald-300">
+                          {terminalsVisible}
+                        </span>
                       )}
-                    >
-                      {terminals}
+                      {terminalsHidden > 0 && (
+                        <span className="rounded-full bg-neutral-700/80 px-1 text-neutral-300">
+                          {terminalsHidden}
+                        </span>
+                      )}
                     </span>
                   )}
                 </span>

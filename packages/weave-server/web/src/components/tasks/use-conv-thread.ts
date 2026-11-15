@@ -572,6 +572,11 @@ export function useConvThread(deps: {
   // 判成「用户在上翻」，长回复于是永不跟随。尾条变了 = 尾部真进了新内容 → 跟随；
   // 向上翻页是往头部插，尾条不动、视口不被抢。
   const stick = useRef(true);
+  /** 用户是否亲手滚动过（2026-11-15 用户裁决：首次进入要按最后一个气泡定位）。
+   *  首次进入后 narration 迟加载把过程段插进流中部——内容在视口之上大幅撑高、
+   *  布局抖动顺带触发 scroll，把 stick 误记成非贴底，视口从此停在半空。用户
+   *  滚动前的所有布局变化都维持贴底，不给误记机会。 */
+  const userScrolled = useRef(false);
   const atBottom = (): boolean => {
     const el = threadRef.current;
     return !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
@@ -677,7 +682,7 @@ export function useConvThread(deps: {
     thread, outbox, visible, newestAssistantKey, newestUserKey, newestQueuedId, now,
     error, setError,
     threadRef, contentRef, scrollFix,
-    stick, atBottom, lastScroll, lastAnchor, restoreAnchor, anchorAtTop,
+    stick, atBottom, lastScroll, lastAnchor, restoreAnchor, anchorAtTop, userScrolled,
     compacting, interrupted, generating, failed, liveText,
     pull,
     refreshMessages,

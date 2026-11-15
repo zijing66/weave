@@ -40,6 +40,8 @@ interface SessionStatusValue {
   error: string | null;
   /** sessionId → 在途消息条数（服务端 push 'inflightCounts' 的绝对值快照）。 */
   inflight: Map<string, number>;
+  /** sessionId → 常驻投递失败行条数（同一帧的 failed 快照；重发/移除即清）。 */
+  failedDeliveries: Map<string, number>;
   /** sessionId → 待答阻塞问题（AskUserQuestion / 计划与权限确认）。 */
   questions: Map<string, PendingQuestionEntry>;
   /** harness → 模型别名表（别名 → 真名）：模型下拉两个都摆，真名也认回别名那档。 */
@@ -115,6 +117,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   const [subagents, setSubagents] = useState<Map<string, Map<string, number>>>(new Map());
   /** 在途消息角标（后端 push 的绝对值快照；漏帧由下一次推自我校正）。 */
   const [inflight, setInflight] = useState<Map<string, number>>(new Map());
+  /** 在途投递失败角标（同帧 failed 快照；failed 是状态机更靠后的态，优先展示）。 */
+  const [failedDeliveries, setFailedDeliveries] = useState<Map<string, number>>(new Map());
   /** 待答阻塞问题：随 hook 帧的 500ms 防抖重拉（tracker 是事件驱动的内存态，
    *  帧到即变——重拉既覆盖问题出现也覆盖作答/解除，自愈无独立 SSE 通道）。 */
   const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
@@ -226,8 +230,9 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   // 在途消息角标：后端按 message.* 事件重算并推绝对值快照（无轮询、无重拉）。
   useEffect(
     () =>
-      subscribePush<{ counts: Record<string, number> }>('inflightCounts', (p) => {
+      subscribePush<{ counts: Record<string, number>; failed?: Record<string, number> }>('inflightCounts', (p) => {
         setInflight(new Map(Object.entries(p.counts ?? {})));
+        setFailedDeliveries(new Map(Object.entries(p.failed ?? {})));
       }),
     [],
   );
@@ -462,13 +467,14 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       projectStats,
       error,
       inflight,
+      failedDeliveries,
       questions,
       modelCatalog,
       settled,
       refresh: refreshWithToast,
       terminalVisibility,
     }),
-    [sessions, dispatches, statuses, projectStats, error, inflight, questions, modelCatalog, settled, refreshWithToast, terminalVisibility],
+    [sessions, dispatches, statuses, projectStats, error, inflight, failedDeliveries, questions, modelCatalog, settled, refreshWithToast, terminalVisibility],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
