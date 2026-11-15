@@ -179,3 +179,40 @@ export function getVersionStampPath(dir?: string): string {
 export function getIndexDir(dir?: string): string {
   return path.join(dataRoots(dir).cache, 'index');
 }
+
+/** 终端窗口可见性账面（mux windowId → 上次已知 vis；wezterm 后端对称残局消歧用）。 */
+export function getTerminalVisLedgerPath(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'terminal-vis-ledger.json');
+}
+
+/**
+ * spawn 差集认窗账面（pane/windowId → OS 窗口 HWND + cwd → 最近落子）：自动隐藏
+ * 精确通道的依据，落盘后 daemon 重启不用重认窗。
+ */
+export function getTerminalHwndLedgerPath(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'terminal-hwnds.json');
+}
+
+/** hook 分发冷却账面（classify 冷却 + 规则去重池；daemon 重启后回环闸不归零）。 */
+export function getHookDispatchStatePath(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'hook-dispatch-state.json');
+}
+
+/** 扩展引擎闸账面（绑定日频次计数 + 连败告警计数；重启后闸不归零）。 */
+export function getExtensionStatePath(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'extension-state.json');
+}
+
+/** 旁白游标账面（sessionId → 转录字节游标；重启后免全量重扫）。 */
+export function getNarrationCursorsPath(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'narration-cursors.json');
+}
+
+/**
+ * 备份包滚动目录（`<cache>/backups/`，7 天滚动保留）：可弃语义——包由库+uploads
+ * 现打现取，放 data/ 会被当作实体数据随迁移整档带走（体积翻倍），放 cache/ 丢了
+ * 也能重打。
+ */
+export function getBackupsDir(dir?: string): string {
+  return path.join(dataRoots(dir).cache, 'backups');
+}

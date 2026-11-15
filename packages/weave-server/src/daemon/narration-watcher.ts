@@ -1,6 +1,8 @@
 import { openSync, readSync, closeSync, statSync } from 'node:fs';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { NarrationSurface, NarrationText } from '@weavecode/harness';
+import { getNarrationCursorsPath } from '../db/paths.js';
+import { readJsonLedger, writeJsonLedger } from '../db/json-ledger.js';
 
 /**
  * 旁白增量监视器：宿主写转录没有 hook 事件照会，但**每条 hook 事件本身就是
@@ -9,8 +11,9 @@ import type { NarrationSurface, NarrationText } from '@weavecode/harness';
  * ——只碰新增字节，半行存 carry，新段经 `narration.updated` 帧广播（读一次
  * 服务所有标签页，web 零轮询）。
  *
- * 游标与 carry 只在内存：daemon 重启后首拍全量重读（转录是 append-only，
- * 重读即重建游标，代价一次全量扫描——与 web 初载同价）。
+ * 游标落盘（cache 档 JSON）：daemon 重启后从盘上恢复（carry 不落——重启那一拍
+ * 尾部半行重读整行是 parser 幂等的）；路径变了 / 文件被截断仍作废重读，全量
+ * 扫描只在真的对不上时发生。
  */
 
 /** 同一会话突发事件的聚合窗：宿主一轮里事件一票接一票，每票都读就失去增量意义。 */
@@ -44,7 +47,21 @@ export class NarrationWatcher {
     private readonly surfaceOf: (harness: string) => NarrationSurface | null,
     private readonly pathOf: (sessionId: string) => string | null,
     private readonly harnessOf: (sessionId: string) => string | null,
-  ) {}
+  ) {
+    const loaded = readJsonLedger<Record<string, Cursor>>(getNarrationCursorsPath());
+    if (loaded && typeof loaded === 'object') {
+      for (const [sessionId, cur] of Object.entries(loaded)) {
+        if (cur && typeof cur.offset === 'number' && typeof cur.path === 'string' && typeof cur.carry === 'string') {
+          this.cursors.set(sessionId, cur);
+        }
+      }
+    }
+  }
+
+  /** 游标账落盘（offset+path；失败静默——丢了退全量重读）。 */
+  private persistCursors(): void {
+    writeJsonLedger(getNarrationCursorsPath(), Object.fromEntries(this.cursors));
+  }
 
   /** 挂上 hookBus（daemon 装配时调一次）。 */
   start(): void {
@@ -90,7 +107,7 @@ export class NarrationWatcher {
     try {
       size = statSync(path).size;
     } catch {
-      this.cursors.delete(sessionId); // 文件没了（清理/换文件）：游标作废
+      if (this.cursors.delete(sessionId)) this.persistCursors(); // 文件没了（清理/换文件）：游标作废
       return;
     }
     const cur = this.cursors.get(sessionId);
@@ -98,11 +115,17 @@ export class NarrationWatcher {
     // 的代价 = 一次全量扫描，与 web 初载同价；不广播历史段——web 初载自己拉）。
     if (!cur || cur.path !== path || size < cur.offset) {
       this.cursors.set(sessionId, { offset: size, carry: '', path });
+      this.persistCursors();
       return;
     }
     if (size === cur.offset) return; // 没有新字节
     let text: string;
-    const fd = openSync(path, 'r');
+    let fd: number;
+    try {
+      fd = openSync(path, 'r');
+    } catch {
+      return; // stat 过了仍打不开（权限/杀软瞬时锁）：这拍放弃，游标不动
+    }
     try {
       const buf = Buffer.alloc(size - cur.offset);
       readSync(fd, buf, 0, buf.length, cur.offset);
@@ -115,6 +138,7 @@ export class NarrationWatcher {
     const lines = (cur.carry + text).split('\n');
     cur.carry = lines.pop() ?? ''; // 尾段是半行（宿主写到一半），留给下一拍
     cur.offset = size;
+    this.persistCursors();
     const segs: NarrationText[] = [];
     for (const line of lines) {
       const seg = parser(line);

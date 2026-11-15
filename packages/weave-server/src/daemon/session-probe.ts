@@ -6,7 +6,9 @@ import {
   currentEffortAt,
   currentModelAt,
   currentModeAt,
+  effortLevelOf,
   interruptMarkerAt,
+  permissionModeOf,
   switchedModelOf,
   type EffortFact,
   type ModelSwitchFact,
@@ -103,7 +105,45 @@ export function dbModelFactResolver(
   };
 }
 
-/** 转录尾部抽出的事实（一次尾读、多问共享；按文件大小缓存）。 */
+/**
+ * 装配用兜底：推理档位 / 执行模式的事件账同样只在内存，daemon 重启即清零。回读库里
+ * 该会话最近一条带 `effort.level` / `permission_mode` 的事件（ingest 侧本来就从事件
+ * payload 提取，见 inbox-worker 的 noteEffort/noteMode——同一键形同一来源）。
+ * 每个会话在 daemon 生命周期里最多查一次（`probedEffort` / `probedMode`）。
+ */
+export function dbEffortResolver(events: {
+  listBySession(sessionId: string, limit?: number): Array<{ payload: string }>;
+}): (sessionId: string) => { level: string; at: string | null } | null {
+  return (sessionId) => {
+    const rows = events.listBySession(sessionId, 1);
+    const latest = rows[rows.length - 1];
+    if (!latest) return null;
+    try {
+      const raw = (JSON.parse(latest.payload) as { raw?: unknown }).raw;
+      const level = effortLevelOf(raw);
+      if (!level) return null;
+      const ts = (raw as { timestamp?: unknown } | null)?.timestamp;
+      return { level, at: typeof ts === 'string' && ts ? ts : null };
+    } catch {
+      return null;
+    }
+  };
+}
+
+export function dbModeResolver(events: {
+  listBySession(sessionId: string, limit?: number): Array<{ payload: string }>;
+}): (sessionId: string) => string | null {
+  return (sessionId) => {
+    const rows = events.listBySession(sessionId, 1);
+    const latest = rows[rows.length - 1];
+    if (!latest) return null;
+    try {
+      return permissionModeOf((JSON.parse(latest.payload) as { raw?: unknown }).raw);
+    } catch {
+      return null;
+    }
+  };
+}
 interface TailFacts {
   size: number;
   markerAt: number | null;
@@ -135,6 +175,9 @@ export class SessionProbe {
     private readonly fallbackPath?: (sessionId: string) => string | null,
     /** 重启后补换模型闩（见 {@link dbModelFactResolver}）。 */
     private readonly fallbackSwitch?: (sessionId: string) => ModelSwitchFact | null,
+    /** 重启后补推理档位 / 执行模式（见 {@link dbEffortResolver}/{@link dbModeResolver}）。 */
+    private readonly fallbackEffort?: (sessionId: string) => { level: string; at: string | null } | null,
+    private readonly fallbackMode?: (sessionId: string) => string | null,
   ) {}
 
   /** sessionId → 转录路径（内存态；hook 事件每次上报都覆盖刷新）。 */
@@ -160,6 +203,9 @@ export class SessionProbe {
   private readonly efforts = new Map<string, { level: string; at: string | null }>();
   /** sessionId → 事件自带的执行模式（每条事件覆盖）：比转录早一步，见 `noteMode`。 */
   private readonly modes = new Map<string, string>();
+  /** 档位/模式的库里补账已问过（事件账不会变，问一次就够）。 */
+  private readonly probedEffort = new Set<string>();
+  private readonly probedMode = new Set<string>();
 
   noteTranscript(sessionId: string, path: string | null): void {
     if (path) this.paths.set(sessionId, path);
@@ -188,6 +234,8 @@ export class SessionProbe {
     this.probed.delete(sessionId);
     this.efforts.delete(sessionId);
     this.modes.delete(sessionId);
+    this.probedEffort.delete(sessionId);
+    this.probedMode.delete(sessionId);
   }
 
   /** 推理档位（`effort.level`，事件自带，带事件时刻）：逐条覆盖，与模型/模式同口径只放内存。 */
@@ -202,6 +250,11 @@ export class SessionProbe {
    *  时刻比较真正的意义：`/effort` 切换那拍只有转录 stdout 事实，事件还是上一轮
    *  的旧档位——不比时刻，切换要等下一轮才显示得出。 */
   currentEffort(sessionId: string): string | null {
+    if (!this.efforts.has(sessionId) && !this.probedEffort.has(sessionId)) {
+      this.probedEffort.add(sessionId);
+      const fromDb = this.fallbackEffort?.(sessionId);
+      if (fromDb) this.efforts.set(sessionId, fromDb);
+    }
     const event = this.efforts.get(sessionId);
     const fact = this.latched(sessionId).effort;
     if (!event) return fact?.level ?? null;
@@ -283,6 +336,11 @@ export class SessionProbe {
 
   /** 最后一次活动时的执行模式：事件优先、转录兜底；两者都没有即 null（不猜）。 */
   currentMode(sessionId: string): string | null {
+    if (!this.modes.has(sessionId) && !this.probedMode.has(sessionId)) {
+      this.probedMode.add(sessionId);
+      const fromDb = this.fallbackMode?.(sessionId);
+      if (fromDb) this.modes.set(sessionId, fromDb);
+    }
     return this.modes.get(sessionId) ?? this.latched(sessionId).mode;
   }
 

@@ -17,6 +17,8 @@ import type { MessageDeliverer } from './message-deliverer.js';
 import { postJson } from './handlers/webhook.js';
 import { renderTemplate } from './match.js';
 import type { DecisionKernel } from './decision-kernel.js';
+import { getExtensionStatePath } from '../db/paths.js';
+import { readJsonLedger, writeJsonLedger } from '../db/json-ledger.js';
 
 /**
  * 会话扩展点引擎（L1 绑定域，批 2b 瘦身版）：`turn-end` / `idle` 两点 ×
@@ -77,17 +79,19 @@ export interface ExtensionEventInput {
 export class ExtensionEngine {
   /** point → (projectId, sessionId|null) 启用绑定（内存索引；变更后 reload）。 */
   private byPoint = new Map<string, ExtensionBindingRow[]>();
-  /** 冷却（绑定×会话）与日计数（绑定×UTC 日）。 */
+  /** 冷却（绑定×会话）与日计数（绑定×UTC 日）；日计数落盘（重启后闸不归零）。 */
   private readonly lastFiredAt = new Map<string, number>();
-  private readonly dayCounts = new Map<number, { day: string; n: number }>();
-  /** 同绑定连续 failed 计数（失败告警闸）。 */
-  private readonly failStreak = new Map<number, number>();
+  private readonly dayCounts: Map<number, { day: string; n: number }>;
+  /** 同绑定连续 failed 计数（失败告警闸）；落盘（重启后告警不重爬）。 */
+  private readonly failStreak: Map<number, number>;
   /** 同绑定前一拍在跑标记（忙跳过：不排队）。 */
   private readonly busy = new Set<number>();
   /** 在飞执行数（全局并发闸）。 */
   private inflight = 0;
   /** 陈旧窗（settings 可配；构造注入，读侧已在装配处现读现效）。 */
   private staleMs: number;
+  /** 闸账落盘路径（测试注入临时路径；缺省 cache 档真账）。 */
+  private readonly statePath: string;
 
   constructor(
     private readonly deps: {
@@ -110,10 +114,41 @@ export class ExtensionEngine {
       postJsonImpl?: typeof postJson;
       /** 失败告警的会话名（提醒措辞用）；缺省取 sessionId 前 8 位。 */
       labelOf?: (sessionId: string) => string;
+      /** 闸账落盘路径（测试注入临时路径）；缺省 cache 档真账。 */
+      statePath?: string;
     },
   ) {
     this.staleMs = deps.staleMs ?? DEFAULT_EXTENSION_STALE_MS;
+    this.statePath = deps.statePath ?? getExtensionStatePath();
+    const loaded = readJsonLedger<{ dayCounts?: Record<string, { day: string; n: number }>; failStreak?: Record<string, number> }>(
+      this.statePath,
+    );
+    this.dayCounts = new Map(
+      Object.entries(loaded?.dayCounts ?? {}).flatMap(([k, v]) =>
+        typeof v?.day === 'string' && typeof v?.n === 'number' && Number.isInteger(Number(k))
+          ? [[Number(k), v] as const]
+          : [],
+      ),
+    );
+    this.failStreak = new Map(
+      Object.entries(loaded?.failStreak ?? {}).flatMap(([k, v]) =>
+        typeof v === 'number' && Number.isInteger(Number(k)) ? [[Number(k), v] as const] : [],
+      ),
+    );
     this.reload();
+  }
+
+  /** 闸账落盘（日频次 + 连败告警；失败静默——闸是防失控的增强，丢了退冷启动口径）。
+   *  顺手淘汰非当日的 dayCounts（日界切换后旧日计数只剩占位语义）：账面不滚雪球。 */
+  private persistState(): void {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [id, c] of this.dayCounts) {
+      if (c.day !== today) this.dayCounts.delete(id);
+    }
+    writeJsonLedger(this.statePath, {
+      dayCounts: Object.fromEntries(this.dayCounts),
+      failStreak: Object.fromEntries(this.failStreak),
+    });
   }
 
   /** settings 变更后更新陈旧窗（现读现效，不重启）。 */
@@ -413,6 +448,7 @@ export class ExtensionEngine {
 
     this.lastFiredAt.set(cooldownKey, now);
     this.dayCounts.set(binding.id, { day, n: count + 1 });
+    this.persistState();
     this.busy.add(binding.id);
     this.inflight++;
     try {
@@ -586,6 +622,7 @@ export class ExtensionEngine {
       });
       // 成功清零连败计数（在 delivered 落定后才清——扇出前清会让告警永不到顶）。
       this.failStreak.delete(binding.id);
+      this.persistState();
     } catch (err) {
       ctx.record('failed', {
         ok: false,
@@ -603,8 +640,12 @@ export class ExtensionEngine {
   private noteFailure(bindingId: number): void {
     const streak = (this.failStreak.get(bindingId) ?? 0) + 1;
     this.failStreak.set(bindingId, streak);
-    if (streak < FAILURE_ALERT_STREAK) return;
+    if (streak < FAILURE_ALERT_STREAK) {
+      this.persistState();
+      return;
+    }
     this.failStreak.delete(bindingId);
+    this.persistState();
     try {
       const binding = this.deps.bindings.getById(bindingId);
       this.deps.bus.emit({

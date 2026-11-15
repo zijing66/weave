@@ -1,15 +1,6 @@
 import { statSync } from 'node:fs';
 import path from 'node:path';
-import { VISUALIZATION_PROTOCOL } from '@weavecode/core';
-
-const REF_PREFIXES = [
-  VISUALIZATION_PROTOCOL.referencePrefix,
-  ...VISUALIZATION_PROTOCOL.referencePrefixAliases,
-];
-const REF_SUFFIXES = [
-  VISUALIZATION_PROTOCOL.referenceSuffix,
-  ...VISUALIZATION_PROTOCOL.referenceSuffixAliases,
-];
+import { parseVisualizationRef, VISUALIZATION_PROTOCOL } from '@weavecode/core';
 
 /** 一条引用行（原文 + fragment 绝对路径）。 */
 export interface VisualRef {
@@ -20,26 +11,15 @@ export interface VisualRef {
 }
 
 /**
- * 文本里的渲染块引用行（web `visualizeRefOf` 同判据：前缀 + 可选后缀 + 合法
- * JSON 带 path；坏行当普通文本）。行内空白先 trim——屏上复制来的行常带尾空格。
+ * 文本里的渲染块引用行（行级判据唯一实现 = core `parseVisualizationRef`，与
+ * web `visualizeSegments` 同源）。行内空白先 trim——屏上复制来的行常带尾空格。
  */
 export function visualizeRefsIn(text: string): Array<{ line: string; path: string }> {
   const out: Array<{ line: string; path: string }> = [];
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
-    const prefix = REF_PREFIXES.find((p) => trimmed.startsWith(p));
-    if (!prefix) continue;
-    let body = trimmed.slice(prefix.length);
-    const suffix = REF_SUFFIXES.find((s) => body.endsWith(s));
-    if (suffix) body = body.slice(0, -suffix.length);
-    try {
-      const parsed = JSON.parse(body) as { path?: unknown };
-      if (typeof parsed.path === 'string' && parsed.path) {
-        out.push({ line: trimmed, path: path.resolve(parsed.path) });
-      }
-    } catch {
-      /* 坏行当普通文本（与 web 同口径） */
-    }
+    const ref = parseVisualizationRef(trimmed);
+    if (ref) out.push({ line: trimmed, path: path.resolve(ref.path) });
   }
   return out;
 }

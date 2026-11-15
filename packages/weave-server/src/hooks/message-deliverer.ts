@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { readJsonLedger, writeJsonLedger } from '../db/json-ledger.js';
 import { isHarness, type Harness } from '@weavecode/core';
 import {
   commandModeAt,
@@ -440,6 +440,8 @@ const DISMISS_GUARD_MAX = 200;
 /** pane 定位 env 落盘文件名（放 `<dataDir>/hooks/` 下，与 inbox 凭据同目录同口径）。 */
 const PANE_ENVS_FILE = 'pane-envs.json';
 const PENDING_ORIGINS_FILE = 'pending-origins.json';
+const INDUCTIONS_FILE = 'inductions.json';
+const PIPE_MEMORY_FILE = 'pipe-memory.json';
 
 /** socket 比较键：统一斜杠、win 压大小写（同 mux 两形分隔符的既有口径）。 */
 function normalizeSocketKey(raw: string | undefined): string | null {
@@ -462,7 +464,7 @@ interface PendingOrigin {
 /** 读盘上的起点候选：缺失 / 坏文件 / 值形不对一律视同没有；顺手剪过期。 */
 function readPendingOrigins(file: string): PendingOrigin[] {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    const parsed: unknown = readJsonLedger(file);
     if (!Array.isArray(parsed)) return [];
     const out: PendingOrigin[] = [];
     for (const item of parsed) {
@@ -490,19 +492,81 @@ function readPendingOrigins(file: string): PendingOrigin[] {
 
 /** 读盘上的 pane 定位 env：缺失 / 坏文件 / 值不是字符串表一律视同没有（靠 hook 事件补回来）。 */
 function readPaneEnvs(file: string): Record<string, Record<string, string>> {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
-    if (typeof parsed !== 'object' || parsed === null) return {};
-    const out: Record<string, Record<string, string>> = {};
-    for (const [sessionId, value] of Object.entries(parsed)) {
-      if (typeof value !== 'object' || value === null) continue;
-      const env: Record<string, string> = {};
-      for (const [key, v] of Object.entries(value)) if (typeof v === 'string' && v) env[key] = v;
-      if (Object.keys(env).length > 0) out[sessionId] = env;
+  const parsed: unknown = readJsonLedger(file);
+  if (typeof parsed !== 'object' || parsed === null) return {};
+  const out: Record<string, Record<string, string>> = {};
+  for (const [sessionId, value] of Object.entries(parsed)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const env: Record<string, string> = {};
+    for (const [key, v] of Object.entries(value)) if (typeof v === 'string' && v) env[key] = v;
+    if (Object.keys(env).length > 0) out[sessionId] = env;
+  }
+  return out;
+}
+
+/** 读盘上的诱导登记：缺失 / 坏文件 / 值不是有限数一律视同没有。 */
+function readInductions(file: string): Record<string, number> {
+  const parsed: unknown = readJsonLedger(file);
+  if (typeof parsed !== 'object' || parsed === null) return {};
+  const out: Record<string, number> = {};
+  for (const [sessionId, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof v === 'number' && Number.isFinite(v)) out[sessionId] = v;
+  }
+  return out;
+}
+
+/** 读盘上的管道内存账（memory 行 + stalled + awaitingAck 一档）；坏形状整档丢弃。 */
+function readPipeMemory(file: string): {
+  memory: PipeMessage[];
+  stalled: Record<string, { messageId: string; reason: 'unacked' | 'failed' }>;
+  awaitingAck: Record<string, string>;
+} {
+  const o = readJsonLedger<Record<string, unknown>>(file);
+  if (!o || typeof o !== 'object') return { memory: [], stalled: {}, awaitingAck: {} };
+  const memory = Array.isArray(o.memory) ? (o.memory as PipeMessage[]) : [];
+    const stalled: Record<string, { messageId: string; reason: 'unacked' | 'failed' }> = {};
+    if (o.stalled && typeof o.stalled === 'object') {
+      for (const [k, v] of Object.entries(o.stalled as Record<string, unknown>)) {
+        const e = v as { messageId?: unknown; reason?: unknown } | null;
+        if (
+          e &&
+          typeof e.messageId === 'string' &&
+          (e.reason === 'unacked' || e.reason === 'failed')
+        ) {
+          stalled[k] = { messageId: e.messageId, reason: e.reason };
+        }
+      }
     }
-    return out;
-  } catch {
-    return {};
+    const awaitingAck: Record<string, string> = {};
+    if (o.awaitingAck && typeof o.awaitingAck === 'object') {
+      for (const [k, v] of Object.entries(o.awaitingAck as Record<string, unknown>)) {
+        if (typeof v === 'string') awaitingAck[k] = v;
+      }
+    }
+    return { memory, stalled, awaitingAck };
+}
+
+/** 写入即记账的 Map（本文件管道账落盘用；AckGate 经引用改写同样触发）。 */
+class PersistedMap<K, V> extends Map<K, V> {
+  constructor(
+    private readonly onChanged: () => void,
+    entries?: readonly (readonly [K, V])[],
+  ) {
+    super(entries);
+  }
+  override set(key: K, value: V): this {
+    super.set(key, value);
+    this.onChanged();
+    return this;
+  }
+  override delete(key: K): boolean {
+    const had = super.delete(key);
+    if (had) this.onChanged();
+    return had;
+  }
+  override clear(): void {
+    super.clear();
+    this.onChanged();
   }
 }
 
@@ -519,8 +583,10 @@ export class MessageDeliverer {
   private readonly hooksDir: string;
   /** 读屏通道的回答落库（codex = /side；缺省无——回答只发帧不存档）。 */
   private readonly sideAnswerStore?: { answerById(sessionId: string, question: string, answer: string): void };
-  /** 内存态注册表（pending 之后的生命周期）。 */
-  private readonly memory = new Map<string, PipeMessage>();
+  /** 内存态注册表（pending 之后的生命周期）。落盘见 persistPipeMemory。 */
+  private readonly memory = new PersistedMap<string, PipeMessage>(() => this.persistPipeMemory());
+  /** memory 落盘比较基线（值没变不重写）。 */
+  private persistedPipeMemory = '';
   /** 有队列行的会话（ingest 冲洗守卫 + 刷新器探活索引；构造时从磁盘重建）。 */
   private readonly queuedSessions: Set<string>;
   /** 会话 inbox 直投目标（hook 旁路上报，落 `<dataDir>/hooks/inbox-targets.json` 0600）。 */
@@ -563,7 +629,7 @@ export class MessageDeliverer {
    * **一次性核销**：被诱导会话首次 Stop（`consumeInduction`）即摘除，不依赖
    * 时间窗——超窗（编排陈滞 2h 那类）首轮也不再误判自然回合。
    */
-  private readonly inductions = new Map<string, number>();
+  private readonly inductions: Map<string, number>;
   /**
    * 正在冲洗的会话（重入闸：异步冲洗 + 多条触发源，防同批行被投两次）。值是这一拍
    * 的令牌——强制移除卡住的那一行要就地解除泵闸，旧拍醒来时不能顺手把新拍的闸也
@@ -571,13 +637,15 @@ export class MessageDeliverer {
    */
   private readonly flushing = new Map<string, symbol>();
   /** 队列暂停闸（sessionId → 成因消息）：未回执超窗 / 投递失败即置；重发或回执解除。 */
-  private readonly stalled = new Map<string, { messageId: string; reason: 'unacked' | 'failed' }>();
+  private readonly stalled = new PersistedMap<string, { messageId: string; reason: 'unacked' | 'failed' }>(
+    () => this.persistPipeMemory(),
+  );
   /**
    * 队头在等回执（sessionId → 消息 id）：层② 终端把一条贴进输入框后，下一条必须
    * 等它的 UPS 才发——再贴一份会在同一个框里叠成一段，两条消息并成一条提交。
    * 直投/中投不压（交出去即入会话自己的队列，会话按序处理）。
    */
-  private readonly awaitingAck = new Map<string, string>();
+  private readonly awaitingAck = new PersistedMap<string, string>(() => this.persistPipeMemory());
   /**
    * 刚删掉的队列行 id：冲洗「先把队列读进内存、再逐条投递」——这中间被删的行
    * 仍在手里那一批里，靠它跳过（否则删掉的消息照样发出去）。只兜这一个窗口，
@@ -613,6 +681,20 @@ export class MessageDeliverer {
     this.persistedPaneEnvs = JSON.stringify(loadedPaneEnvs);
     this.pendingOrigins = readPendingOrigins(join(this.hooksDir, PENDING_ORIGINS_FILE));
     this.persistedPendingOrigins = JSON.stringify(this.pendingOrigins);
+    this.inductions = new Map(Object.entries(readInductions(join(this.hooksDir, INDUCTIONS_FILE))));
+    // 管道内存账恢复（memory 行 + stalled + awaitingAck）：重启用户新在途视图不丢。
+    // 已落定（settledAt 非 null）的行不恢复——驻留窗口只是展示语义，重启即退场。
+    const loadedPipe = readPipeMemory(join(this.hooksDir, PIPE_MEMORY_FILE));
+    for (const msg of loadedPipe.memory) {
+      if (msg?.id && typeof msg === 'object' && !msg.settledAt) this.memory.set(msg.id, msg);
+    }
+    for (const [sessionId, entry] of Object.entries(loadedPipe.stalled)) {
+      this.stalled.set(sessionId, entry);
+    }
+    for (const [sessionId, messageId] of Object.entries(loadedPipe.awaitingAck)) {
+      this.awaitingAck.set(sessionId, messageId);
+    }
+    this.persistedPipeMemory = this.pipeMemoryJson();
     this.queuedSessions = scanQueuedSessionIds(this.hooksDir);
     this.gate = new AckGate(
       { awaitingAck: this.awaitingAck, stalled: this.stalled, memory: this.memory },
@@ -838,6 +920,7 @@ export class MessageDeliverer {
    */
   registerInduction(sessionId: string): void {
     this.inductions.set(sessionId, Date.now());
+    this.persistInductions();
   }
 
   /**
@@ -848,6 +931,7 @@ export class MessageDeliverer {
   consumeInduction(sessionId: string): boolean {
     const had = this.inductions.has(sessionId);
     this.inductions.delete(sessionId);
+    if (had) this.persistInductions();
     return had;
   }
 
@@ -1066,37 +1150,66 @@ export class MessageDeliverer {
     this.persistPendingOrigins();
   }
 
-  /** 原子写（临时文件 + rename）+ 0600；失败静默（内存态照常能定位，下次再落）。 */
   private persistPaneEnvs(): void {
     const next = JSON.stringify(Object.fromEntries(this.paneEnvs));
     if (next === this.persistedPaneEnvs) return;
-    const file = join(this.hooksDir, PANE_ENVS_FILE);
-    try {
-      mkdirSync(dirname(file), { recursive: true });
-      const tmp = `${file}.tmp`;
-      writeFileSync(tmp, `${next}\n`, { encoding: 'utf8', mode: 0o600 });
-      renameSync(tmp, file);
-      chmodSync(file, 0o600);
-      this.persistedPaneEnvs = next;
-    } catch {
-      // 这条路径由 hook 事件驱动：落盘失败绝不能冒泡
-    }
+    writeJsonLedger(join(this.hooksDir, PANE_ENVS_FILE), JSON.parse(next));
+    this.persistedPaneEnvs = next;
   }
 
   private persistPendingOrigins(): void {
     const next = JSON.stringify(this.pendingOrigins);
     if (next === this.persistedPendingOrigins) return;
-    const file = join(this.hooksDir, PENDING_ORIGINS_FILE);
-    try {
-      mkdirSync(dirname(file), { recursive: true });
-      const tmp = `${file}.tmp`;
-      writeFileSync(tmp, `${next}\n`, { encoding: 'utf8', mode: 0o600 });
-      renameSync(tmp, file);
-      chmodSync(file, 0o600);
-      this.persistedPendingOrigins = next;
-    } catch {
-      // 同 persistPaneEnvs：落盘失败绝不能冒泡
+    writeJsonLedger(join(this.hooksDir, PENDING_ORIGINS_FILE), this.pendingOrigins);
+    this.persistedPendingOrigins = next;
+  }
+
+  /** 诱导登记落盘（一次性核销语义保持：核销即从账删 + 落盘）；失败静默。 */
+  private persistInductions(): void {
+    writeJsonLedger(join(this.hooksDir, INDUCTIONS_FILE), Object.fromEntries(this.inductions));
+  }
+
+  private pipeMemoryJson(): string {
+    return JSON.stringify({
+      memory: [...this.memory.values()],
+      stalled: Object.fromEntries(this.stalled),
+      awaitingAck: Object.fromEntries(this.awaitingAck),
+    });
+  }
+
+  /**
+   * 已落定行的节流清扫：气泡已认领（ackedEventId 非空）的 delivered 行没有继续
+   * 驻留的理由（对话在目标会话自己的转录里），留着只会让 pipe-memory.json 与每次
+   * persist 全量重写越来越大。failed/timeout/常驻命令（无认领事件）不碰——那是
+   * 在途视图的常驻语义。挂点 = persist 前（PersistedMap 写穿处顺带），2 分钟一拍。
+   */
+  private lastSettledSweep = 0;
+  private sweepSettled(): void {
+    const now = Date.now();
+    if (now - this.lastSettledSweep < 120_000) return;
+    this.lastSettledSweep = now;
+    for (const [id, msg] of this.memory) {
+      if (
+        !msg.settledAt ||
+        now - Date.parse(msg.settledAt) < 5 * 60_000 ||
+        msg.ackedEventId == null
+      )
+        continue;
+      this.memory.delete(id);
     }
+  }
+
+  /**
+   * 管道内存账落盘（memory 行 + stalled + awaitingAck → hooks 目录 pipe-memory.json，
+   * 0600 原子写；memory/stalled/awaitingAck 是写入即记账的 PersistedMap，闸与直改
+   * 都过这里）：daemon 重启后在途视图与暂停闸不丢。失败静默（内存态照常工作）。
+   */
+  private persistPipeMemory(): void {
+    this.sweepSettled();
+    const next = this.pipeMemoryJson();
+    if (next === this.persistedPipeMemory) return;
+    writeJsonLedger(join(this.hooksDir, PIPE_MEMORY_FILE), JSON.parse(next));
+    this.persistedPipeMemory = next;
   }
 
   /**
@@ -1116,6 +1229,7 @@ export class MessageDeliverer {
     this.persistPaneEnvs();
     this.awaitingAck.delete(sessionId); // 进程没了，这一条的回执再也不会到
     this.inductions.delete(sessionId); // 被诱导的回合不会再来了
+    this.persistInductions();
     const session = this.deps.sessions.getBySessionId(sessionId);
     const project = session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
     if (!project) return;
@@ -1993,6 +2107,7 @@ export class MessageDeliverer {
     this.paneEnvs.delete(sessionId); // pane 定位同样是会话生命周期内的旁路事实
     this.paneEnvConflicts.delete(sessionId);
     this.inductions.delete(sessionId);
+    this.persistInductions();
     this.revokedPaneEnvs.add(sessionId); // 同退出：显式报 null 摘出终端分组
     this.persistPaneEnvs();
     return removed;

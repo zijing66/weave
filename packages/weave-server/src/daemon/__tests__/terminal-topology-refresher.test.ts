@@ -183,4 +183,33 @@ describe('TerminalTopologyRefresher', () => {
     await refresher.tick();
     expect(refresher.lastSnapshot?.terminals).toEqual({ s1: screen, s2: null });
   });
+
+  it('visibilities 按键合并：这轮没探到的目标保留上次值（一拍探空不摘全班牌）', async () => {
+    const bus = new DataBus();
+    const frames = collect(bus);
+    let visibilities: Record<string, 'visible' | 'hidden'> = { '1|a:0:0': 'hidden' };
+    const refresher = new TerminalTopologyRefresher(
+      async () => ({ counts: { 1: 1 }, terminals: {}, visibilities }),
+      bus,
+    );
+
+    await refresher.tick();
+    expect(refresher.lastSnapshot?.visibilities).toEqual({ '1|a:0:0': 'hidden' });
+
+    // 这轮目标缺席（探空）→ 保留上次；另一目标显式 visible → 合入
+    visibilities = { '1|b:0:0': 'visible' };
+    await refresher.tick();
+    expect(refresher.lastSnapshot?.visibilities).toEqual({
+      '1|a:0:0': 'hidden',
+      '1|b:0:0': 'visible',
+    });
+
+    // a 回来且变了 → 覆盖新值
+    visibilities = { '1|a:0:0': 'visible', '1|b:0:0': 'visible' };
+    await refresher.tick();
+    expect(refresher.lastSnapshot?.visibilities).toEqual({
+      '1|a:0:0': 'visible',
+      '1|b:0:0': 'visible',
+    });
+  });
 });

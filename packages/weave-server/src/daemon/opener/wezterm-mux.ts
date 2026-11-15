@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
+import { getTerminalHwndLedgerPath } from '../../db/paths.js';
+import { readJsonLedger, writeJsonLedger } from '../../db/json-ledger.js';
 import type { LaunchOrigin } from '../opener.js';
 import { joinCmd } from './shared.js';
 import {
@@ -23,6 +25,8 @@ export interface WeztermPaneInfo {
   isActive: boolean;
   /** pane 标题（claude 的 OSC 标题）——弹窗标签的素材，缺省回落窗口/Tab 号。 */
   title: string | null;
+  /** OS 窗口级标题（wezterm 自报，同窗全体 pane 同值）。 */
+  windowTitle: string | null;
 }
 
 export type WeztermDirection = 'right' | 'bottom';
@@ -56,6 +60,11 @@ export function parseWeztermPanes(jsonText: string | null): WeztermPaneInfo[] {
       top: typeof row.top_row === 'number' ? row.top_row : 0,
       isActive: row.is_active === true,
       title: typeof row.title === 'string' && row.title ? row.title : null,
+      // OS 窗口级标题（wezterm 自报的窗口标题，全体 pane 同值）：标题认窗的
+      // 窗口级信号——比「活动 pane 标题」稳一拍（pane 切换时 OS 标题停旧帧，
+      // window_title 反映窗口自认的标题）。
+      windowTitle:
+        typeof row.window_title === 'string' && row.window_title ? row.window_title : null,
     });
   }
   return panes;
@@ -681,6 +690,16 @@ const lastGoodPanes = new Map<string, WeztermPaneInfo[]>();
 const lastGoodAt = new Map<string, number>();
 const LAST_GOOD_MAX_AGE_MS = 10 * 60_000;
 
+/** lastGood 快照兜底（light 与全量路径共用；快照过期 = 当没有）。 */
+function lastGoodFallback(socket: string): WeztermMux | null {
+  const snapAt = lastGoodAt.get(socket) ?? 0;
+  const snap = lastGoodPanes.get(socket);
+  if (snap && Date.now() - snapAt < LAST_GOOD_MAX_AGE_MS) {
+    return { socket, panes: snap, workspace: null, idleMs: Number.POSITIVE_INFINITY } satisfies WeztermMux;
+  }
+  return null;
+}
+
 
 /**
  * 逐候选探活（单次 5s 超时兜底挂死的 GUI）；返回活 mux 与候选清单（报错用）。
@@ -701,7 +720,13 @@ export async function weztermLiveMuxes(
         // force（投递路径已确定的那个 socket）不受闸约束：冷却期只为「扫全部候选」
         // 省 spawn，而投递一次只炸一发、且目标已知——让冷却挡住它 = 冷却窗口里
         // 所有会话的停止/作答全都 409（点了没反应）。
-        if (!force && !probeGate.shouldProbe(socket)) return null;
+        if (!force && !probeGate.shouldProbe(socket)) {
+          // 冷却窗 ≠ socket 死了（只是上一轮超时/可疑）：照失败拍同口径回退
+          // lastGood 快照——否则冷却 60s 里 muxes 空，counts 整包归零、refresher
+          // 把全 0 当真实世界推帧（角标周期性闪没的成因）；全量路径同样受益：
+          // 目标缺席 = 会话分块/可见性全班摘牌（探测打摆的成因）。
+          return lastGoodFallback(socket);
+        }
         const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
         if (!listed?.ok) {
           // 永久判死只认「这个 GUI 进程真没了」——路径与 GUI pid 绑定，pid 死则
@@ -714,22 +739,23 @@ export async function weztermLiveMuxes(
             probeGate.failed(socket);
             lastGoodPanes.delete(socket);
           } else probeGate.cooledDown(socket);
-          // light（计数/分组）：探不到但进程还活着 → 回退最近一次成功的 pane 快照，
-          // 别让半死实例的窗口数与隐藏态在冷却窗里周期性闪没。快照过期才当没有。
-          if (light && listed) {
-            const snapAt = lastGoodAt.get(socket) ?? 0;
-            const snap = lastGoodPanes.get(socket);
-            if (snap && Date.now() - snapAt < LAST_GOOD_MAX_AGE_MS) {
-              return { socket, panes: snap, workspace: null, idleMs: Number.POSITIVE_INFINITY } satisfies WeztermMux;
-            }
-          }
+          // 探不到但进程还活着 → 回退最近一次成功的 pane 快照，别让半死实例的
+          // 窗口数与隐藏态在冷却窗里周期性闪没。快照过期才当没有。
+          if (listed) return lastGoodFallback(socket);
           return null;
         }
         probeGate.succeeded(socket);
-        const panes = parseWeztermPanes(listed.out);
+        let panes = parseWeztermPanes(listed.out);
         if (panes.length > 0) {
           lastGoodPanes.set(socket, panes);
           lastGoodAt.set(socket, Date.now());
+        } else {
+          // rc0 但 pane 表空（GUI 忙时 list 偶发空世界，实测形态）：这不是「用户
+          // 关光了」的可信信号——照失败拍同口径回退 lastGood，别让分块/角标在
+          // 「空世界一拍」里集体摘掉再回来（眼睛闪没的成因）。快照过期才信空。
+          const snapAt = lastGoodAt.get(socket) ?? 0;
+          const snap = lastGoodPanes.get(socket);
+          if (snap && Date.now() - snapAt < LAST_GOOD_MAX_AGE_MS) panes = snap;
         }
         if (light) return { socket, panes, workspace: null, idleMs: Number.POSITIVE_INFINITY } satisfies WeztermMux;
         const clients = await weztermCli(['cli', 'list-clients', '--format', 'json'], socket);
@@ -854,6 +880,44 @@ const windowHwnds = new Map<string, number>();
 const spawnedPaneByCwd = new Map<string, { socket: string; paneId: string; at: number }>();
 const SPAWNED_CWD_MAX = 32;
 
+/** 账面落盘（cache 档 JSON；记账即写、值没变不重写；失败静默——丢了退标题路径）。 */
+let lastHwndLedgerJson = '';
+function persistHwndLedger(): void {
+  const next = JSON.stringify({
+    paneHwnds: Object.fromEntries(paneHwnds),
+    windowHwnds: Object.fromEntries(windowHwnds),
+    spawnedPaneByCwd: Object.fromEntries(spawnedPaneByCwd),
+  });
+  if (next === lastHwndLedgerJson) return;
+  lastHwndLedgerJson = next;
+  writeJsonLedger(getTerminalHwndLedgerPath(), JSON.parse(next));
+}
+
+function loadHwndLedger(): void {
+  const o = readJsonLedger<Record<string, unknown>>(getTerminalHwndLedgerPath());
+  if (!o || typeof o !== 'object') return;
+  const int = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0;
+  if (o.paneHwnds && typeof o.paneHwnds === 'object') {
+    for (const [k, v] of Object.entries(o.paneHwnds as Record<string, unknown>)) {
+      if (int(v)) paneHwnds.set(k, v);
+    }
+  }
+  if (o.windowHwnds && typeof o.windowHwnds === 'object') {
+    for (const [k, v] of Object.entries(o.windowHwnds as Record<string, unknown>)) {
+      if (int(v)) windowHwnds.set(k, v);
+    }
+  }
+  if (o.spawnedPaneByCwd && typeof o.spawnedPaneByCwd === 'object') {
+    for (const [k, v] of Object.entries(o.spawnedPaneByCwd as Record<string, unknown>)) {
+      const e = v as { socket?: unknown; paneId?: unknown; at?: unknown } | null;
+      if (e && typeof e.socket === 'string' && typeof e.paneId === 'string' && typeof e.at === 'number') {
+        spawnedPaneByCwd.set(k, { socket: e.socket, paneId: e.paneId, at: e.at });
+      }
+    }
+  }
+}
+loadHwndLedger();
+
 function ownedHwndSnapshot(socket: string): Promise<number[]> {
   const guiPid = weztermGuiPidOf(socket);
   if (guiPid === null) return Promise.resolve([]);
@@ -884,6 +948,7 @@ function noteSpawnedPane(
       const oldest = [...spawnedPaneByCwd.entries()].sort((a, b) => a[1].at - b[1].at)[0];
       if (oldest) spawnedPaneByCwd.delete(oldest[0]);
     }
+    persistHwndLedger();
   }
   if (hwndBefore === null || hwndBefore.length === 0) return; // 非 win32 / split（不开新窗）/ 快照失败不认窗
   void (async () => {
@@ -901,6 +966,7 @@ function noteSpawnedPane(
           const windowId = panes.find((p) => String(p.paneId) === paneId)?.windowId;
           if (windowId !== undefined) windowHwnds.set(`${socket}|w${windowId}`, added[0]!);
           trimPaneHwnds();
+          persistHwndLedger();
           return;
         }
         if (added.length > 1) return; // 歧义（用户同拍手开窗）不猜，退标题路径
@@ -923,6 +989,7 @@ function noteSplitPane(socket: string, paneId: string): void {
       if (hwnd !== undefined) {
         paneHwnds.set(`${socket}|${paneId}`, hwnd);
         trimPaneHwnds();
+        persistHwndLedger();
       }
     } catch {
       // 继承不到就退标题路径

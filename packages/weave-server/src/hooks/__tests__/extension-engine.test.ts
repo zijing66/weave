@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ExtensionEngine, DEFAULT_EXTENSION_STALE_MS, type ExtensionEventInput } from '../extension-engine.js';
 import {
   ExtensionBindingRepository,
@@ -20,6 +23,7 @@ let sent: Array<{ toSessionId: string; text: string; origin?: string; fromKind?:
 let consumed: string[];
 let kernel: Pick<DecisionKernel, 'judge' | 'evaluate'>;
 let staleMs: number | undefined;
+let statePath: string;
 
 const bus = {
   emit: (m: HookBusMessage) => {
@@ -63,6 +67,7 @@ const mkEngine = () =>
     hookEvents: { listBySession: () => [] },
     bus,
     kernel,
+    statePath,
     ...(staleMs !== undefined ? { staleMs } : {}),
   });
 
@@ -81,6 +86,8 @@ beforeEach(() => {
   consumed = [];
   kernel = mkKernel();
   staleMs = undefined;
+  // 闸账走独立临时档：不与活 daemon 的真账串（dayCounts/failStreak 落盘后测试隔离要新文件）。
+  statePath = join(mkdtempSync(join(tmpdir(), 'weave-ext-')), 'state.json');
 });
 
 const sessionBinding = (over: Partial<Parameters<ExtensionBindingRepository['insert']>[0]> = {}) =>
@@ -358,6 +365,7 @@ describe('session 端点自指与 webhook 端点', () => {
       hookEvents: { listBySession: () => [] },
       bus,
       kernel,
+      statePath,
       postJsonImpl: async (url, _secret, body) => {
         posts.push({ url, body });
         return { ok: true, status: 'succeeded' };
@@ -386,6 +394,7 @@ describe('失败告警与 reload', () => {
       hookEvents: { listBySession: () => [] },
       bus,
       kernel,
+      statePath,
     });
     for (const id of [1, 2, 3]) {
       engine.onEvent(baseInput({ sessionId: `f${id}`, eventId: id }));

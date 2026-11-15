@@ -1,11 +1,11 @@
 import path from 'node:path';
 import { readdir, readFile } from 'node:fs/promises';
 import {
-  detectPlatform,
   WEAVE_PLUGIN_MANIFEST,
   WeavePluginManifestSchema,
   type WeavePluginManifest,
 } from '@weavecode/core';
+import { getPluginsDir } from '@weavecode/server';
 import { templateRegistry, type TemplateEntry } from '@weavecode/templates';
 
 /** 遍历两个插件根（全局 + 项目）的一级子目录，产出合法 manifest。 */
@@ -14,7 +14,7 @@ async function* iteratePluginManifests(
   globalRoot?: string,
 ): AsyncGenerator<{ dir: string; manifest: WeavePluginManifest }> {
   const roots = [
-    globalRoot ?? path.join(detectPlatform().configDir, 'weave', 'data', 'plugins'),
+    globalRoot ?? getPluginsDir(),
     path.join(projectDir, '.weave', 'plugins'),
   ];
   for (const root of roots) {

@@ -15,6 +15,8 @@ import type { HookEventBus } from './bus.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/projects.js';
 import type { PluginStateRepository } from '../repositories/plugin-states.js';
 import { readHooksEnabled } from '../daemon/settings.js';
+import { getHookDispatchStatePath } from '../db/paths.js';
+import { readJsonLedger, writeJsonLedger } from '../db/json-ledger.js';
 import { effective, pluginsStateOf } from './plugin-project-state.js';
 import { postJson, runWebhook, type EventSummary } from './handlers/webhook.js';
 import {
@@ -93,11 +95,44 @@ const PLUGIN_INJECT_BUDGET_MS = 3_000;
  *
  * 一切异常在内部吞掉并降级为「无动作」——分发失败永不影响 ingest。
  */
+/**
+ * 分发冷却账面落盘（cache 档 JSON，原子写）：classify 冷却与 60s 去重池跨 daemon
+ * 重启存活——重启归零会让下游回环闸失效一拍。坏值/缺文件 = 空账（行为同冷启动）。
+ */
+function loadDispatchState(): { lastClassifyAt: Map<string, number>; recentPool: Map<string, number> } {
+  const lastClassifyAt = new Map<string, number>();
+  const recentPool = new Map<string, number>();
+  const o = readJsonLedger<Record<string, unknown>>(getHookDispatchStatePath());
+  if (o && typeof o === 'object') {
+    const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+    const now = Date.now();
+    if (o.lastClassifyAt && typeof o.lastClassifyAt === 'object') {
+      for (const [k, v] of Object.entries(o.lastClassifyAt as Record<string, unknown>)) {
+        // 冷却早已过期的条目读进来也只会挡一拍（now - ts < cooldown 为假）：不留。
+        if (num(v) && now - v < CLASSIFY_COOLDOWN_MS * 24) lastClassifyAt.set(k, v);
+      }
+    }
+    if (o.recentPool && typeof o.recentPool === 'object') {
+      for (const [k, v] of Object.entries(o.recentPool as Record<string, unknown>)) {
+        if (num(v) && now - v < DEDUPE_WINDOW_MS) recentPool.set(k, v);
+      }
+    }
+  }
+  return { lastClassifyAt, recentPool };
+}
+
+function persistDispatchState(lastClassifyAt: Map<string, number>, recentPool: Map<string, number>): void {
+  writeJsonLedger(getHookDispatchStatePath(), {
+    lastClassifyAt: Object.fromEntries(lastClassifyAt),
+    recentPool: Object.fromEntries(recentPool),
+  });
+}
+
 export class HookDispatcher {
   private readonly runningWebhooks = new Set<string>();
   /** classify：规则级冷却（防下游回环）与「最后一次尝试」时刻。 */
-  private readonly lastClassifyAt = new Map<string, number>();
-  private readonly recentPool = new Map<string, number>();
+  private readonly lastClassifyAt = loadDispatchState().lastClassifyAt;
+  private readonly recentPool = loadDispatchState().recentPool;
   private activeWebhooks = 0;
   private readonly pendingWebhooks: Array<() => void> = [];
   private activePlugins = 0;
@@ -279,6 +314,7 @@ export class HookDispatcher {
           if (this.runningWebhooks.has(guardKey)) continue;
           this.lastClassifyAt.set(guardKey, now);
           this.runningWebhooks.add(guardKey);
+          persistDispatchState(this.lastClassifyAt, this.recentPool);
           const row = this.createDispatch(rule, ctx, {
             prompt: `classify → ${handler.routes.map((r) => r.label).join('/')}`,
             status: 'running',
@@ -370,6 +406,7 @@ export class HookDispatcher {
     if (last !== undefined && now - last < DEDUPE_WINDOW_MS) return true;
     this.recentPool.set(key, now);
     this.trimDedupe(now);
+    persistDispatchState(this.lastClassifyAt, this.recentPool);
     return false;
   }
 

@@ -19,11 +19,11 @@ export interface TerminalTopology {
   /** projectId → 本项目已开终端窗口数（项目卡角标）。 */
   counts: Record<number, number>;
   /**
-   * projectId → 本项目是否**全部已开窗都处于系统级隐藏态**（项目卡角标的隐藏
-   * 小标；探不到/不支持的项目不进表 = 前端不摆）。仅 win32 + 有显隐通道的后端
-   * 才有值；count>0 而缺键 = 至少一窗可见（或没探）。
+   * projectId → 本项目处于系统级隐藏态的终端窗数（项目卡角标的隐藏小标；
+   * 探不到/不支持的项目与 0 不进表 = 前端不摆）。仅 win32 + 有显隐通道的后端
+   * 才有值；显示数 = counts − hidden（前端现算）。
    */
-  hidden: Record<number, boolean>;
+  hidden: Record<number, number>;
   /**
    * sessionId → 所在可见屏幕；`null` = 确认不在了（pane 已关 / 换了 mux / 整个
    * GUI 没了），缺 = 这轮没探到或没上报过定位——web 据此保留上次分块，不摘行。
@@ -123,11 +123,17 @@ export class TerminalTopologyRefresher {
         if (screen === undefined) continue;
         mergedTerminals[sessionId] = screen;
       }
+      // visibilities 同一契约：这轮没探到的目标（socket 探活打摆）保留上次值，
+      // 别让「一拍探空」把全班眼睛/隐藏角标摘掉。
+      const mergedVis: TerminalTopology['visibilities'] = { ...this.last?.visibilities };
+      for (const [k, v] of Object.entries(topology.visibilities ?? {})) {
+        mergedVis[k] = v;
+      }
       const merged: TerminalTopology = {
         counts: topology.counts,
         hidden: topology.hidden,
         terminals: mergedTerminals,
-        ...(topology.visibilities ? { visibilities: topology.visibilities } : {}),
+        ...(Object.keys(mergedVis).length > 0 ? { visibilities: mergedVis } : {}),
       };
       this.last = merged;
       const fingerprint = JSON.stringify(merged);

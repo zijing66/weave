@@ -185,6 +185,10 @@ export const CLAUDE_ASSETS: AssetSurface = {
     return true;
   },
 
+  mcpEnableScopes() {
+    return ['project'];
+  },
+
   classify(relPath) {
     if (relPath === '.claude' || relPath.startsWith('.claude/')) return true;
     if (relPath === '.mcp.json') return true;

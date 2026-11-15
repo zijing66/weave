@@ -88,7 +88,13 @@ import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SnapshotRefresher } from './snapshot-refresher.js';
-import { SessionProbe, dbModelFactResolver, dbTranscriptPathResolver } from './session-probe.js';
+import {
+  SessionProbe,
+  dbEffortResolver,
+  dbModeResolver,
+  dbModelFactResolver,
+  dbTranscriptPathResolver,
+} from './session-probe.js';
 import { NarrationWatcher } from './narration-watcher.js';
 import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
@@ -332,6 +338,9 @@ export function startDaemon(): void {
     dbTranscriptPathResolver(hookEvents),
     // 换模型闩只在内存，重启即清零——回读库里这条会话最近一条落定事件补回来。
     dbModelFactResolver(hookEvents, (sessionId) => hookSessions.getBySessionId(sessionId)?.harness ?? null),
+    // 档位/模式的事件账同样只在内存，重启后回读库里最近一条带值的事件补回。
+    dbEffortResolver(hookEvents),
+    dbModeResolver(hookEvents),
   );
   // 旁白增量监视：hook 事件 = 「转录刚被写过」的信号，字节游标增量读、新段广播
   // narration.updated 帧（web 增量 append，不重拉不轮询）。harness 归属走

@@ -15,6 +15,8 @@ export interface WinRaiseRequest {
   hwnd?: number;
   /** 只列 guiPid 名下的顶层窗口 HWND（快照用；`hwnd\n` 逐行输出）。 */
   listOnly?: boolean;
+  /** 列窗并带标题（`hwnd|title` 逐行；多窗同题消歧用——配对 mux windowId）。 */
+  listTitles?: boolean;
   /** 顺手最大化认中的窗口（wezterm 新窗用：`gui-startup` 的 maximize 不吃
    *  `cli spawn --new-window`——事件只在 GUI 冷启动时触发一次）。 */
   alsoMaximize?: boolean;
@@ -71,6 +73,7 @@ export async function winRaiseOnce(
       WEAVE_RAISE_TITLES: titles.join('|'),
       WEAVE_RAISE_HWND: req.hwnd ? String(req.hwnd) : '',
       WEAVE_RAISE_LIST: req.listOnly ? '1' : '',
+      WEAVE_RAISE_LIST_TITLES: req.listTitles ? '1' : '',
       WEAVE_RAISE_MAX: req.alsoMaximize ? '1' : '',
       WEAVE_RAISE_VIS: req.visibility ?? '',
     },
@@ -107,6 +110,93 @@ export async function winListOwnedHwnds(guiPid: number): Promise<number[]> {
     .filter((n) => Number.isInteger(n) && n > 0);
 }
 
+/** guiPid 名下顶层窗口（HWND + 原始标题；`listTitles` 探测；失败 = 空表）。 */
+export async function winListOwnedWindows(
+  guiPid: number,
+): Promise<{ hwnd: number; title: string }[]> {
+  const r = await winRaiseOnce({ guiPid, listTitles: true }, []);
+  if (!r.ok) return [];
+  return r.out
+    .split('\n')
+    .map((l) => {
+      const bar = l.indexOf('|');
+      if (bar <= 0) return null;
+      const hwnd = Number(l.slice(0, bar));
+      return Number.isInteger(hwnd) && hwnd > 0 ? { hwnd, title: l.slice(bar + 1).replace(/\r$/, '') } : null;
+    })
+    .filter((w): w is { hwnd: number; title: string } => w !== null);
+}
+
+/** 标题归一（与 PS 脚本 Norm 同一条：剥 `[n/m]` 前缀、剥头部非文字、压空白）。 */
+function normTitle(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^\[\d+\/\d+\]\s*/, '')
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * 多窗同题消歧：mux 的 windowId 与 OS 窗口一一配对——OS 窗口标题 = 活动 pane 标题
+ * （ConPTY），故每个 mux 窗口的 pane 标题集必含它 OS 窗口的标题。锁定 =
+ * 迭代唯一配对（某 mux 窗候选剩一个、且那个 OS 窗没被别的 mux 窗认走——先锁的
+ * 窗把候选从其余 mux 窗里排除，多轮收敛）。`muxVisibility`（可选，账面可见性）：
+ * 锁定后仍有对称残局（两个 mux 窗 ↔ 两个同题 OS 窗）时按「账面 vis = OS 窗实况
+ * vis」互证（账面来自拓扑快照上一拍，实况来自 IsWindowVisible）。仍配不出 = 空
+ * 表，调用方退标题认窗老路。
+ */
+export function matchWindowsToMuxIds(
+  windows: { hwnd: number; title: string }[],
+  muxWindows: Map<number, readonly string[]>,
+  muxVisibility?: ReadonlyMap<number, 'visible' | 'hidden'>,
+  windowVisibilityOf?: (hwnd: number) => 'visible' | 'hidden' | null,
+): Map<number, number> {
+  const normed = windows.map((w) => ({ ...w, key: normTitle(w.title) }));
+  const out = new Map<number, number>();
+  if (normed.length === 0 || muxWindows.size === 0) return out;
+  // 候选：muxWindowId → 标题命中的 OS 窗列表
+  const cands = new Map<number, number[]>();
+  for (const [windowId, titles] of muxWindows) {
+    const set = new Set(titles.map(normTitle));
+    const hit = normed.filter((w) => w.key && set.has(w.key)).map((w) => w.hwnd);
+    if (hit.length > 0) cands.set(windowId, hit);
+  }
+  // 迭代唯一锁定：先锁的窗从其余 mux 窗的候选里排除，多轮收敛
+  const used = new Set<number>();
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const [windowId, hwnds] of cands) {
+      const avail = hwnds.filter((h) => !used.has(h));
+      if (avail.length === 1) {
+        out.set(windowId, avail[0]!);
+        used.add(avail[0]!);
+        cands.delete(windowId);
+        progress = true;
+      }
+    }
+  }
+  // 对称残局（2×2 同题互斥）按可见性互证：账面 hidden ↔ 实况隐藏窗。**只信这个
+  // 强信号**——互证不出如实配不出（退标题老路报「认不出」），绝不做 Z 序/序数
+  // 之类的猜测兜底：OS 枚举序是最近使用序、随用户操作漂移，猜错就把切换打到
+  // 同题的另一扇窗上（用户实测「改 A 窗状态 B 窗跟着变」的成因）。
+  if (muxVisibility && windowVisibilityOf) {
+    for (const [windowId, hwnds] of cands) {
+      const expect = muxVisibility.get(windowId);
+      if (!expect) continue;
+      const avail = hwnds.filter((h) => !used.has(h) && windowVisibilityOf(h) === expect);
+      if (avail.length === 1) {
+        out.set(windowId, avail[0]!);
+        used.add(avail[0]!);
+        cands.delete(windowId);
+      }
+    }
+  }
+  return out;
+}
+
 /** 按已知 HWND 最大化（跳过标题认窗；失败静默——与 maximize 同为锦上添花口径）。 */
 export async function winMaximizeByHwnd(hwnd: number): Promise<void> {
   try {
@@ -128,19 +218,20 @@ export async function winSetVisibilityByHwnd(
 /** PowerShell 脚本（base64/UTF-16，`-EncodedCommand` 免引号转义）；纯函数，单测覆盖。 */
 export function winRaiseEncodedScript(): string {
   const script = `$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -TypeDefinition @'
 ${WIN_RAISE_CS}
 '@
 # HWND 直打：快照（listOnly）或按已知 HWND 操作，跳过标题认窗——
 # 新窗最大化的兜底不依赖 pane 标题上报时序。
-if ($env:WEAVE_RAISE_LIST -eq '1') {
+if ($env:WEAVE_RAISE_LIST -eq '1' -or $env:WEAVE_RAISE_LIST_TITLES -eq '1') {
   foreach ($w in [WeaveRaise]::Owned(
     (@(($env:WEAVE_RAISE_PIDS + '') -split ',' | Where-Object { $_ }) | ForEach-Object { [uint32]$_ }),
     '')) {
     # wgl 探测辅助窗随每个新窗同拍出现（不可见、有标题）——不过滤会让
     # spawn 差集恒为 2（真窗 + 探测窗），差集认窗恒歧义。
     if ($w.Title -match 'probing window') { continue }
-    '{0}' -f [int64]$w.Handle
+    if ($env:WEAVE_RAISE_LIST_TITLES -eq '1') { '{0}|{1}' -f [int64]$w.Handle, $w.Title } else { '{0}' -f [int64]$w.Handle }
   }
   exit 0
 }

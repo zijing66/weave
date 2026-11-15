@@ -447,6 +447,8 @@ export function HooksPanel({
   const tintClass = useCanvasTintClass();
 
   const [rules, setRules] = useState<HookRule[] | null>(null);
+  /** inject 事件候选表（`GET /hooks/injectable` 派生面；拉不到回落内置 claude 表）。 */
+  const [injectable, setInjectable] = useState<Record<string, readonly string[]> | undefined>();
   /** 项目模式：插件 effective 状态（`/hooks/plugins?projectId=` 已按项目级开关裁决）。 */
   const [pluginStatus, setPluginStatus] = useState<Map<string, HookPlugin['status']>>(new Map());
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -490,6 +492,7 @@ export function HooksPanel({
       .listProjects()
       .then(setProjects)
       .catch(() => {});
+    api.listInjectableEvents().then(setInjectable).catch(() => {});
   }, [refreshRules]);
 
   // 规则变更事件（本面板 CRUD + 插件段级联启停/装卸）→ 重拉并重建数据流画布。
@@ -572,9 +575,9 @@ export function HooksPanel({
       if (!f) return f;
       let event = f.state.event;
       // inject 只允许白名单事件（按 harness 分表）— 切过去时把越界事件拉回第一个可注入项。
-      const injectable = injectableEventsOf(f.state.harness);
-      if (type === 'inject' && !injectable.includes(event)) {
-        event = injectable[0] ?? event;
+      const events = injectableEventsOf(f.state.harness, injectable);
+      if (type === 'inject' && !events.includes(event)) {
+        event = events[0] ?? event;
       }
       return {
         ...f,
@@ -1006,13 +1009,13 @@ export function HooksPanel({
                         }))}
                         onChange={(v) => {
                           const harness = v as Harness | 'any';
-                          const injectable = injectableEventsOf(harness);
+                          const events = injectableEventsOf(harness, injectable);
                           patchForm({
                             harness,
                             // 换 harness 后原事件可能不在新白名单里（inject 会 400）
                             ...(form.state.handlerType === 'inject' &&
-                            !injectable.includes(form.state.event)
-                              ? { event: injectable[0] ?? form.state.event }
+                            !events.includes(form.state.event)
+                              ? { event: events[0] ?? form.state.event }
                               : {}),
                           });
                         }}
@@ -1026,7 +1029,7 @@ export function HooksPanel({
                       className="w-full rounded-lg bg-neutral-800 px-2.5 py-1.5 text-xs"
                       value={form.state.event}
                       options={(form.state.handlerType === 'inject'
-                        ? injectableEventsOf(form.state.harness)
+                        ? injectableEventsOf(form.state.harness, injectable)
                         : CLAUDE_HOOK_EVENTS
                       ).map((ev) => ({ value: ev }))}
                       onChange={(v) => patchForm({ event: v })}
@@ -1034,7 +1037,7 @@ export function HooksPanel({
                     {form.state.handlerType === 'inject' && (
                       <span className="block text-10 text-amber-400/80">
                         {t('hooks.eventInjectHint', {
-                          events: injectableEventsOf(form.state.harness).join(', '),
+                          events: injectableEventsOf(form.state.harness, injectable).join(', '),
                         })}
                       </span>
                     )}

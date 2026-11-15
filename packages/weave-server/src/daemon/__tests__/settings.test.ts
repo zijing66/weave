@@ -586,8 +586,8 @@ describe('wezterm mux 会话通道（纯函数）', () => {
       },
     ]);
     expect(parseWeztermPanes(real)).toEqual([
-      { windowId: 0, tabId: 0, paneId: 0, cwd: 'file:///D:/x', left: 0, top: 0, isActive: false, title: null },
-      { windowId: 0, tabId: 0, paneId: 2, cwd: null, left: 0, top: 27, isActive: false, title: null },
+      { windowId: 0, tabId: 0, paneId: 0, cwd: 'file:///D:/x', left: 0, top: 0, isActive: false, title: null, windowTitle: null },
+      { windowId: 0, tabId: 0, paneId: 2, cwd: null, left: 0, top: 27, isActive: false, title: null, windowTitle: null },
       {
         windowId: 1,
         tabId: 3,
@@ -597,6 +597,7 @@ describe('wezterm mux 会话通道（纯函数）', () => {
         top: 0,
         isActive: true,
         title: '✳ 修复登录',
+        windowTitle: null,
       },
     ]);
   });

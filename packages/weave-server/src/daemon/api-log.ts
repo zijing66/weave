@@ -29,6 +29,9 @@ const REDACT_KEYS = new Set([
   'authorization',
   'cookie',
   'x-weave-local',
+  // Web Push 订阅的载荷加密私密钥（keys.auth，见 routes/watches.ts 的 subscribe）。
+  'auth',
+  'p256dh',
 ]);
 
 /**

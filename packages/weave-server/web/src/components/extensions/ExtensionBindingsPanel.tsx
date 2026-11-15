@@ -11,6 +11,7 @@ import {
 import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { errorText } from '@/lib/action-feedback';
+import { subscribeHook } from '@/lib/sse';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
@@ -73,21 +74,22 @@ export function ExtensionBindingsPanel({ projectId }: { projectId: number }) {
   // 写操作后推 invalidate（同 settings/编排域口径）；接到既有 fetcher 上。
   useEffect(() => registerInvalidator('extensions', refresh), [refresh]);
 
-  // 项目内任何会话行变更（改名/删除）都会影响作用域徽标与会话下拉——轻量重拉。
-  useEffect(() => {
-    let live = true;
-    const id = window.setInterval(() => {
-      if (!live || form) return; // 表单开着不抖（下拉候选变了会打断挑选）
-      api
-        .listSessions(projectId)
-        .then((r) => live && setSessions(r.sessions))
-        .catch(() => {});
-    }, 30_000);
-    return () => {
-      live = false;
-      window.clearInterval(id);
-    };
-  }, [projectId, form]);
+  // 项目内会话改名影响作用域徽标与会话下拉——吃 SSE 的 session.renamed 帧（表单开着
+  // 不抖：下拉候选变了会打断挑选）。
+  useEffect(
+    () =>
+      subscribeHook(
+        () => {
+          if (form) return;
+          api
+            .listSessions(projectId)
+            .then((r) => setSessions(r.sessions))
+            .catch(() => {});
+        },
+        ['session.renamed'],
+      ),
+    [projectId, form],
+  );
 
   // 派生面合并成一行：本项目接入的 harness 逐个取能力；多 harness 时取「都支持」
   // 的交集（有项目行 harness 才看得到面板——v1 不按 harness 分绑定）。

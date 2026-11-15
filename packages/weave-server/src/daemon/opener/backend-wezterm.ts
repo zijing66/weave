@@ -1,4 +1,6 @@
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
+import { getTerminalVisLedgerPath } from '../../db/paths.js';
+import { readJsonLedger, writeJsonLedger } from '../../db/json-ledger.js';
 import {
   MAX_PANES_PER_SCREEN,
   countWindowsByDir,
@@ -22,7 +24,14 @@ import {
   type SessionTerminal,
   type WeztermMux,
 } from './wezterm-mux.js';
-import { winRaiseTerminalWindow, winWindowVisibility } from './win-raise.js';
+import {
+  matchWindowsToMuxIds,
+  winListOwnedWindows,
+  winRaiseOnce,
+  winRaiseTerminalWindow,
+  winSetVisibilityByHwnd,
+  winWindowVisibility,
+} from './win-raise.js';
 import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, throughCmd } from './shared.js';
 import {
   TerminalBackend,
@@ -35,6 +44,19 @@ import {
 
 /** 单枪原文上限（走 argv，命令行上限 ~32k）；按字节切，中文一字三字节。 */
 const WEZTERM_PROMPT_CHUNK_BYTES = 16_384;
+
+/**
+ * send-text 超时自动补一枪（实测 5s 超时偶发命中：mux IPC 停顿可达秒级甚至几十秒、
+ * 空闲 pane 也中——首枪超时通常只是连接没建起来、文本没写进去，重发不会重复注入；
+ * rc≠0 不重试，那是明确的失败语义，交给上层报错）。
+ */
+async function retryOnTimeout(
+  fire: () => ReturnType<typeof weztermCli>,
+): Promise<ReturnType<typeof weztermCli>> {
+  const first = await fire();
+  if (first?.timedOut !== true) return first;
+  return fire();
+}
 
 /**
  * 探活结果短缓存（10s）：角标的周期探测 + 开窗后对账 + GET 后台对账会在
@@ -59,8 +81,38 @@ export async function weztermLiveMuxesCached(): Promise<{ muxes: WeztermMux[]; c
  * send-text。
  */
 export class WeztermBackend extends TerminalBackend {
+  /** `<muxKey>:<windowId>` → 上次已知可见性（切换回包、查询命中都记账）；对称残局
+   *  （两窗同题）的互证信号——账面 hidden ↔ 实况隐藏窗。key 带 muxKey：多个 GUI
+   *  实例的 windowId 各自从 0 编号，纯数字 key 跨实例互染（旧实例的 hidden 账被
+   *  拿去证新实例的窗）。**落盘**（cache 档 JSON，原子写）：daemon 随时重启可恢复，
+   *  不留内存孤账。 */
+  private readonly visLedger: Map<string, 'visible' | 'hidden'>;
+
   constructor(platform: NodeJS.Platform) {
     super('wezterm', true, platform, true);
+    this.visLedger = loadVisLedger();
+  }
+
+  /**
+   * 记账即落盘（原子写；失败静默——账是消歧的增强信号，丢了退标题老路）。
+   * 顺手淘汰已消失实例的 key：GUI 进程死了它的 windowId 空间整体作废，账面
+   * 留着只会随实例换防越滚越多（探活用 light 缓存，不加 spawn）。
+   */
+  private async noteVisibility(muxKey: string, windowId: number, vis: 'visible' | 'hidden'): Promise<void> {
+    const key = `${muxKey}:${windowId}`;
+    if (this.visLedger.get(key) !== vis) this.visLedger.set(key, vis);
+    try {
+      const { muxes } = await weztermLiveMuxesCached();
+      if (muxes.length > 0) {
+        const live = new Set(muxes.map((m) => weztermMuxKey(m.socket)));
+        for (const k of [...this.visLedger.keys()]) {
+          if (!live.has(k.slice(0, k.indexOf(':')))) this.visLedger.delete(k);
+        }
+      }
+    } catch {
+      // 探活失败不淘汰（宁多勿误删）
+    }
+    writeJsonLedger(getTerminalVisLedgerPath(), Object.fromEntries(this.visLedger));
   }
 
   candidates(dir: string, run?: string[]): TerminalLaunch[] {
@@ -166,7 +218,52 @@ export class WeztermBackend extends TerminalBackend {
   }
 
   /**
-   * 系统级隐藏/恢复（SW_HIDE / SW_SHOW）：认窗与抬窗同一套（guiPid + 标题唯一命中）。
+   * 目标 mux windowId → OS 窗口 HWND：标题认窗歧义时的消歧层——guiPid 名下全部
+   * 顶层窗与全部 mux 窗的 pane 标题集一一配对（OS 标题 = 活动 pane 标题，故配对
+   * 必命中），唯一配对即 HWND。配不出 = null（退标题认窗老路）。
+   */
+  private async hwndOfWindow(mux: WeztermMux, windowId: number): Promise<number | null> {
+    const guiPid = weztermGuiPidOf(mux.socket);
+    if (guiPid === null) return null;
+    const windows = await winListOwnedWindows(guiPid);
+    const byId = new Map<number, readonly string[]>();
+    for (const w of new Set(mux.panes.map((p) => p.windowId))) {
+      byId.set(
+        w,
+        mux.panes
+          .filter((p) => p.windowId === w)
+          .flatMap((p) => [p.title ?? '', p.windowTitle ?? '']),
+      );
+    }
+    // 对称残局的互证：OS 窗实况可见性现查（一次脚本全查完，不加 spawn 轮次）。
+    // 只带本 mux 的账（windowId 是实例内编号，别的实例的同号账不参与互证）。
+    const muxKey = weztermMuxKey(mux.socket);
+    const muxVis = new Map<number, 'visible' | 'hidden'>();
+    for (const [k, v] of this.visLedger) {
+      const id = Number(k.slice(k.indexOf(':') + 1));
+      if (k.startsWith(`${muxKey}:`) && Number.isInteger(id)) muxVis.set(id, v);
+    }
+    const hwndVis = new Map<number, 'visible' | 'hidden'>();
+    if (muxVis.size > 0) {
+      for (const w of windows) {
+        const r = await winRaiseOnce({ hwnd: w.hwnd, visibility: 'query' }, []);
+        const m = /vis\|(visible|hidden)/.exec(r.out);
+        if (m) hwndVis.set(w.hwnd, m[1] as 'visible' | 'hidden');
+      }
+    }
+    return (
+      matchWindowsToMuxIds(
+        windows,
+        byId,
+        muxVis,
+        (h) => hwndVis.get(h) ?? null,
+      ).get(windowId) ?? null
+    );
+  }
+
+  /**
+   * 系统级隐藏/恢复（SW_HIDE / SW_SHOW）：优先 HWND 直打（标题认窗在多窗同题时
+   * 恒歧义——两个 mux 窗的活动 pane 同题是常态），配不出 HWND 退标题认窗老路。
    * hide 前若窗口已最小化，SW_HIDE 照样生效；show 解隐藏同时解最小化。
    */
   override async setTargetVisibility(
@@ -185,16 +282,29 @@ export class WeztermBackend extends TerminalBackend {
       (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
     );
     if (!pane) throw new Error('That terminal is gone — reopen the list');
-    await winRaiseTerminalWindow({
-      guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
-      titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
-      visibility,
-    });
+    const guiPid = weztermGuiPidOf(mux.socket) ?? undefined;
+    const titles = await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId);
+    const hwnd = await this.hwndOfWindow(mux, parsed.windowId);
+    if (hwnd !== null) {
+      await winSetVisibilityByHwnd(hwnd, visibility);
+    } else {
+      await winRaiseTerminalWindow({ guiPid, titles, visibility });
+    }
     // 切换后复读实况（hide 后 IsWindowVisible 即假），不回显意图。
-    const vis = await winWindowVisibility({
-      guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
-      titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
-    });
+    if (hwnd !== null) {
+      const r = await winRaiseOnce({ hwnd, visibility: 'query' }, []);
+      const m = /vis\|(visible|hidden)/.exec(r.out);
+      if (m) {
+        await this.noteVisibility(parsed.muxKey, parsed.windowId, m[1] as 'visible' | 'hidden');
+        return { visibility: m[1] as 'visible' | 'hidden' };
+      }
+    }
+    const vis = await winWindowVisibility({ guiPid, titles });
+    await this.noteVisibility(
+      parsed.muxKey,
+      parsed.windowId,
+      vis ?? (visibility === 'hide' ? 'hidden' : 'visible'),
+    );
     return { visibility: vis ?? (visibility === 'hide' ? 'hidden' : 'visible') };
   }
 
@@ -207,6 +317,16 @@ export class WeztermBackend extends TerminalBackend {
       (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
     );
     if (!pane) return null;
+    // HWND 配对可信时直查（多窗同题时标题认窗恒歧义 → null → 前端不摆态）
+    const hwnd = await this.hwndOfWindow(mux, parsed.windowId);
+    if (hwnd !== null) {
+      const r = await winRaiseOnce({ hwnd, visibility: 'query' }, []);
+      const m = /vis\|(visible|hidden)/.exec(r.out);
+      if (m) {
+        await this.noteVisibility(parsed.muxKey, parsed.windowId, m[1] as 'visible' | 'hidden');
+        return m[1] as 'visible' | 'hidden';
+      }
+    }
     return winWindowVisibility({
       guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
       titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),
@@ -289,7 +409,7 @@ export class WeztermBackend extends TerminalBackend {
     const pane = String(parsed.paneId);
     const send = async (payload: string, noPaste: boolean) => {
       const args = ['cli', 'send-text', '--pane-id', pane, ...(noPaste ? ['--no-paste'] : []), payload];
-      const r = await weztermCli(args, mux.socket);
+      const r = await retryOnTimeout(() => weztermCli(args, mux.socket));
       if (!r?.ok) {
         const shown = ['cli', 'send-text', '--pane-id', pane, ...(noPaste ? ['--no-paste'] : []), '<prompt text>'];
         throw new Error(weztermStepError(shown, mux.socket, r));
@@ -321,9 +441,8 @@ export class WeztermBackend extends TerminalBackend {
     const mux = await weztermMuxForId(parsed.muxKey);
     if (!mux) throw new Error('wezterm instance is gone — cannot send keys to the pane');
     const pane = String(parsed.paneId);
-    const sent = await weztermCli(
-      ['cli', 'send-text', '--pane-id', pane, '--no-paste', keys],
-      mux.socket,
+    const sent = await retryOnTimeout(() =>
+      weztermCli(['cli', 'send-text', '--pane-id', pane, '--no-paste', keys], mux.socket),
     );
     if (!sent?.ok) {
       throw new Error(
@@ -397,4 +516,20 @@ export function parsePromptPaneId(id: string): { muxKey: string; paneId: number 
   const m = /^([0-9a-f]{8}):(\d+)$/.exec(id);
   if (!m) return null;
   return { muxKey: m[1]!, paneId: Number(m[2]) };
+}
+
+/** 可见性账面读盘（坏值/缺文件 = 空账；key = `<muxKey>:<windowId>`，windowId 从
+ *  0 起编号——历史版的纯数字 key（跨实例互染）读不匹配即弃，靠重探重建）。 */
+function loadVisLedger(): Map<string, 'visible' | 'hidden'> {
+  const out = new Map<string, 'visible' | 'hidden'>();
+  const raw = readJsonLedger<Record<string, unknown>>(getTerminalVisLedgerPath());
+  if (raw && typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw)) {
+      const m = /^([0-9a-f]{8}):(\d+)$/.exec(k);
+      if (m && (v === 'visible' || v === 'hidden')) {
+        out.set(k, v);
+      }
+    }
+  }
+  return out;
 }

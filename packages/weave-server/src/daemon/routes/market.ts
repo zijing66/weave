@@ -1,7 +1,8 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { checkHarness, isHarness, type Harness, type ToolScope } from '@weavecode/core';
+import { isHarness, type Harness, type ToolScope } from '@weavecode/core';
+import { checkHarness } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
 import { readBody, sendJson } from '../http.js';
 import { FingerprintCache } from '../../install/fingerprint.js';
@@ -51,6 +52,7 @@ import { ensureBuiltinMarket, isBuiltinMarketDir } from '../../market/builtin.js
 import { removeInstalled } from '../../market/install-link.js';
 import { syncPlugins } from '../../hooks/plugin-project-state.js';
 import { assetSurfaces, pluginStateSurfaces, pluginSurfaces, pluginSurfaceFor } from '../../surfaces.js';
+import type { PluginSurface } from '@weavecode/harness';
 
 interface InstallBody {
   category?: string;
@@ -207,6 +209,11 @@ export async function handleMarketRoutes(
   pathname: string,
   url: URL,
 ): Promise<boolean> {
+  // 插件面取用缝：deps.pluginSurfaceOf（测试注入）优先；旧注入点 deps.pluginSurface
+  // 只当 claude 面的回落（存量测试形态），其余经 registry 按名取。
+  const pluginSurfaceOf = (harness: Harness): PluginSurface =>
+    deps.pluginSurfaceOf?.(harness) ??
+    (harness === 'claude' && deps.pluginSurface ? deps.pluginSurface : pluginSurfaceFor(harness));
   // --- 安装属性矩阵（harness 适配 × 安装范围；web 拖拽/点击禁用共用） ---
   if (pathname === '/capabilities' && req.method === 'GET') {
     sendJson(res, 200, installCapabilities());
@@ -443,7 +450,7 @@ export async function handleMarketRoutes(
     // best-effort：CLI 缺失/旧版不该堵死市场移除，warning 带回前端提示。
     let warning: string | undefined;
     try {
-      const surface = deps.pluginSurface ?? pluginSurfaceFor('claude');
+      const surface = pluginSurfaceOf('claude');
       await surface.removeMarketplace(row.path);
     } catch (e) {
       warning = `Host marketplace deregistration failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -592,11 +599,8 @@ export async function handleMarketRoutes(
           sendJson(res, 400, { error: `No plugin install surface for runtime: ${agent}` });
           return true;
         }
-        // `deps.pluginSurface` 是 claude 的测试注入点（生产缺省经 registry 取面）。
-        const surface =
-          agent === 'claude' && deps.pluginSurface
-            ? deps.pluginSurface
-            : installFace.surface;
+        // 面取用经解析器缝（测试注入 deps.pluginSurfaceOf，缺省 registry）。
+        const surface = pluginSurfaceOf(agent);
         const info = await installPluginPack(surface, {
           dir: body.sourceDir,
           name: body.name,
@@ -899,11 +903,8 @@ export async function handleMarketRoutes(
       try {
         const installFace = pluginSurfaces().find((p) => p.harness === body.runtime);
         if (installFace) {
-          // `deps.pluginSurface` 是 claude 的测试注入点（生产缺省经 registry 取面）。
-          const surface =
-            body.runtime === 'claude' && deps.pluginSurface
-              ? deps.pluginSurface
-              : installFace.surface;
+          // 面取用经解析器缝（测试注入 deps.pluginSurfaceOf，缺省 registry）。
+          const surface = pluginSurfaceOf(body.runtime);
           await surface.setEnabledOverride(project.path, scope, body.key, state);
         } else {
           // 仅启用面 harness（codex）：只有 user 档布尔写，无 inherit 删除语义。
@@ -944,11 +945,7 @@ export async function handleMarketRoutes(
     }
     try {
       // runtime 声明了 plugins 槽才可卸；未补槽的 harness（如 codex）→ 400。
-      // `deps.pluginSurface` 是 claude 的测试注入点（生产缺省经 registry 取面）。
-      const surface =
-        body.runtime === 'claude' && deps.pluginSurface
-          ? deps.pluginSurface
-          : pluginSurfaceFor(body.runtime);
+      const surface = pluginSurfaceOf(body.runtime);
       const { name, market } = surface.parsePluginKey(body.key);
       await surface.uninstall(name, market);
       sendJson(res, 200, { ok: true });
