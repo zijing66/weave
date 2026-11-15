@@ -24,9 +24,6 @@ dist/
 # codegraph
 .codegraph/
 
-# archify
-.archify/
-
 # 本地草稿/生成物（不提交）
 .codex/
 temp/
