@@ -1048,3 +1048,14 @@ web 侧 ECharts 走**动态 import + 按需模块**（`echarts/core` + `LineChar
 - **编排出口**：webhook 出口节点增可选 `channelId`（与裸 `url` 二选一）。`validateOrchestration` 放宽为 `channelId || 合法 http(s) url`（服务端与 web 同判据）；**通道存在性归运行时**——`deliverOnce` 查 `channelById`，查无/已停用记 `notify channel not found or disabled` 并走既有「失败重试一次」，成功/失败都照常落 RunEvent。载荷 = `{title: "weave · <编排名>", body: <边正文>}`。
 - **设置面**：设置页「通知」区新增「外发通道」子块（`NotifyChannelsSection.tsx`）：通道列表（类型徽章 / 启用开关 / 测试发送 / 编辑 / 删除）、内联表单按 kind 出字段、删除走 `ConfirmDialog`。编排画布 webhook 出口检查器加「出口目标」下拉（自定义 URL + 通道列表），选通道时隐藏 url/secret 输入。
 - **端点**：`GET/POST /notify/channels`、`PUT/DELETE /notify/channels/:id`、`POST /notify/channels/:id/test`（`routes/notify-channels.ts`，走既有认证门）；测试发送直接调 `sendToChannel`，回 `WebhookResult`。
+
+## §23 联邦 caller 级项目范围切面（ALS）
+
+联邦（跨机配对）是唯一半信任暴露面：对端机器凭 per-peer token 经 `POST /federation/call`（服务白名单，默认拒绝）访问本机。peer 行的 `scopeProjects`（number[] | null；null=全量，[]=不共享）按「哪台机器来的」裁**全部项目/会话相关读面**。机制（2026-11-14 裁决）：
+
+- **切面** = `daemon/caller-scope.ts` 的 AsyncLocalStorage：`federation-routes.ts` 在 token 门内（`peerByToken` 命中后）用 `runWithCallerScope(row, …)` 包住心跳段与 caps/call 段的后续处理（pair 段不包）；仓储/数据层经 `scopedProjectIds()` / `scopeProjectsFilter(column)` / `projectInScope()` 随取随裁。`/federation/*` 在 `isPublicRequest` 豁免段内、主链认证门拿不到 peer 行，故 ALS 只能在 federation-routes 自己消解 token 处建立——server.ts 主链不改。
+- **边界裁决：ALS 空 = 全量，是安全默认**——内部作业（inbox-worker、dashboard-pusher、refresher）无请求上下文，必须拿全量；新增裁剪点必须走 caller-scope 的助手函数，不许自己猜默认值。红线：不允许 ALS 上下文内 setTimeout 后依赖 scope。
+- **混合策略**：多项目返回面（清单/搜索，入参无 projectId）→ 仓储层 SQL/内存裁（`ProjectRepository.list/listArchived` 内存 filter；`SessionRepository.list/listWithCounts/searchByTitle`、`HookEventRepository.searchConversationTexts/conversationTextsContaining` SQL 追加 scope 片段，空集产 `AND 0`——IN () 非法）；带 projectId 的单项目操作 → 显式 403 `project outside the sharing scope of this peer`（`routes/project-files.ts` 三闸：files 浏览/refresh-dir/file 预览；federation-call 的 sessions.events/inject）。`listBySession` 不裁（sessionId 寻址的跨项目语义面，`server.ts /projects/:id/hooks` 注释「projectId 仅作鉴权锚点」），闸留给消费面。uploads 无 project_id 列，v1 不裁（近似记 DECISIONS.md）。
+- **语义**：本机 caller（localToken/dashboard/内部）零感知恒全量；对端照原样调、服务端裁——**同一 API 不同 caller 不同返回**，对端看不到「被裁」的痕迹（清单缺行，不是标不可见）。
+- **服务表扩面（2026-11-14 裁决）**：`FEDERATION_SERVICES` 在四行基础上加三只读行 `projects.list` / `search`（复用 `routes/search.ts` 的 `globalSearch` 查询核）/ `projects.files`（复用 project-files 的索引浏览/搜索核）——对端可读清单、全局搜索与项目文件索引，全部天然过范围闸。**写面同日第二批**：加 `sessions.create`（复用 `startSessionInProject` 执行核）与 `orchestration.trigger`（复用 `triggerOrchestration` 执行核，闸按编排挂靠项目）两行 delivering——范围闸先于执行，联邦起的会话强制隐藏（viaMcp 同 MCP 口径）；`/projects/:id/hooks` 也补 403 闸。403 先于 404（范围外不暴露存在性）。
+- `listWithCounts` 的事件计数子查询不过滤项目（与跨项目事件语义一致的近似）；`countSince`/`seriesBySecond` 入参来自 `projects.list()`，裁上游即覆盖。

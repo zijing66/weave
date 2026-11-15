@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Globe, Loader2, Plus, RefreshCw, Trash2, UserPlus } from 'lucide-react';
-import { api, type DiscoveredPeer, type PeerRow, type RpgInvitationView } from '@/lib/api';
+import { api, type DiscoveredPeer, type PeerRow, type ProjectRow, type RpgInvitationView } from '@/lib/api';
 import { useI18n } from '@/i18n/I18nProvider';
 import { registerInvalidator } from '@/lib/sse';
 import { Switch } from '@/components/ui/switch';
@@ -53,6 +53,10 @@ export function FederationSection(props: {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [deciding, setDeciding] = useState<number | null>(null);
+  // 会话共享范围（服务端裁决、对端无感知）：peer 行展开项目切换，即时 PATCH。
+  const [projects, setProjects] = useState<ProjectRow[] | null>(null);
+  const [scopeEditing, setScopeEditing] = useState<string | null>(null);
+  const [scopeBusy, setScopeBusy] = useState<string | null>(null);
 
   const reloadPeers = useCallback(() => {
     api
@@ -220,6 +224,28 @@ export function FederationSection(props: {
       .finally(() => setInviteBusy(false));
   }, [invitePeerId, inviteTeam, inviteScene, t]);
 
+  // 展开范围编辑器时按需拉一次项目清单（不常驻）。
+  useEffect(() => {
+    if (scopeEditing == null || projects != null) return;
+    api
+      .listProjects()
+      .then(setProjects)
+      .catch((e) => setError(errorText(e)));
+  }, [scopeEditing, projects]);
+
+  const setScope = useCallback(
+    (peer: PeerRow, next: number[] | null) => {
+      setScopeBusy(peer.id);
+      setError(null);
+      api
+        .updatePeer(peer.id, { scopeProjects: next })
+        .then(reloadPeers)
+        .catch((e) => setError(errorText(e)))
+        .finally(() => setScopeBusy(null));
+    },
+    [reloadPeers],
+  );
+
   const inputCls =
     'rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
@@ -318,32 +344,83 @@ export function FederationSection(props: {
           <ul className="space-y-1">
             {peers.map((p) => {
               const state = livenessOf(p.lastSeenAt);
+              const scope = p.scopeProjects;
               return (
                 <li
                   key={p.id}
-                  className="flex items-center gap-2 rounded-lg bg-neutral-800/60 px-2.5 py-1.5 text-11 text-neutral-300"
+                  className="rounded-lg bg-neutral-800/60 px-2.5 py-1.5 text-11 text-neutral-300"
                 >
-                  <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${state === 'online' ? 'bg-blue-400' : 'bg-neutral-600'}`}
-                    title={t(state === 'online' ? 'settings.fedOnline' : state === 'offline' ? 'settings.fedOffline' : 'settings.fedNeverSeen')}
-                  />
-                  <span className="truncate">{p.name}</span>
-                  <span className="text-neutral-500">
-                    {p.host}
-                    {p.port > 0 ? `:${p.port}` : ''}
-                  </span>
-                  <span className="text-neutral-600">
-                    {p.source === 'manual' ? t('settings.fedSrcManual') : p.source === 'pairing' ? t('settings.fedSrcPairing') : t('settings.fedSrcMdns')}
-                  </span>
-                  <span className="ml-auto" />
-                  <button
-                    type="button"
-                    onClick={() => setDeleting(p)}
-                    className="text-neutral-500 hover:text-red-400"
-                    aria-label={t('settings.fedDelete')}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${state === 'online' ? 'bg-blue-400' : 'bg-neutral-600'}`}
+                      title={t(state === 'online' ? 'settings.fedOnline' : state === 'offline' ? 'settings.fedOffline' : 'settings.fedNeverSeen')}
+                    />
+                    <span className="truncate">{p.name}</span>
+                    <span className="text-neutral-500">
+                      {p.host}
+                      {p.port > 0 ? `:${p.port}` : ''}
+                    </span>
+                    <span className="text-neutral-600">
+                      {p.source === 'manual' ? t('settings.fedSrcManual') : p.source === 'pairing' ? t('settings.fedSrcPairing') : t('settings.fedSrcMdns')}
+                    </span>
+                    <span className="ml-auto" />
+                    <button
+                      type="button"
+                      onClick={() => setScopeEditing(scopeEditing === p.id ? null : p.id)}
+                      disabled={scopeBusy === p.id}
+                      className={`rounded px-1.5 py-0.5 hover:bg-neutral-700 disabled:opacity-50 ${scopeEditing === p.id ? 'bg-neutral-700 text-neutral-200' : 'bg-neutral-800 text-neutral-500'}`}
+                    >
+                      {scopeBusy === p.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : scope == null ? (
+                        t('settings.fedScopeAll')
+                      ) : scope.length === 0 ? (
+                        t('settings.fedScopeNone')
+                      ) : (
+                        t('settings.fedScopeCount', { n: scope.length })
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleting(p)}
+                      className="text-neutral-500 hover:text-red-400"
+                      aria-label={t('settings.fedDelete')}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  {scopeEditing === p.id && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1 border-t border-edge/[0.08] pt-1.5">
+                      <span className="text-neutral-500">{t('settings.fedScopeEditor')}</span>
+                      <button
+                        type="button"
+                        onClick={() => setScope(p, null)}
+                        className={`rounded px-1.5 py-0.5 ${scope == null ? 'bg-blue-600/80 text-white' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}
+                      >
+                        {t('settings.fedScopeAllOption')}
+                      </button>
+                      {(projects ?? []).map((pr) => {
+                        const on = (p.scopeProjects ?? []).includes(pr.id);
+                        return (
+                          <button
+                            key={pr.id}
+                            type="button"
+                            onClick={() =>
+                              setScope(
+                                p,
+                                on
+                                  ? (p.scopeProjects ?? []).filter((i) => i !== pr.id)
+                                  : [...(p.scopeProjects ?? []), pr.id],
+                              )
+                            }
+                            className={`max-w-40 truncate rounded px-1.5 py-0.5 ${on ? 'bg-blue-600/80 text-white' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}
+                          >
+                            {pr.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </li>
               );
             })}

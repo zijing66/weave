@@ -18,6 +18,11 @@ export interface PeerRow {
   /** 最近一次心跳（ISO）；null = 从未心跳。 */
   lastSeenAt: string | null;
   enabled: boolean;
+  /**
+   * 会话共享的项目范围（服务端裁决，客户端无感知）：null = 全部项目；
+   * 数组 = 只放行这些项目 id 的会话（sessions.list / sessions.events / inject）。
+   */
+  scopeProjects: number[] | null;
   createdAt: string;
 }
 
@@ -35,12 +40,13 @@ export class PeerRepository {
     port: number;
     fingerprint?: string | null;
     source?: PeerRow['source'];
+    scopeProjects?: number[] | null;
   }): PeerRow {
     const id = randomUUID();
     this.db
       .prepare(
-        `INSERT INTO peers (id, name, host, port, fingerprint, source, last_seen_at, enabled, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO peers (id, name, host, port, fingerprint, source, last_seen_at, enabled, scope_projects, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -51,6 +57,7 @@ export class PeerRepository {
         input.source ?? 'manual',
         null,
         1,
+        input.scopeProjects == null ? null : JSON.stringify(input.scopeProjects),
         new Date().toISOString(),
       );
     return this.getById(id)!;
@@ -69,16 +76,24 @@ export class PeerRepository {
 
   update(
     id: string,
-    patch: Partial<Pick<PeerRow, 'name' | 'host' | 'port' | 'fingerprint' | 'enabled'>>,
+    patch: Partial<Pick<PeerRow, 'name' | 'host' | 'port' | 'fingerprint' | 'enabled' | 'scopeProjects'>>,
   ): PeerRow | undefined {
     const row = this.getById(id);
     if (!row) return undefined;
     const next = { ...row, ...patch };
     this.db
       .prepare(
-        `UPDATE peers SET name = ?, host = ?, port = ?, fingerprint = ?, enabled = ? WHERE id = ?`,
+        `UPDATE peers SET name = ?, host = ?, port = ?, fingerprint = ?, enabled = ?, scope_projects = ? WHERE id = ?`,
       )
-      .run(next.name, next.host, next.port, next.fingerprint, next.enabled ? 1 : 0, id);
+      .run(
+        next.name,
+        next.host,
+        next.port,
+        next.fingerprint,
+        next.enabled ? 1 : 0,
+        next.scopeProjects == null ? null : JSON.stringify(next.scopeProjects),
+        id,
+      );
     return this.getById(id);
   }
 
@@ -108,6 +123,20 @@ function toRow(row: Record<string, unknown>): PeerRow {
     source: (row.source === 'mdns' || row.source === 'pairing' ? row.source : 'manual') as PeerRow['source'],
     lastSeenAt: row.last_seen_at == null ? null : String(row.last_seen_at),
     enabled: Number(row.enabled) === 1,
+    // 坏值（手改库 / 半截写入）回落 null = 全量——范围闸宁宽勿假窄，绝不猜一个子集
+    scopeProjects: parseScope(row.scope_projects),
     createdAt: String(row.created_at),
   };
+}
+
+function parseScope(raw: unknown): number[] | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    // 显式 [] = 不共享（用户取消全选的意图原样保留）；坏 JSON 才回落 null = 全量
+    return parsed.filter((v): v is number => typeof v === 'number' && Number.isInteger(v));
+  } catch {
+    return null;
+  }
 }

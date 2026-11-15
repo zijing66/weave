@@ -20,6 +20,7 @@ import { tokenFileOf } from '../repositories/peers.js';
 import { handleDiscoverRoute } from './mdns-advertiser.js';
 import { handleFederationCall, readPeerTokenFromRequest } from './federation-call.js';
 import { peerRequest, describePeerError, peerEndpointOf } from './federation-client.js';
+import { runWithCallerScope } from './caller-scope.js';
 import { withPeerNames } from '../rpg/invitations.js';
 
 /**
@@ -38,6 +39,8 @@ const PeerBody = z
     host: z.string().min(1).max(255),
     port: z.number().int().min(1).max(65_535),
     fingerprint: z.string().regex(/^[0-9a-f]{1,64}$/i).max(64).optional(),
+    /** 会话共享的项目范围（本机裁决）：null/缺省 = 全部项目；数组 = 只放行这些。 */
+    scopeProjects: z.array(z.number().int()).nullable().optional(),
   })
   .strict();
 
@@ -127,10 +130,13 @@ export async function handleFederationRoutes(
       sendJson(res, 403, { error: 'refused' });
       return true;
     }
-    peers.heartbeat(row.id, new Date().toISOString());
-    federate();
-    sendJson(res, 200, { ok: true });
-    return true;
+    // caller 范围切面：心跳段也包（成本零，防未来门内加数据面漏包）
+    return runWithCallerScope(row, () => {
+      peers.heartbeat(row.id, new Date().toISOString());
+      federate();
+      sendJson(res, 200, { ok: true });
+      return true as const;
+    });
   }
 
   // --- per-peer token 门内（豁免既有认证门）：互报 / 服务调用（F1）---
@@ -141,21 +147,24 @@ export async function handleFederationRoutes(
       sendJson(res, 403, { error: 'refused: per-peer token required' });
       return true;
     }
-    // 心跳副带：能过 token 门的请求就是对端活着的证据。
-    peers.heartbeat(row.id, new Date().toISOString());
-    federate();
-    if (pathname === '/federation/caps') {
-      if (req.method !== 'GET') return true;
-      sendJson(res, 200, {
-        hostname,
-        fingerprint: deps.ownFingerprint ?? null,
-        services: FEDERATION_SERVICES,
-      });
+    // 心跳副带：能过 token 门的请求就是对端活着的证据。整段跑在 caller 范围
+    // 切面内——call 臂的数据层裁剪（scopeProjects）从 ALS 读，不再逐臂穿参。
+    return runWithCallerScope(row, async () => {
+      peers.heartbeat(row.id, new Date().toISOString());
+      federate();
+      if (pathname === '/federation/caps') {
+        if (req.method !== 'GET') return true;
+        sendJson(res, 200, {
+          hostname,
+          fingerprint: deps.ownFingerprint ?? null,
+          services: FEDERATION_SERVICES,
+        });
+        return true;
+      }
+      if (req.method !== 'POST') return true;
+      await handleFederationCall(req, res, deps, { id: row.id, name: row.name, scopeProjects: row.scopeProjects });
       return true;
-    }
-    if (req.method !== 'POST') return true;
-    await handleFederationCall(req, res, deps, { id: row.id, name: row.name });
-    return true;
+    });
   }
 
   // --- 对端来交换（短码已由本机用户口头交给对方）：同样豁免认证门 ---
@@ -220,6 +229,7 @@ export async function handleFederationRoutes(
         port: body.port,
         fingerprint: body.fingerprint ?? null,
         source: 'manual',
+        scopeProjects: body.scopeProjects ?? null,
       });
       federate();
       sendJson(res, 201, { peer: row });
@@ -248,6 +258,7 @@ export async function handleFederationRoutes(
         ...(body.host != null ? { host: body.host } : {}),
         ...(body.port != null ? { port: body.port } : {}),
         ...(body.fingerprint !== undefined ? { fingerprint: body.fingerprint ?? null } : {}),
+        ...(body.scopeProjects !== undefined ? { scopeProjects: body.scopeProjects } : {}),
       });
       if (!row) {
         sendJson(res, 404, { error: 'Not found' });
@@ -309,7 +320,7 @@ export async function handleFederationRoutes(
       }
     }
     const endpoint = peerEndpointOf({
-      ...{ id: existing?.id ?? '', name: body.name, host, port: body.port, fingerprint: existing?.fingerprint ?? body.fingerprint ?? null, source: 'pairing', lastSeenAt: null, enabled: true, createdAt: '' },
+      ...{ id: existing?.id ?? '', name: body.name, host, port: body.port, fingerprint: existing?.fingerprint ?? body.fingerprint ?? null, source: 'pairing', lastSeenAt: null, enabled: true, scopeProjects: existing?.scopeProjects ?? null, createdAt: '' },
     });
     if (!endpoint) {
       sendJson(res, 400, { error: 'peer endpoint unavailable' });

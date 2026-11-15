@@ -46,6 +46,7 @@ import type { UploadRepository } from '../repositories/uploads.js';
 import type { UploadSessions } from './upload-sessions.js';
 import type { WatchService } from '../watch/watch-service.js';
 import { sendJson } from './http.js';
+import { projectInScope } from './caller-scope.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { ApiLogger, type ApiLogOrigin } from './api-log.js';
 import { handleHooksRoutes } from './hooks-routes.js';
@@ -401,6 +402,10 @@ async function handleRequest(
       return;
     }
     const projectId = Number(hooksMatch[1]);
+    if (!projectInScope(projectId)) {
+      sendJson(res, 403, { error: 'project outside the sharing scope of this peer' });
+      return;
+    }
     const limit = clampLimit(url.searchParams.get('limit'));
     const sessionId = url.searchParams.get('sessionId');
     const beforeIdRaw = url.searchParams.get('beforeId');

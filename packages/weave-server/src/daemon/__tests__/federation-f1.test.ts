@@ -79,6 +79,7 @@ describe('F1 federation（跨机投递闭环）', () => {
       // inject 走真 MessageDeliverer（claude 面 + UserPromptSubmit 事件 → surface 可判）。
       hookSessions: new SessionRepository(db),
       hookEvents: hookEventsRepo,
+      orchestrations: new (await import('../../repositories/orchestrations.js')).OrchestrationRepository(db),
       messageDeliverer: new MessageDeliverer({
         sessions: new SessionRepository(db),
         projects: new ProjectRepository(db),
@@ -187,6 +188,169 @@ describe('F1 federation（跨机投递闭环）', () => {
     expect(peers.list().find((p) => p.name === 'peer-call')!.lastSeenAt).toBeTruthy();
   });
 
+  it('会话共享范围：peer 的 scopeProjects 裁 sessions.list / sessions.events / inject（客户端无感知）', async () => {
+    // 两个项目各一条会话：范围外的会话对 scoped peer 必须不可见、不可触达
+    new ProjectRepository(db).register({ path: 'D:/proj-f1b', name: 'proj-f1b', token: 't2', source: 'scan' });
+    const sessions = new SessionRepository(db);
+    sessions.touch('sess-in-scope', 1);
+    sessions.touch('sess-out-scope', 2);
+
+    const offer = await rest(port, 'POST', '/federation/pairing/offer');
+    const swapped = await rest(port, 'POST', '/federation/pair', {
+      code: offer.body.code as string,
+      name: 'peer-scope',
+      fingerprint: 'b'.repeat(64),
+    });
+    const token = swapped.body.token as string;
+
+    // 缺省 = 全量共享（存量语义不动）
+    const all = await rest(
+      port, 'POST', '/federation/call',
+      { service: 'sessions.list', params: {} },
+      { authorization: `Bearer ${token}` },
+    );
+    expect(all.status).toBe(200);
+    expect((all.body.sessions as Array<{ sessionId: string }>).map((s) => s.sessionId)).toContain('sess-out-scope');
+
+    // PATCH 收窄到项目 1：客户端照原样调，拿到的就是子集
+    const patched = await rest(port, 'PATCH', `/federation/peers/${swapped.body.peerId as string}`, { scopeProjects: [1] });
+    expect(patched.status).toBe(200);
+    expect(patched.body.peer.scopeProjects).toEqual([1]);
+
+    const scoped = await rest(
+      port, 'POST', '/federation/call',
+      { service: 'sessions.list', params: {} },
+      { authorization: `Bearer ${token}` },
+    );
+    expect(scoped.status).toBe(200);
+    const scopedIds = (scoped.body.sessions as Array<{ sessionId: string }>).map((s) => s.sessionId);
+    expect(scopedIds).toContain('sess-in-scope');
+    expect(scopedIds).toContain('sess-f1'); // 前序用例的项目 1 会话——范围内照常放行
+    expect(scopedIds).not.toContain('sess-out-scope');
+
+    // 范围外会话：events / inject 一并把关（范围闸不只在清单上）
+    const evOut = await rest(
+      port, 'POST', '/federation/call',
+      { service: 'sessions.events', params: { sessionId: 'sess-out-scope' } },
+      { authorization: `Bearer ${token}` },
+    );
+    expect(evOut.status).toBe(403);
+    const injOut = await rest(
+      port, 'POST', '/federation/call',
+      { service: 'inject', params: { sessionId: 'sess-out-scope', text: 'x' } },
+      { authorization: `Bearer ${token}` },
+    );
+    expect(injOut.status).toBe(403);
+    // 范围内会话照常
+    const evIn = await rest(
+      port, 'POST', '/federation/call',
+      { service: 'sessions.events', params: { sessionId: 'sess-in-scope' } },
+      { authorization: `Bearer ${token}` },
+    );
+    expect(evIn.status).toBe(200);
+
+    // 清回全量（不动别的测试的语义）
+    await rest(port, 'PATCH', `/federation/peers/${swapped.body.peerId as string}`, { scopeProjects: null });
+  });
+
+  it('范围切面（ALS）：scoped peer 走扩面服务——projects.list / search / projects.files / sessions.list 全按范围裁', async () => {
+    // 造数据：p1 会话带对话事件（标题命中搜索），p2 同构——scope=[p1] 的 peer 只见 p1
+    const hookEvents = new HookEventRepository(db);
+    const sessions = new SessionRepository(db);
+    sessions.touch('sess-search-p1', 1);
+    sessions.touch('sess-search-p2', 2);
+    for (const [pid, sid, title] of [
+      [1, 'sess-search-p1', 'alphahit-title'],
+      [2, 'sess-search-p2', 'alphahit-title'],
+    ] as const) {
+      hookEvents.insert({
+        projectId: pid,
+        source: 'claude',
+        eventType: 'UserPromptSubmit',
+        sessionId: sid,
+        payload: JSON.stringify({ raw: { prompt: `alphahit body on p${pid}` } }),
+      });
+      sessions.setTitle(sid, title);
+    }
+
+    const offer = await rest(port, 'POST', '/federation/pairing/offer');
+    const swapped = await rest(port, 'POST', '/federation/pair', {
+      code: offer.body.code as string,
+      name: 'peer-als',
+      fingerprint: 'a'.repeat(64),
+    });
+    const token = swapped.body.token as string;
+    await rest(port, 'PATCH', `/federation/peers/${swapped.body.peerId as string}`, { scopeProjects: [1] });
+    const call = (service: string, params: Record<string, unknown>) =>
+      rest(port, 'POST', '/federation/call', { service, params }, { authorization: `Bearer ${token}` });
+
+    // projects.list：只见 p1（p2 被裁，不是标不可见）
+    const pl = await call('projects.list', {});
+    expect(pl.status).toBe(200);
+    const plIds = (pl.body.projects as Array<{ id: number }>).map((p) => p.id);
+    expect(plIds).toContain(1);
+    expect(plIds).not.toContain(2);
+
+    // search：三路命中只含 p1 —— ALS 穿 HTTP 链的端到端证明
+    const sr = await call('search', { q: 'alphahit' });
+    expect(sr.status).toBe(200);
+    expect((sr.body.sessions as Array<{ projectId: number }>).map((s) => s.projectId)).not.toContain(2);
+    expect((sr.body.messages as Array<{ projectId: number }>).map((m) => m.projectId)).not.toContain(2);
+
+    // projects.files：范围内浏览照常、范围外 403
+    const pfIn = await call('projects.files', { projectId: 1, limit: 10 });
+    expect(pfIn.status).toBe(200);
+    expect(pfIn.body.root).toBeTruthy();
+    const pfOut = await call('projects.files', { projectId: 2 });
+    expect(pfOut.status).toBe(403);
+
+    // sessions.list：p2 会话从清单消失（仓储层 ALS 裁，非内存 filter）
+    const sl = await call('sessions.list', {});
+    expect(sl.status).toBe(200);
+    expect((sl.body.sessions as Array<{ sessionId: string }>).map((s) => s.sessionId)).not.toContain('sess-search-p2');
+
+    await rest(port, 'PATCH', `/federation/peers/${swapped.body.peerId as string}`, { scopeProjects: null });
+  });
+
+  it('副作用扩面：sessions.create / orchestration.trigger 过 caller 范围闸（表外仍 404）', async () => {
+    const offer = await rest(port, 'POST', '/federation/pairing/offer');
+    const swapped = await rest(port, 'POST', '/federation/pair', {
+      code: offer.body.code as string,
+      name: 'peer-write',
+      fingerprint: '9'.repeat(64),
+    });
+    const token = swapped.body.token as string;
+    await rest(port, 'PATCH', `/federation/peers/${swapped.body.peerId as string}`, { scopeProjects: [1] });
+    const call = (service: string, params: Record<string, unknown>) =>
+      rest(port, 'POST', '/federation/call', { service, params }, { authorization: `Bearer ${token}` });
+
+    // sessions.create：范围外 403（闸在执行核之前，不暴露项目存在性——999 也 403）
+    const scOut = await call('sessions.create', { projectId: 2 });
+    expect(scOut.status).toBe(403);
+    const scMissing = await call('sessions.create', { projectId: 999 });
+    expect(scMissing.status).toBe(403);
+    const scBad = await call('sessions.create', { projectId: 1, harness: 'nope' });
+    expect(scBad.status).toBe(400);
+
+    // orchestration.trigger：范围外挂靠的编排 403；需要编排仓储行
+    const { OrchestrationRepository } = await import('../../repositories/orchestrations.js');
+    const orchestrations = new OrchestrationRepository(db);
+    const orchId = orchestrations.insert({
+      name: 'fed-orch',
+      projectId: 2,
+      startText: '',
+      nodes: [{ id: 't:x', kind: 'trigger' }],
+      edges: [],
+    }).id;
+    const otOut = await call('orchestration.trigger', { orchestrationId: orchId });
+    expect(otOut.status).toBe(403);
+
+    await rest(port, 'PATCH', `/federation/peers/${swapped.body.peerId as string}`, { scopeProjects: null });
+    // 清回全量后同一条编排可过闸（无 engine = 503 如实报因，不是 403）
+    const otIn = await call('orchestration.trigger', { orchestrationId: orchId });
+    expect(otIn.status).toBe(503);
+  });
+
   it('pairing 出站全链：mock 对端 /federation/pair（token 落盘 + TOFU mismatch 拒）', async () => {
     // mock 对端：本地 https server 假装对端（联邦出站恒 HTTPS + TOFU pin——
     // 出站侧对本机证书首见即信，指纹落 peer 行）。
@@ -289,5 +453,205 @@ describe('peer 目标解析（hooks/delivery/peer）', () => {
     expect(parsePeerTarget('peer:lab-box/abc-123')).toEqual({ peerName: 'lab-box', sessionId: 'abc-123' });
     expect(parsePeerTarget('local-session')).toBeNull();
     expect(parsePeerTarget('peer:noname')).toBeNull();
+  });
+});
+
+describe('双实例回环（本机以跨机方式调自己的服务）', () => {
+  /** 回环两实例都是 https：REST 走 https（自签证书，rejectUnauthorized 关——测试只关心业务）。 */
+  const restTls = async (
+    port: number,
+    method: string,
+    url: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) => {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    try {
+      const res = await fetch(`https://127.0.0.1:${port}/api${url}`, {
+        method,
+        headers: { 'content-type': 'application/json', ...headers },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const text = await res.text();
+      return { status: res.status, body: text ? JSON.parse(text) : null };
+    } finally {
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    }
+  };
+  const restB = (method: string, url: string, body?: unknown, headers?: Record<string, string>) =>
+    restTls(portB, method, url, body, headers);
+  /**
+   * 全真链路的「单机双面」验证：A 与 B 都是 https 真实例（各自自签证书 +
+   * weaveRequestHandler 原样跑），互为联邦 peer。双向 pairing 出站（https+TOFU
+   * 指纹比对走 node https 真通道）、A 用 `peer:` 目标投递 → B 收 inject、B 的
+   * caller 视角经 call 门读 A。跑完即弃、不碰活库。
+   */
+  let dbA: DatabaseSync;
+  let dbB: DatabaseSync;
+  let httpsA: import('node:https').Server;
+  let httpsB: import('node:https').Server;
+  let portA: number;
+  let portB: number;
+  let tokenDirA: string;
+  let tokenDirB: string;
+  let delivererA: MessageDeliverer;
+
+  beforeAll(async () => {
+    portA = await freePort();
+    portB = await freePort();
+    dbA = openDatabase(':memory:');
+    dbB = openDatabase(':memory:');
+    new ProjectRepository(dbA).register({ path: 'D:/loop-a', name: 'loop-a', token: 'ta', source: 'scan' });
+    new ProjectRepository(dbB).register({ path: 'D:/loop-b', name: 'loop-b', token: 'tb', source: 'scan' });
+    tokenDirA = mkdtempSync(path.join(tmpdir(), 'weave-loop-a-'));
+    tokenDirB = mkdtempSync(path.join(tmpdir(), 'weave-loop-b-'));
+    const pemsA = await generate([{ name: 'commonName', value: 'host-loop-a' }], { keySize: 2048 });
+    const pemsB = await generate([{ name: 'commonName', value: 'host-loop-b' }], { keySize: 2048 });
+    const { createServer: httpsCreate } = await import('node:https');
+    const { weaveRequestHandler } = await import('../../daemon/server.js');
+
+    // A：https 真实例——peerRoute 全真（按名查 peers 表 + token 盘），出站走缺省
+    // https+TOFU 通道（动态 import 那条，正是本回环要验的活装配路径）。
+    const hookEventsA = new HookEventRepository(dbA);
+    const peerRepoA = new PeerRepository(dbA);
+    delivererA = new MessageDeliverer({
+        sessions: new SessionRepository(dbA),
+        projects: new ProjectRepository(dbA),
+        hookEvents: hookEventsA,
+        bus: new HookEventBus(),
+        hooksDir: mkdtempSync(path.join(tmpdir(), 'weave-loop-a-hooks-')),
+        peerRoute: (peerName) => {
+          const row = peerRepoA.list().find((p) => p.name === peerName && p.enabled);
+          if (!row) return null;
+          const token = readPeerToken(tokenDirA, row.id, tokenFileOf)?.token;
+          if (!token) return null;
+          return { peerId: row.id, host: row.host, port: row.port, fingerprint: row.fingerprint, token };
+        },
+      });
+    httpsA = httpsCreate(
+      { key: pemsA.private, cert: pemsA.cert },
+      weaveRequestHandler({
+        projects: new ProjectRepository(dbA),
+        port: portA,
+        peers: peerRepoA,
+        peerTokensDir: tokenDirA,
+        ownCertPem: pemsA.cert,
+        ownHostname: 'host-loop-a',
+        ownFingerprint: certFingerprint(pemsA.cert),
+        hookSessions: new SessionRepository(dbA),
+        hookEvents: hookEventsA,
+        messageDeliverer: delivererA,
+      }),
+    );
+    await new Promise<void>((resolve) => httpsA.listen(portA, '127.0.0.1', resolve));
+
+    // B：https 真实例——同一个请求处理器，TLS 全真（A 的 TOFU 指纹比对打在真证书上）
+    const hookEventsB = new HookEventRepository(dbB);
+    const peerRepoB = new PeerRepository(dbB);
+    const delivererB = new MessageDeliverer({
+      sessions: new SessionRepository(dbB),
+      projects: new ProjectRepository(dbB),
+      hookEvents: hookEventsB,
+      bus: new HookEventBus(),
+      hooksDir: mkdtempSync(path.join(tmpdir(), 'weave-loop-b-hooks-')),
+      peerRoute: (peerName) => {
+        const row = peerRepoB.list().find((p) => p.name === peerName && p.enabled);
+        if (!row) return null;
+        const token = readPeerToken(tokenDirB, row.id, tokenFileOf)?.token;
+        if (!token) return null;
+        return { peerId: row.id, host: row.host, port: row.port, fingerprint: row.fingerprint, token };
+      },
+    });
+    httpsB = httpsCreate(
+      { key: pemsB.private, cert: pemsB.cert },
+      weaveRequestHandler({
+        projects: new ProjectRepository(dbB),
+        port: portB,
+        peers: peerRepoB,
+        peerTokensDir: tokenDirB,
+        ownCertPem: pemsB.cert,
+        ownHostname: 'host-loop-b',
+        ownFingerprint: certFingerprint(pemsB.cert),
+        hookSessions: new SessionRepository(dbB),
+        hookEvents: hookEventsB,
+        messageDeliverer: delivererB,
+      }),
+    );
+    await new Promise<void>((resolve) => httpsB.listen(portB, '127.0.0.1', resolve));
+  });
+
+  afterAll(async () => {
+    httpsA.close();
+    httpsB.close();
+    dbA.close();
+    dbB.close();
+    rmSync(tokenDirA, { recursive: true, force: true });
+    rmSync(tokenDirB, { recursive: true, force: true });
+  });
+
+  it('A→B：pairing 出站（真 https+TOFU）→ peer: 目标投递进 B → B 的对话事件落库', async () => {
+    // B 给短码，A 出站 pairing——对端半边是真 weave 实例（不是 mock 脚本）
+    const offerB = await restB('POST', '/federation/pairing/offer');
+    const swapped = await restTls(portA, 'POST', '/federation/pairing/initiate', {
+      name: 'loop-b',
+      host: '127.0.0.1',
+      port: portB,
+      code: offerB.body.code as string,
+    });
+    expect(swapped.status).toBe(200);
+    const peerRow = new PeerRepository(dbA).list().find((p) => p.name === 'loop-b')!;
+    expect(peerRow.fingerprint).toBeTypeOf('string');
+    expect(peerRow.fingerprint!.length).toBe(64);
+
+    // B 侧造一条本地会话（A 将把消息投给它）
+    new HookEventRepository(dbB).insert({
+      projectId: 1,
+      source: 'claude',
+      eventType: 'UserPromptSubmit',
+      sessionId: 'sess-loop-b',
+      payload: '{}',
+    });
+    new SessionRepository(dbB).touch('sess-loop-b', 1);
+
+    // A 以跨机方式投递：peer: 目标 → 出站 https call inject → B 落库
+    const result = await delivererA.send({
+      toSessionId: 'peer:loop-b/sess-loop-b',
+      text: 'hi across the loop',
+      mode: 'inject',
+      fromKind: 'dashboard',
+      oneWay: true,
+    });
+    expect(result.ok, `send failed: ${JSON.stringify(result)}`).toBe(true);
+    // B 的消息账里真的有了（inject 通道写 B 的 outbox）
+    const bInbox = new HookEventRepository(dbB).listBySession('sess-loop-b', 10);
+    expect(bInbox.length).toBeGreaterThan(0);
+
+    // 反向：B 配对到 A，B 的 caller 视角经 call 门读 A 的会话清单（范围闸 = 全量）
+    const offerA = await restTls(portA, 'POST', '/federation/pairing/offer');
+    const swappedBA = await restB('POST', '/federation/pairing/initiate', {
+      name: 'loop-a',
+      host: '127.0.0.1',
+      port: portA,
+      code: offerA.body.code as string,
+    });
+    expect(swappedBA.status).toBe(200);
+    new HookEventRepository(dbA).insert({
+      projectId: 1,
+      source: 'claude',
+      eventType: 'UserPromptSubmit',
+      sessionId: 'sess-loop-a',
+      payload: '{}',
+    });
+    new SessionRepository(dbA).touch('sess-loop-a', 1);
+    // B 侧拿到 A 签发的 per-peer token（pairing 交换时 A 已写进 A 的 tokenDir，
+    // 文件名 = A 视角里来访 peer 行的 id——A 看到的来访名 = B 的 hostname）。
+    const peerRowBA = new PeerRepository(dbA).list().find((p) => p.name === 'host-loop-b')!;
+    const tokenBA = readPeerToken(tokenDirA, peerRowBA.id, tokenFileOf)?.token;
+    expect(tokenBA).toBeTruthy();
+    const called = await restTls(portA, 'POST', '/federation/call', { service: 'sessions.list', params: {} }, {
+      authorization: `Bearer ${tokenBA}`,
+    });
+    expect(called.status).toBe(200);
+    expect((called.body.sessions as Array<{ sessionId: string }>).map((s) => s.sessionId)).toContain('sess-loop-a');
   });
 });

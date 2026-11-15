@@ -5,6 +5,17 @@ import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
 import { listDirOf, matchPaths, projectFileIndex, refreshDir } from '../project-files.js';
 import { resolveWithinProject } from '../../install/reader.js';
+import { projectInScope } from '../caller-scope.js';
+
+/** 项目文件面共用的 scope 闸：范围外统一口径（403，不泄露项目存在性）。 */
+function scopeGuard(
+  res: ServerResponse,
+  project: { id: number },
+): boolean {
+  if (projectInScope(project.id)) return true;
+  sendJson(res, 403, { error: 'project outside the sharing scope of this peer' });
+  return false;
+}
 
 /**
  * 项目文件数据面路由（project 维度）：文件索引（浏览/搜索）与项目根内只读预览。
@@ -117,6 +128,7 @@ export async function handleProjectFileRoutes(
       sendJson(res, 404, { error: 'Project not found' });
       return true;
     }
+    if (!scopeGuard(res, project)) return true;
 
     // 打开浏览器那一拍带 `fresh=1`：旧账先出（毫秒级）、后台重建，跟进请求拿新账
     const index = await projectFileIndex(project.id, project.path, {
@@ -186,6 +198,7 @@ export async function handleProjectFileRoutes(
       sendJson(res, 404, { error: 'Project not found' });
       return true;
     }
+    if (!scopeGuard(res, project)) return true;
     const dir = (url.searchParams.get('dir') ?? '').replace(/^\/+|\/+$/g, '');
     const index = await refreshDir(project.id, project.path, dir);
     sendJson(res, 200, {
@@ -210,6 +223,7 @@ export async function handleProjectFileRoutes(
       sendJson(res, 404, { error: 'Project not found' });
       return true;
     }
+    if (!scopeGuard(res, project)) return true;
     const relPath = url.searchParams.get('path');
     if (!relPath) {
       sendJson(res, 400, { error: 'Missing "path" query parameter' });

@@ -1,10 +1,16 @@
 import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
+import { isHarness } from '@weavecode/core';
 import { readJson } from './http.js';
 import { FEDERATION_SERVICES } from './federation.js';
 import type { WeaveServerDeps } from './server.js';
 import { readPeerToken } from './peer-tokens.js';
 import { tokenFileOf } from '../repositories/peers.js';
+import { projectInScope } from './caller-scope.js';
+import { globalSearch } from './routes/search.js';
+import { projectFileIndex, matchPaths, listDirOf } from './project-files.js';
+import { startSessionInProject } from './routes/projects.js';
+import { triggerOrchestration } from './routes/orchestration.js';
 
 /**
  * `POST /federation/call` —— 对端服务调用门（F1）。请求 `{service, params}`，
@@ -43,6 +49,37 @@ const SessionEventsParams = z
   })
   .strict();
 
+const SearchParams = z
+  .object({ q: z.string().min(1).max(200) })
+  .strict();
+
+const ProjectFilesParams = z
+  .object({
+    projectId: z.number().int(),
+    dir: z.string().max(500).optional(),
+    q: z.string().max(200).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    fresh: z.boolean().optional(),
+  })
+  .strict();
+
+const SessionsCreateParams = z
+  .object({
+    projectId: z.number().int(),
+    harness: z.string().max(50).optional(),
+    title: z.string().max(200).optional(),
+    worktree: z.boolean().optional(),
+  })
+  .strict();
+
+const OrchestrationTriggerParams = z
+  .object({
+    orchestrationId: z.number().int(),
+    text: z.string().max(20_000).optional(),
+    entries: z.array(z.string().min(1).max(128)).max(20).optional(),
+  })
+  .strict();
+
 /** `rpg.invite` 参数（F2）：只落一条待确认记录——不执行任何动作（不违反 inject-only）。 */
 const InviteParams = z
   .object({
@@ -64,6 +101,21 @@ export function readPeerTokenFromRequest(req: IncomingMessage): string | null {
   return m ? m[1]! : null;
 }
 
+/**
+ * 会话共享范围（服务端裁决、客户端无感知）：caller peer 的 scopeProjects 由
+ * caller-scope 切面（ALS）携带——federation-routes 在 token 门内 runWithCallerScope
+ * 建立。null = 全部项目；数组 = 只放行这些项目的会话。范围闸覆盖所有按会话
+ * 寻址的服务（sessions.list 过滤、sessions.events / inject 把关），对端仍按
+ * 原方式调用——拿到的就是本机放行的子集。
+ */
+function sessionProjectInScope(
+  deps: WeaveServerDeps,
+  sessionId: string,
+): boolean {
+  const projectId = deps.hookSessions?.getBySessionId(sessionId)?.projectId ?? null;
+  return projectInScope(projectId);
+}
+
 export async function handleFederationCall(
   req: IncomingMessage,
   res: {
@@ -73,7 +125,7 @@ export async function handleFederationCall(
   },
   deps: WeaveServerDeps,
   /** 已过 token 门的调用方 peer（federation-routes 解析；invite 落记录要记来源）。 */
-  callerPeer?: { id: string; name: string },
+  callerPeer?: { id: string; name: string; scopeProjects: number[] | null },
 ): Promise<void> {
   const json = (status: number, payload: unknown): void => {
     res.statusCode = status;
@@ -109,6 +161,10 @@ export async function handleFederationCall(
     const p = InjectParams.safeParse(params);
     if (!p.success) {
       json(400, { error: p.error.issues.map((i) => i.message).join('; ') });
+      return;
+    }
+    if (!sessionProjectInScope(deps, p.data.sessionId)) {
+      json(403, { error: 'session outside the sharing scope of this peer' });
       return;
     }
     const result = await deps.messageDeliverer.send({
@@ -190,6 +246,10 @@ export async function handleFederationCall(
       json(400, { error: p.error.issues.map((i) => i.message).join('; ') });
       return;
     }
+    if (!sessionProjectInScope(deps, p.data.sessionId)) {
+      json(403, { error: 'session outside the sharing scope of this peer' });
+      return;
+    }
     const events = deps.hookEvents.listBySession(p.data.sessionId, p.data.limit ?? 50);
     json(200, {
       events: events.map((e) => ({
@@ -198,6 +258,146 @@ export async function handleFederationCall(
         at: e.createdAt,
       })),
     });
+    return;
+  }
+
+  // ---- 只读扩面（2026-11-14 裁决：对端可读清单/搜索/文件，全部过 caller 范围闸）----
+
+  if (service === 'projects.list') {
+    // projects.list 仓储层已按 ALS 裁过——无参数，策展最小字段。
+    json(200, {
+      projects: deps.projects.list().map((p) => ({
+        id: p.id,
+        name: p.name,
+        path: p.path,
+      })),
+    });
+    return;
+  }
+
+  if (service === 'search') {
+    const p = SearchParams.safeParse(params);
+    if (!p.success) {
+      json(400, { error: p.error.issues.map((i) => i.message).join('; ') });
+      return;
+    }
+    // globalSearch 查询核与 GET /search 共用：三路命中在仓储层按 ALS 裁。
+    // 服务臂前置已守 hookEvents/hookSessions（sessions.* 臂同门）。
+    if (!deps.hookEvents || !deps.hookSessions) {
+      json(503, { error: 'Hooks subsystem unavailable' });
+      return;
+    }
+    json(
+      200,
+      await globalSearch(
+        { projects: deps.projects, hookEvents: deps.hookEvents, hookSessions: deps.hookSessions },
+        p.data.q.trim(),
+      ),
+    );
+    return;
+  }
+
+  if (service === 'projects.files') {
+    const p = ProjectFilesParams.safeParse(params);
+    if (!p.success) {
+      json(400, { error: p.error.issues.map((i) => i.message).join('; ') });
+      return;
+    }
+    if (!projectInScope(p.data.projectId)) {
+      json(403, { error: 'project outside the sharing scope of this peer' });
+      return;
+    }
+    const project = deps.projects.getById(p.data.projectId);
+    if (!project) {
+      json(404, { error: 'Project not found' });
+      return;
+    }
+    const index = await projectFileIndex(project.id, project.path, { fresh: p.data.fresh === true });
+    const q = (p.data.q ?? '').trim();
+    const dir = (p.data.dir ?? '').replace(/^\/+|\/+$/g, '');
+    const limit = p.data.limit ?? 100;
+    if (q) {
+      const { hits, total, capped } = await matchPaths(index, q, limit, dir);
+      json(200, {
+        root: project.path,
+        dir,
+        total,
+        capped,
+        truncated: index.truncated,
+        entries: hits.map((h) => ({ path: h.path, kind: h.kind, ranges: h.ranges })),
+      });
+      return;
+    }
+    const children = listDirOf(index, dir).slice(0, limit);
+    json(200, {
+      root: project.path,
+      dir,
+      total: children.length,
+      capped: false,
+      truncated: index.truncated,
+      entries: children.map((c) => ({ path: c.path, kind: c.kind })),
+    });
+    return;
+  }
+
+  // ---- 副作用扩面（2026-11-14 裁决第二批：起会话 / 触发编排，全部过 caller 范围闸）----
+
+  if (service === 'sessions.create') {
+    const p = SessionsCreateParams.safeParse(params);
+    if (!p.success) {
+      json(400, { error: p.error.issues.map((i) => i.message).join('; ') });
+      return;
+    }
+    if (!projectInScope(p.data.projectId)) {
+      json(403, { error: 'project outside the sharing scope of this peer' });
+      return;
+    }
+    const project = deps.projects.getById(p.data.projectId);
+    if (!project) {
+      json(404, { error: 'Project not found' });
+      return;
+    }
+    // 联邦链建的会话强制隐藏（对端人不在本机终端跟前，同 MCP 口径）。
+    const harness = p.data.harness;
+    if (harness !== undefined && !isHarness(harness)) {
+      json(400, { error: 'Invalid "harness"' });
+      return;
+    }
+    const result = await startSessionInProject(deps, project, {
+      harness,
+      title: p.data.title,
+      worktree: p.data.worktree === true,
+      viaMcp: true,
+    });
+    if (!result.ok) {
+      json(result.status, { error: result.error });
+      return;
+    }
+    json(200, result);
+    return;
+  }
+
+  if (service === 'orchestration.trigger') {
+    const p = OrchestrationTriggerParams.safeParse(params);
+    if (!p.success) {
+      json(400, { error: p.error.issues.map((i) => i.message).join('; ') });
+      return;
+    }
+    const orch = deps.orchestrations?.getById(p.data.orchestrationId);
+    if (!orch) {
+      json(404, { error: 'Orchestration not found' });
+      return;
+    }
+    if (!projectInScope(orch.projectId)) {
+      json(403, { error: 'project outside the sharing scope of this peer' });
+      return;
+    }
+    const result = await triggerOrchestration(deps, p.data.orchestrationId, p.data.text, p.data.entries);
+    if (!result.ok) {
+      json(result.status, { error: result.error });
+      return;
+    }
+    json(201, { ok: true, runId: result.runId });
     return;
   }
 

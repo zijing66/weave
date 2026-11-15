@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, Check, ChevronLeft, Folder, Search, X } from 'lucide-react';
+import { Box, Check, ChevronLeft, Folder, Globe, Search, X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
+import type { FederatedPeerBucket } from './federation-buckets';
 import { useT } from '@/i18n/I18nProvider';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,7 @@ export function SessionShuttlePicker({
   projects,
   statuses,
   currentProjectId,
+  federatedPeers,
   onPick,
   onPickBatch,
   onPickProject,
@@ -57,6 +59,8 @@ export function SessionShuttlePicker({
   statuses: ReadonlyMap<string, SessionStatus>;
   /** 默认选中的项目（当前会话所属）：打开即落在它的会话列表上。 */
   currentProjectId: number | null;
+  /** 联邦对端账（peer 行 + 各自会话账；缺省/空 = 不出联邦分组）。 */
+  federatedPeers?: ReadonlyArray<FederatedPeerBucket>;
   /** 落定目标：调用方插胶囊并关弹窗（多选时按 Enter 整批落定，顺序 = 选择序）。 */
   onPick: (sessionId: string, name: string) => void;
   onPickBatch?: (picked: ReadonlyArray<{ sessionId: string; name: string }>) => void;
@@ -85,6 +89,8 @@ export function SessionShuttlePicker({
   const [pickedProjects, setPickedProjects] = useState<Array<{ projectId: number; name: string }>>([]);
   /** 窄屏两屏下钻：项目列表 ⇄ 会话列表（同 FilePicker 的 list/preview）。 */
   const [screen, setScreen] = useState<'projects' | 'sessions'>('sessions');
+  /** 焦点所在联邦 peer（左栏 peer 行选中态）；null = 焦点在普通项目分组。 */
+  const [peerIdx, setPeerIdx] = useState<number | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const projListRef = useRef<HTMLUListElement>(null);
@@ -149,16 +155,19 @@ export function SessionShuttlePicker({
   /** 窄屏两屏下钻（桌面两栏、搜索态平铺都不适用）。 */
   const drilldown = !isDesktop && !flat;
 
-  /** 右栏此刻的行集：搜索态 = 平铺结果，层级态 = 焦点项目的会话。 */
-  const rightRows = flat ?? groups[projIdx]?.rows ?? [];
+  /** 右栏此刻的行集：搜索态 = 平铺结果；焦点在 peer = 对端会话；否则焦点项目的会话。 */
+  const rightRows: Array<SessionRow | FederatedPeerBucket['sessions'][number]> =
+    flat ?? (peerIdx != null ? (federatedPeers?.[peerIdx]?.sessions ?? []) : (groups[projIdx]?.rows ?? []));
+  /** 右栏行是不是联邦行（两形行的取值字段同名：sessionId/title；状态图标对端恒灰点）。 */
+  const rightIsPeer = peerIdx != null && !flat;
 
-  // 换项目 / 换搜索词：右栏高亮收回首条；行集缩短时高亮收回界内；勾选账清掉
+  // 换项目 / 换 peer / 换搜索词：右栏高亮收回首条；行集缩短时高亮收回界内；勾选账清掉
   // （勾的是「这一屏的行」，换屏后旧勾容易变成看不见的幽灵选择）
   useEffect(() => {
     setSessIdx(0);
     setPicked([]);
     setPickedProjects([]);
-  }, [query, projIdx]);
+  }, [query, projIdx, peerIdx]);
   useEffect(() => {
     setSessIdx((i) => Math.min(i, Math.max(0, rightRows.length - 1)));
   }, [rightRows.length]);
@@ -216,6 +225,21 @@ export function SessionShuttlePicker({
       kbdNav.current = true;
       const step = e.key === 'ArrowDown' ? 1 : -1;
       if (focusCol === 'projects') {
+        // 联邦 peer 行在项目列表尾段：焦点越过普通项目组后进入 peer 段
+        const peersLen = federatedPeers?.length ?? 0;
+        if (peersLen > 0 && peerIdx == null && projIdx >= groups.length - 1 && step > 0) {
+          setPeerIdx(0);
+          return;
+        }
+        if (peerIdx != null) {
+          const next = peerIdx + step;
+          if (next < 0) {
+            setPeerIdx(null);
+            return;
+          }
+          setPeerIdx(Math.min(peersLen - 1, next));
+          return;
+        }
         setProjIdx((i) => Math.min(groups.length - 1, Math.max(0, i + step)));
       } else {
         setSessIdx((i) => Math.min(rightRows.length - 1, Math.max(0, i + step)));
@@ -264,7 +288,13 @@ export function SessionShuttlePicker({
         return;
       }
       const hit = rightRows[sessIdx];
-      if (hit) onPick(hit.sessionId, sessionLabel(hit.title, hit.sessionId));
+      if (!hit) return;
+      // 联邦行落定 = peer 目标形（投递层一等公民）；普通行 = 本机 sessionId
+      if (rightIsPeer && peerIdx != null) {
+        onPick(`peer:${federatedPeers![peerIdx]!.peerName}/${hit.sessionId}`, sessionLabel(hit.title, hit.sessionId));
+      } else {
+        onPick(hit.sessionId, sessionLabel(hit.title, hit.sessionId));
+      }
       return;
     }
     // Space = 焦点栏当前行打勾/取消（项目/会话同款多选）。搜索框里也勾（检索中
@@ -478,6 +508,49 @@ export function SessionShuttlePicker({
                 </li>
                 );
               })}
+              {/* 联邦 peer 段：分隔行 + 每 peer 一行（下钻看对端会话；离线灰置）。 */}
+              {(federatedPeers?.length ?? 0) > 0 && (
+                <li aria-hidden className="px-2.5 pb-0.5 pt-2 text-10 uppercase tracking-wide text-neutral-600">
+                  {t('tasks.sessionPickerFederated')}
+                </li>
+              )}
+              {(federatedPeers ?? []).map((p, pi) => (
+                <li key={p.peerId} className="relative">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={peerIdx === pi}
+                    onMouseEnter={() => {
+                      if (!kbdNav.current) {
+                        setPeerIdx(pi);
+                        setCol('projects');
+                      }
+                    }}
+                    onClick={() => {
+                      setPeerIdx(pi);
+                      setCol('projects');
+                      if (!isDesktop) setScreen('sessions');
+                    }}
+                    className={cn(
+                      'flex w-full items-center gap-1.5 py-1 pl-2.5 pr-2.5 text-left text-xs transition-colors',
+                      peerIdx === pi
+                        ? rowClass(focusCol === 'projects', 'project')
+                        : 'text-neutral-300 hover:bg-edge/[0.04]',
+                      !p.online && 'opacity-60',
+                    )}
+                  >
+                    {peerIdx === pi && focusCol === 'projects' && (
+                      <span
+                        aria-hidden
+                        className={cn('absolute inset-y-0 left-0 w-[3px] rounded-full', focusBar('project'))}
+                      />
+                    )}
+                    <Globe className={cn('h-3.5 w-3.5 shrink-0', p.online ? 'text-cyan-300/80' : 'text-neutral-600')} />
+                    <span className="min-w-0 flex-1 truncate">{p.peerName}</span>
+                    <span className="shrink-0 text-10 tabular-nums text-neutral-600">{p.sessions.length}</span>
+                  </button>
+                </li>
+              ))}
             </ul>
           )}
           <ul
@@ -497,9 +570,13 @@ export function SessionShuttlePicker({
               <li className="px-3 py-6 text-11 text-neutral-500">{t('orch.pickerEmpty')}</li>
             )}
             {rightRows.map((s, i) => {
-              const status = statuses.get(s.sessionId) ?? 'open';
-              const pid = s.projectId ?? null;
+              const status = rightIsPeer ? 'open' : (statuses.get(s.sessionId) ?? 'open');
+              const pid = (s as SessionRow).projectId ?? null;
               const isPicked = picked.some((p) => p.sessionId === s.sessionId);
+              const pickId = rightIsPeer && peerIdx != null
+                ? `peer:${federatedPeers![peerIdx]!.peerName}/${s.sessionId}`
+                : s.sessionId;
+              const pick = (): void => onPick(pickId, sessionLabel(s.title, s.sessionId));
               return (
                 <li key={s.sessionId} className="relative">
                   <button
@@ -516,9 +593,9 @@ export function SessionShuttlePicker({
                       setSessIdx(i);
                       setCol('sessions');
                       // 触屏没有可靠的双击，会话也没有预览步骤：单击直接落定
-                      if (!isDesktop) onPick(s.sessionId, sessionLabel(s.title, s.sessionId));
+                      if (!isDesktop) pick();
                     }}
-                    onDoubleClick={() => onPick(s.sessionId, sessionLabel(s.title, s.sessionId))}
+                    onDoubleClick={pick}
                     className={cn(
                       'flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors',
                       i === sessIdx
@@ -533,7 +610,11 @@ export function SessionShuttlePicker({
                         className={cn('absolute inset-y-0 left-0 w-[3px] rounded-full', focusBar('session'))}
                       />
                     )}
-                    <SessionStatusIcon status={status} harness={s.harness} />
+                    {rightIsPeer ? (
+                      <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-neutral-600" />
+                    ) : (
+                      <SessionStatusIcon status={status} harness={(s.harness as 'claude' | 'codex' | null) ?? null} />
+                    )}
                     <span className="min-w-0 flex-1 truncate">{sessionLabel(s.title, s.sessionId)}</span>
                     {/* Space 勾选的行：勾标记盖在状态文案前（勾选序 = 落定序） */}
                     {isPicked && (
@@ -545,7 +626,9 @@ export function SessionShuttlePicker({
                         {projectName.get(pid) ?? `#${pid}`}
                       </span>
                     )}
-                    <span className="shrink-0 text-10 text-neutral-500">{t(STATUS_KEY[status])}</span>
+                    <span className="shrink-0 text-10 text-neutral-500">
+                      {rightIsPeer ? t('tasks.sessionPickerRemote') : t(STATUS_KEY[status])}
+                    </span>
                   </button>
                 </li>
               );

@@ -62,6 +62,24 @@ const TriggerBody = z.object({
   entries: z.array(z.string().min(1)).optional(),
 });
 
+/**
+ * 手动触发一个编排（REST trigger 路由与联邦 orchestration.trigger 共用的执行核）。
+ * caller 范围闸在调用方（对端触发只放行 scope 内项目挂靠的编排）。
+ */
+export async function triggerOrchestration(
+  deps: WeaveServerDeps,
+  orchId: number,
+  text?: string,
+  entries?: readonly string[],
+): Promise<{ ok: true; runId: number } | { ok: false; status: number; error: string }> {
+  if (!deps.orchestrationEngine || !deps.orchestrations) {
+    return { ok: false, status: 503, error: 'Messaging subsystem unavailable' };
+  }
+  const result = await deps.orchestrationEngine.start(orchId, 'manual', text, entries);
+  if (!result.ok) return { ok: false, status: result.status, error: result.error };
+  return { ok: true, runId: result.runId };
+}
+
 /** 换某枚 webhook 入口节点的 token。 */
 const RotateNodeBody = z.object({ nodeId: z.string().min(1).max(128) });
 
@@ -360,9 +378,9 @@ export async function handleOrchestrationRoutes(
       sendJson(res, 400, { error: 'Invalid body' });
       return true;
     }
-    const result = await deps.orchestrationEngine.start(
+    const result = await triggerOrchestration(
+      deps,
       Number(triggerMatch[1]),
-      'manual',
       body.text,
       body.entries,
     );

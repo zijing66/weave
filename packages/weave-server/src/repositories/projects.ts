@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { resolve } from 'node:path';
+import { scopedProjectIds } from '../daemon/caller-scope.js';
 
 export interface ProjectRow {
   id: number;
@@ -90,20 +91,25 @@ export class ProjectRepository {
    * 尾部可见位置。
    */
   list(): ProjectRow[] {
-    return this.db
+    const rows = this.db
       .prepare(
         'SELECT * FROM projects WHERE archived_at IS NULL ORDER BY superagent DESC, sort_order IS NULL, sort_order ASC, registered_at DESC',
       )
       .all()
       .map((row) => toProject(row));
+    // 联邦 caller 范围切面：无上下文（本机/内部作业）= 全量
+    const scope = scopedProjectIds();
+    return scope == null ? rows : rows.filter((p) => scope.includes(p.id));
   }
 
   /** 归档项目（仅基础信息，历史会话已在归档时清空），按归档时间倒序。 */
   listArchived(): ProjectRow[] {
-    return this.db
+    const rows = this.db
       .prepare('SELECT * FROM projects WHERE archived_at IS NOT NULL ORDER BY archived_at DESC')
       .all()
       .map((row) => toProject(row));
+    const scope = scopedProjectIds();
+    return scope == null ? rows : rows.filter((p) => scope.includes(p.id));
   }
 
   /**

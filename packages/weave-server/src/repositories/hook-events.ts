@@ -1,6 +1,7 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { HARNESS_LIFECYCLE, type Harness } from '@weavecode/core';
 import { readDaemonSettingsSync, DEFAULT_EVENT_RETENTION_DAYS } from '../daemon/settings.js';
+import { scopeProjectsFilter } from '../daemon/caller-scope.js';
 
 export interface HookEventInput {
   projectId: number;
@@ -248,17 +249,19 @@ export class HookEventRepository {
     }
     const typeList = [...types].map((t) => `'${t}'`).join(',');
     const needle = likeEscape(q);
+    // 联邦 caller 范围（ALS）：空集产 AND 0，无上下文产空片段
+    const scope = scopeProjectsFilter('project_id');
     const rows = this.db
       .prepare(
         `SELECT id, project_id, source, event_type, session_id, payload, created_at
          FROM hook_events
          WHERE event_type IN (${typeList})
            AND (COALESCE(json_extract(payload, '$.raw.prompt'), '') LIKE '%' || ? || '%' ESCAPE '\\'
-            OR COALESCE(json_extract(payload, '$.raw.last_assistant_message'), '') LIKE '%' || ? || '%' ESCAPE '\\')
+            OR COALESCE(json_extract(payload, '$.raw.last_assistant_message'), '') LIKE '%' || ? || '%' ESCAPE '\\')${scope.sql}
          ORDER BY id DESC
          LIMIT ?`,
       )
-      .all(needle, needle, limit) as Array<Record<string, unknown>>;
+      .all(needle, needle, ...scope.params, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => {
       const payload = JSON.parse(String(row.payload)) as {
         raw?: { prompt?: unknown; last_assistant_message?: unknown };
@@ -289,14 +292,15 @@ export class HookEventRepository {
     }
     const typeList = [...types].map((t) => `'${t}'`).join(',');
     const like = likeEscape(needle);
+    const scope = scopeProjectsFilter('project_id');
     const rows = this.db
       .prepare(
         `SELECT payload FROM hook_events
          WHERE event_type IN (${typeList})
            AND (COALESCE(json_extract(payload, '$.raw.prompt'), '') LIKE '%' || ? || '%' ESCAPE '\\'
-            OR COALESCE(json_extract(payload, '$.raw.last_assistant_message'), '') LIKE '%' || ? || '%' ESCAPE '\\')`,
+            OR COALESCE(json_extract(payload, '$.raw.last_assistant_message'), '') LIKE '%' || ? || '%' ESCAPE '\\')${scope.sql}`,
       )
-      .all(like, like) as Array<{ payload: unknown }>;
+      .all(like, like, ...scope.params) as Array<{ payload: unknown }>;
     const out: string[] = [];
     for (const row of rows) {
       const payload = JSON.parse(String(row.payload)) as {

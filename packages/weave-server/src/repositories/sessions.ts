@@ -7,6 +7,7 @@ import {
   type Harness,
 } from '@weavecode/core';
 import { readDaemonSettingsSync, DEFAULT_SESSION_IDLE_DAYS } from '../daemon/settings.js';
+import { projectInScope, scopeProjectsFilter } from '../daemon/caller-scope.js';
 
 export interface SessionRow {
   sessionId: string;
@@ -142,17 +143,20 @@ export class SessionRepository {
   }
 
   list(projectId?: number): SessionRow[] {
-    // 创建时间固定排序（不随活跃跳动）。
-    const rows =
-      projectId === undefined
-        ? this.db
-            .prepare('SELECT * FROM sessions ORDER BY created_at DESC LIMIT 200')
-            .all()
-        : this.db
-            .prepare(
-              'SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 200',
-            )
-            .all(projectId);
+    // 创建时间固定排序（不随活跃跳动）。联邦 caller 范围（ALS）与显式 projectId 取交集。
+    const scope = scopeProjectsFilter('project_id');
+    if (projectId === undefined) {
+      const rows = this.db
+        .prepare(`SELECT * FROM sessions WHERE 1=1${scope.sql} ORDER BY created_at DESC LIMIT 200`)
+        .all(...scope.params);
+      return rows.map(toSession);
+    }
+    if (!projectInScope(projectId)) return [];
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 200',
+      )
+      .all(projectId);
     return rows.map(toSession);
   }
 
@@ -162,11 +166,12 @@ export class SessionRepository {
    */
   searchByTitle(q: string, limit: number): SessionRow[] {
     const needle = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const scope = scopeProjectsFilter('project_id');
     const rows = this.db
       .prepare(
-        "SELECT * FROM sessions WHERE title LIKE ? ESCAPE '\\' ORDER BY last_seen_at DESC LIMIT ?",
+        `SELECT * FROM sessions WHERE title LIKE ? ESCAPE '\\'${scope.sql} ORDER BY last_seen_at DESC LIMIT ?`,
       )
-      .all(needle, limit);
+      .all(needle, ...scope.params, limit);
     return rows.map(toSession);
   }
 
@@ -193,8 +198,15 @@ export class SessionRepository {
     const where: string[] = [];
     const params: Array<number | string> = [];
     if (projectId !== undefined) {
+      // 显式 projectId 与联邦 caller 范围（ALS）取交集：范围外恒空
+      if (!projectInScope(projectId)) return [];
       where.push('s.project_id = ?');
       params.push(projectId);
+    }
+    const scope = scopeProjectsFilter('s.project_id');
+    if (scope.sql) {
+      where.push(scope.sql.replace(/^ AND /, ''));
+      params.push(...scope.params);
     }
     if (sessionIds && sessionIds.length > 0) {
       where.push(`s.session_id IN (${sessionIds.map(() => '?').join(',')})`);

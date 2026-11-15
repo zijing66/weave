@@ -521,6 +521,7 @@ CREATE TABLE IF NOT EXISTS peers (
   source       TEXT NOT NULL DEFAULT 'manual', -- manual | mdns | pairing
   last_seen_at TEXT,
   enabled      INTEGER NOT NULL DEFAULT 1,
+  scope_projects TEXT,                   -- 会话共享范围：JSON 项目 id 数组；NULL = 全部项目
   created_at   TEXT NOT NULL
 );
 `;
@@ -722,6 +723,7 @@ function openAndMigrate(dbPath: string): DatabaseSync {
     migrateExtensionBindingsColumns(db);
     migrateRpgGoalsColumns(db);
     migrateRpgRolesColumns(db);
+    migratePeersColumns(db);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     return db;
   } catch (err) {
@@ -774,6 +776,21 @@ function migrateSessionWatchesColumns(db: DatabaseSync): void {
     db.exec('ALTER TABLE session_watches ADD COLUMN remaining INTEGER');
     db.exec('UPDATE session_watches SET remaining = 1');
   }
+}
+
+/**
+ * 联邦 peer 的列级兜底：存量库补 scope_projects（会话共享范围，JSON 项目 id
+ * 数组；NULL = 全部项目——存量行不迁移即维持原全量共享语义）。
+ */
+function migratePeersColumns(db: DatabaseSync): void {
+  const cols = new Set(
+    db
+      .prepare('PRAGMA table_info(peers)')
+      .all()
+      .map((row) => String((row as { name: string }).name)),
+  );
+  if (cols.size === 0) return;
+  if (!cols.has('scope_projects')) db.exec('ALTER TABLE peers ADD COLUMN scope_projects TEXT');
 }
 
 /**

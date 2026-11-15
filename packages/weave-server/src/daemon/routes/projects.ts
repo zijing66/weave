@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isHarness, type Harness } from '@weavecode/core';
 import type { WeaveServerDeps } from '../server.js';
@@ -118,6 +119,105 @@ function scheduleSessionTitle(
     }, 500);
   };
   poll();
+}
+
+/**
+ * 在项目里起一个新会话（new-session 路由与联邦 sessions.create 共用的执行核）。
+ * harness 校验（integrated/canStartSession/501）在这里；调用方先做完自己的门
+ * （存在性 404、请求体校验、caller 范围闸）。
+ */
+export async function startSessionInProject(
+  deps: WeaveServerDeps,
+  project: { id: number; name: string; path: string },
+  opts: {
+    harness?: Harness;
+    worktree?: boolean;
+    target?: string;
+    title?: string;
+    /** MCP/联邦链建的会话强制隐藏（调用方不在终端跟前）。 */
+    viaMcp?: boolean;
+  },
+): Promise<{ ok: true; command: string; cwd: string; worktree?: string } | { ok: false; status: number; error: string }> {
+  const integrated = await projectHarnesses(project.path, deps.harnesses);
+  if (opts.harness !== undefined && !integrated.some((h) => h.id === opts.harness)) {
+    return { ok: false, status: 409, error: `Harness "${opts.harness}" is not integrated in this project` };
+  }
+  const wanted = opts.harness ? [opts.harness] : integrated.map((h) => h.id);
+  const picked = integrated.find((h) => wanted.includes(h.id) && h.canStartSession);
+  const spec = picked ? deps.harnesses?.get(picked.id)?.resume : undefined;
+  if (!spec?.bin) {
+    return { ok: false, status: 501, error: `Harness "${wanted[0]}" cannot start an interactive session` };
+  }
+  const opener = deps.opener ?? defaultProjectOpener;
+  try {
+    const stat = await fs.promises.stat(project.path);
+    if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
+    // worktree 隔离（B5 最小切片）：起手建 worktree，会话 cwd 落进它（与会话级
+    // 生命周期两端绑死：SessionEnd 后由 sweepWorktreeMerges 并回主干）。环境
+    // 不支持（非 git 仓 / git 缺席）→ 409 如实报因，前端据此置灰——不炸、不回落。
+    let cwd = project.path;
+    let worktreePath: string | undefined;
+    if (opts.worktree === true) {
+      // sessionId 此刻未知（宿主自己生成）：先用占位键建目录与分支，登记按
+      // 占位键记；首个会话事件到达时按 cwd 前缀认领改绑（claimPendingSessionWorktree，
+      // 与起点候选 pending-origins 同一哲学）。
+      const key = PENDING_WT_PREFIX + crypto.randomUUID();
+      const created = await createSessionWorktree(project.path, key, deps.worktreeGitExec);
+      if (!created.ok) {
+        return { ok: false, status: created.unsupported ? 409 : 400, error: created.error ?? 'worktree unavailable' };
+      }
+      cwd = created.path!;
+      worktreePath = created.path;
+      if (deps.hooksDir) {
+        upsertWorktreeEntry(deps.hooksDir, {
+          sessionId: key,
+          projectId: project.id,
+          path: created.path!,
+          branch: created.branch!,
+          status: 'active',
+          at: new Date().toISOString(),
+        });
+      }
+    }
+    const settings = await readDaemonSettings();
+    const argv = [spec.bin, ...(spec.launchArgs ?? [])];
+    // 定点落子（可选 target = list_terminals 的 targetId）：能力归后端——enumerable
+    // preset 才有定点通道，其余明确报因；目标没了 / 长满了 throw 转前端报因，
+    // 绝不静默换落点（换了就是「点了 A 进了 B」）。
+    const origin =
+      typeof opts.target === 'string'
+        ? await opener.runInTerminalAt!(cwd, argv, opts.target, settings.terminal)
+        : await opener.runInTerminal(cwd, argv, settings.terminal);
+    // 起点候选：sessionId 事后才知道（宿主自己生成）——spawn 回执先按
+    // (harness, projectId) 排队，ingest 侧（hook 事件 / rollout session_meta）
+    // 认领。只为 paneEnvSource='launch' 的 harness 记（'hook' 的 env 精确，
+    // 起点只会引入过期源）。
+    if (origin && picked && messagingSurfaceFor(picked.id).paneEnvSource === 'launch') {
+      deps.messageDeliverer?.notePendingOrigin({
+        harness: picked.id,
+        projectId: project.id,
+        env: origin.env,
+      });
+    }
+    // 引导注入（懒建档宿主的会话行加速）：spec 声明了 bootstrapText 才注入，
+    // 文本 = `/rename <项目名>` 这类零模型命令，会话行即刻进列表。
+    if (origin && picked && spec?.bootstrapText) {
+      scheduleBootstrapInjection(deps, origin, spec.bootstrapText(project.name));
+    }
+    // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
+    setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+    // MCP 建的会话强制隐藏（调用方是编排/协调链，人不在终端跟前——刷一排窗
+    // 只会淹任务栏）；dashboard 手动建的仍按项目 hideWindow 配置走。
+    scheduleHideWindow(deps, project.id, cwd, 2500, opts.viaMcp === true);
+    // 按任务重命名（可选 title）：spawn 时 sessionId 未定（宿主自己生成）——
+    // 等首个会话事件把行建出来（inbox touch）再落 setTitle，限时放弃。
+    if (typeof opts.title === 'string' && opts.title.trim()) {
+      scheduleSessionTitle(deps, origin, opts.title.trim());
+    }
+    return { ok: true, command: argv.join(' '), cwd, ...(worktreePath ? { worktree: worktreePath } : {}) };
+  } catch (e) {
+    return { ok: false, status: 400, error: e instanceof Error ? e.message : 'Open failed' };
+  }
 }
 
 /**
@@ -338,102 +438,22 @@ export async function handleProjectRoutes(
     // 起哪个 harness = 项目 init 选择结果里的；请求体指定则用它。未接入的不许起
     // （不替用户跨配置起会话）；能起 = resume 槽有裸 bin 且宿主版本够
     // （canStartSession，版本闸见 project-harnesses），都不行 → 501。
-    const integrated = await projectHarnesses(project.path, deps.harnesses);
     if (body.harness !== undefined && !isHarness(body.harness)) {
       sendJson(res, 400, { error: 'Invalid "harness"' });
       return true;
     }
-    const requested = body.harness as Harness | undefined;
-    if (requested && !integrated.some((h) => h.id === requested)) {
-      sendJson(res, 409, { error: `Harness "${requested}" is not integrated in this project` });
+    const result = await startSessionInProject(deps, project, {
+      harness: body.harness as Harness | undefined,
+      worktree: body.worktree === true,
+      target: body.target as string | undefined,
+      title: typeof body.title === 'string' ? body.title : undefined,
+      viaMcp: body.__viaMcp === true,
+    });
+    if (!result.ok) {
+      sendJson(res, result.status, { error: result.error });
       return true;
     }
-    const wanted = requested ? [requested] : integrated.map((h) => h.id);
-    const picked = integrated.find((h) => wanted.includes(h.id) && h.canStartSession);
-    const spec = picked ? deps.harnesses?.get(picked.id)?.resume : undefined;
-    if (!spec?.bin) {
-      sendJson(res, 501, {
-        error: `Harness "${wanted[0]}" cannot start an interactive session`,
-      });
-      return true;
-    }
-    const opener = deps.opener ?? defaultProjectOpener;
-    try {
-      const stat = await fs.promises.stat(project.path);
-      if (!stat.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
-      // worktree 隔离（B5 最小切片）：起手建 worktree，会话 cwd 落进它（与会话级
-      // 生命周期两端绑死：SessionEnd 后由 sweepWorktreeMerges 并回主干）。环境
-      // 不支持（非 git 仓 / git 缺席）→ 409 如实报因，前端据此置灰——不炸、不回落。
-      let cwd = project.path;
-      let worktreePath: string | undefined;
-      if (body.worktree === true) {
-        // sessionId 此刻未知（宿主自己生成）：先用占位键建目录与分支，登记按
-        // 占位键记；首个会话事件到达时按 cwd 前缀认领改绑（claimPendingSessionWorktree，
-        // 与起点候选 pending-origins 同一哲学）。
-        const key = PENDING_WT_PREFIX + crypto.randomUUID();
-        const created = await createSessionWorktree(
-          project.path,
-          key,
-          deps.worktreeGitExec,
-        );
-        if (!created.ok) {
-          sendJson(res, created.unsupported ? 409 : 400, {
-            error: created.error ?? 'worktree unavailable',
-          });
-          return true;
-        }
-        cwd = created.path!;
-        worktreePath = created.path;
-        if (deps.hooksDir) {
-          upsertWorktreeEntry(deps.hooksDir, {
-            sessionId: key,
-            projectId: project.id,
-            path: created.path!,
-            branch: created.branch!,
-            status: 'active',
-            at: new Date().toISOString(),
-          });
-        }
-      }
-      const settings = await readDaemonSettings();
-      const argv = [spec.bin, ...(spec.launchArgs ?? [])];
-      // 定点落子（可选 target = list_terminals 的 targetId）：能力归后端——enumerable
-      // preset 才有定点通道，其余明确报因；目标没了 / 长满了 throw 转前端报因，
-      // 绝不静默换落点（换了就是「点了 A 进了 B」）。
-      const origin =
-        typeof body.target === 'string'
-          ? await opener.runInTerminalAt!(cwd, argv, body.target, settings.terminal)
-          : await opener.runInTerminal(cwd, argv, settings.terminal);
-      // 起点候选：sessionId 事后才知道（宿主自己生成）——spawn 回执先按
-      // (harness, projectId) 排队，ingest 侧（hook 事件 / rollout session_meta）
-      // 认领。只为 paneEnvSource='launch' 的 harness 记（'hook' 的 env 精确，
-      // 起点只会引入过期源）。
-      if (origin && picked && messagingSurfaceFor(picked.id).paneEnvSource === 'launch') {
-        deps.messageDeliverer?.notePendingOrigin({
-          harness: picked.id,
-          projectId: project.id,
-          env: origin.env,
-        });
-      }
-      // 引导注入（懒建档宿主的会话行加速）：spec 声明了 bootstrapText 才注入，
-      // 文本 = `/rename <项目名>` 这类零模型命令，会话行即刻进列表。
-      if (origin && picked && spec?.bootstrapText) {
-        scheduleBootstrapInjection(deps, origin, spec.bootstrapText(project.name));
-      }
-      // 角标对账：新 pane 的 cwd 上报有一拍延迟（与 /open 同口径）。
-      setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
-      // MCP 建的会话强制隐藏（调用方是编排/协调链，人不在终端跟前——刷一排窗
-      // 只会淹任务栏）；dashboard 手动建的仍按项目 hideWindow 配置走。
-      scheduleHideWindow(deps, project.id, cwd, 2500, body.__viaMcp === true);
-      // 按任务重命名（可选 title）：spawn 时 sessionId 未定（宿主自己生成）——
-      // 等首个会话事件把行建出来（inbox touch）再落 setTitle，限时放弃。
-      if (typeof body.title === 'string' && body.title.trim()) {
-        scheduleSessionTitle(deps, origin, body.title.trim());
-      }
-      sendJson(res, 200, { ok: true, command: argv.join(' '), cwd, ...(worktreePath ? { worktree: worktreePath } : {}) });
-    } catch (e) {
-      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Open failed' });
-    }
+    sendJson(res, 200, result);
     return true;
   }
 

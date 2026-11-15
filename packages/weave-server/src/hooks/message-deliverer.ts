@@ -786,7 +786,11 @@ export class MessageDeliverer {
     if (!parsed) return { ok: false, status: 400, error: 'Malformed peer target (expect peer:<name>/<sessionId>)' };
     const route = this.deps.peerRoute?.(parsed.peerName);
     if (!route) return { ok: false, status: 404, error: `Unknown peer: ${parsed.peerName}` };
-    const request = this.deps.peerRequestImpl;
+    const request =
+      this.deps.peerRequestImpl ??
+      // 缺省 = 真 https+TOFU 通道：动态 import（hooks 层保持无传输依赖，同
+      // nodemailer 的旁路载入手法）。测试注入 mock 走显式 peerRequestImpl。
+      ((await import('../daemon/federation-client.js')).peerRequest as PeerRequestLike);
     if (!request) return { ok: false, status: 503, error: 'Federation transport unavailable' };
     try {
       const res = await request(

@@ -66,15 +66,26 @@ export async function handleSearchRoutes(
     return true;
   }
   const q = (url.searchParams.get('q') ?? '').trim();
+  sendJson(res, 200, await globalSearch(deps as Parameters<typeof globalSearch>[0], q));
+  return true;
+}
+
+/** 全局搜索查询核（HTTP 路由与联邦 call `search` 服务共用；caller 范围由 ALS 裁）。 */
+export async function globalSearch(
+  deps: Pick<WeaveServerDeps, 'projects'> & {
+    hookEvents: NonNullable<WeaveServerDeps['hookEvents']>;
+    hookSessions: NonNullable<WeaveServerDeps['hookSessions']>;
+  },
+  q: string,
+): Promise<SearchResponse> {
   if (!q) {
-    sendJson(res, 200, {
+    return {
       q,
       sessions: [],
       messages: [],
       files: [],
       truncated: { messages: false, files: false },
-    } satisfies SearchResponse);
-    return true;
+    };
   }
 
   // 会话名 + 聊天记录：两条 SQL 并行（各自毫秒级~几十毫秒）。
@@ -97,7 +108,7 @@ export async function handleSearchRoutes(
   );
   const files = perProject.flat().slice(0, LIMIT_FILES_TOTAL);
 
-  sendJson(res, 200, {
+  return {
     q,
     sessions: sessions.map((s) => ({ sessionId: s.sessionId, projectId: s.projectId, title: s.title })),
     messages: textHits.map((h) => windowOf(h, q)),
@@ -106,8 +117,7 @@ export async function handleSearchRoutes(
       messages: textHits.length >= LIMIT_MESSAGES,
       files: files.length >= LIMIT_FILES_TOTAL,
     },
-  } satisfies SearchResponse);
-  return true;
+  };
 }
 
 /** 命中窗口截取：命中点前后各留 MESSAGE_CONTEXT_CHARS 字符（首次命中为准）。 */

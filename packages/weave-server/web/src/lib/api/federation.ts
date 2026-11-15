@@ -15,6 +15,8 @@ export interface PeerRow {
   source: 'manual' | 'mdns' | 'pairing';
   lastSeenAt: string | null;
   enabled: boolean;
+  /** 会话共享的项目范围（本机裁决、对端无感知）：null = 全部项目；数组 = 只放行这些。 */
+  scopeProjects: number[] | null;
   createdAt: string;
 }
 
@@ -37,7 +39,10 @@ export const federationApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  updatePeer: (id: string, patch: Partial<{ name: string; host: string; port: number; enabled: boolean }>) =>
+  updatePeer: (
+    id: string,
+    patch: Partial<{ name: string; host: string; port: number; enabled: boolean; scopeProjects: number[] | null }>,
+  ) =>
     apiFetch<{ peer: PeerRow }>(`/federation/peers/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),

@@ -29,6 +29,7 @@ import { PROJECTS_QUERY } from '@/hooks/use-projects';
 import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickTarget } from './FilePicker';
 import { SessionShuttlePicker } from './SessionShuttlePicker';
+import { useFederatedPeerBuckets } from './use-federated-peers';
 import { SessionEditsDialog } from './SessionEditsDialog';
 import { SessionUsageDialog } from './SessionUsageDialog';
 import { SessionExtensionExecutionsDialog } from '@/components/extensions/SessionExtensionExecutionsDialog';
@@ -376,6 +377,9 @@ export function SessionMessages({
     () => (sessions ?? []).filter((s) => s.sessionId !== sessionId),
     [sessions, sessionId],
   );
+  /** 联邦分组（`#` 选择器的跨机半边）：选择器开着才拉（peers + 逐 peer 会话账，
+   *  对端不可达 = 离线灰置不炸）；staleTime 内缓存复用，不逐键打爆。 */
+  const federatedPeers = useFederatedPeerBuckets(sessionPickerOpen);
   const shuttleProjects = useMemo(() => projects ?? [], [projects]);
   const shuttleProjectId = useMemo(
     () => sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null,
@@ -2560,6 +2564,7 @@ export function SessionMessages({
             projects={shuttleProjects}
             statuses={statuses}
             currentProjectId={shuttleProjectId}
+            federatedPeers={federatedPeers}
             onPick={handleShuttlePick}
             onPickBatch={handleShuttlePickBatch}
             onPickProject={handleShuttlePickProject}

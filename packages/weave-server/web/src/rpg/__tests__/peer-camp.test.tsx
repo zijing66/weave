@@ -20,6 +20,7 @@ const peer = (over: Partial<PeerRow> = {}): PeerRow => ({
   source: 'manual',
   lastSeenAt: new Date().toISOString(),
   enabled: true,
+  scopeProjects: null,
   createdAt: '2026-11-08T00:00:00Z',
   ...over,
 });

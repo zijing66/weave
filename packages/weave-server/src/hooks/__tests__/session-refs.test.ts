@@ -21,4 +21,10 @@ describe('referencedSessionIds（输入框 # 引用胶囊的序列化形）', ()
     expect(referencedSessionIds('#a198b95d 「某会话」 #12345')).toEqual([]);
     expect(referencedSessionIds(`a198b95d-d026-41ab-9a2f-361fe28ce84b`)).toEqual([]);
   });
+
+  it('跨机 peer 引用 `#peer:<名>/<id>「<名>」` 不进 ensureOpen 名单（远程会话本机拉不起，走投递层 peer: 分流）', () => {
+    expect(
+      referencedSessionIds(`#peer:lab-box/${A}「远端会话」 和本机 #${B}「b」`),
+    ).toEqual([B]);
+  });
 });

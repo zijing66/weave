@@ -211,6 +211,36 @@ export const FEDERATION_SERVICES: readonly FederationServiceRow[] = [
     description:
       'Deliver an RPG team invitation into one local pending record — HITL: the recipient user must accept manually; no action is executed.',
   },
+  {
+    service: 'projects.list',
+    effect: 'readonly',
+    description:
+      'Active projects visible to this peer (server-side scopeProjects filter — callers see only their allowed subset, no scope parameters).',
+  },
+  {
+    service: 'search',
+    effect: 'readonly',
+    description:
+      'Global search across session titles, conversation texts and project file names (q parameter) — results limited to the peer scope.',
+  },
+  {
+    service: 'projects.files',
+    effect: 'readonly',
+    description:
+      'Browse or fuzzy-search one project file index (projectId, optional dir/q/limit/fresh) — 403 when the project is outside the peer scope.',
+  },
+  {
+    service: 'sessions.create',
+    effect: 'delivering',
+    description:
+      'Start a new interactive session in one project terminal (projectId, optional harness/title/worktree) — spawns like the local new-session route; 403 when the project is outside the peer scope.',
+  },
+  {
+    service: 'orchestration.trigger',
+    effect: 'delivering',
+    description:
+      'Manually trigger one local orchestration (orchestrationId, optional text/entries) — 403 when its project is outside the peer scope.',
+  },
 ] as const;
 
 /** caps 响应形状（互报端点的载荷；对端 pairing 后即可取）。 */
