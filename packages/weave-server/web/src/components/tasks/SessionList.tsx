@@ -514,29 +514,32 @@ export function SessionList({
               {sessionLabel(s.title, s.sessionId)}
             </span>
             <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
-              {/* 消息信号同一格（与动作按钮同行、贴在按钮组左侧）：失败红、在途
-                  amber（服务端计数）与草稿 blue（纯前端——草稿只存 sessionStorage）。
-                  失败优先于在途（状态机从后往前：failed 是更靠后的态）。
+              {/* 消息信号同一格（与动作按钮同行、贴在按钮组左侧）：同一枚消息图标
+                  三态换色，一次只亮一个——失败红 > 在途 amber > 草稿 blue（状态机
+                  从后往前：failed 是更靠后的态；草稿在 composer，最靠前）。
                   纯指示、不可点：对话入口就是行本身。 */}
-              {failed > 0 ? (
-                <Tooltip label={t('tasks.messageFailed', { n: failed })}>
-                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-red-400/40 bg-red-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-red-300">
+              {(failed > 0 || inflight > 0 || draftIds.has(s.sessionId)) && (
+                <Tooltip
+                  label={
+                    failed > 0
+                      ? t('tasks.messageFailed', { n: failed })
+                      : inflight > 0
+                        ? t('tasks.messageInflight', { n: inflight })
+                        : t('tasks.draftUnsent')
+                  }
+                >
+                  <span
+                    className={cn(
+                      'inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-0.5 text-10 font-semibold leading-none',
+                      failed > 0
+                        ? 'border-red-400/40 bg-red-500/10 text-red-300'
+                        : inflight > 0
+                          ? 'border-amber-400/40 bg-amber-500/10 text-amber-300'
+                          : 'border-blue-400/40 bg-blue-500/10 text-blue-300',
+                    )}
+                  >
                     <MessageSquareText className="h-3 w-3" />
-                    {failed > 9 ? '9+' : failed}
-                  </span>
-                </Tooltip>
-              ) : inflight > 0 && (
-                <Tooltip label={t('tasks.messageInflight', { n: inflight })}>
-                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-400/40 bg-amber-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-amber-300">
-                    <MessageSquareText className="h-3 w-3" />
-                    {inflight > 9 ? '9+' : inflight}
-                  </span>
-                </Tooltip>
-              )}
-              {draftIds.has(s.sessionId) && (
-                <Tooltip label={t('tasks.draftUnsent')}>
-                  <span className="inline-flex shrink-0 items-center rounded border border-blue-400/40 bg-blue-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-blue-300">
-                    <MessageSquareText className="h-3 w-3" />
+                    {(failed > 0 ? failed : inflight) > 9 ? '9+' : failed > 0 ? failed : inflight || ''}
                   </span>
                 </Tooltip>
               )}

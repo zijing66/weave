@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, Check, ChevronLeft, Folder, Globe, Search, X } from 'lucide-react';
+import { Check, ChevronLeft, Folder, Globe, Search, X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
 import type { FederatedPeerBucket } from './federation-buckets';
 import { useT } from '@/i18n/I18nProvider';
@@ -21,8 +21,9 @@ import { STATUS_KEY, type SessionStatus } from './session-status';
  * 进搜索框——监听挂 document 捕获阶段，焦点落在哪儿都还能用键盘（FilePicker 同
  * 款）。搜索时跨全部项目平铺（每行带所属项目），清空即回层级模式。
  *
- * 项目引用（仅 superagent 仓给入口）：项目行上的 `P`（或项目行右侧的按钮）= 把**整个项目**插成青色标注胶囊
- * （`#p<id>「名」`，纯上下文标注——模型自己读项目文件）；Enter 仍是下钻进会话。
+ * 项目引用（仅 superagent 会话给入口）：项目行的 checkbox = 把**整个项目**插成
+ * 青色标注胶囊（`#p<id>「名」`，纯上下文标注——模型自己读项目文件）；Enter 仍是
+ * 下钻进会话。其他项目的会话只选会话，项目行不摆 checkbox。
  *
  * **焦点栏高亮**：焦点行实底 + 左缘竖条（三像素 accent），非焦点栏淡底无竖条——
  * ←→ 在哪边一眼可辨（原先两栏只差一档底色，看不出焦点在哪边）。
@@ -67,7 +68,9 @@ export function SessionShuttlePicker({
   /** 引用整个项目（青色标注胶囊；缺席 = 不提供项目引用入口，含多选）。 */
   onPickProject?: (projectId: number, name: string) => void;
   onPickProjectsBatch?: (picked: ReadonlyArray<{ projectId: number; name: string }>) => void;
-  /** 标题换 superagent 版（「引用项目/会话」）：项目引用的消费者是上帝/协调链。 */
+  /** 标题换 superagent 版（「引用项目/会话」）：项目引用的消费者是上帝/协调链。
+   *  同时是**项目 checkbox 的总闸**——只有 superagent 会话能勾项目（其他项目的
+   *  会话只选会话），看的是「发起引用的会话属谁」，不是项目行本身。 */
   superagentTitle?: boolean;
   onClose: () => void;
 }) {
@@ -316,7 +319,7 @@ export function SessionShuttlePicker({
       if (inAnyInput(e) && e.target !== searchRef.current) return;
       e.preventDefault();
       if (focusCol === 'projects') {
-        if (!onPickProject) return;
+        if (!onPickProject || !superagentTitle) return;
         const g = groups[projIdx];
         const pid = g?.projectId;
         if (pid == null) return;
@@ -483,8 +486,7 @@ export function SessionShuttlePicker({
                       if (!isDesktop) setScreen('sessions');
                     }}
                     className={cn(
-                      // pr-7 让位给行右侧的「引用整个项目」小钮（有入口时）
-                      'flex w-full items-center gap-1.5 py-1 pl-2.5 pr-7 text-left text-xs transition-colors',
+                      'flex w-full items-center gap-1.5 py-1 pl-2.5 pr-2.5 text-left text-xs transition-colors',
                       i === projIdx
                         ? rowClass(focusCol === 'projects', 'project')
                         : 'text-neutral-300 hover:bg-edge/[0.04]',
@@ -501,8 +503,10 @@ export function SessionShuttlePicker({
                     <span className="shrink-0 text-10 tabular-nums text-neutral-600">{g.rows.length}</span>
                     {/* checkbox 勾选（2026-11-15 用户裁决：移动端点不到 Space，勾选
                         手势统一成 checkbox——点行其余部分行为不变（下钻），多选键序
-                        （Space/Enter 整批落定）照旧；可勾的项目才摆（无入口的勾了也白勾） */}
-                    {onPickProject && g.projectId != null && (
+                        （Space/Enter 整批落定）照旧。2026-11-16 用户裁决：只有
+                        superagent 会话能勾项目（其他项目的会话只选会话）——总闸 =
+                        superagentTitle（发起引用的会话属谁），不按项目行分流。 */}
+                    {superagentTitle && onPickProject && g.projectId != null && (
                       <span
                         role="checkbox"
                         aria-checked={projPicked}
@@ -531,26 +535,6 @@ export function SessionShuttlePicker({
                       </span>
                     )}
                   </button>
-                  {/* 引用整个项目：纯上下文标注（`#p<id>「名」`，青色胶囊）——与下钻
-                      分开（点行 = 下钻、点它 = 引用），触屏也能直接够到。仅内建
-                      superagent 仓有这枚钮（项目引用的消费者是上帝/协调链）。 */}
-                  {onPickProject && g.projectId != null && g.superagent && (
-                    <Tooltip
-                      label={t('tasks.projectRefPick')}
-                      side="top"
-                      // Tooltip 的 wrapper 自己当定位容器：span 走行内流会顶挤/悬空错位
-                      className="absolute inset-y-0 right-1.5 flex items-center"
-                    >
-                      <button
-                        type="button"
-                        aria-label={t('tasks.projectRefPick')}
-                        onClick={() => onPickProject(g.projectId!, g.name)}
-                        className="rounded p-1 text-neutral-500 transition-colors hover:bg-edge/[0.08] hover:text-cyan-300"
-                      >
-                        <Box className="h-3 w-3" />
-                      </button>
-                    </Tooltip>
-                  )}
                 </li>
                 );
               })}
@@ -662,10 +646,20 @@ export function SessionShuttlePicker({
                       <SessionStatusIcon status={status} harness={(s.harness as 'claude' | 'codex' | null) ?? null} />
                     )}
                     <span className="min-w-0 flex-1 truncate">{sessionLabel(s.title, s.sessionId)}</span>
+                    {/* 搜索态跨项目平铺：所属项目只有它能区分（层级模式左栏就是上下文） */}
+                    {flat && pid != null && (
+                      <span className="shrink-0 font-mono text-10 text-neutral-600">
+                        {projectName.get(pid) ?? `#${pid}`}
+                      </span>
+                    )}
+                    <span className="shrink-0 text-10 text-neutral-500">
+                      {rightIsPeer ? t('tasks.sessionPickerRemote') : t(STATUS_KEY[status])}
+                    </span>
                     {/* checkbox 勾选（2026-11-15 用户裁决：与项目行同款——移动端点
                         不到 Space，点 checkbox 即勾/取消；点行其余部分行为不变
                         （触屏单击落定、桌面双击落定），Space/Enter 批量落定照旧。
-                        checkbox 即唯一勾选指示（旧 Check 标记退役——两个勾重复） */}
+                        checkbox 即唯一勾选指示（旧 Check 标记退役——两个勾重复）。
+                        2026-11-16 用户裁决：状态文案在前、checkbox 恒贴行尾——整齐。 */}
                     <span
                       role="checkbox"
                       aria-checked={isPicked}
@@ -689,15 +683,6 @@ export function SessionShuttlePicker({
                       )}
                     >
                       <Check className="h-2.5 w-2.5" strokeWidth={3.5} />
-                    </span>
-                    {/* 搜索态跨项目平铺：所属项目只有它能区分（层级模式左栏就是上下文） */}
-                    {flat && pid != null && (
-                      <span className="shrink-0 font-mono text-10 text-neutral-600">
-                        {projectName.get(pid) ?? `#${pid}`}
-                      </span>
-                    )}
-                    <span className="shrink-0 text-10 text-neutral-500">
-                      {rightIsPeer ? t('tasks.sessionPickerRemote') : t(STATUS_KEY[status])}
                     </span>
                   </button>
                 </li>
