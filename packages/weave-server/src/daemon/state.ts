@@ -25,7 +25,7 @@ export function readDaemonState(): DaemonState | null {
 export function writeDaemonState(state: DaemonState): void {
   const p = getDaemonStatePath();
   mkdirSync(path.dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(state, null, 2) + '\n', 'utf-8');
+  writeFileSync(p, JSON.stringify(state, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
 }
 
 export function clearDaemonState(): void {

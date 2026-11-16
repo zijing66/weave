@@ -22,6 +22,7 @@ import { ensureDir, fileExists, writeFileIfAbsent } from '@weavecode/harness';
 import { templateRegistry } from '@weavecode/templates';
 import { generateStatuslineScript, readStatuslineConfig, WEAVE_VERSION } from '@weavecode/server';
 import { InitPipeline, generateHookHandler, readUserCapture, type InitContext } from '@weavecode/harness';
+import { HARNESS_DIRS } from '@weavecode/core';
 import type { SurfaceRecords, SurfacePipeline } from '../types.js';
 import { generateSettingsJson, mergeSettingsJson } from '../settings-gen.js';
 import { mergeMcpJson } from '../mcp-gen.js';
@@ -96,7 +97,7 @@ export class ClaudeInitTemplate extends InitPipeline implements SurfacePipeline 
 
   constructor(ctx: InitContext) {
     super(ctx);
-    const claudeDir = path.join(ctx.targetDir, '.claude');
+    const claudeDir = path.join(ctx.targetDir, HARNESS_DIRS.claude.projectDir);
     this.st = {
       targetDir: ctx.targetDir,
       force: ctx.force,

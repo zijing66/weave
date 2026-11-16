@@ -120,13 +120,14 @@ export class UploadRepository {
       writeFileSync(
         this.filePath(existing.id, existing.mediaType, existing.name, this.dirOf(existing)),
         input.bytes,
+        { mode: 0o644 }, // 非敏感附件：显式 0644，不随 umask 漂
       );
       return existing;
     }
     const dir = input.dir ?? this.dir;
     mkdirSync(dir, { recursive: true });
     const file = this.filePath(id, input.mediaType, input.name, dir);
-    if (!existsSync(file)) writeFileSync(file, input.bytes);
+    if (!existsSync(file)) writeFileSync(file, input.bytes, { mode: 0o644 });
     this.db
       .prepare(
         `INSERT INTO uploads (id, media_type, name, size, created_at, dir) VALUES (?, ?, ?, ?, ?, ?)

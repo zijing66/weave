@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hookShardId } from './mirror.js';
 
@@ -106,6 +106,7 @@ export function appendPromptbox(
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '', { mode: 0o600 });
     renameSync(tmp, file);
+    chmodSync(file, 0o600); // Windows rename 可能丢写时 mode，落定后补一记
   } catch {
     // 队列写失败只损失一次 prompt 递送尝试（重发可补）
   }
@@ -141,6 +142,7 @@ export function removePromptboxEntries(hooksDir: string, token: string, ids: Set
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '', { mode: 0o600 });
     renameSync(tmp, file);
+    chmodSync(file, 0o600);
   } catch {
     // 同 append：丢一次删除不影响正确性（送达幂等键在 id）
   }
@@ -202,8 +204,9 @@ export function removePromptboxBySession(hooksDir: string, sessionId: string): n
     removed += lines.length - kept.length;
     try {
       const tmp = `${target}.tmp`;
-      writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '');
+      writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '', { mode: 0o600 });
       renameSync(tmp, target);
+      chmodSync(target, 0o600);
     } catch {
       // 写失败：清理尽力而为
     }

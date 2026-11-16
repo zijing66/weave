@@ -489,8 +489,8 @@ export async function scaffoldCoordinator(
     /* 写不进不挡脚手架 */
   });
   await mkdir(path.join(dir, '.weave'), { recursive: true });
-  // hook-handler 靠 `.weave/token` 定位采集落点（缺它 = 事件全丢，会话不可见）
-  await writeFile(path.join(dir, '.weave', 'token'), `${row.token}\n`, 'utf-8').catch(
+  // hook-handler 靠 `.weave/token` 定位采集落点（缺它 = 事件全丢，会话不可见）；可重放凭据 0600
+  await writeFile(path.join(dir, '.weave', 'token'), `${row.token}\n`, { encoding: 'utf-8', mode: 0o600 }).catch(
     () => {
       /* 写不进不挡脚手架 */
     },

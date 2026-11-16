@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Harness, HookRule } from '@weavecode/core';
 import { hookSourceHarness } from '@weavecode/core';
@@ -223,6 +223,7 @@ export function appendOutbox(hooksDir: string, token: string, entries: OutboxEnt
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '', { mode: 0o600 });
     renameSync(tmp, file);
+    chmodSync(file, 0o600); // Windows rename 可能丢写时 mode，落定后补一记
   } catch {
     // outbox 写失败只损失一次顺延注入
   }

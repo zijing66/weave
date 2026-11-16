@@ -33,7 +33,8 @@ export function registerProject(targetDir: string, source: 'init' | 'scan', dbPa
     const row = projects.register({ path: targetDir, name: basename(targetDir), token, source });
 
     mkdirSync(join(targetDir, '.weave'), { recursive: true });
-    writeFileSync(join(targetDir, '.weave', 'token'), token + '\n', 'utf-8');
+    // token 是可重放凭据（hook 进程拿它上报）：0600，不随 umask 落 0644
+    writeFileSync(join(targetDir, '.weave', 'token'), token + '\n', { encoding: 'utf-8', mode: 0o600 });
 
     return { id: row.id, token, path: row.path };
   } finally {

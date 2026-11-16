@@ -209,7 +209,7 @@ export const INJECTABLE_HOOK_EVENTS = [
 
 /** 面板按 harness 给 inject 事件的候选（'any' 的 inject 服务端会拒，按 claude 列）。 */
 export function injectableEventsOf(harness: string, table?: Record<string, readonly string[]>): readonly string[] {
-  return table?.[harness] ?? (harness === 'codex' ? INJECTABLE_HOOK_EVENTS : INJECTABLE_HOOK_EVENTS);
+  return table?.[harness] ?? INJECTABLE_HOOK_EVENTS;
 }
 
 export const hooksApi = {

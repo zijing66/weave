@@ -504,7 +504,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
         if (n) skillNames.add(n);
       }
     }
-    const mcp = mcpRows.filter((r) => r.harness === 'claude').length;
+    // 项目档计数 = 行随身判据（installScopes 含 project 的行才有项目档启停面，
+    // 与 categoryData 的 machineMcp 同一条 §4 收编口径，不点名 harness）。
+    const mcp = mcpRows.filter((r) => r.installScopes.includes('project')).length;
     return { skill: skillNames.size, mcp };
   }, [assets, mcpRows]);
 
