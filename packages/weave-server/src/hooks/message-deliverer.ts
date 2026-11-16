@@ -1105,6 +1105,11 @@ export class MessageDeliverer {
     return this.paneEnvConflicts.get(sessionId) ?? null;
   }
 
+  /** 该会话是否已有定位 env（false = 新会话，拓扑该即时对账一次）。 */
+  paneEnvKnown(sessionId: string): boolean {
+    return this.paneEnvs.has(sessionId);
+  }
+
   /**
    * 按 spawn 回执的起点 env 反查 sessionId（new-session 的 title 认领用）：paneEnvs
    * 里的 env 与起点同源（claude = hook 旁路上报、codex = claimPendingOrigin 认领

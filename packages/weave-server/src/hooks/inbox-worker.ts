@@ -420,6 +420,8 @@ export interface IngestedHandlerDeps {
     noteInboxSocket?(sessionId: string, target: { socket: string; token: string | null } | null): void;
     /** hook 旁路上报的会话 pane 定位 env（内存态；层② 精确定位用）。 */
     notePaneEnv?(sessionId: string, env: Record<string, string>): void;
+    /** 该会话是否已有定位 env（新会话首条事件 = false，供拓扑即时对账判「变化」）。 */
+    paneEnvKnown?(sessionId: string): boolean;
     /** 认领起点候选（weave 起会话的 spawn 回执；paneEnvSource='launch' 的 harness 用）。 */
     claimPendingOrigin?(sessionId: string, harness: Harness, projectId: number): void;
     /** UPS 事件 = 投递回执判据（prompt 原文与在途条目匹配）；返回命中消息的随附图 id。
@@ -431,7 +433,7 @@ export interface IngestedHandlerDeps {
     /** 会话退出事件（`HARNESS_LIFECYCLE[<harness>].sessionExit`）= 旁路事实作废点。 */
     sessionExited?(sessionId: string): void;
   };
-  /** 终端拓扑即时对账（会话退出后立刻摘出终端分组，不等 30s 周期）；缺省跳过。 */
+  /** 终端拓扑即时对账（会话退出摘出分组 / 新会话 env 记上立刻进分组，不等 30s 周期）；缺省跳过。 */
   terminalTopologyKick?: () => void;
   /** 渲染块续投：本轮最终回复带引用行 → 重写该项目镜像（会话 → 活跃引用）。 */
   onVisualization?: (projectId: number) => void;
@@ -585,7 +587,10 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         if (isHarness(src) && deps.paneEnvSource?.(src) === 'launch') {
           deps.messagePipe?.claimPendingOrigin?.(record.input.sessionId, src, record.projectId);
         } else if (record.terminalEnv) {
+          // 新会话的定位 env 刚记上：立刻对账终端拓扑，分组首帧不等 30s 周期。
+          const known = deps.messagePipe?.paneEnvKnown?.(record.input.sessionId) ?? true;
           deps.messagePipe?.notePaneEnv?.(record.input.sessionId, record.terminalEnv);
+          if (!known) deps.terminalTopologyKick?.();
         }
       }
       // UPS = 投递回执判据：会话真收到消息时必然打一条（payload.raw.prompt 即投递原文）。

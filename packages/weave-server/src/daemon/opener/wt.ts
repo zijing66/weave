@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
-import { captureCommand, normalizeDirKey, type WeztermMuxPane } from './wezterm-mux.js';
+import { captureCommand } from './wezterm-probe.js';
+import { normalizeDirKey, type WeztermMuxPane } from './wezterm-mux.js';
 
 // ---- Windows Terminal 通道（win32）：进程树反查 + 命名窗口落子 ----
 //

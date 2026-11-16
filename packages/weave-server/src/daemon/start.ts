@@ -21,7 +21,7 @@ import { createEdgeExtract } from '../hooks/edge-extract.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { defaultWorktreeGitExec, startWorktreeMergeSweeper, type SessionWorktreeEntry } from './worktree.js';
-import { readTerminalHidden, readTerminalVisibility } from './opener.js';
+import { readTerminalWorld } from './opener.js';
 import { hooksRoot } from '../hooks/mirror.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
@@ -100,7 +100,7 @@ import { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import { pidAliveOf } from './claude-liveness.js';
 import { combinedLivenessOf } from './liveness.js';
-import { promptTerminalChannel, readTerminalCounts } from './opener.js';
+import { promptTerminalChannel } from './opener.js';
 import { DEFAULT_BIND_HOST } from './port.js';
 import { readDaemonState, writeDaemonState } from './state.js';
 import { ensureDataLayout } from '../db/layout.js';
@@ -427,12 +427,15 @@ export function startDaemon(): void {
   // 所以绑 SSE 客户端数——没人开看板就一次都不探；会话所在屏幕复用同一份旁路
   // pane env（后端探活缓存也同源），不为分块多打一枪。
   const terminalRefresher = new TerminalTopologyRefresher(
-    async () => ({
-      counts: await readTerminalCounts(projects.list()),
-      hidden: await readTerminalHidden(projects.list()),
-      visibilities: Object.fromEntries((await readTerminalVisibility(projects.list())).byTarget),
-      terminals: await messageDeliverer.sessionTerminals(),
-    }),
+    async () => {
+      const world = await readTerminalWorld(projects.list());
+      return {
+        counts: world.counts,
+        hidden: world.hidden,
+        visibilities: Object.fromEntries(world.byTarget),
+        terminals: await messageDeliverer.sessionTerminals(),
+      };
+    },
     dataBus,
     { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );

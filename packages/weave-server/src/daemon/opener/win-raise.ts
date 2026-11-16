@@ -1,4 +1,4 @@
-import { captureCommand } from './wezterm-mux.js';
+import { captureCommand } from './wezterm-probe.js';
 
 /** 一次唤出要向 Win32 问的三件事：窗口属于谁、标题叫什么、抬哪一个。 */
 export interface WinRaiseRequest {

@@ -88,7 +88,7 @@ import { FingerprintCache } from '../install/fingerprint.js';
 import { detectProjectUpdateCounts } from '../install/updates.js';
 import { pidAliveOf } from './claude-liveness.js';
 import { combinedLivenessOf } from './liveness.js';
-import { promptTerminalChannel, readTerminalCounts, readTerminalHidden, readTerminalVisibility } from './opener.js';
+import { promptTerminalChannel, readTerminalWorld } from './opener.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
@@ -395,12 +395,15 @@ async function main(): Promise<void> {
   // 绑 SSE 客户端数。
   const dataBus = new DataBus();
   const terminalRefresher = new TerminalTopologyRefresher(
-    async () => ({
-      counts: await readTerminalCounts(projects.list()),
-      hidden: await readTerminalHidden(projects.list()),
-      visibilities: Object.fromEntries((await readTerminalVisibility(projects.list())).byTarget),
-      terminals: await messageDeliverer.sessionTerminals(),
-    }),
+    async () => {
+      const world = await readTerminalWorld(projects.list());
+      return {
+        counts: world.counts,
+        hidden: world.hidden,
+        visibilities: Object.fromEntries(world.byTarget),
+        terminals: await messageDeliverer.sessionTerminals(),
+      };
+    },
     dataBus,
     { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );

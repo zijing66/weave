@@ -346,11 +346,14 @@ export function SessionList({
         show('error', t('errors.terminalVisibilityFailed', { error: errorText(e) }));
       });
   };
-  /** 块头文案：同窗口多个 tab 时才标 Tab 号（单 tab 窗口标了只是噪音）。 */
-  const blockTitle = (terminal: SessionTerminal): string =>
-    terminal.tabsInWindow > 1
-      ? t('tasks.terminalBlockTab', { w: terminal.windowId, t: terminal.tabId })
-      : t('tasks.terminalBlock', { w: terminal.windowId });
+  /** 块头文案：多实例时标实例号（双实例下两个「终端 0」分不清）；同窗口多个
+   *  tab 时才标 Tab 号（单 tab 窗口标了只是噪音）。 */
+  const blockTitle = (terminal: SessionTerminal): string => {
+    const inst = terminal.instance ? ` · ${terminal.instance}` : '';
+    return terminal.tabsInWindow > 1
+      ? t('tasks.terminalBlockTab', { w: `${terminal.windowId}${inst}`, t: terminal.tabId })
+      : t('tasks.terminalBlock', { w: `${terminal.windowId}${inst}` });
+  };
   /** 提醒订阅弹窗目标（null = 关）。 */
   const [watchPickerFor, setWatchPickerFor] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);

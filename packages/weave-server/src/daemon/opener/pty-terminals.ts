@@ -1,4 +1,5 @@
-import { captureCommand, normalizeDirKey } from './wezterm-mux.js';
+import { captureCommand } from './wezterm-probe.js';
+import { normalizeDirKey } from './wezterm-mux.js';
 import { joinCmd, quotePath } from './shared.js';
 import type { AttachTarget } from './wezterm-mux.js';
 

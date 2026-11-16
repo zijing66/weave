@@ -831,18 +831,14 @@ export function ProjectList({
                       }
                     />
                   </QuickButton>
-                  {terminals > 0 && (
-                    <span className="pointer-events-none absolute -top-1 -right-1.5 flex items-center gap-0.5 rounded-full px-1 text-9 leading-3">
-                      {terminalsVisible > 0 && (
-                        <span className="rounded-full bg-emerald-900/80 px-1 text-emerald-300">
-                          {terminalsVisible}
-                        </span>
-                      )}
-                      {terminalsHidden > 0 && (
-                        <span className="rounded-full bg-neutral-700/80 px-1 text-neutral-300">
-                          {terminalsHidden}
-                        </span>
-                      )}
+                  {terminalsVisible > 0 && (
+                    <span className="pointer-events-none absolute -top-1 -right-1.5 rounded-full bg-emerald-900/80 px-1 text-9 leading-3 text-emerald-300">
+                      {terminalsVisible}
+                    </span>
+                  )}
+                  {terminalsHidden > 0 && (
+                    <span className="pointer-events-none absolute -bottom-1 -right-1.5 rounded-full bg-neutral-700/80 px-1 text-9 leading-3 text-neutral-300">
+                      {terminalsHidden}
                     </span>
                   )}
                 </span>

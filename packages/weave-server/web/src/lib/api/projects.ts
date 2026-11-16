@@ -76,6 +76,8 @@ export interface SessionTerminal {
   tabId: number;
   /** 所在窗口的 tab 数（>1 时块头才标 Tab 号）。 */
   tabsInWindow: number;
+  /** 多 wezterm 实例并存时的实例序号（1 起）；单实例缺席。 */
+  instance?: number;
 }
 
 /** Structured result of one harness health check (core 返回，文案由 web 词典渲染). */

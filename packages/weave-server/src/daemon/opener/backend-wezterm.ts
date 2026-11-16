@@ -11,19 +11,22 @@ import {
   parseAttachTargetId,
   planWeztermGrid,
   runInWezterm,
-  weztermCli,
-  weztermGuiPidOf,
-  weztermLiveMuxes,
-  weztermMuxForId,
   weztermMuxKey,
   weztermPaneFromEnv,
   sessionScreensFromEnvs,
   weztermSpawnAndSend,
-  weztermStepError,
   type AttachTarget,
   type SessionTerminal,
-  type WeztermMux,
 } from './wezterm-mux.js';
+import {
+  weztermCli,
+  weztermGuiPidOf,
+  weztermLiveMuxes,
+  weztermLiveMuxesCached,
+  weztermMuxForId,
+  weztermStepError,
+  type WeztermMux,
+} from './wezterm-probe.js';
 import {
   matchWindowsToMuxIds,
   winListOwnedWindows,
@@ -56,22 +59,6 @@ async function retryOnTimeout(
   const first = await fire();
   if (first?.timedOut !== true) return first;
   return fire();
-}
-
-/**
- * 探活结果短缓存（10s）：角标的周期探测 + 开窗后对账 + GET 后台对账会在
- * 瞬间打多枪，缓存挡掉重复 spawn——一枪要对**每个存活 socket** spawn 一次
- * `wezterm cli list`（实测 wall ~180ms / CPU 62–125ms；残留幽灵 GUI 会把
- * socket 数放大）。**只给计数/分组用**（light 探测，workspace/idle 留空）：
- * runInWezterm 的落点决策必须看实时世界（缓存会让分屏落到刚关掉的 pane）。
- */
-let muxCache: { at: number; muxes: WeztermMux[]; candidates: string[] } | null = null;
-
-export async function weztermLiveMuxesCached(): Promise<{ muxes: WeztermMux[]; candidates: string[] }> {
-  if (muxCache && Date.now() - muxCache.at < 10000) return muxCache;
-  const { muxes, candidates } = await weztermLiveMuxes(true);
-  muxCache = { at: Date.now(), muxes, candidates };
-  return muxCache;
 }
 
 /**
@@ -174,8 +161,8 @@ export class WeztermBackend extends TerminalBackend {
     );
   }
 
-  override listTargets(dir: string, includeForeign = false): Promise<AttachTarget[]> {
-    return listAttachTargets(dir, this.platform, includeForeign);
+  override listTargets(dir: string, includeForeign = false, realtime = true): Promise<AttachTarget[]> {
+    return listAttachTargets(dir, this.platform, includeForeign, realtime);
   }
 
   override runAt(dir: string, argv: string[], targetId: string): Promise<LaunchOrigin | null> {

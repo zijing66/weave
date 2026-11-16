@@ -11,8 +11,7 @@ import { readDaemonSettings } from '../settings.js';
 import {
   closeTerminalsIn,
   defaultProjectOpener,
-  readTerminalCounts,
-  readTerminalHidden,
+  readTerminalWorld,
   terminalBackendFor,
 } from '../opener.js';
 import { purgeProjectPipeline } from '../hook-pipeline.js';
@@ -303,7 +302,9 @@ export async function handleProjectRoutes(
     try {
       const close = opener.closeTerminals ?? closeTerminalsIn;
       const closed = await close(project.path, settings.terminal, body.paneIds as string[]);
-      setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);
+      // 关 pane 是即时事实（不像开窗要等 cwd 上报）：缓存已在 closeTerminalsIn 里
+      // 作废，短延一拍只是给 wezterm 自己的 pane 表收敛留余地。
+      setTimeout(() => void deps.terminalRefresher?.refreshNow(), 200);
       sendJson(res, 200, { ok: true, closed });
     } catch (e) {
       sendJson(res, 400, { error: e instanceof Error ? e.message : 'Close failed' });
@@ -626,11 +627,8 @@ export async function handleProjectRoutes(
       });
       void deps.terminalRefresher.tick(true);
     } else {
-      const opener = deps.opener ?? defaultProjectOpener;
-      sendJson(res, 200, {
-        counts: await readTerminalCounts(deps.projects.list(), opener),
-        hidden: await readTerminalHidden(deps.projects.list(), opener),
-      });
+      const world = await readTerminalWorld(deps.projects.list());
+      sendJson(res, 200, { counts: world.counts, hidden: world.hidden });
     }
     return true;
   }

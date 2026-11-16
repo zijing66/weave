@@ -4,6 +4,8 @@ CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用�
 
 ## 2026-11-15
 
+- **superagent 项目 worktree 默认值裁决 = C 维持默认关（用户裁定）**：起因 = 用户问「superagent 项目是否默认开 worktree 且不支持关闭」。子 Agent 三选项分析（A 默认开+上帝会话豁免 / B 默认开无豁免 / C 维持默认关）后用户裁定 C——**默认值不动**（HarnessPicker 开关 `useState(false)` 维持逐次手选）。关键发现：默认关只是 B5「最小切片」的隐含选择，从无带日期用户裁决，本条即补这个空位。核心论据：① 上帝会话套 worktree 是净损失——治理账（teams/state/playbooks + 记忆出口读主干）必须即时在主干可见，并回延迟与合并梯碰治理文件都是新风险面；superagent 仓内并发本来就低（`projects/<项目>/<会话>/` 产物层天然按会话隔离）；② 默认开会引入 409 新失败模式（git 缺席让出厂项目起不了会话）；③ A 的豁免判据（`projects.superagent` 列单点翻转）绕一圈等于承认「默认开」没赚到什么；④ 五起 git index 竞态已有专属纪律（提交前复核 + numstat 护栏）兜着。**后续触发条件（已记录）**：若未来出现多上帝/编排会话并行改 teams/state 再撞 index，届时裁「superagent 项目默认开 + 显式开关可关」（判据 = `projects.superagent` 列）。另：worktree 时机语义此前散在 G6/B5 批注未成文——**存活中不 rebase、退出（sessionExit 事件落库）15s 内并回、并回走合并梯、403/409 如实报**，随本条一并成文。
+
 - **架构评审（四维并行子 Agent 方案）与 D-1 pet SSE 豁免（用户裁决「d1先豁免挂账」）**：评审方案 = 四个只读子 Agent 并行、各领一张可核对检查单（A 分层依赖 / B 能力面装配 / C 数据持久化 / D web 前端协议），产出 severity 分级发现清单 + 通过项 + 修复顺序；方案本体已转交「weave skill集成制作」会话泛化成通用 skill。中危发现当日修复：api-log REDACT 补 push 订阅 `keys.auth`、backup 归档 `getBackupsDir`（cache 档）、market 插件面收敛 `pluginSurfaceOf` 解析器缝、ExtensionBindingsPanel 30s 轮询改吃 `session.renamed` 帧、槽清单 21→22 文档同步、`AssetSurface.mcpEnableScopes` 启停面声明化。**豁免挂账**：`pet/main.ts`（桌宠独立 WebView2 入口）自建 `EventSource` + 15s 兜底轮询——§9「SSE 单通道」的明文例外范围不含它，但 pet 是独立页面壳（非 dashboard 主应用）、WebView2 后台节流下 SSE 心跳不可靠，轮询是刻意的对账兜底（注释自证）；**不改**，后续若 pet 收编进主应用再迁 `lib/sse.ts`。
 
 ## 2026-11-14

@@ -1,4 +1,4 @@
-import { captureCommand } from './wezterm-mux.js';
+import { captureCommand } from './wezterm-probe.js';
 import { PRESET_CANDIDATES, TerminalBackend, type LaunchOrigin, type TerminalLaunch } from './backend.js';
 
 /**

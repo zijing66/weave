@@ -1,5 +1,5 @@
 import { TERMINAL_LOCATOR_ENV } from '@weavecode/core';
-import { captureCommand } from './wezterm-mux.js';
+import { captureCommand } from './wezterm-probe.js';
 import { PRESET_CANDIDATES, TerminalBackend, type TerminalLaunch } from './backend.js';
 
 /**

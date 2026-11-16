@@ -138,8 +138,10 @@ export abstract class TerminalBackend {
   }
 
   /** 可附加目标（窗口内的 tab）；不支持的 preset 走这里。includeForeign（opt-in）=
-   *  别的项目的 tab 也进候选（跨项目分屏落点用），默认关、现状不变。 */
-  async listTargets(_dir: string, _includeForeign = false): Promise<AttachTarget[]> {
+   *  别的项目的 tab 也进候选（跨项目分屏落点用），默认关、现状不变。realtime
+   *  （wezterm 专属语义）= 绕过 10s 探活缓存实时枚举——弹窗路径要实时，30s 对账
+   *  要快（默认吃缓存）。 */
+  async listTargets(_dir: string, _includeForeign = false, _realtime = true): Promise<AttachTarget[]> {
     return [];
   }
 
