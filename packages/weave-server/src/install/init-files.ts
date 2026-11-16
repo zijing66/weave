@@ -4,7 +4,6 @@ import {
   DEFAULT_HOOKS,
   DEFAULT_MCP,
   HARNESS_KEYS,
-  detectPlatform,
   isHarness,
   resolveComponents,
   type Harness,
@@ -17,6 +16,7 @@ import {
 import {
   WEAVE_CONTENT_MARKER,
   generateInitFiles,
+  detectPlatform,
   type InitFileContext,
   type InitGeneratedFile,
 } from '@weavecode/harness';

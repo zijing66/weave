@@ -192,11 +192,12 @@ export interface OutboxEntry {
  */
 export function appendInbox(hooksDir: string, token: string, report: unknown): void {
   const dir = join(hooksDir, 'inbox');
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // 行内带 per-project token（旁路凭据，§3）：hooks 目录账面 0600 口径
   writeFileSync(
     join(dir, `${hookShardId(token)}.jsonl`),
     JSON.stringify({ v: 1, token, report }) + '\n',
-    { flag: 'a' },
+    { flag: 'a', mode: 0o600 },
   );
 }
 
@@ -220,7 +221,7 @@ export function appendOutbox(hooksDir: string, token: string, entries: OutboxEnt
     }
     const bounded = kept.slice(-OUTBOX_MAX_LINES);
     const tmp = `${file}.tmp`;
-    writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '');
+    writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '', { mode: 0o600 });
     renameSync(tmp, file);
   } catch {
     // outbox 写失败只损失一次顺延注入

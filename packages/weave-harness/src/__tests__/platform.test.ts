@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { detectPlatform } from '../platform';
+import { detectPlatform } from '../shared/platform';
 
 describe('detectPlatform', () => {
   it('returns a complete PlatformInfo shape', () => {

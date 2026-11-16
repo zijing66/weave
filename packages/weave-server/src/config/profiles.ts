@@ -70,8 +70,10 @@ async function readJsonObject(target: string): Promise<Record<string, unknown> |
 async function writeJson(target: string, data: unknown): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
   const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  // 快照可能带 API key（§17）：local/ 档本机 0600，与同目录 auth/ai/push 同口径
+  await fs.writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   await fs.rename(tmp, target);
+  await fs.chmod(target, 0o600).catch(() => {});
 }
 
 async function readStore(root: string, harness: string): Promise<Store> {

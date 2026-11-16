@@ -4,6 +4,8 @@ export * from './init/generated.js';
 export * from './registry-wiring.js';
 export * from './install.js';
 export * from './shared/file-specs.js';
+export * from './shared/platform.js';
+export * from './shared/fs.js';
 export * from './shared/install-link.js';
 export * from './shared/turn-output.js';
 export * from './shell.js';

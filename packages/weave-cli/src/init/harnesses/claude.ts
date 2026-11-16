@@ -13,12 +13,10 @@ import {
   DEFAULT_HOOKS,
   DEFAULT_MCP,
   DEFAULT_SKILLS,
-  ensureDir,
-  fileExists,
   logger,
   resolveComponents,
-  writeFileIfAbsent,
 } from '@weavecode/core';
+import { ensureDir, fileExists, writeFileIfAbsent } from '@weavecode/harness';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
 import { templateRegistry } from '@weavecode/templates';

@@ -93,7 +93,7 @@ export function appendPromptbox(
   if (entries.length === 0) return;
   try {
     const file = promptboxPathOf(hooksDir, hookShardId(token));
-    mkdirSync(join(hooksDir, 'promptbox'), { recursive: true });
+    mkdirSync(join(hooksDir, 'promptbox'), { recursive: true, mode: 0o700 });
     let kept: string[] = [];
     try {
       kept = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim());
@@ -104,7 +104,7 @@ export function appendPromptbox(
     for (const entry of entries) kept.push(JSON.stringify({ ...entry, at }));
     const bounded = kept.slice(-PROMPTBOX_MAX_LINES);
     const tmp = `${file}.tmp`;
-    writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '');
+    writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '', { mode: 0o600 });
     renameSync(tmp, file);
   } catch {
     // 队列写失败只损失一次 prompt 递送尝试（重发可补）
@@ -139,7 +139,7 @@ export function removePromptboxEntries(hooksDir: string, token: string, ids: Set
       }
     });
     const tmp = `${file}.tmp`;
-    writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '');
+    writeFileSync(tmp, bounded.length ? bounded.join('\n') + '\n' : '', { mode: 0o600 });
     renameSync(tmp, file);
   } catch {
     // 同 append：丢一次删除不影响正确性（送达幂等键在 id）

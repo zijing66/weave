@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import type { PlatformInfo } from './types.js';
+import type { PlatformInfo } from '@weavecode/core';
 
 export function detectPlatform(): PlatformInfo {
   const platform = os.platform();

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ensureDir, writeFileIfAbsent, fileExists } from '../utils/fs';
+import { ensureDir, writeFileIfAbsent, fileExists } from '../shared/fs';
 
 let tmpDir: string;
 

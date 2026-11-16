@@ -5,15 +5,13 @@ import {
   type SkillsConfig,
   DEFAULT_SKILLS,
   HARNESS_DIRS,
-  ensureDir,
   logger,
   resolveComponents,
-  writeFileIfAbsent,
 } from '@weavecode/core';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — weave-templates is symlinked via pnpm workspaces
 import { templateRegistry } from '@weavecode/templates';
-import { InitPipeline, type InitContext } from '@weavecode/harness';
+import { InitPipeline, ensureDir, writeFileIfAbsent, type InitContext } from '@weavecode/harness';
 import { type SurfaceRecords } from '../types.js';
 import { t } from '../../i18n/index.js';
 

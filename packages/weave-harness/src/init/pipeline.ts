@@ -1,6 +1,6 @@
 import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDir, fileExists, writeFileIfAbsent } from '@weavecode/core';
+import { ensureDir, fileExists, writeFileIfAbsent } from '../shared/fs.js';
 import type { InitOptions, PlatformInfo } from '@weavecode/core';
 
 /** init 执行上下文：InitOptions 加上运行时探测到的平台信息。 */
