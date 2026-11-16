@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Harness } from '@weavecode/core';
-import type { PluginScope, PluginSurface } from '@weavecode/harness';
+import { CLAUDE_MIN_HOST_VERSION, type PluginScope, type PluginSurface } from '@weavecode/harness';
 import { hashFile } from '../install/fingerprint.js';
 import { fileAssetTargetDir, type FileAssetCategory } from '../install/file-assets.js';
 import { assetSurfaceFor, pluginSurfaceFor } from '../surfaces.js';
@@ -86,8 +86,8 @@ export interface ToolkitToggleResult {
   warnings: string[];
 }
 
-/** mod 类包的宿主版本下限（Claude Code ≥ 2.1.287 契约，EARLY ACCESS）。 */
-export const MIN_MOD_HOST_VERSION = [2, 1, 287] as const;
+/** mod 类包的宿主版本下限（唯一出处 = harness 的 CLAUDE_MIN_HOST_VERSION）。 */
+export const MIN_MOD_HOST_VERSION = CLAUDE_MIN_HOST_VERSION;
 
 /** 包清单缓存时长：面板重复打开/多端同时打开的主要收益都在这段时间内。 */
 const PACKS_TTL_MS = 10_000;
@@ -359,16 +359,17 @@ export interface ModHostGate {
 
 export function evaluateModHostGate(version: string | null): ModHostGate {
   if (process.env.WEAVE_SKIP_MOD_VERSION_CHECK === '1') return { ok: true };
+  const minText = CLAUDE_MIN_HOST_VERSION.join('.');
   if (!version) {
     return {
       ok: true,
-      warning: '无法检测宿主 Claude Code 版本，mod 工具包需要 ≥ 2.1.287 才能被加载',
+      warning: `无法检测宿主 Claude Code 版本，mod 工具包需要 ≥ ${minText} 才能被加载`,
     };
   }
-  if (!isVersionAtLeast(version, MIN_MOD_HOST_VERSION)) {
+  if (!isVersionAtLeast(version, CLAUDE_MIN_HOST_VERSION)) {
     return {
       ok: false,
-      message: `宿主 Claude Code ${version} 低于 2.1.287，mod 工具包不落盘（请先升级 Claude Code）`,
+      message: `宿主 Claude Code ${version} 低于 ${minText}，mod 工具包不落盘（请先升级 Claude Code）`,
     };
   }
   return { ok: true };

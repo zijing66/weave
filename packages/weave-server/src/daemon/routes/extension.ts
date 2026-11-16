@@ -7,6 +7,7 @@ import type {
 } from '../../repositories/extension-bindings.js';
 import type { WeaveServerDeps } from '../server.js';
 import { messagingSurfaceFor } from '../../surfaces.js';
+import { MessageDeliverer } from '../../hooks/message-deliverer.js';
 import { readJson, sendJson } from '../http.js';
 
 /**
@@ -238,7 +239,7 @@ export async function handleExtensionRoutes(
         const surface = messagingSurfaceFor(harness);
         close = HARNESS_LIFECYCLE[harness].close;
         idle = surface.idleSignals;
-        prompt = surface.queuedPrompt !== null || surface.prompt !== null || promptChannel;
+        prompt = MessageDeliverer.promptChannelOf(surface, promptChannel);
         // fork 提取面（condition/summarize 可用性）：resume 槽有 extractArgs 才有。
         extract = typeof deps.harnesses?.get(harness)?.resume?.extractArgs === 'function';
       } catch {

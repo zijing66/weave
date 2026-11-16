@@ -2,12 +2,16 @@ import {
   HARNESS_DRIVERS,
   HarnessRegistry,
   createRuntimeRegistry,
+  type HarnessCapability,
   type HarnessDriver,
   type InitTemplateClass,
 } from '@weavecode/harness';
 import type { Harness } from '@weavecode/core';
 import { ClaudeInitTemplate } from './harnesses/claude.js';
 import { CodexInitTemplate } from './harnesses/codex.js';
+
+/** init 槽名（与 HarnessCapability 联合成员同源，字面只此一处且类型钉死）。 */
+const INIT_CAPABILITY = 'init' satisfies HarnessCapability;
 
 /**
  * init 槽表（cli 侧）——**加 harness = 这里加一行**（`satisfies` 穷尽，漏加即编译
@@ -28,9 +32,9 @@ export function buildInitRegistry(): HarnessRegistry {
     const base = HARNESS_DRIVERS[h];
     const driver: HarnessDriver = {
       ...base,
-      capabilities: base.capabilities.includes('init')
+      capabilities: base.capabilities.includes(INIT_CAPABILITY)
         ? base.capabilities
-        : [...base.capabilities, 'init'],
+        : [...base.capabilities, INIT_CAPABILITY],
       init: HARNESS_INIT_TEMPLATES[h],
     };
     reg.unregister(h);

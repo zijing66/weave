@@ -1,6 +1,7 @@
 import { lstat, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { HARNESS_DIRS } from '@weavecode/core';
 import { classifyAgent, classifyAsset } from '../watch/classifier.js';
 import { PluginModsSniffer } from '../watch/plugin-mods.js';
 import type { AssetEntry } from '../watch/types.js';
@@ -47,7 +48,7 @@ const CODEX_FILES = ['config.toml', 'AGENTS.md'];
 const SKIP_DIRS = new Set(['skills', 'node_modules', '.git']);
 /** Inside `.claude/plugins/`, these dir names are registry data, not assets. */
 const PLUGIN_SUBTREE_SKIP = new Set(['marketplaces', 'data', '.in_use']);
-const PLUGIN_SUBTREE_ROOT = '.claude/plugins';
+const PLUGIN_SUBTREE_ROOT = `${HARNESS_DIRS.claude.projectDir}/plugins`;
 const PLUGIN_SUBTREE_PREFIX = `${PLUGIN_SUBTREE_ROOT}/`;
 
 const MAX_DEPTH = 6;
@@ -63,8 +64,8 @@ interface RootSpec {
 }
 
 const ROOTS: RootSpec[] = [
-  { prefix: '.claude', dirs: CLAUDE_DIRS, files: CLAUDE_FILES },
-  { prefix: '.codex', dirs: CODEX_DIRS, files: CODEX_FILES },
+  { prefix: HARNESS_DIRS.claude.projectDir, dirs: CLAUDE_DIRS, files: CLAUDE_FILES },
+  { prefix: HARNESS_DIRS.codex.projectDir, dirs: CODEX_DIRS, files: CODEX_FILES },
 ];
 
 /** One file entry, or null when it vanished / is not a regular file. */

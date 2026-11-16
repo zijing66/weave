@@ -1,6 +1,14 @@
 import type { ResumeCommandSpec } from '../driver.js';
 
 /**
+ * weave 的 claude 集成（hook 面 / 阻塞问答键序 / 计划正文 / mod 工具包）都按
+ * 2.1.287 起的宿主任约写——宿主版本下限的唯一出处（消费方从这里拆）。
+ */
+export const CLAUDE_MIN_HOST_VERSION = [2, 1, 287] as const;
+
+const MIN_HOST_VERSION_TEXT = CLAUDE_MIN_HOST_VERSION.join('.');
+
+/**
  * 批 4b 迁入：Claude resume 命令规格；`WEAVE_CLAUDE_BIN` / `claudeBin` 环境与
  * 测试覆盖由 runner 保留。prompt 走 stdin（`claude --resume <sessionId> -p`
  * 无位置参数时读管道）——命令行不含用户内容，Windows 的 .cmd shim 由此可
@@ -26,7 +34,6 @@ export const CLAUDE_RESUME: ResumeCommandSpec = {
     '--session-id',
     forkSessionId,
   ],
-  // weave 的 claude 集成（hook 面 / 阻塞问答键序 / 计划正文）都按 2.1.287 起的
-  // 宿主任约写，低于它的不接新会话（UI 置灰并报出实际版本）。
-  minVersion: '2.1.287',
+  // 低于宿主版本下限的不接新会话（UI 置灰并报出实际版本）。
+  minVersion: MIN_HOST_VERSION_TEXT,
 };

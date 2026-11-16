@@ -7,6 +7,7 @@ import { TOOLS, callTool } from './orchestration.js';
 import * as sessionsNs from './sessions.js';
 import * as projectsNs from './projects.js';
 import * as eventsNs from './events.js';
+import { WEAVE_VERSION } from '../../version.js';
 
 /**
  * 内置 MCP 注册表（Streamable HTTP，daemon 托管）：`serverName → 服务定义`。
@@ -55,7 +56,7 @@ export interface McpServerDef {
 export const MCP_SERVERS: readonly McpServerDef[] = [
   {
     name: 'weave-orchestration',
-    version: '0.1.0',
+    version: WEAVE_VERSION,
     // `/mcp` 裸路径 = 编排（存量已装配置不断）；后续新服务走 `/mcp/<server>`。
     path: '/mcp',
     tools: TOOLS,
@@ -63,21 +64,21 @@ export const MCP_SERVERS: readonly McpServerDef[] = [
   },
   {
     name: 'weave-sessions',
-    version: '0.1.0',
+    version: WEAVE_VERSION,
     path: '/mcp/sessions',
     tools: sessionsNs.SESSIONS_TOOLS,
     callTool: sessionsNs.callTool,
   },
   {
     name: 'weave-projects',
-    version: '0.1.0',
+    version: WEAVE_VERSION,
     path: '/mcp/projects',
     tools: projectsNs.PROJECTS_TOOLS,
     callTool: projectsNs.callTool,
   },
   {
     name: 'weave-events',
-    version: '0.1.0',
+    version: WEAVE_VERSION,
     path: '/mcp/events',
     tools: eventsNs.EVENTS_TOOLS,
     callTool: eventsNs.callTool,

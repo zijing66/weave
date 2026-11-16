@@ -116,6 +116,7 @@ import { openPetWindow, shutdownPetWindow } from './pet-window.js';
 import { seedBuiltinPets } from './pet-seed.js';
 import { PeerRepository } from '../repositories/peers.js';
 import { getPeerTokensDir, getDataRoot } from '../db/paths.js';
+import { getBackupsDir } from '../db/paths.js';
 import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
 import { certFingerprint } from './federation.js';
 import { startFederationHeartbeat, type FederationHeartbeat } from './federation-heartbeat.js';
@@ -774,7 +775,7 @@ export function startDaemon(): void {
     engine: backupEngine,
     config: () => readDaemonSettingsSync().backup ?? { enabled: true, hour: 1, includeHistory: false },
     hasBackupToday: async () => {
-      const names = await readdir(path.join(getDataRoot(), 'backups')).catch(() => [] as string[]);
+      const names = await readdir(getBackupsDir(getDataRoot())).catch(() => [] as string[]);
       const today = new Date();
       const p = (n: number) => String(n).padStart(2, '0');
       const prefix = `weave-backup-${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())}-`;

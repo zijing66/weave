@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { getDbPath } from './paths.js';
+import { getDbPath, getDbMigrationsBackupDir } from './paths.js';
 import { projectKey } from '../repositories/projects.js';
 
 /**
@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, last_seen_at);
+-- 全局标题搜索的排序（searchByTitle 无 project 前缀，吃不上复合索引左前缀）。
+CREATE INDEX IF NOT EXISTS idx_sessions_last_seen ON sessions(last_seen_at);
 
 -- 跨会话编排（session-orchestration）：会话订阅 + 序列表保留。点对点消息域
 -- 已重塑为纯递送管道（本地文件 + 内存态，不落库）——session_messages 表退役。
@@ -528,7 +530,7 @@ CREATE TABLE IF NOT EXISTS peers (
 
 /** schema 版本（写进 PRAGMA user_version）：结构有变就递增，迁移前据此备份。 */
 export const SCHEMA_VERSION = 1;
-/** 迁移备份保留份数（`<dataDir>/backups/`，每份按库大小计）。 */
+/** 迁移备份保留份数（`<data>/backups/`，getDbMigrationsBackupDir，每份按库大小计）。 */
 const BACKUP_KEEP = 3;
 
 /**
@@ -568,7 +570,7 @@ function backupIfMigrating(db: DatabaseSync, dbPath: string): void {
     | { n: number }
     | undefined;
   if (!objects || objects.n === 0) return; // 新库，没有可备份的东西
-  const dir = path.join(path.dirname(dbPath), 'backups');
+  const dir = getDbMigrationsBackupDir(path.dirname(dbPath));
   mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dest = path.join(dir, `weave-v${current}-${stamp}.db`);

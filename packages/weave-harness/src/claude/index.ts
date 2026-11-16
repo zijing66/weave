@@ -27,7 +27,7 @@ export { CLAUDE_ASSETS, ClaudeJsonCorruptError, readClaudeJson } from './assets.
 export { CLAUDE_PLUGINS, createClaudePluginSurface, WEAVE_MARKETPLACE } from './plugins.js';
 export type { PluginExecutor, PluginExecResult } from './plugins.js';
 export { CLAUDE_PLUGIN_STATE } from './plugin-state.js';
-export { CLAUDE_RESUME } from './resume.js';
+export { CLAUDE_RESUME, CLAUDE_MIN_HOST_VERSION } from './resume.js';
 export { CLAUDE_DETECTOR } from './detect.js';
 export { CLAUDE_MESSAGING } from './messaging.js';
 export { CLAUDE_BLOCKING_PROMPT } from './questions.js';

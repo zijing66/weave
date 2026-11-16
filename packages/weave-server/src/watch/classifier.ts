@@ -1,5 +1,9 @@
 import type { AssetAgent, AssetCategory } from './types.js';
 import { assetSurfaces } from '../surfaces.js';
+import { HARNESS_DIRS } from '@weavecode/core';
+
+const CLAUDE_DIR = HARNESS_DIRS.claude.projectDir;
+const CODEX_DIR = HARNESS_DIRS.codex.projectDir;
 
 /**
  * Classify a project-relative path into an asset category.
@@ -11,23 +15,25 @@ export function classifyAsset(relPath: string): AssetCategory {
   const p = normalizeRelPath(relPath);
   if (p === '.mcp.json') return 'mcp';
   if (
-    p.startsWith('.claude/skills/') ||
-    p.startsWith('.codex/skills/') ||
+    p.startsWith(`${CLAUDE_DIR}/skills/`) ||
+    p.startsWith(`${CODEX_DIR}/skills/`) ||
     p.startsWith('.agents/skills/')
   ) {
     return 'skill';
   }
-  if (p === '.claude/settings.json' || p === '.claude/settings.local.json') return 'settings';
-  if (p === '.codex/config.toml') return 'settings';
-  if (p.startsWith('.claude/commands/') || p.startsWith('.codex/prompts/')) return 'command';
-  if (p.startsWith('.claude/agents/')) return 'agent';
-  if (p.startsWith('.claude/helpers/')) return 'helper';
-  if (p.startsWith('.claude/workflows/')) return 'workflow';
-  if (p.startsWith('.claude/rules/')) return 'rule';
-  if (p.startsWith('.claude/output-styles/')) return 'output-style';
+  if (p === `${CLAUDE_DIR}/settings.json` || p === `${CLAUDE_DIR}/settings.local.json`)
+    return 'settings';
+  if (p === `${CODEX_DIR}/config.toml`) return 'settings';
+  if (p.startsWith(`${CLAUDE_DIR}/commands/`) || p.startsWith(`${CODEX_DIR}/prompts/`))
+    return 'command';
+  if (p.startsWith(`${CLAUDE_DIR}/agents/`)) return 'agent';
+  if (p.startsWith(`${CLAUDE_DIR}/helpers/`)) return 'helper';
+  if (p.startsWith(`${CLAUDE_DIR}/workflows/`)) return 'workflow';
+  if (p.startsWith(`${CLAUDE_DIR}/rules/`)) return 'rule';
+  if (p.startsWith(`${CLAUDE_DIR}/output-styles/`)) return 'output-style';
   // 插件包前缀必须先于下方 base-name 回落：包内的 CLAUDE.md / AGENTS.md
   // 属于插件包自身，不能逃逸成 instructions。
-  if (p.startsWith('.claude/plugins/') || p.startsWith('.weave/plugins/')) return 'plugin';
+  if (p.startsWith(`${CLAUDE_DIR}/plugins/`) || p.startsWith('.weave/plugins/')) return 'plugin';
   // Instruction files may live at any depth (nested CLAUDE.md / AGENTS.md),
   // not just the project root. Directory prefixes above win first, so a
   // CLAUDE.md inside a skill or command folder stays part of that folder.

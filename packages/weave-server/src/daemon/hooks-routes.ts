@@ -17,6 +17,7 @@ import {
 
 import type { WeaveServerDeps } from './server.js';
 import type { MessageAttachment, SessionDeliveryDiagnosis } from '../hooks/message-deliverer.js';
+import { MessageDeliverer } from '../hooks/message-deliverer.js';
 import { readJson, sendJson } from './http.js';
 import { purgeSession } from '../hooks/session-purge.js';
 import { referencedSessionIds } from '../hooks/session-refs.js';
@@ -77,9 +78,9 @@ const SendMessageBody = z.object({
   forceTerminal: z.boolean().optional(),
 });
 
-/** prompt 通道可用性（与投递裁决同口径）：宿主队列 || 层① 原生中继 || 层② 终端 send-text 兜底。 */
+/** prompt 通道可用性：派生单点 = MessageDeliverer.promptChannelOf（投递裁决同口径）。 */
 function promptChannelOf(surface: MessagingSurface, terminalChannel: boolean): boolean {
-  return surface.queuedPrompt !== null || surface.prompt !== null || terminalChannel;
+  return MessageDeliverer.promptChannelOf(surface, terminalChannel);
 }
 
 /**

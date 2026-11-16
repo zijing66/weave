@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AssetSurface, McpServerConfig } from '../driver.js';
 import { FILE_ASSET_SPECS } from '../shared/file-specs.js';
@@ -74,6 +74,29 @@ function localServersOf(
   if (!projects || typeof projects !== 'object') return undefined;
   const entry = projects[localKey(projectPath)] as Record<string, unknown> | undefined;
   return entry?.mcpServers;
+}
+
+/** 项目 settings.json：缺失/坏 JSON → 空对象（读侧不让坏文件挡住列表）。 */
+async function readProjectSettings(projectPath: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(path.join(projectPath, '.claude', 'settings.json'), 'utf-8'),
+    );
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function stringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+function patchStringArray(s: Record<string, unknown>, key: string, set: Set<string>): void {
+  if (set.size === 0) delete s[key];
+  else s[key] = [...set].sort();
 }
 
 /**
@@ -187,6 +210,34 @@ export const CLAUDE_ASSETS: AssetSurface = {
 
   mcpEnableScopes() {
     return ['project'];
+  },
+
+  // MCP 启停覆写三键族（claude settings.json 文法，自 server settings-mcp 迁入）：
+  // enableAllProjectMcpServers + enabled/disabledMcpjsonServers。
+  async mcpEnableRead(projectPath) {
+    const s = await readProjectSettings(projectPath);
+    const enabled = stringArray(s['enabledMcpjsonServers']);
+    const disabled = stringArray(s['disabledMcpjsonServers']);
+    const overrides: Record<string, 'enabled' | 'disabled' | 'default'> = {};
+    for (const n of enabled) overrides[n] = 'enabled';
+    for (const n of disabled) overrides[n] = 'disabled';
+    return { overrides, enableAll: s['enableAllProjectMcpServers'] === true };
+  },
+
+  async mcpEnableWrite(projectPath, name, state) {
+    const s = await readProjectSettings(projectPath);
+    const enabled = new Set(stringArray(s['enabledMcpjsonServers']));
+    const disabled = new Set(stringArray(s['disabledMcpjsonServers']));
+    enabled.delete(name);
+    disabled.delete(name);
+    if (state === 'enabled') enabled.add(name);
+    else if (state === 'disabled') disabled.add(name);
+    // 'default' → present in neither array
+    patchStringArray(s, 'enabledMcpjsonServers', enabled);
+    patchStringArray(s, 'disabledMcpjsonServers', disabled);
+    const file = path.join(projectPath, '.claude', 'settings.json');
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, `${JSON.stringify(s, null, 2)}\n`, 'utf-8');
   },
 
   classify(relPath) {

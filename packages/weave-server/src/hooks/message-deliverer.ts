@@ -978,6 +978,14 @@ export class MessageDeliverer {
   }
 
   /**
+   * prompt 通道可用性（与投递层序同口径）：宿主队列 || 层① 原生中继 || 层② 终端
+   * send-text 兜底——能力矩阵 prompt 列的唯一派生点，调用方不自排。
+   */
+  static promptChannelOf(surface: MessagingSurface, terminalChannel: boolean): boolean {
+    return surface.queuedPrompt !== null || surface.prompt !== null || terminalChannel;
+  }
+
+  /**
    * 自续冲洗：本轮投出去过（有进展）但队列仍有行 → 隔一拍继续，直到排空。
    * 只有「有进展」才续（通道不可用时不续，避免热循环）；沿用节流间隔作拍长。
    */

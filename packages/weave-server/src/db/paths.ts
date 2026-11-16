@@ -40,6 +40,15 @@ export function getDbPath(dir?: string): string {
   return path.join(dataRoots(dir).data, 'weave.db');
 }
 
+/**
+ * 数据库迁移前备份目录：库文件所在目录旁的 `backups/`（生产 = `<data>/backups/`，
+ * schema 迁移把库降级入口关掉，备份是唯一回退物 → 随数据迁移带走）。与可弃的
+ * `getBackupsDir`（`<cache>/backups/` 包备份）分名。dir = 库文件所在目录。
+ */
+export function getDbMigrationsBackupDir(dbDir: string): string {
+  return path.join(dbDir, 'backups');
+}
+
 /** 已安装插件内容（SPI 扫描根）；随数据迁移。 */
 export function getPluginsDir(dir?: string): string {
   return path.join(dataRoots(dir).data, 'plugins');

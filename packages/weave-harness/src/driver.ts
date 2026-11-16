@@ -274,6 +274,23 @@ export interface AssetSurface {
   mcpEnableScopes?(): ToolScope[];
 
   /**
+   * 读某项目 MCP 启停覆写（键形归 harness：claude = settings.json 的
+   * enableAllProjectMcpServers / enabledMcpjsonServers / disabledMcpjsonServers
+   * 三键族）。无此面的 harness 不实现（mcpEnableScopes 缺省即无覆写面）。
+   */
+  mcpEnableRead?(projectPath: string): Promise<{
+    overrides: Record<string, 'enabled' | 'disabled' | 'default'>;
+    enableAll: boolean;
+  }>;
+
+  /** 写/清一条启停覆写；state = 'default' 即两数组都除名。 */
+  mcpEnableWrite?(
+    projectPath: string,
+    name: string,
+    state: 'enabled' | 'disabled' | 'default',
+  ): Promise<void>;
+
+  /**
    * 宿主插件缓存根（Claude `~/.claude/plugins/cache`；Codex `~/.codex/plugins/cache`）；
    * 无插件机制的 harness 返回 undefined。全局技能枚举与「某路径归属谁」消费。
    */

@@ -12,7 +12,7 @@ import { readDaemonState } from '../daemon/state.js';
 import type { McpServerConfig } from '@weavecode/harness';
 import { generateHookHandler } from '@weavecode/harness';
 import { generateSettingsJson, mergeSettingsJson, statusLineIsWeave } from '@weavecode/harness';
-import { DEFAULT_HOOKS, type PlatformInfo } from '@weavecode/core';
+import { DEFAULT_HOOKS, HARNESS_DIRS, type PlatformInfo } from '@weavecode/core';
 import { RpgRoleRepository, archetypeBaseline, type Hexagon, type RpgRoleRow } from './roles.js';
 import { ROLE_MANIFEST_KEY, readRoleManifest, type RoleManifest } from './role-plugin.js';
 import { BUILTIN_ROLE_TEMPLATES, COORDINATOR_PERSONA, COORDINATOR_SKILLS, handbookPersonaSection } from '../install/role-manifests.js';
@@ -110,14 +110,15 @@ async function ensureMcpJsonIgnored(dir: string): Promise<void> {
  * 单源，这里只做编排。不装 statusline（出厂仓对话页有它即可，不需要终端条）。
  */
 async function ensureProjectCapture(dir: string): Promise<void> {
-  const helpersDir = path.join(dir, '.claude', 'helpers');
+  const claudeDir = path.join(dir, HARNESS_DIRS.claude.projectDir);
+  const helpersDir = path.join(claudeDir, 'helpers');
   await mkdir(helpersDir, { recursive: true });
   await writeFile(
     path.join(helpersDir, 'hook-handler.cjs'),
     generateHookHandler(WEAVE_VERSION),
     'utf-8',
   );
-  const file = path.join(dir, '.claude', 'settings.json');
+  const file = path.join(claudeDir, 'settings.json');
   let existing: Record<string, unknown> = {};
   try {
     const parsed = JSON.parse(await readFile(file, 'utf-8')) as unknown;
@@ -433,7 +434,7 @@ export async function scaffoldCoordinator(
   // （本仓普通会话）即可用；与角色仓库形态同构，分身出征直接声明进 role.json
   // 走 installKit。版本刷新时重写，版本不变时用户已有同名 = 跳过不覆盖。
   for (const skill of COORDINATOR_SKILLS) {
-    const skillDir = path.join(dir, '.claude', 'skills', skill.name);
+    const skillDir = path.join(dir, HARNESS_DIRS.claude.projectDir, 'skills', skill.name);
     const skillFile = path.join(skillDir, 'SKILL.md');
     if (!refresh) {
       try {

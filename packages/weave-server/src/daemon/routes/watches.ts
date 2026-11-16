@@ -5,6 +5,7 @@ import type { MessagingSurface } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
 import { readJson, sendJson } from '../http.js';
 import { messagingSurfaceFor } from '../../surfaces.js';
+import { MessageDeliverer } from '../../hooks/message-deliverer.js';
 import { DEFAULT_WATCH_ON } from '../../repositories/session-watches.js';
 
 /** 会话订阅：watcherSessionId 缺省 null = dashboard 订阅（fire 走 toast + 浏览器通知）；
@@ -27,9 +28,9 @@ const SubscribePushBody = z.object({
 
 const UnsubscribePushBody = z.object({ endpoint: z.string().url() });
 
-/** prompt 通道可用性（与投递裁决同口径）：宿主队列 || 层① 原生中继 || 层② 终端 send-text 兜底。 */
+/** prompt 通道可用性：派生单点 = MessageDeliverer.promptChannelOf（投递裁决同口径）。 */
 function promptChannelOf(surface: MessagingSurface, terminalChannel: boolean): boolean {
-  return surface.queuedPrompt !== null || surface.prompt !== null || terminalChannel;
+  return MessageDeliverer.promptChannelOf(surface, terminalChannel);
 }
 
 /**
