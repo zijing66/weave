@@ -7,6 +7,7 @@ import type { LaunchOrigin } from '../opener.js';
 import { joinCmd } from './shared.js';
 import {
   weztermCli,
+  weztermGuiAlive,
   weztermGuiPidOf,
   weztermLiveMuxes,
   weztermLiveMuxesCached,
@@ -572,6 +573,35 @@ function trimPaneHwnds(): void {
   }
 }
 
+/** 摘除已死 GUI 实例的账（key 前缀 = socket 路径）。 */
+function pruneHwndsOf(socketPath: string): void {
+  const prefix = `${socketPath}|`;
+  for (const k of [...paneHwnds.keys()]) if (k.startsWith(prefix)) paneHwnds.delete(k);
+  for (const k of [...windowHwnds.keys()]) if (k.startsWith(prefix)) windowHwnds.delete(k);
+  for (const [k, v] of [...spawnedPaneByCwd.entries()]) {
+    if (normalizeDirKey(v.socket, process.platform) === normalizeDirKey(socketPath, process.platform)) {
+      spawnedPaneByCwd.delete(k);
+    }
+  }
+}
+
+/** ledger 里 socket 已死（GUI 进程没了）的条目整批摘除；脏了才回写。 */
+async function pruneDeadHwndEntries(): Promise<void> {
+  if (process.platform !== 'win32') return;
+  const sockets = new Set<string>();
+  for (const v of spawnedPaneByCwd.values()) sockets.add(v.socket);
+  for (const k of paneHwnds.keys()) sockets.add(k.split('|')[0]!);
+  for (const k of windowHwnds.keys()) sockets.add(k.split('|')[0]!);
+  let dirty = false;
+  for (const socket of sockets) {
+    const pid = weztermGuiPidOf(socket);
+    if (pid === null || (await weztermGuiAlive(pid))) continue;
+    pruneHwndsOf(socket);
+    dirty = true;
+  }
+  if (dirty) persistHwndLedger();
+}
+
 function noteSpawnedPane(
   socket: string,
   paneId: string,
@@ -586,6 +616,10 @@ function noteSpawnedPane(
       if (oldest) spawnedPaneByCwd.delete(oldest[0]);
     }
     persistHwndLedger();
+    // 死账顺手清（实测坑：GUI 重启后 ledger 还指着死实例——自动隐藏按死 key 等
+    // HWND 空等 8s，再退标题认窗打空，表现「设置过却没藏」）。落新账这一拍按
+    // gui-sock-<pid> 文件名探 GUI 进程，死了的条目整批摘除。
+    void pruneDeadHwndEntries();
   }
   if (hwndBefore === null || hwndBefore.length === 0) return; // 非 win32 / split（不开新窗）/ 快照失败不认窗
   void (async () => {
@@ -651,6 +685,14 @@ export async function hideSpawnedWeztermWindow(dir: string): Promise<boolean> {
     if (hwnd !== undefined) {
       await winSetVisibilityByHwnd(hwnd, 'hide');
       return true;
+    }
+    // 落子实例已死（账是上一次会话的残留）：等不来 HWND，立即短路退标题路径，
+    // 不空等 8s。
+    const pid = weztermGuiPidOf(spawned.socket);
+    if (pid !== null && !(await weztermGuiAlive(pid))) {
+      spawnedPaneByCwd.delete(key!);
+      persistHwndLedger();
+      return false;
     }
     if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, 500));
