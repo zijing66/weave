@@ -312,14 +312,19 @@ const VIZ_REF_SUFFIX = '\u{e201}';
  * U+E202→U+E0001、U+E201→U+E0002）——屏上全不可见、语义一致，认不出整块就
  * 静默退化成普通文本（2026-10-30 转录实测，9/9 行如此）。
  */
-const VIZ_REF_PREFIXES = [VIZ_REF_PREFIX, '\u{e0000}visualize\u{e0001}', 'visualize'] as const;
+const VIZ_REF_PREFIXES = [
+  VIZ_REF_PREFIX,
+  '\u{e0000}visualize\u{e0001}',
+  'U+E200visualizeU+E202',
+  'visualize',
+] as const;
 /**
  * 带协议标记（PUA / LANGUAGE TAG）的那两种前缀：出现即「这是一条引用行」，
  * 坏行也照此认出（渲染成不可用占位，别让用户只看到一串乱码）。
  * 裸 `visualize` 不算标记——正文里提到语法的情形太多，须 JSON 合法才成立。
  */
-const VIZ_MARKED_PREFIXES = [VIZ_REF_PREFIX, '\u{e0000}visualize\u{e0001}'] as const;
-const VIZ_REF_SUFFIXES = [VIZ_REF_SUFFIX, '\u{e0002}'] as const;
+const VIZ_MARKED_PREFIXES = [VIZ_REF_PREFIX, '\u{e0000}visualize\u{e0001}', 'U+E200visualizeU+E202'] as const;
+const VIZ_REF_SUFFIXES = [VIZ_REF_SUFFIX, '\u{e0002}', 'U+E201'] as const;
 
 /** 渲染块引用（引用行解析产物）：fragment 文件绝对路径 + 可选标题/宽幅。 */
 export interface VisualizeRef {
@@ -338,7 +343,23 @@ export type VizSeg =
 function visualizeRefOf(line: string): VisualizeRef | null {
   const prefix = VIZ_REF_PREFIXES.find((p) => line.startsWith(p));
   if (!prefix) return null;
-  let body = line.slice(prefix.length);
+  return refFromBody(line.slice(prefix.length));
+}
+
+/**
+ * 行内含字面转义形前缀 → 从那里截到行尾解析（前缀是可见 ASCII，模型实测会把
+ * 引用行接在正文后面：「……顺序为 ①–⑨，U+E200visualizeU+E202{…}」——整行
+ * startsWith 落空就退化成普通文本，2026-11-17 实测）。只对字面转义形做行内
+ * 提取：真 PUA 形是隐形字符，正文里粘贴示例的概率高，不放宽。
+ */
+function visualizeInlineRefOf(line: string): VisualizeRef | null {
+  const marked = ['U+E200visualizeU+E202', VIZ_REF_PREFIX, '\u{e0000}visualize\u{e0001}'] as const;
+  const prefix = marked.find((p) => line.includes(p));
+  if (!prefix) return null;
+  return refFromBody(line.slice(line.indexOf(prefix) + prefix.length));
+}
+
+function refFromBody(body: string): VisualizeRef | null {
   const suffix = VIZ_REF_SUFFIXES.find((s) => body.endsWith(s));
   if (suffix) body = body.slice(0, -suffix.length);
   try {
@@ -401,7 +422,7 @@ export function visualizeSegments(text: string): VizSeg[] {
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i]!.trim();
     if (!inFence[i]) {
-      const ref = visualizeRefOf(t);
+      const ref = visualizeRefOf(t) ?? visualizeInlineRefOf(t);
       if (ref) {
         flush();
         out.push({ kind: 'viz', ref });
@@ -428,6 +449,8 @@ export function hasVisualizeRef(text: string): boolean {
     const t = line.trim();
     return (
       VIZ_MARKED_PREFIXES.some((p) => t.startsWith(p)) ||
+      // 字面转义形是可见 ASCII：行中（前面带正文）也认
+      t.includes('U+E200visualizeU+E202') ||
       // 裸 `visualize` 太常见，只认「单独一行且紧跟 `{`」——成立与否在分段的 JSON 校验里
       /^visualize\{/.test(t)
     );
@@ -443,7 +466,11 @@ export function stripVisualizeRefs(text: string): string {
     .filter((line, i) => {
       if (inFence[i]) return true;
       const t = line.trim();
-      return !(visualizeRefOf(t) || VIZ_MARKED_PREFIXES.some((p) => t.startsWith(p)));
+      return !(
+        visualizeRefOf(t) ||
+        visualizeInlineRefOf(t) ||
+        VIZ_MARKED_PREFIXES.some((p) => t.startsWith(p))
+      );
     })
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')

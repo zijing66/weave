@@ -13,10 +13,11 @@ describe('visualizeRefsIn', () => {
       `  ${CANONICAL('/tmp/panel.html')}  `,
       `\u{e0000}visualize\u{e0001}${JSON.stringify({ path: '/tmp/panel.html' })}\u{e0002}`,
       `visualize${JSON.stringify({ path: '/tmp/panel.html' })}`,
+      `U+E200visualizeU+E202${JSON.stringify({ path: '/tmp/panel.html' })}U+E201`,
     ];
     const refs = visualizeRefsIn(lines.join('\n'));
-    expect(refs).toHaveLength(3);
-    expect(refs.map((r) => r.path)).toEqual([target, target, target]);
+    expect(refs).toHaveLength(4);
+    expect(refs.map((r) => r.path)).toEqual([target, target, target, target]);
     expect(refs[0]!.line).toBe(lines[0]!.trim());
     expect(refs[2]!.line).toBe(lines[2]!.trim());
   });

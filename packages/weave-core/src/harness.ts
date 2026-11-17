@@ -353,9 +353,12 @@ export const VISUALIZATION_PROTOCOL = {
    * 压缩摘要这一层常把不可见字符整个吃掉，模型据摘要复述时写出的就是裸行
    * （同日实测两条，都在压缩之后）。裸行只在一整行恰好是 `visualize` + 合法
    * JSON 且带 path 时才成立，正文里的提及（带前缀文字 / 反引号包裹）不命中。
+   * **字面转义形也认**（2026-11-17 转录实测第三种写法）：模型把私有区字符按
+   * 码位名字面写出（`U+E200visualizeU+E202{...}`，六个 ASCII 字符）——压缩
+   * 摘要与 skill 文档都教「U+E200」这个名字，模型照抄字面量比写出真字符容易。
    */
-  referencePrefixAliases: ['\u{e0000}visualize\u{e0001}', 'visualize'],
-  referenceSuffixAliases: ['\u{e0002}'],
+  referencePrefixAliases: ['\u{e0000}visualize\u{e0001}', 'U+E200visualizeU+E202', 'visualize'],
+  referenceSuffixAliases: ['\u{e0002}', 'U+E201'],
   /** fragment 文件大小上限（字节）——对齐 codex 的 2MB 口径。 */
   maxFragmentBytes: 2 * 1024 * 1024,
 } as const;

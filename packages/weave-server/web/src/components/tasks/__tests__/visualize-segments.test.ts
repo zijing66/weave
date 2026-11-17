@@ -108,6 +108,20 @@ describe('visualizeSegments', () => {
     const segs = visualizeSegments(`see ${ref('D:/x.html')} inline`);
     expect(segs).toEqual([{ kind: 'text', text: `see ${ref('D:/x.html')} inline` }]);
   });
+
+  it('字面转义形照认（模型把 PUA 写成 U+E200 等 ASCII 码位名，2026-11-17 实测）', () => {
+    const lit = 'U+E200visualizeU+E202{"path":"D:/x/a.html","mode":"wide"}U+E201';
+    expect(visualizeSegments(lit)).toEqual([
+      { kind: 'viz', ref: { path: 'D:/x/a.html', mode: 'wide' } },
+    ]);
+    // 行首带正文也认（可见 ASCII 才放宽行内提取；前缀文字被引用行吞掉）
+    const segs = visualizeSegments(`HTML 章节顺序为 ①–⑨，${lit}`);
+    expect(segs).toEqual([{ kind: 'viz', ref: { path: 'D:/x/a.html', mode: 'wide' } }]);
+    expect(hasVisualizeRef(`a\n${lit}`)).toBe(true);
+    expect(stripVisualizeRefs(`a\n${lit}\nb`)).toBe('a\nb');
+    // 坏 JSON 同样出占位
+    expect(visualizeSegments('U+E200visualizeU+E202{oops}')).toEqual([{ kind: 'vizUnavailable' }]);
+  });
 });
 
 describe('hasVisualizeRef / stripVisualizeRefs', () => {
