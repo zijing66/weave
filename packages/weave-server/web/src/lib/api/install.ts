@@ -154,4 +154,24 @@ export const installApi = {
     apiFetch<{ installations: InstallationRow[] }>('/installations').then(
       (r) => r.installations,
     ),
+
+  // --- MCP 跨项目共享（2026-11-16 定案：聚合托管项目实配，市场弹层可见可装）---
+  listMcpShared: (): Promise<McpSharedResponse> =>
+    apiFetch<McpSharedResponse>('/mcp-shared'),
 };
+
+/** MCP 共享聚合行（服务端 readMcpRows 扫全部托管项目后按 harness×名去重）。 */
+export interface McpSharedRow {
+  name: string;
+  config: McpServerConfig;
+  harness: AssetAgent;
+  sourceProjectId: number;
+  sourceProjectName: string;
+  alsoIn: Array<{ projectId: number; projectName: string }>;
+}
+
+export interface McpSharedResponse {
+  shared: McpSharedRow[];
+  /** harness → 该 harness 的 MCP 全部可装范围（slider 档位禁用判据，随行免二次拉矩阵）。 */
+  scopesByHarness: Record<string, AssetScope[]>;
+}

@@ -3,6 +3,7 @@ import { HARNESS_KEYS } from '@weavecode/core';
 import type { WeaveServerDeps } from '../server.js';
 import { sendJson } from '../http.js';
 import { readMcpRows } from '../../install/mcp-rows.js';
+import { assetSurfaces } from '../../surfaces.js';
 import { readGlobalSkillGroups } from '../../install/global-config.js';
 import { listGlobalFileAssets } from '../../install/global-file-assets.js';
 import type { AssetAgent, AssetCategory } from '../../watch/types.js';
@@ -166,5 +167,79 @@ export async function handleInstallationRoutes(
   }
 
   sendJson(res, 200, { installations: rows });
+  return true;
+}
+
+/** MCP 共享行（市场弹层的「已托管项目实配」聚合行）。 */
+export interface McpSharedRow {
+  name: string;
+  config: unknown;
+  harness: AssetAgent;
+  /** 来源项目（首个发现的；同名多项目并存时展示首个、聚合列表全带）。 */
+  sourceProjectId: number;
+  sourceProjectName: string;
+  /** 同名实配还出现在哪些项目（含 source，展示用）。 */
+  alsoIn: Array<{ projectId: number; projectName: string }>;
+}
+
+/**
+ * MCP 跨项目共享聚合（2026-11-16 用户定案）：扫全部托管项目的 MCP 实配
+ * （readMcpRows = 各 AssetSurface.mcpRead 按 scope 展平），按 (harness, 名字)
+ * 去重聚合成行、标注来源项目。装到其他项目 = 写目标项目对应档配置
+ * （POST /projects/:id/install category=mcp 复用既有链）。GET /mcp-shared。
+ */
+export async function handleMcpSharedRoutes(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WeaveServerDeps,
+  pathname: string,
+): Promise<boolean> {
+  if (pathname !== '/mcp-shared') return false;
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method not allowed' });
+    return true;
+  }
+
+  const projects = deps.projects.list();
+  const perProject = await Promise.all(
+    projects.map(async (project) => ({
+      project,
+      rows: await readMcpRows(project.path).catch(() => []),
+    })),
+  );
+
+  const byKey = new Map<string, McpSharedRow>();
+  for (const { project, rows } of perProject) {
+    for (const row of rows) {
+      if (row.builtin) continue;
+      const config = row.detail;
+      if (!config) continue;
+      const key = `${row.harness}\0${row.key}`;
+      const hit = byKey.get(key);
+      if (hit) {
+        if (!hit.alsoIn.some((a) => a.projectId === project.id)) {
+          hit.alsoIn.push({ projectId: project.id, projectName: project.name });
+        }
+        continue;
+      }
+      byKey.set(key, {
+        name: row.key,
+        config,
+        harness: row.harness,
+        sourceProjectId: project.id,
+        sourceProjectName: project.name,
+        alsoIn: [],
+      });
+    }
+  }
+
+  const shared = [...byKey.values()].sort((a, b) =>
+    a.harness.localeCompare(b.harness) || a.name.localeCompare(b.name),
+  );
+  // installScopes 随行下发（该 harness 的 MCP 面），web 的 slider 档位禁用不二次拉矩阵。
+  const scopesByHarness = Object.fromEntries(
+    assetSurfaces().map((s) => [s.harness, s.mcpScopes()]),
+  );
+  sendJson(res, 200, { shared, scopesByHarness });
   return true;
 }

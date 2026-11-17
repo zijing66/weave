@@ -11,19 +11,19 @@ import {
   type MarketPluginAsset,
   type MarketUpdateStatus,
   type McpServerConfig,
+  type McpSharedRow,
   type ProjectRow,
   type SkillAsset,
 } from '@/lib/api';
 import {
   capabilitiesOf,
-  canInstall,
-  type InstallVerdict,
 } from '@/lib/install-capabilities';
 import {
   buildInstallationIndex,
   filterAndRankRows,
   installationKeyOfRow,
   rowsOfLibrary,
+  rowsOfSharedMcp,
   type LibraryAssets,
   type MarketRow,
 } from '@/lib/market-rows';
@@ -55,7 +55,6 @@ import {
   Puzzle,
   RefreshCw,
   Server,
-  Check,
   Trash2,
   X,
 } from 'lucide-react';
@@ -142,6 +141,8 @@ export function MarketModal({
   const fb = useActionFeedback();
 
   const [market, setMarket] = useState<MarketItem[]>([]);
+  /** MCP 共享行（聚合托管项目实配；随 /mcp-shared 拉取）。 */
+  const [sharedMcp, setSharedMcp] = useState<McpSharedRow[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   /** 库资产缓存（id → 四类扫描结果）；搜索时全量补齐。 */
   const [libCache, setLibCache] = useState<Map<number, LibraryAssets>>(new Map());
@@ -156,6 +157,9 @@ export function MarketModal({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [gitUrl, setGitUrl] = useState('');
   const [marketStatus, setMarketStatus] = useState<Map<number, MarketUpdateStatus>>(new Map());
+  /** 多选批操作：选中行 uid 集 + 开关态（有选中即开）。 */
+  const [bulkSelected, setBulkSelected] = useState<string[]>([]);
+  const bulkMode = bulkSelected.length > 0;
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -172,10 +176,14 @@ export function MarketModal({
     [show],
   );
 
-  // 打开即拉：市场源 + 安装位置快照
+  // 打开即拉：市场源 + 安装位置快照 + MCP 共享聚合
   useEffect(() => {
     void refreshMarket();
     reloadInstallations();
+    api
+      .listMcpShared()
+      .then((r) => setSharedMcp(r.shared))
+      .catch(() => setSharedMcp([]));
   }, [refreshMarket, reloadInstallations]);
 
   useEffect(
@@ -242,14 +250,18 @@ export function MarketModal({
 
   /** 当前展示的行集：搜索 = 全部源并集过滤排序；否则 = 选中源的摊平行。 */
   const rows: MarketRow[] = useMemo(() => {
+    const shared = rowsOfSharedMcp(sharedMcp);
     if (searching) {
-      const all = [...libCache.values()].flatMap((a) => rowsOfLibrary(0, a));
+      const all = [
+        ...shared,
+        ...[...libCache.values()].flatMap((a) => rowsOfLibrary(0, a)),
+      ];
       return filterAndRankRows(all, query);
     }
-    if (selectedId === null) return [];
+    if (selectedId === null) return shared;
     const assets = libCache.get(selectedId);
     return assets ? rowsOfLibrary(selectedId, assets) : [];
-  }, [searching, query, libCache, selectedId]);
+  }, [searching, query, libCache, selectedId, sharedMcp]);
 
   /** ESC 逐层退：位置弹层 → 源管理 → MCP 表单 → 行展开 → 关 modal。 */
   const layerRefs = {
@@ -320,6 +332,8 @@ export function MarketModal({
     const project = target.projectId !== null ? projects.find((p) => p.id === target.projectId) ?? null : null;
     if (row.skill) {
       await onInstallSkill(row.skill, target.scope, target.agent, project);
+    } else if (row.shared) {
+      await onInstallMcp(row.name, row.shared.config, target.scope, row.shared.harness, project);
     } else if (row.mcp) {
       await onInstallMcp(
         row.name,
@@ -344,6 +358,8 @@ export function MarketModal({
     const project = target.projectId !== null ? projects.find((p) => p.id === target.projectId) ?? null : null;
     if (row.plugin && project) {
       await onUninstallPlugin(row.plugin, project);
+    } else if (row.shared) {
+      await onUninstallMcp(row.name, target.scope, row.shared.harness, project);
     } else if (row.skill) {
       await onUninstallSkill(row.name, target.scope, target.agent, project);
     } else if (row.mcp) {
@@ -667,6 +683,43 @@ export function MarketModal({
 
           {/* 右栏：资产行清单 */}
           <div className="min-w-0 flex-1 overflow-y-auto p-2">
+            {/* 多选批操作条：勾选若干资源 → 统一滑条一次装到同一落点 */}
+            {rows.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 rounded bg-neutral-950/60 p-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBulkSelected((prev) => (prev.length > 0 ? [] : rows.slice(0, 1).map((r) => r.uid)))
+                  }
+                  className={cn(
+                    'shrink-0 rounded px-2 py-0.5 text-11',
+                    bulkMode ? 'bg-blue-900/40 text-blue-200' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
+                  )}
+                >
+                  {t('market.multiSelect')}
+                  {bulkSelected.length > 0 && ` · ${t('market.batchSelected', { n: bulkSelected.length })}`}
+                </button>
+                {bulkMode && bulkSelected.length > 0 && (
+                  <BulkInstallSlider
+                    names={rows.filter((r) => bulkSelected.includes(r.uid)).map((r) => r.name)}
+                    projects={projects}
+                    onApply={(scope, projectId, agent) => {
+                      void fb.run(
+                        'mkt-bulk-install',
+                        async () => {
+                          for (const r of rows.filter((x) => bulkSelected.includes(x.uid))) {
+                            await runInstall(r, { scope, projectId, agent });
+                          }
+                          show('success', t('market.batchSelected', { n: bulkSelected.length }));
+                        },
+                        { fail: (e) => t('errors.installFailed', { error: errorText(e) }) },
+                      );
+                    }}
+                    loading={fb.stateOf('mkt-bulk-install') === 'loading'}
+                  />
+                )}
+              </div>
+            )}
             {/* <lg：源 chips 行（搜索态隐藏） */}
             {!searching && (
               <div className="mb-2 flex flex-wrap gap-1 lg:hidden">
@@ -702,6 +755,13 @@ export function MarketModal({
               <MarketRowView
                 key={row.uid}
                 row={row}
+                bulkMode={bulkMode}
+                bulkChecked={bulkSelected.includes(row.uid)}
+                onBulkToggle={() =>
+                  setBulkSelected((prev) =>
+                    prev.includes(row.uid) ? prev.filter((u) => u !== row.uid) : [...prev, row.uid],
+                  )
+                }
                 expanded={expandedUid === row.uid}
                 installedCount={installedCountOf(row)}
                 locations={locationsKey === installationKeyOfRow(row) ? installIndex.get(locationsKey) ?? [] : null}
@@ -904,6 +964,9 @@ function iconOfKind(kind: MarketRow['kind']): ReactNode {
 /** 单行资产 + 展开详情（目标选择器 + 安装）+ 位置弹层。 */
 function MarketRowView({
   row,
+  bulkMode,
+  bulkChecked,
+  onBulkToggle,
   expanded,
   installedCount,
   locations,
@@ -918,6 +981,9 @@ function MarketRowView({
   installState,
 }: {
   row: MarketRow;
+  bulkMode: boolean;
+  bulkChecked: boolean;
+  onBulkToggle: () => void;
   expanded: boolean;
   installedCount: number;
   /** 非空 = 位置弹层打开，内容 = 该键的位置行。 */
@@ -949,6 +1015,15 @@ function MarketRowView({
         }}
         className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 focus:outline-none focus-visible:ring-1 focus-visible:ring-edge/20 max-lg:flex-wrap"
       >
+        {bulkMode && (
+          <input
+            type="checkbox"
+            checked={bulkChecked}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onBulkToggle}
+            className="h-3 w-3 shrink-0 accent-emerald-500"
+          />
+        )}
         {expanded ? (
           <ChevronDown className="h-3 w-3 shrink-0 text-neutral-600" />
         ) : (
@@ -967,6 +1042,14 @@ function MarketRowView({
           <Badge className={cn('shrink-0', MARKET_KIND_STYLES[row.kind])}>
             {t(MARKET_KIND_KEY[row.kind])}
           </Badge>
+        )}
+        {row.shared && (
+          <span
+            className="shrink-0 rounded bg-blue-900/30 px-1.5 py-0.5 text-10 text-blue-300"
+            title={`${t('market.sharedFrom')}: ${row.shared.sourceProjectName}`}
+          >
+            {t('market.sharedBadge')} · {row.shared.sourceProjectName}
+          </span>
         )}
         {plugin?.targets && plugin.targets.length > 0 && (
           <span className="shrink-0 text-10 text-neutral-600">
@@ -1067,7 +1150,224 @@ function MarketRowView({
   );
 }
 
-/** 项目级安装 = 每项目一枚带开关的胶囊（已装亮起，点击切换安装/卸载），可多行。 */
+/** 四档 slider 的档位词表（展示名；位置固定：未装 < local < project < user）。 */
+const LEVELS = ['uninstalled', 'local', 'project', 'user'] as const;
+type InstallLevel = (typeof LEVELS)[number];
+const LEVEL_KEY: Record<InstallLevel, MessageKey> = {
+  uninstalled: 'market.levelUninstalled',
+  local: 'market.levelLocal',
+  project: 'market.levelProject',
+  user: 'market.levelUser',
+};
+/** 每落点一条四档滑条（未装→local→project→user；local 仅插件启停链，非插件禁用）。
+ *  滑到新档弹 ConfirmDialog 确认后才发装卸动作；已在档位 = 滑动无效。 */
+function InstallLevelSlider({
+  name,
+  agent,
+  agentScopes,
+  currentLevel,
+  onChange,
+  loading,
+}: {
+  name: string;
+  agent: AssetAgent;
+  /** 该 harness 该类别可装范围（矩阵派生；无该面的档自动禁用）。 */
+  agentScopes: AssetScope[];
+  currentLevel: InstallLevel;
+  onChange: (level: InstallLevel, scope: AssetScope | null) => void;
+  loading: boolean;
+}) {
+  const t = useT();
+  /** 悬停/拖动预览档；确认弹窗打开时锁住展示。 */
+  const [draft, setDraft] = useState<InstallLevel | null>(null);
+  const [confirm, setConfirm] = useState<{
+    level: InstallLevel;
+    scope: AssetScope | null;
+    uninstall: boolean;
+  } | null>(null);
+  const shown = draft ?? currentLevel;
+  const idx = LEVELS.indexOf(shown);
+  const last = LEVELS.length - 1;
+  const pct = (idx / last) * 100;
+
+  // 档位可用性：local 只对插件启停链开放（落装仍两档，2026-11-16 定案）；
+  // project/user 面缺失自动禁用。
+  const enabledOf = (level: InstallLevel): boolean => {
+    if (level === 'uninstalled') return true;
+    if (level === 'local') return false; // 非插件行落装无 local 档
+    return agentScopes.includes(level);
+  };
+
+  const tryLevel = (level: InstallLevel): void => {
+    if (level === currentLevel) return;
+    if (!enabledOf(level)) return;
+    if (level === 'uninstalled') {
+      // 卸载 = 回到未装：确认后按当前档对应落点卸
+      const scope = currentLevel === 'user' ? 'user' : 'project';
+      setConfirm({ level, scope, uninstall: true });
+    } else {
+      setConfirm({ level, scope: level, uninstall: false });
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-32 max-w-32 shrink-0 truncate text-11 text-neutral-400" title={name}>
+        {name}
+      </span>
+      <span className="text-10 shrink-0 text-neutral-600">{harnessUiOf(agent).label}</span>
+      <span className="relative inline-flex h-4 min-w-0 flex-1 items-center">
+        <span
+          className="relative h-1.5 w-full rounded-full"
+          style={{
+            background:
+              'linear-gradient(to right, rgba(255,255,255,0.05), rgba(255,255,255,0.14) 50%, rgba(255,255,255,0.05))',
+          }}
+        >
+          <span
+            className="absolute inset-y-0 left-0 rounded-full bg-emerald-700/70"
+            style={{ width: `${pct}%` }}
+          />
+          {LEVELS.map((lv, i) => (
+            <span
+              key={lv}
+              style={{ left: `${(i / last) * 100}%` }}
+              className={cn(
+                'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full',
+                i <= idx ? 'bg-emerald-300' : 'bg-neutral-600',
+                !enabledOf(lv) && lv !== 'uninstalled' && 'opacity-40',
+              )}
+            />
+          ))}
+          <span
+            style={{ left: `${pct}%` }}
+            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-emerald-300 bg-neutral-200 shadow"
+          />
+          {/* 透明 range：拖动/触屏/方向键免费；松手（onChange 终值）即出确认 */}
+          <input
+            type="range"
+            min={0}
+            max={last}
+            step={1}
+            value={idx}
+            aria-label={t('market.sliderTip')}
+            disabled={loading}
+            onChange={(e) => {
+              const lv = LEVELS[Number(e.target.value)]!;
+              setDraft(null);
+              tryLevel(lv);
+            }}
+            onInput={(e) => setDraft(LEVELS[Number((e.target as HTMLInputElement).value)]!)}
+            onMouseUp={() => setDraft(null)}
+            onTouchEnd={() => setDraft(null)}
+            onBlur={() => setDraft(null)}
+            className="absolute inset-x-0 -top-1.5 bottom-[-6px] w-full cursor-pointer appearance-none bg-transparent opacity-0 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none"
+          />
+        </span>
+      </span>
+      <span className="w-44 shrink-0 text-right text-10 text-neutral-500">
+        {LEVELS.map((lv, i) => (
+          <button
+            key={lv}
+            type="button"
+            disabled={loading || !enabledOf(lv)}
+            onClick={() => tryLevel(lv)}
+            className={cn(
+              'mr-1 rounded px-1 text-10',
+              i === idx ? 'text-emerald-300' : 'text-neutral-500 hover:text-neutral-300',
+              !enabledOf(lv) && 'cursor-not-allowed opacity-40',
+            )}
+          >
+            {t(LEVEL_KEY[lv])}
+          </button>
+        ))}
+      </span>
+      <ConfirmDialog
+        open={confirm !== null}
+        title={t(confirm?.uninstall ? 'market.confirmUninstallTitle' : 'market.confirmInstallTitle')}
+        message={
+          confirm === null
+            ? ''
+            : confirm.uninstall
+              ? t('market.confirmUninstallMsg', {
+                  name,
+                  dest:
+                    confirm.scope === 'user'
+                      ? t('market.destGlobal')
+                      : t('market.scopeProject'),
+                })
+              : t('market.confirmInstallMsg', {
+                  name,
+                  dest: confirm.scope === 'user' ? t('market.destGlobal') : t('market.scopeProject'),
+                })
+        }
+        confirmLabel={t(confirm?.uninstall ? 'market.confirmUninstallTitle' : 'market.confirmInstallTitle')}
+        onConfirm={() => {
+          if (confirm) onChange(confirm.level, confirm.scope);
+        }}
+        onClose={() => setConfirm(null)}
+      />
+    </div>
+  );
+}
+
+/** 多选批操作滑条：选中若干资源后统一选落点（全局/每项目）装过去，二次确认。 */
+function BulkInstallSlider({
+  names,
+  projects,
+  onApply,
+  loading,
+}: {
+  names: string[];
+  projects: ProjectRow[];
+  onApply: (scope: AssetScope, projectId: number | null, agent: AssetAgent) => void;
+  loading: boolean;
+}) {
+  const t = useT();
+  const [target, setTarget] = useState<string>('__global__');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const p = projects.find((x) => String(x.id) === target) ?? null;
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <select
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+        className="rounded border border-edge/[0.1] bg-neutral-900 px-2 py-0.5 text-11 text-neutral-200"
+      >
+        <option value="__global__">{t('market.destGlobal')}</option>
+        {projects.map((x) => (
+          <option key={x.id} value={String(x.id)}>
+            {x.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={loading}
+        onClick={() => setConfirmOpen(true)}
+        className="shrink-0 rounded bg-blue-900/40 px-2 py-0.5 text-11 text-blue-200 hover:bg-blue-900/60 disabled:opacity-40"
+      >
+        {loading ? t('library.installing') : t('market.batchApply')}
+      </button>
+      <ConfirmDialog
+        open={confirmOpen}
+        title={t('market.confirmInstallTitle')}
+        message={t('market.batchConfirmMsg', {
+          n: names.length,
+          dest: p ? t('market.destProject', { name: p.name }) : t('market.destGlobal'),
+        })}
+        confirmLabel={t('market.batchApply')}
+        onConfirm={() =>
+          p ? onApply('project', p.id, 'claude') : onApply('user', null, 'claude')
+        }
+        onClose={() => setConfirmOpen(false)}
+      />
+    </div>
+  );
+}
+
+/** 安装目标选择器：落点行 × 四档滑条（未装→local→project→user），切换二次确认。 */
 function InstallTargetPicker({
   row,
   capabilities,
@@ -1080,7 +1380,7 @@ function InstallTargetPicker({
   row: MarketRow;
   capabilities: InstallCapabilities | null;
   projects: ProjectRow[];
-  /** 该资源当前全部已装位置行（含全局），胶囊点亮与卸载载荷的数据面。 */
+  /** 该资源当前全部已装位置行（含全局），滑条当前档与卸载载荷的数据面。 */
   installedRows: InstallationRow[];
   onInstall: (target: { scope: AssetScope; projectId: number | null; agent: AssetAgent }) => void;
   onUninstall: (target: { scope: AssetScope; projectId: number | null; agent: AssetAgent }) => void;
@@ -1091,33 +1391,37 @@ function InstallTargetPicker({
   const category = row.kind === 'plugin' ? 'skill' : row.kind;
   const attrs = capabilitiesOf(category, capabilities);
   const surfaces = attrs.surfaces;
+  /** 共享行 harness 固定（来源实配的 harness）；其余行可切 harness。 */
+  const sharedHarness = row.shared?.harness;
+  const [agent, setAgent] = useState<AssetAgent>(sharedHarness ?? surfaces[0]?.harness ?? 'claude');
+  const activeAgent = sharedHarness ?? agent;
+  const agentScopes = surfaces.find((s) => s.harness === activeAgent)?.scopes ?? [];
 
-  const [agent, setAgent] = useState<AssetAgent>(surfaces[0]?.harness ?? 'claude');
-  const agentScopes = surfaces.find((s) => s.harness === agent)?.scopes ?? [];
-  // 项目胶囊 = 项目级安装：该 harness 有 project 面用之，否则回落 user 档
-  // （如 codex MCP 住用户级文件——安装 handler 自己再按矩阵校正）。
-  const scope: AssetScope = agentScopes.includes('project') || isPlugin ? 'project' : 'user';
-  // 全局胶囊 = user 档装卸；该 harness 无 user 面时不摆（非插件才有全局概念）。
-  const hasUserScope = !isPlugin && agentScopes.includes('user');
-
-  const verdict: InstallVerdict | null = isPlugin
-    ? null
-    : canInstall(attrs, { scope, agent });
-  const globalVerdict: InstallVerdict | null = hasUserScope
-    ? canInstall(attrs, { scope: 'user', agent })
-    : null;
-
-  // 胶囊点亮判据：该项目（projectId）已装该资源——按 kind/name/key 认，不看 scope。
-  const isInstalled = (projectId: number): boolean =>
-    installedRows.some((r) => r.projectId === projectId);
+  /** 全局（user 档）当前档：该面有 user 档才参与滑条。 */
+  const hasUserScope = agentScopes.includes('user');
   const globalInstalled = installedRows.some((r) => r.projectId === null);
 
+  const handleChange = (
+    projectId: number | null,
+    level: InstallLevel,
+    scope: AssetScope | null,
+  ): void => {
+    if (level === 'uninstalled' && scope) {
+      onUninstall({ scope, projectId, agent: activeAgent });
+    } else if (scope) {
+      onInstall({ scope, projectId, agent: activeAgent });
+    }
+  };
+
+  const loading = installState === 'loading';
+  const anySlider = hasUserScope || projects.length > 0;
+
   return (
-    <div className="space-y-1.5 rounded bg-neutral-950/60 p-2 max-lg:flex-wrap">
+    <div className="space-y-1.5 rounded bg-neutral-950/60 p-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="shrink-0 text-11 text-neutral-500">{t('market.installTo')}</span>
-        {/* harness 切换（skill/mcp；文件类资产今天只有 claude 面） */}
-        {!isPlugin && surfaces.length > 1 && (
+        {/* harness 切换（skill/mcp；共享行 harness 固定） */}
+        {!isPlugin && !sharedHarness && surfaces.length > 1 && (
           <div className="flex shrink-0 items-center rounded bg-neutral-900 p-0.5">
             {surfaces.map((s) => (
               <button
@@ -1134,71 +1438,33 @@ function InstallTargetPicker({
             ))}
           </div>
         )}
-        <span className="text-10 text-neutral-600">{t('market.projectCapsulesTip')}</span>
+        <span className="text-10 text-neutral-600">{t('market.sliderTip')}</span>
       </div>
-      {/* 全局胶囊：亮 = user 档已装（该 harness 有 user 面才摆） */}
-      {hasUserScope && (
-        <div>
-          <button
-            type="button"
-            disabled={installState === 'loading'}
-            title={
-              globalVerdict && !globalVerdict.ok && globalVerdict.reasonKey
-                ? t(globalVerdict.reasonKey)
-                : undefined
-            }
-            onClick={() =>
-              (globalInstalled ? onUninstall : onInstall)(
-                { scope: 'user', projectId: null, agent },
-              )
-            }
-            className={cn(
-              'flex items-center gap-1 rounded-full px-2 py-0.5 text-11',
-              globalInstalled
-                ? 'bg-emerald-900/40 text-emerald-200 hover:bg-emerald-900/60'
-                : 'bg-neutral-900 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200',
-              installState === 'loading' && 'opacity-50',
-            )}
-          >
-            <Globe className="h-2.5 w-2.5" />
-            {t('library.scopeGlobal')}
-            {globalInstalled && <Check className="h-2.5 w-2.5" />}
-          </button>
-        </div>
-      )}
-      {/* 项目胶囊多行：亮 = 该项目已装，点击切换 */}
-      {projects.length === 0 ? (
-        <p className="text-11 text-neutral-600">{t('market.chooseProjectCapsule')}</p>
-      ) : (
-        <div className="flex flex-wrap gap-1">
+      {!anySlider && <p className="text-11 text-neutral-600">{t('market.chooseProjectCapsule')}</p>}
+      {anySlider && (
+        <div className="space-y-1">
+          {hasUserScope && (
+            <InstallLevelSlider
+              name={t('market.destGlobal')}
+              agent={activeAgent}
+              agentScopes={agentScopes}
+              currentLevel={globalInstalled ? 'user' : 'uninstalled'}
+              onChange={(_level, scope) => handleChange(null, _level, scope)}
+              loading={loading}
+            />
+          )}
           {projects.map((p) => {
-            const installed = isInstalled(p.id);
+            const installed = installedRows.some((r) => r.projectId === p.id);
             return (
-              <button
+              <InstallLevelSlider
                 key={p.id}
-                type="button"
-                disabled={installState === 'loading'}
-                title={
-                  verdict && !verdict.ok && verdict.reasonKey
-                    ? t(verdict.reasonKey)
-                    : installed
-                      ? t('market.installedLocations')
-                      : t('market.installTo')
-                }
-                onClick={() =>
-                  (installed ? onUninstall : onInstall)({ scope, projectId: p.id, agent })
-                }
-                className={cn(
-                  'flex items-center gap-1 rounded-full px-2 py-0.5 text-11',
-                  installed
-                    ? 'bg-emerald-900/40 text-emerald-200 hover:bg-emerald-900/60'
-                    : 'bg-neutral-900 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200',
-                  installState === 'loading' && 'opacity-50',
-                )}
-              >
-                {installed && <Check className="h-2.5 w-2.5" />}
-                <span className="max-w-40 truncate">{p.name}</span>
-              </button>
+                name={p.name}
+                agent={activeAgent}
+                agentScopes={agentScopes}
+                currentLevel={installed ? 'project' : 'uninstalled'}
+                onChange={(level, scope) => handleChange(p.id, level, scope)}
+                loading={loading}
+              />
             );
           })}
         </div>
@@ -1209,7 +1475,7 @@ function InstallTargetPicker({
           className="h-3 w-3"
           icon={<Download className="h-3 w-3" />}
         />
-        {installState === 'loading' && (
+        {loading && (
           <span className="ml-1 text-11 text-neutral-400">{t('library.installing')}</span>
         )}
       </div>

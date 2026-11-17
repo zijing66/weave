@@ -8,7 +8,6 @@ import { HARNESS_ORDER } from '@/lib/harness-meta';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import {
@@ -91,7 +90,7 @@ function groupByScope(packs: ToolkitPack[]): ScopeGroup[] {
  * 工具包区段（批 10，批 3 增旧副本警示，仓库维度改批 6）：**以仓库 namespace 为一级**
  * 折叠块（与外层 Skills 同源），市场里的包文件夹为二级，包行为三级——不再按
  * 「Claude Plugins / 表面工具包」这种成分切法分堆（那种切法看不出包属于哪个市场）。
- * 形态与开关粒度不变：CC 原生包 + mods 走「全局安装 + 项目启用」的整包 Switch，
+ * 形态与开关粒度不变：CC 原生包 + mods 走「全局安装 + 项目启用」的整包启停，
  * 其余按本项目落盘；行尾卸载按钮 + 热重载由 daemon 负责。运行态页签按包的
  * manifest targets 过滤（CC 包 targets=['claude']，codex 页签自然不见）。
  */
@@ -159,30 +158,6 @@ export function ToolkitSection({
     );
   };
 
-  /** user 档安装（安装管理面，拍板 7-6 方案 A）：两步 CLI 较慢，行级三态反馈。 */
-  const installUser = async (pack: ToolkitPack): Promise<void> => {
-    const key = rowKey(pack);
-    if (rowBusy(key)) return;
-    await fb.run(
-      key,
-      async () => {
-        const res = await api.install(projectId, {
-          category: 'plugin',
-          name: pack.name,
-          sourceDir: pack.dir,
-          version: pack.version,
-          description: pack.description,
-          scope: 'user',
-          agent: 'claude',
-        });
-        if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-        refresh();
-        show('success', t('toolkit.userInstalled', { key: pack.key ?? pack.name }));
-      },
-      { fail: (e) => t('toolkit.installFailed', { error: errorText(e) }) },
-    );
-  };
-
   /** user 档启停覆写循环（inherit → on → off）：状态源 = 服务端行的 enable。 */
   const cycleUserEnable = async (pack: ToolkitPack, next: EnableOverride): Promise<void> => {
     const key = rowKey(pack);
@@ -231,9 +206,14 @@ export function ToolkitSection({
   const visible = useMemo(() => {
     if (!packs) return [];
     return packs.filter(
-      (p) => !p.weavePack && (runtimeTab === 'all' || p.targets.includes(runtimeTab)),
+      (p) =>
+        !p.weavePack &&
+        (runtimeTab === 'all' || p.targets.includes(runtimeTab)) &&
+        // user 视图（独立安装管理面）：未安装的 CC 包不展示——安装入口在资源
+        // 市场，这里不再摆「安装」空行（2026-11-16 用户裁决）。
+        !(scope === 'user' && !!p.key && !p.installed),
     );
-  }, [packs, runtimeTab]);
+  }, [packs, runtimeTab, scope]);
 
   const repos = useMemo(() => groupByRepo(visible), [visible]);
   /** 每个仓的二级块；仓内包全部直接落在扫描根下 → 没有父级文件夹可当汇总单位，
@@ -344,48 +324,50 @@ export function ToolkitSection({
             </button>
           </Tooltip>
           {userManaged ? (
-            p.installed ? (
-              <Tooltip
-                label={t('toolkit.enableTip', { state: t(STATE_LABEL[userState]) })}
-              >
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void cycleUserEnable(p, NEXT_STATE[userState])}
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
-                    userState === 'on'
-                      ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
-                      : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
-                  )}
-                >
-                  <FeedbackIcon
-                    state={fb.stateOf(rowKey(p))}
-                    className="h-3 w-3"
-                    icon={<Power className="h-3 w-3" />}
-                  />
-                  {t(STATE_LABEL[userState])}
-                </button>
-              </Tooltip>
-            ) : (
-              <Tooltip label={t('toolkit.installTip')}>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void installUser(p)}
-                  className="rounded bg-blue-900/50 px-2 py-0.5 text-10 text-blue-200 hover:bg-blue-800/60 disabled:opacity-40"
-                >
-                  {isBusy ? t('toolkit.installing') : t('toolkit.install')}
-                </button>
-              </Tooltip>
-            )
-          ) : (
-            <Tooltip label={t('toolkit.toggleTip')}>
-              <Switch
-                checked={p.enabled}
+            <Tooltip
+              label={t('toolkit.enableTip', { state: t(STATE_LABEL[userState]) })}
+            >
+              <button
+                type="button"
                 disabled={isBusy}
-                onChange={(v) => void toggle(p, v)}
-              />
+                onClick={() => void cycleUserEnable(p, NEXT_STATE[userState])}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                  userState === 'on'
+                    ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
+                    : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
+                )}
+              >
+                <FeedbackIcon
+                  state={fb.stateOf(rowKey(p))}
+                  className="h-3 w-3"
+                  icon={<Power className="h-3 w-3" />}
+                />
+                {t(STATE_LABEL[userState])}
+              </button>
+            </Tooltip>
+          ) : (
+            // 启停控件统一为 Power 循环胶囊（与 user 视图 CC 包、McpGrid 同款）——
+            // Switch 只留给 hooks 规则面，资源管理一行一个控法。
+            <Tooltip label={t('toolkit.toggleTip')}>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => void toggle(p, !p.enabled)}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                  p.enabled
+                    ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
+                    : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
+                )}
+              >
+                <FeedbackIcon
+                  state={fb.stateOf(rowKey(p))}
+                  className="h-3 w-3"
+                  icon={<Power className="h-3 w-3" />}
+                />
+                {p.enabled ? t('toolkit.enableOn') : t('toolkit.enableOff')}
+              </button>
             </Tooltip>
           )}
         </span>

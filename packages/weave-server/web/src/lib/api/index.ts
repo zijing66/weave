@@ -148,6 +148,8 @@ export type {
   ProjectFile,
   InstallationKind,
   InstallationRow,
+  McpSharedRow,
+  McpSharedResponse,
 } from './install';
 export { FILE_ASSET_CATEGORIES } from './install';
 export type {

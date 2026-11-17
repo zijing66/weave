@@ -8,6 +8,8 @@ import type {
   InstallationKind,
   InstallationRow,
   MarketPluginAsset,
+  McpServerConfig,
+  McpSharedRow,
   McpTemplate,
   SkillAsset,
 } from '@/lib/api';
@@ -23,6 +25,8 @@ export interface MarketRow {
   mcp?: McpTemplate;
   file?: FileAssetTemplate;
   plugin?: MarketPluginAsset;
+  /** MCP 共享行（聚合托管项目实配）：载荷与来源项目。 */
+  shared?: { config: McpServerConfig; harness: McpSharedRow['harness']; sourceProjectName: string };
 }
 
 /** 一个库的四类扫描结果（GET /libraries/:id/assets 的响应形状）。 */
@@ -31,6 +35,19 @@ export interface LibraryAssets {
   mcp: McpTemplate[];
   files: FileAssetTemplate[];
   plugins: MarketPluginAsset[];
+}
+
+/** MCP 共享行摊平：进市场清单，与模板行同一 uid 空间（marketId=0）。
+ *  与库模板行按 kind:name 自然去重——搜索并集里两处同名会各占一行（可接受：
+ *  来源不同，载荷可能不同）。 */
+export function rowsOfSharedMcp(shared: readonly McpSharedRow[]): MarketRow[] {
+  return shared.map((s) => ({
+    uid: `shared:mcp:${s.harness}:${s.name}`,
+    marketId: 0,
+    kind: 'mcp' as const,
+    name: s.name,
+    shared: { config: s.config, harness: s.harness, sourceProjectName: s.sourceProjectName },
+  }));
 }
 
 /** 四类摊平（包内 skill 不进——隶属插件，随包启停，与市场侧栏同口径）。 */
