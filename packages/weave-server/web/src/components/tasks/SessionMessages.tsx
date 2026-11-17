@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, Trash2, Workflow, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
@@ -552,6 +552,27 @@ export function SessionMessages({
     enterSelect, pickedEntries, allPicked, toggleAll,
     rowProps, cancelTap,
   } = useConvSelect({ thread, coarse });
+
+  // 多选切换的视口补偿：进/出多选会把过程输出叠层整叠摊平（或收回成叠），
+  // 对话中部布局剧变而滚动位置不动 → 视口跳到错误的气泡。摊平后的首拍把
+  // 切换前记的锚（视口顶那条气泡）滚回原位——锚不在已加载窗口（清空勾选等）
+  // 就不动，交贴底缺省。
+  const selectingPrev = useRef(false);
+  useLayoutEffect(() => {
+    if (selecting === selectingPrev.current) return;
+    selectingPrev.current = selecting;
+    const a = lastAnchor.current;
+    if (!a) return;
+    requestAnimationFrame(() => {
+      const node = threadRef.current?.querySelector(
+        `[data-conv-anchor="${CSS.escape(a.key)}"]`,
+      );
+      const el = threadRef.current;
+      if (!el || !node) return;
+      el.scrollTop =
+        node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - a.offset;
+    });
+  }, [selecting]);
 
   // 分享/导出域：复制 / canvas 图片 / 单页 HTML（反馈键共用 convImg:<id>）
   const { copyPicked, shareImage, shareViaSheet, exportHtml, exportMarkdown, openShareMenu } = useConvShare({
