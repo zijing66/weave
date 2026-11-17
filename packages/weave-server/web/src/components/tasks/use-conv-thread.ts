@@ -387,9 +387,11 @@ export function useConvThread(deps: {
     });
   }, [loadExecutions, sessionId]);
 
-  /** 向上翻页：游标 = 手上最旧那条的事件 id。 */
+  /** 向上翻页：游标 = 手上最旧**有事件 id**那条（旁白/命令/作答回显这些转录补采
+   *  条目没有事件、eventId undefined，且常被按时刻插到流的最前面——拿它当游标
+   *  翻页就静默失效，历史加载不出来）。 */
   const loadEarlier = useCallback(async (): Promise<void> => {
-    const oldest = entries?.[0]?.eventId;
+    const oldest = entries?.find((e) => e.eventId !== undefined)?.eventId;
     if (oldest === undefined || loadingEarlier || headDone) return;
     setLoadingEarlier(true);
     try {
@@ -398,7 +400,13 @@ export function useConvThread(deps: {
       const older = conversationOf(events, lifecycle, harness);
       if (older.length > 0) {
         scrollFix.current = threadRef.current?.scrollHeight ?? null;
-        setEntries((prev) => [...older, ...(prev ?? [])]);
+        // 按 key 去重合并：翻页与 SSE 增量竞态时同一条目会两路各到一份，
+        // 不去重就是「历史里冒出重复气泡、中间还夹着断档」的观感。
+        setEntries((prev) => {
+          const seen = new Set((prev ?? []).map((e) => e.key));
+          const fresh = older.filter((e) => !seen.has(e.key));
+          return fresh.length > 0 ? [...fresh, ...(prev ?? [])] : (prev ?? []);
+        });
       }
     } catch (e) {
       fail(e);
