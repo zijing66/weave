@@ -9,6 +9,7 @@ import {
   maximizeWeztermWindow,
   openInWezterm,
   parseAttachTargetId,
+  parseWeztermPanes,
   planWeztermGrid,
   runInWezterm,
   weztermMuxKey,
@@ -465,6 +466,8 @@ export class WeztermBackend extends TerminalBackend {
    * 关 pane（`wezterm cli kill-pane`）：宿主随 pane 一起退出——这就是「退出会话」
    * 的远程等价（harness 没有「请退出」这种信号，pane 没了它就没了）。mux 定位口径
    * 与 sendKeys 同；目标没了 throw，不静默假装关掉了。
+   * 超时 ≠ 失败（mux 迟滞实测可拖到分钟级、pane 早已关掉）：超时后复查一次枚举，
+   * pane 真不在了按成功收；还在 = 真失败，如实 throw。
    */
   override async closePane(paneId: string): Promise<void> {
     const parsed = parsePromptPaneId(paneId);
@@ -472,10 +475,17 @@ export class WeztermBackend extends TerminalBackend {
     const mux = await weztermMuxForId(parsed.muxKey);
     if (!mux) throw new Error('wezterm instance is gone — cannot close the pane');
     const pane = String(parsed.paneId);
-    const killed = await weztermCli(['cli', 'kill-pane', '--pane-id', pane], mux.socket);
-    if (!killed?.ok) {
-      throw new Error(weztermStepError(['cli', 'kill-pane', '--pane-id', pane], mux.socket, killed));
+    const args = ['cli', 'kill-pane', '--pane-id', pane];
+    const killed = await weztermCli(args, mux.socket);
+    if (killed?.ok) return;
+    if (killed?.timedOut) {
+      const listed = await weztermCli(['cli', 'list', '--format', 'json'], mux.socket);
+      const still = parseWeztermPanes(listed?.ok ? listed.out : null).some(
+        (p) => String(p.paneId) === pane,
+      );
+      if (listed?.ok && !still) return; // pane 已没了 = 关成了（回执被迟滞截断）
     }
+    throw new Error(weztermStepError(args, mux.socket, killed));
   }
 
   /** 读 pane 可视屏（`cli get-text`）：mux 定位口径与 sendKeys 同；失败 null（不猜）。 */
