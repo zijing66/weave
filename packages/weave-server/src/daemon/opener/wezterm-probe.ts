@@ -123,8 +123,17 @@ export function captureCommand(
  * 陈旧/失联 socket 探一次就泄一个（实测攒过 16 个，复盘见 docs/DECISIONS.md）。
  * 带上后连不上是干净的 rc≠0，probeGate 据此判永久死。
  */
-export function weztermCli(args: string[], socket: string): Promise<CaptureResult | null> {
-  return captureCommand('wezterm', weztermCliArgs(args), { ...process.env, WEZTERM_UNIX_SOCKET: socket });
+export function weztermCli(
+  args: string[],
+  socket: string,
+  timeoutMs?: number,
+): Promise<CaptureResult | null> {
+  return captureCommand(
+    'wezterm',
+    weztermCliArgs(args),
+    { ...process.env, WEZTERM_UNIX_SOCKET: socket },
+    timeoutMs,
+  );
 }
 
 /** cli 子命令参数 → 补上 `--no-auto-start`（须落在 `cli` 与子命令之间）。 */

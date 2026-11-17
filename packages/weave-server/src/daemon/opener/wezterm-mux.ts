@@ -465,14 +465,52 @@ export async function runInWezterm(dir: string, argv: string[]): Promise<LaunchO
     return await weztermSpawnAndSend(chosen.socket, dir, argv, split, chosen.workspace);
   } catch (err) {
     // 半死实例（进程活着但 mux 答不上话，实测 cli 挂 120s+、GUI 日志刷
-    // os error 10054）会吃满 5s 超时——落点决策是按「探活通过」选的，超时
+    // os error 10054）会吃满超时——落点决策是按「探活通过」选的，超时
     // 说明探活的结论已过期。换下一个健康实例重试一次（分屏换新窗），再失败
     // 才把真相抛给上层（投递路径报「自动打开失败」，前端可手动重发）。
+    // **防双开**：超时 ≠ 失败（mux 迟滞时 spawn 实测 183s 才回执、窗口早落地），
+    // 先在原实例确认窗没开成才换实例重试；开成了就补记账收尾。
     const others = muxes.filter((m) => m.socket !== chosen!.socket);
     if (others.length === 0) throw err;
+    const landed = await spawnedPaneAfterTimeout(chosen.socket, dir, argv, platform);
+    if (landed) return landed;
     const next = others.reduce((a, b) => (b.idleMs < a.idleMs ? b : a));
     probeGate.cooledDown(chosen.socket);
     return weztermSpawnAndSend(next.socket, dir, argv, null, next.workspace);
+  }
+}
+
+/**
+ * 超时后的落子确认：枚举原实例找 cwd 命中的 pane——spawn 已成功只是回执被
+ * 超时截断的形态。命中即按该 pane 补收尾（send-text 投递命令 + 记账 + 起点
+ * env），不重开第二扇窗；该 pane 已有命令在跑（老 pane）时 send-text 也无害——
+ * 与正常投递同语义。枚举也失败 = 确认不了，返回 null 交上层重试（双开风险
+ * 接受：失败场景多于双开）。
+ */
+async function spawnedPaneAfterTimeout(
+  socket: string,
+  dir: string,
+  argv: string[],
+  platform: NodeJS.Platform,
+): Promise<LaunchOrigin | null> {
+  try {
+    const listed = await weztermCli(['cli', 'list', '--format', 'json'], socket);
+    if (!listed?.ok) return null;
+    const panes = parseWeztermPanes(listed.out);
+    const key = normalizeDirKey(dir, process.platform);
+    const hits = panes.filter((p) => p.cwd && normalizeDirKey(p.cwd, process.platform) === key);
+    if (hits.length === 0) return null;
+    const pane = hits[hits.length - 1]!;
+    const paneId = String(pane.paneId);
+    noteSpawnedPane(socket, paneId, dir, null);
+    await renameWeztermTab(socket, paneId, dir, true);
+    const sendArgs = ['cli', 'send-text', '--pane-id', paneId, '--no-paste', `${joinCmd(argv, platform)}\r`];
+    const sent = await weztermCli(sendArgs, socket);
+    if (!sent?.ok) throw new Error(weztermStepError(sendArgs, socket, sent));
+    const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
+    return { env: { [paneKey]: paneId, [socketKey]: socket } };
+  } catch {
+    return null;
   }
 }
 
@@ -495,7 +533,9 @@ export async function weztermSpawnPane(
   const spawnArgs = split
     ? ['cli', 'split-pane', '--pane-id', String(split.paneId), `--${split.direction}`, '--cwd', dir]
     : planWeztermNewWindow(dir, workspace);
-  const spawned = await weztermCli(spawnArgs, socket);
+  // 新窗 spawn 单独放宽（30s）：mux IPC 迟滞实测可拖到分钟级、5s 超时照常成功
+  //（窗口已落地只是回执晚到）——低频动作多等无害；list/send-text 维持 5s。
+  const spawned = await weztermCli(spawnArgs, socket, split ? undefined : 30_000);
   if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, socket, spawned));
   const paneId = spawned.out.trim();
   if (!/^\d+$/.test(paneId)) {
