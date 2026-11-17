@@ -135,10 +135,10 @@ export function BackupSection() {
         )}
       </div>
 
-      {/* 包清单（新→旧，最多摆 7 份；空 = 一份还没有） */}
+      {/* 包清单（新→旧；max-h + 滚动——包攒到 30+ 份时列表会顶爆设置弹窗） */}
       {bundle && bundle.packages.length > 0 && (
-        <ul className="space-y-0.5">
-          {bundle.packages.slice(0, 7).map((pkg) => (
+        <ul className="max-h-48 space-y-0.5 overflow-y-auto pr-1">
+          {bundle.packages.map((pkg) => (
             <li key={pkg.name} className="flex items-center justify-between gap-2 rounded px-1.5 py-0.5 text-10 text-neutral-500 odd:bg-neutral-950/40">
               <span className="truncate font-mono">{pkg.name}</span>
               <span className="shrink-0 tabular-nums">{fmtBytes(pkg.bytes)}</span>
