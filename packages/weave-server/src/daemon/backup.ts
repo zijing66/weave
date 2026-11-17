@@ -333,7 +333,9 @@ export class BackupEngine {
       mtime,
     });
 
-    const backupsDir = getBackupsDir(dataRoot);
+    // 无参 = 全局 cache 根（<configDir>/weave/cache/backups）——传 dataRoot 会
+    // 再拼一层落 <data>/cache/backups，与包清单的读取目录（getBackupsDir()）错开。
+    const backupsDir = getBackupsDir();
     await mkdir(backupsDir, { recursive: true });
     const stamp = stampOf(mtime);
     const file = path.join(backupsDir, `weave-backup-${stamp}.tar.gz`);
