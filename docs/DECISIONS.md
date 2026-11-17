@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-11-16
+
+- **pet 的 SSE 消费收敛进 lib/sse 单例总线（豁免收窄；用户裁决「要做」）**：起因 = 用户问「后端能否统一接入事件总线、pet 分发也实时、多处状态同步而不是各走各的」。核实结论：后端早统一（HookEventBus + DataBus → SseHub → 唯一 `/events`；dashboard 全部走 push/行级补丁），「各走各的」只在 pet 消费端——裸 `new EventSource`（D-1 豁免）把大部分帧扔掉、靠「帧只当重拉信号 + 15s 全量三连拉」，与 dashboard 的行级补丁两套对账节拍。收敛（04d0a02f）：pet 改走 `lib/sse.ts`（心跳判活/断线补发/`?since=`/resync 全继承；boot 先跑 `refreshAuth`——sse 建连闸读 `authState`，dashboard 由 App 探、pet 自跑）；`sessionLiveness`/`sessionInterrupt` push 帧行级补丁直写聚合输入（`applyRowPatch`），hook 帧按域只拉受影响那份（dispatch.→dispatches、question.pending→questions、event.ingested 等→sessions），15s 兜底节拍与前台 visibilitychange 对账保留。**豁免条款收窄**：D-1 的「pet 自建 EventSource」不再成立，但「WebView2 后台节流 → 15s 对账兜底」那一半理由仍成立、保留。
+
 ## 2026-11-15
 
 - **superagent 项目 worktree 默认值裁决 = C 维持默认关（用户裁定）**：起因 = 用户问「superagent 项目是否默认开 worktree 且不支持关闭」。子 Agent 三选项分析（A 默认开+上帝会话豁免 / B 默认开无豁免 / C 维持默认关）后用户裁定 C——**默认值不动**（HarnessPicker 开关 `useState(false)` 维持逐次手选）。关键发现：默认关只是 B5「最小切片」的隐含选择，从无带日期用户裁决，本条即补这个空位。核心论据：① 上帝会话套 worktree 是净损失——治理账（teams/state/playbooks + 记忆出口读主干）必须即时在主干可见，并回延迟与合并梯碰治理文件都是新风险面；superagent 仓内并发本来就低（`projects/<项目>/<会话>/` 产物层天然按会话隔离）；② 默认开会引入 409 新失败模式（git 缺席让出厂项目起不了会话）；③ A 的豁免判据（`projects.superagent` 列单点翻转）绕一圈等于承认「默认开」没赚到什么；④ 五起 git index 竞态已有专属纪律（提交前复核 + numstat 护栏）兜着。**后续触发条件（已记录）**：若未来出现多上帝/编排会话并行改 teams/state 再撞 index，届时裁「superagent 项目默认开 + 显式开关可关」（判据 = `projects.superagent` 列）。另：worktree 时机语义此前散在 G6/B5 批注未成文——**存活中不 rebase、退出（sessionExit 事件落库）15s 内并回、并回走合并梯、403/409 如实报**，随本条一并成文。

@@ -7,12 +7,17 @@
  * 三腿同值去重）。
  *
  * 认证与 dashboard 同一条会话 cookie（宿主 exe 首导航前种进独立 profile）；
- * SSE 走裸 EventSource（本页不引 sse.ts——那是 React 生态的单例总线，这里
- * 一页一线程一条流，断线重连 EventSource 自带）。
+ * SSE 走 lib/sse.ts 单例总线（2026-11-16 收敛：自建 EventSource 退役）——与
+ * dashboard 消费同一份帧流、同一套心跳判活/断线补发/resync 语义，push 帧直接
+ * 写状态（行级补丁），不再「帧只当重拉信号 + 15s 全量三连拉」两套对账节拍。
+ * auth.ts 的登录探测 pet 自己先跑一次（sse.ts 的建连闸读它）。
  */
 
 import { createSpritePlayer, GAZE_ROW, SPRITE_GRID, type PetAnimation } from './sprite';
 import { deriveSessionStatus } from '@/components/tasks/session-status';
+import { refreshAuth } from '@/lib/auth';
+import { subscribeHook, subscribePush } from '@/lib/sse';
+import { type SessionRow as ApiSessionRow, type HookDispatch } from '@/lib/api';
 
 const API_BASE = '/api';
 
@@ -20,23 +25,7 @@ const API_BASE = '/api';
 // 数据面：与任务面板同源的三个列表 + 聚合状态机
 // ---------------------------------------------------------------------------
 
-interface SessionRow {
-  sessionId: string;
-  projectId: number | null;
-  title: string | null;
-  lastSeenAt: string;
-  turnOpen?: boolean;
-  lastEventType?: string | null;
-  pidAlive?: boolean | null;
-  interruptedAt?: number | null;
-  harness?: string | null;
-}
-
-interface HookDispatch {
-  sessionId: string | null;
-  status: 'pending' | 'injected' | 'running' | 'succeeded' | 'failed' | 'timeout';
-  startedAt: string;
-}
+type SessionRow = ApiSessionRow;
 
 interface PendingQuestionEntry {
   sessionId: string;
@@ -133,10 +122,13 @@ function aggregate(
   }
   // 运行中：与会话列表同一份派生状态（turnOpen 静默窗 / dispatch / pidAlive /
   // 中断 / 压缩全在 deriveSessionStatus 里算好了），pet 不再自带第二份简化判据。
-  const anyBusy = sessions.some((s) => {
-    const st = statusOf(s);
-    return st === 'running' || st === 'compacting';
-  });
+  // 乐观名单并进：dispatch.started 帧已到、API 未确认的会话按运行中算。
+  const anyBusy =
+    pendingRunning.size > 0 ||
+    sessions.some((s) => {
+      const st = statusOf(s);
+      return st === 'running' || st === 'compacting';
+    });
   if (anyBusy) {
     return { anim: busyAnim, bubble: null, focusSessionId: null, stateBubbles };
   }
@@ -151,11 +143,7 @@ function aggregate(
 
 /** 「刚完成」判据的运行痕迹：上一拍聚合成运行中（结网循环）的时刻。 */
 let lastRunningAt = 0;
-/** 上次切到运行中的时刻（防抖：状态切换间隔不足此值不跟，免得 busy/idle 高频打摆）。 */
-let lastBusySwitchAt = 0;
 const JUST_FINISHED_MS = 3 * 60_000;
-/** 运行↔空闲切换防抖窗：低于它不认新状态（turn 间隙/单事件脉冲不再来回切）。 */
-const BUSY_SWITCH_DEBOUNCE_MS = 20_000;
 /** 空闲多久后转睡觉：全部会话静默超过此时长 = 没人盯着，蜷起来值守。 */
 const SLEEP_AFTER_MS = 10 * 60_000;
 
@@ -181,32 +169,103 @@ async function fetchJson<T>(path: string): Promise<T | null> {
 let sessions: SessionRow[] = [];
 let dispatches: HookDispatch[] = [];
 let questions: PendingQuestionEntry[] = [];
+/** dispatch.started 帧已见、API 还没确认的会话（乐观置位，与列表 overlay 同思路）：
+ *  聚合判据并进「运行中」，refreshSessions 回来即清（落库 dispatch 已可查）。 */
+const pendingRunning = new Set<string>();
+/** 行级补丁缓冲（与 session-status-store 同思路）：push 帧的绝对值先记下，
+ *  落到 sessions 快照上再重算——聚合输入始终是一份完整行集。 */
+const rowPatch: {
+  alive?: Record<string, boolean>;
+  interrupted?: Record<string, number>;
+} = {};
 
-async function refreshAll(): Promise<void> {
-  const [s, d, q] = await Promise.all([
-    fetchJson<{ sessions: SessionRow[] }>('/sessions'),
-    fetchJson<{ dispatches: HookDispatch[] }>('/hooks/dispatches?limit=200'),
-    fetchJson<{ questions: PendingQuestionEntry[] }>('/messaging/questions'),
-  ]);
+function applyRowPatch(): void {
+  for (const s of sessions) {
+    const alive = rowPatch.alive?.[s.sessionId];
+    if (alive !== undefined) s.pidAlive = alive;
+    const at = rowPatch.interrupted?.[s.sessionId];
+    if (at !== undefined) s.interruptedAt = at;
+  }
+}
+
+async function refreshSessions(): Promise<void> {
+  const s = await fetchJson<{ sessions: SessionRow[] }>('/sessions');
   if (s) sessions = s.sessions;
+  applyRowPatch();
+  // API 已确认：落库 dispatch 可查了，乐观名单使命完成
+  pendingRunning.clear();
+}
+
+async function refreshDispatches(): Promise<void> {
+  const d = await fetchJson<{ dispatches: HookDispatch[] }>('/hooks/dispatches?limit=200');
   if (d) dispatches = d.dispatches;
+}
+
+async function refreshQuestions(): Promise<void> {
+  const q = await fetchJson<{ questions: PendingQuestionEntry[] }>('/messaging/questions');
   if (q) questions = q.questions;
 }
 
-function connectSse(onEvent: () => void): void {
-  const es = new EventSource(`${API_BASE}/events`);
-  es.onmessage = (ev) => {
-    try {
-      const frame = JSON.parse(ev.data) as { type?: string; kind?: string };
-      if (frame.type === 'ping') return;
-      // hook 域帧（event.ingested/dispatch.*/watch.fired/question.pending）与
-      // resync 都值得重算；其余帧忽略
-      if (frame.type === 'hook' || frame.type === 'resync') onEvent();
-    } catch {
-      // 坏帧忽略
-    }
+async function refreshAll(): Promise<void> {
+  await Promise.all([refreshSessions(), refreshDispatches(), refreshQuestions()]);
+}
+
+/**
+ * 帧接线（与 dashboard 消费同一份流）：push 帧直接写状态，hook 帧只拉受影响的
+ * 那一份——状态同步从「两套对账节拍」收敛成「同一拍」。返回 recompute（重算
+ * 聚合）供乐观臂与兜底节拍复用。
+ */
+function connectSse(recompute: () => void): { onDispatchStarted: (sessionId: string) => void } {
+  const applySessions = (): void => {
+    applyRowPatch();
+    recompute();
   };
-  // EventSource 自带重连；401 时服务端关流，重连风暴由浏览器背压兜住
+  subscribePush<{ alive?: Record<string, boolean> }>('sessionLiveness', (p) => {
+    if (p.alive) {
+      rowPatch.alive = { ...rowPatch.alive, ...p.alive };
+      applySessions();
+    }
+  });
+  subscribePush<{ interrupted?: Record<string, number> }>('sessionInterrupt', (p) => {
+    if (p.interrupted) {
+      rowPatch.interrupted = { ...rowPatch.interrupted, ...p.interrupted };
+      applySessions();
+    }
+  });
+  // dispatch.started 直通乐观置位：会话列表靠 overlay 即时亮运行中，pet 同拍进
+  // 跑轮——不等防抖 + 接口来回（延迟真凶）。API 回来后照常对账。
+  const offs = [
+    subscribeHook(
+      (frame) => {
+        if (frame.sessionId) {
+          pendingRunning.add(frame.sessionId);
+          recompute();
+        }
+      },
+      ['dispatch.started'],
+    ),
+  ];
+  // hook 域帧只拉受影响的那份（500ms 防抖沿用：帧密时合并成一拉）
+  let debounce: number | null = null;
+  const pull = (fn: () => Promise<void>): void => {
+    if (debounce !== null) return;
+    debounce = window.setTimeout(() => {
+      debounce = null;
+      void fn().then(recompute);
+    }, 500);
+  };
+  offs.push(
+    subscribeHook((_frame) => pull(refreshSessions), [
+      'event.ingested',
+      'session.renamed',
+      'watch.fired',
+      'question.pending',
+      'message.',
+    ]),
+    subscribeHook((_frame) => pull(refreshDispatches), ['dispatch.']),
+    subscribeHook((_frame) => pull(refreshQuestions), ['question.pending']),
+  );
+  return { onDispatchStarted: (id) => void id };
 }
 
 // ---------------------------------------------------------------------------
@@ -741,22 +800,8 @@ function applyAggregated(next: Aggregated): void {
     else wavingDone = true;
   }
   if (next.anim === 'review' || next.anim === 'running') lastRunningAt = Date.now();
-  // 运行↔空闲防抖：运行态判定本身有脉冲性（turn 间隙、单条事件窗），聚合一拍
-  // 一变就把动画来回切。与上次切换间隔不足窗值时维持现状——只有状态稳住了
-  // 窗值时长才真切。
-  const busyLike = next.anim === 'review' || next.anim === 'running';
-  const wasBusyLike = lastAnim === 'review' || lastAnim === 'running';
-  if (busyLike !== wasBusyLike && lastBusySwitchAt !== 0) {
-    const sinceSwitch = Date.now() - lastBusySwitchAt;
-    if (sinceSwitch < BUSY_SWITCH_DEBOUNCE_MS) {
-      // 窗内回摆：当作噪声吞掉，维持上次动画（气泡照常更新）
-      next = { ...next, anim: lastAnim ?? next.anim };
-    } else {
-      lastBusySwitchAt = Date.now();
-    }
-  } else if (busyLike !== wasBusyLike) {
-    lastBusySwitchAt = Date.now();
-  }
+  // 不另设防抖：判据与列表同一份 deriveSessionStatus——它的 STALE_TURN_MS
+  // 静默兜底窗就是防抖（单点内），pet 再加第二层只会引入两边不同步。
   // 运行中（结网/跑轮）无限循环值守；其余动画主循环 ×3 后自然回落 idle。
   // 停止时连切动画一起冻结（画面完全静止），气泡与提醒照常。
   if (!paused) player.play(next.anim, { loopForever: next.anim === 'review' || next.anim === 'running' });
@@ -1098,6 +1143,9 @@ async function boot(): Promise<void> {
   fitCanvas();
   window.addEventListener('resize', fitCanvas);
 
+  // 认证探测先行：lib/sse 的建连闸读 authState（dashboard 由 App 探，pet 自跑）。
+  await refreshAuth();
+
   // 宠物选择：settings.pet.petId；资产列表里没有就回落第一只（都没有就空转）
   const [bundle, pets] = await Promise.all([
     fetchJson<{ settings?: { pet?: { petId?: string; notifications?: boolean; size?: string } } }>('/settings'),
@@ -1114,23 +1162,15 @@ async function boot(): Promise<void> {
   }
 
   await refreshAll();
-  applyAggregated(aggregate(sessions, dispatches, questions));
+  const recompute = (): void => applyAggregated(aggregate(sessions, dispatches, questions));
+  recompute();
+  connectSse(recompute);
 
-  let debounceTimer: number | null = null;
-  const onEvent = (): void => {
-    if (debounceTimer !== null) return;
-    debounceTimer = window.setTimeout(() => {
-      debounceTimer = null;
-      void refreshAll().then(() => applyAggregated(aggregate(sessions, dispatches, questions)));
-    }, 500);
-  };
-  connectSse(onEvent);
-
-  // 聚合兜底节拍：无事件时「刚完成→idle」「运行痕迹过期」也要走到；顺带重拉
+  // 聚合兜底节拍：无事件时「刚完成→idle」「运行痕迹过期」也要走到；顺带对账
   // ——问题清除不发帧（bus.ts：问题面只走 GET），最后一次 refreshAll 若在
   // 清除前落空，缓存的 questions 会把「等你回答」挂到下一条 hook 帧为止。
   window.setInterval(() => {
-    void refreshAll().then(() => applyAggregated(aggregate(sessions, dispatches, questions)));
+    void refreshAll().then(recompute);
   }, 15_000);
 
   // WebView2 对非激活窗的定时器节流可达分钟级：SSE 帧与 15s 节拍都可能整段
