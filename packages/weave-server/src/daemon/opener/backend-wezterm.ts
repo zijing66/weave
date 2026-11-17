@@ -29,6 +29,7 @@ import {
 } from './wezterm-probe.js';
 import {
   matchWindowsToMuxIds,
+  normTitle,
   winListOwnedWindows,
   winRaiseOnce,
   winRaiseTerminalWindow,
@@ -210,6 +211,20 @@ export class WeztermBackend extends TerminalBackend {
    * 必命中），唯一配对即 HWND。配不出 = null（退标题认窗老路）。
    */
   private async hwndOfWindow(mux: WeztermMux, windowId: number): Promise<number | null> {
+    const resolved = await this.hwndAndVisOfWindow(mux, windowId);
+    return resolved && 'hwnd' in resolved ? resolved.hwnd : null;
+  }
+
+  /**
+   * hwndOfWindow 的完整形：配对成功回 `{hwnd}`；配对失败（多窗同题且互证不出）
+   * 但**全部候选 OS 窗的实况可见性一致**时回 `{vis}`——答案与具体配对无关（两个
+   * 同题 Claude Code 窗同隐同显是常态），按一致值答，不再让可见性查询陪葬于
+   * 认窗歧义（实测成因：badge 把 null 当可见计，显隐账对不上）。全不一致 = null。
+   */
+  private async hwndAndVisOfWindow(
+    mux: WeztermMux,
+    windowId: number,
+  ): Promise<{ hwnd: number } | { vis: 'visible' | 'hidden' } | null> {
     const guiPid = weztermGuiPidOf(mux.socket);
     if (guiPid === null) return null;
     const windows = await winListOwnedWindows(guiPid);
@@ -238,14 +253,20 @@ export class WeztermBackend extends TerminalBackend {
         if (m) hwndVis.set(w.hwnd, m[1] as 'visible' | 'hidden');
       }
     }
-    return (
-      matchWindowsToMuxIds(
-        windows,
-        byId,
-        muxVis,
-        (h) => hwndVis.get(h) ?? null,
-      ).get(windowId) ?? null
-    );
+    const pairing = matchWindowsToMuxIds(windows, byId, muxVis, (h) => hwndVis.get(h) ?? null);
+    const hwnd = pairing.get(windowId);
+    if (hwnd !== undefined) return { hwnd };
+    // 配对失败：本窗的候选（标题命中且未被别的 mux 窗认走）实况一致 → 按一致值答。
+    const titles = byId.get(windowId);
+    if (!titles || titles.length === 0) return null;
+    const normed = new Set(titles.map((t) => normTitle(t)));
+    const paired = new Set(pairing.values());
+    const cands = windows
+      .filter((w) => normed.has(normTitle(w.title)) && !paired.has(w.hwnd))
+      .map((w) => hwndVis.get(w.hwnd))
+      .filter((v): v is 'visible' | 'hidden' => v !== undefined);
+    if (cands.length === 0) return null;
+    return cands.every((v) => v === cands[0]) ? { vis: cands[0]! } : null;
   }
 
   /**
@@ -304,16 +325,18 @@ export class WeztermBackend extends TerminalBackend {
       (p) => p.windowId === parsed.windowId && p.tabId === parsed.tabId,
     );
     if (!pane) return null;
-    // HWND 配对可信时直查（多窗同题时标题认窗恒歧义 → null → 前端不摆态）
-    const hwnd = await this.hwndOfWindow(mux, parsed.windowId);
-    if (hwnd !== null) {
-      const r = await winRaiseOnce({ hwnd, visibility: 'query' }, []);
+    // HWND 配对可信时直查（多窗同题时标题认窗恒歧义 → null → 前端不摆态）；
+    // 配对失败但候选窗实况一致（同题窗同隐同显）按一致值答，不让查询陪葬于歧义。
+    const resolved = await this.hwndAndVisOfWindow(mux, parsed.windowId);
+    if (resolved && 'hwnd' in resolved) {
+      const r = await winRaiseOnce({ hwnd: resolved.hwnd, visibility: 'query' }, []);
       const m = /vis\|(visible|hidden)/.exec(r.out);
       if (m) {
         await this.noteVisibility(parsed.muxKey, parsed.windowId, m[1] as 'visible' | 'hidden');
         return m[1] as 'visible' | 'hidden';
       }
     }
+    if (resolved && 'vis' in resolved) return resolved.vis;
     return winWindowVisibility({
       guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
       titles: await this.windowTitlesOf(parsed.muxKey, parsed.windowId, pane.paneId),

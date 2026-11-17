@@ -128,7 +128,7 @@ export async function winListOwnedWindows(
 }
 
 /** 标题归一（与 PS 脚本 Norm 同一条：剥 `[n/m]` 前缀、剥头部非文字、压空白）。 */
-function normTitle(raw: string): string {
+export function normTitle(raw: string): string {
   return raw
     .trim()
     .replace(/^\[\d+\/\d+\]\s*/, '')
