@@ -12,6 +12,7 @@
  */
 
 import { createSpritePlayer, GAZE_ROW, SPRITE_GRID, type PetAnimation } from './sprite';
+import { deriveSessionStatus } from '@/components/tasks/session-status';
 
 const API_BASE = '/api';
 
@@ -28,6 +29,7 @@ interface SessionRow {
   lastEventType?: string | null;
   pidAlive?: boolean | null;
   interruptedAt?: number | null;
+  harness?: string | null;
 }
 
 interface HookDispatch {
@@ -66,8 +68,9 @@ function labelOf(s: SessionRow | undefined, sessionId: string): string {
 /**
  * 全局聚合：失败 > 运行中 > 刚完成 > 空闲（待答只进气泡，不抢动画——
  * 提问时宠物该干嘛干嘛，问题挂起不等于活儿停了）。
- * 判据与 session-status.ts 同源（turnOpen/lastEventType/pidAlive/interruptedAt
- * + dispatch 状态），只是压成全局一态。
+ * 判据 = 会话列表同一份 deriveSessionStatus（session-status.ts 单点纯函数，
+ * pet 与任务面板 import 同一份——不再自带第二份简化判据，两份口径漂移才是
+ * 状态忽闪忽闪的根源），只是压成全局一态。
  */
 function aggregate(
   sessions: SessionRow[],
@@ -76,10 +79,32 @@ function aggregate(
 ): Aggregated {
   const byId = new Map(sessions.map((s) => [s.sessionId, s]));
   const now = Date.now();
+  // 运行中的动画是资产属性（pet.json busyAnimation 自声明）：spider 织网检视
+  // （review）、仓鼠跑轮（running）——weave 不按 pet id 硬判
+  const busyAnim: PetAnimation = busyAnimation;
 
-  const runningDispatch = new Set(
-    dispatches.filter((d) => d.status === 'running').map((d) => d.sessionId),
-  );
+  const dispatchBySession = new Map<string, HookDispatch[]>();
+  for (const d of dispatches) {
+    if (!d.sessionId) continue;
+    const list = dispatchBySession.get(d.sessionId) ?? [];
+    list.push(d);
+    dispatchBySession.set(d.sessionId, list);
+  }
+  const statusOf = (s: SessionRow): string =>
+    deriveSessionStatus({
+      lastSeenAt: s.lastSeenAt,
+      latestEventType: s.lastEventType ?? undefined,
+      pidAlive: s.pidAlive ?? undefined,
+      hasRunningDispatch: (dispatchBySession.get(s.sessionId) ?? []).some(
+        (d) => d.status === 'running',
+      ),
+      latestDispatchFailed: (dispatchBySession.get(s.sessionId) ?? [])[0]?.status === 'failed' ||
+        (dispatchBySession.get(s.sessionId) ?? [])[0]?.status === 'timeout',
+      turnOpen: s.turnOpen,
+      interruptedAt: s.interruptedAt ?? undefined,
+      harness: (s.harness ?? undefined) as never,
+      now,
+    });
   const failedLatest = new Map<string, string>(); // sessionId → startedAt
   for (const d of dispatches) {
     if (d.sessionId && (d.status === 'failed' || d.status === 'timeout')) {
@@ -106,33 +131,33 @@ function aggregate(
       stateBubbles,
     };
   }
-  // 运行中：running dispatch / 回合开着且有近期活动 → 结网循环（织网=干活）。
-  // 口径与 session-status.ts 的 deriveSessionStatus 对齐：turnOpen 只在静默不超
-  // STALE_TURN_MS 时算运行中（回合开着的会话可能早被丢下，卡住就永远在织网），
-  // turnOpen 已知为 false 时即使刚有事件也不算运行中。
-  for (const s of sessions) {
-    if (s.pidAlive === false || s.lastEventType === 'SessionEnd' || s.interruptedAt != null) continue;
-    const quiet = now - Date.parse(s.lastSeenAt);
-    const busy =
-      runningDispatch.has(s.sessionId) ||
-      (s.turnOpen === true ? quiet < STALE_TURN_MS : s.turnOpen !== false && quiet < ACTIVE_WINDOW_MS);
-    if (busy) {
-      return { anim: 'review', bubble: null, focusSessionId: null, stateBubbles };
-    }
+  // 运行中：与会话列表同一份派生状态（turnOpen 静默窗 / dispatch / pidAlive /
+  // 中断 / 压缩全在 deriveSessionStatus 里算好了），pet 不再自带第二份简化判据。
+  const anyBusy = sessions.some((s) => {
+    const st = statusOf(s);
+    return st === 'running' || st === 'compacting';
+  });
+  if (anyBusy) {
+    return { anim: busyAnim, bubble: null, focusSessionId: null, stateBubbles };
   }
   // 刚完成：3 分钟内有过运行、现在没了 → 挥腿庆祝一小段（review 已让给运行中的结网循环）
   if (wasRunningRecently(now)) {
     return { anim: 'waving', bubble: '✓ 全部完成', focusSessionId: null, stateBubbles };
   }
-  return { anim: 'idle', bubble: null, focusSessionId: null, stateBubbles };
+  // 空闲：10 分钟内有过任何会话活动 → 安静待机；更久 → 睡觉（值守态，事件即醒）
+  const recentActivity = sessions.some((s) => now - Date.parse(s.lastSeenAt) < SLEEP_AFTER_MS);
+  return { anim: recentActivity ? 'idle' : 'sleep', bubble: null, focusSessionId: null, stateBubbles };
 }
 
 /** 「刚完成」判据的运行痕迹：上一拍聚合成运行中（结网循环）的时刻。 */
 let lastRunningAt = 0;
+/** 上次切到运行中的时刻（防抖：状态切换间隔不足此值不跟，免得 busy/idle 高频打摆）。 */
+let lastBusySwitchAt = 0;
 const JUST_FINISHED_MS = 3 * 60_000;
-/** 与 session-status.ts 同值：回合开着的静默兜底窗 / 回合未知时的活动窗。 */
-const STALE_TURN_MS = 5 * 60_000;
-const ACTIVE_WINDOW_MS = 30_000;
+/** 运行↔空闲切换防抖窗：低于它不认新状态（turn 间隙/单事件脉冲不再来回切）。 */
+const BUSY_SWITCH_DEBOUNCE_MS = 20_000;
+/** 空闲多久后转睡觉：全部会话静默超过此时长 = 没人盯着，蜷起来值守。 */
+const SLEEP_AFTER_MS = 10 * 60_000;
 
 function wasRunningRecently(now: number): boolean {
   return lastRunningAt > 0 && now - lastRunningAt < JUST_FINISHED_MS;
@@ -459,6 +484,8 @@ function currentPetRect(): { x: number; y: number; w: number; h: number } {
 }
 
 let sheet: HTMLImageElement | null = null;
+/** 运行中播的行（资产 pet.json 的 busyAnimation 自声明，缺省 review）。 */
+let busyAnimation: PetAnimation = 'review';
 const player = createSpritePlayer('idle');
 
 // ---------------------------------------------------------------------------
@@ -513,6 +540,25 @@ function contentBoxOf(anim: PetAnimation): { x0: number; y0: number; x1: number;
   return box;
 }
 
+/** 全部动画行的并集框：命中区/区域（SetWindowRgn）用它恒定基准——按当前动画
+ * 的框缩张的话，挥手这类大幅动画一播区域就一伸一缩，肉眼是「宠物在变大变小」。 */
+function unionBoxOf(): { x0: number; y0: number; x1: number; y1: number } | null {
+  if (!sheet) return null;
+  let x0 = SPRITE_GRID.cellWidth;
+  let y0 = SPRITE_GRID.cellHeight;
+  let x1 = -1;
+  let y1 = -1;
+  for (const anim of Object.keys(PET_ANIMS) as PetAnimation[]) {
+    const b = contentBoxOf(anim);
+    if (!b) continue;
+    x0 = Math.min(x0, b.x0);
+    y0 = Math.min(y0, b.y0);
+    x1 = Math.max(x1, b.x1);
+    y1 = Math.max(y1, b.y1);
+  }
+  return x1 < 0 ? null : { x0, y0, x1, y1 };
+}
+
 /** 窗口命中区 = 精灵真实像素包围盒 ∪ 气泡 ∪ 菜单（宿主 SetWindowRgn）。
  * 区域外既不显示也不收鼠标 ⇒ 点空白处穿透到桌面，不会「点到窗」。
  * 偷窥过渡期间同时算常态位与藏身位并集——区域每帧缩张会带出成对
@@ -520,7 +566,9 @@ function contentBoxOf(anim: PetAnimation): { x0: number; y0: number; x1: number;
 let lastRegionKey = '';
 function syncRegion(): void {
   const dpr = window.devicePixelRatio || 1;
-  const box = contentBoxOf(player.current());
+  // 恒用全动画并集框：动画切换（idle↔waving↔…）不再改变命中区——
+  // 按当前动画框缩张 = 宠物随动画「变大变小」（挥手帧 bbox 明显大于 idle）
+  const box = unionBoxOf();
   const rects = [currentPetRect()];
   // 过渡中与展开态都取「常态位 ∪ 藏身位」并集：只认当前位的话，过渡收敛的
   // 一瞬间两块之间的空隙被踢出命中区——鼠标停在那儿就 enter/leave 循环，
@@ -578,17 +626,18 @@ function syncRegion(): void {
   postToHost(`region:${rx},${ry},${rw},${rh}`);
 }
 
-/** 休息（idle）时头右上飘 zzz；位置跟着绘制区与视线微移走，停止时冻住。
+/** 休息（idle/sleep）时头右上飘 zzz；位置跟着绘制区与视线微移走，停止时冻住。
  * 字号与浮距按宠物档等比缩放（small 为基准 1）。 */
 function syncZzz(): void {
-  const resting = player.current() === 'idle';
+  const cur = player.current();
+  const resting = cur === 'idle' || cur === 'sleep';
   zzzEl.classList.toggle('show', resting);
   zzzEl.classList.toggle('frozen', paused);
   if (!resting) return;
   const s = SIZE_PX[petSize].w / SIZE_PX.small.w;
   zzzEl.style.setProperty('--zzz-scale', s.toFixed(2));
   const r = currentPetRect();
-  const box = contentBoxOf('idle');
+  const box = contentBoxOf(cur);
   const right = box ? r.x + ((box.x1 + 1) / SPRITE_GRID.cellWidth) * r.w : r.x + r.w;
   const top = box ? r.y + (box.y0 / SPRITE_GRID.cellHeight) * r.h : r.y;
   // 容器（44×40×s）右上角锚在头部右上：偏移量随容器放大同步调大
@@ -680,12 +729,37 @@ import { PET_ANIMATIONS as PET_ANIMS } from './sprite';
 // ---------------------------------------------------------------------------
 
 let lastAnim: PetAnimation | null = null;
+/** 本次运行结束后是否已挥过手：3 分钟「刚完成」窗内聚合一拍一变，不锁一次
+ * 的话 waving 播完回落 idle 又被拉起重播，看起来在不停打招呼。 */
+let wavingDone = false;
 
 function applyAggregated(next: Aggregated): void {
-  if (next.anim === 'review') lastRunningAt = Date.now(); // review 行 = 运行中的结网循环
-  // 运行中（结网）无限循环值守；其余动画主循环 ×3 后自然回落 idle。
+  // 挥手只庆祝一次：进运行态即复位，完成拍播一遍，窗内后续拍回 idle
+  if (next.anim === 'running' || next.anim === 'review') wavingDone = false;
+  else if (next.anim === 'waving') {
+    if (wavingDone) next = { ...next, anim: 'idle', bubble: null };
+    else wavingDone = true;
+  }
+  if (next.anim === 'review' || next.anim === 'running') lastRunningAt = Date.now();
+  // 运行↔空闲防抖：运行态判定本身有脉冲性（turn 间隙、单条事件窗），聚合一拍
+  // 一变就把动画来回切。与上次切换间隔不足窗值时维持现状——只有状态稳住了
+  // 窗值时长才真切。
+  const busyLike = next.anim === 'review' || next.anim === 'running';
+  const wasBusyLike = lastAnim === 'review' || lastAnim === 'running';
+  if (busyLike !== wasBusyLike && lastBusySwitchAt !== 0) {
+    const sinceSwitch = Date.now() - lastBusySwitchAt;
+    if (sinceSwitch < BUSY_SWITCH_DEBOUNCE_MS) {
+      // 窗内回摆：当作噪声吞掉，维持上次动画（气泡照常更新）
+      next = { ...next, anim: lastAnim ?? next.anim };
+    } else {
+      lastBusySwitchAt = Date.now();
+    }
+  } else if (busyLike !== wasBusyLike) {
+    lastBusySwitchAt = Date.now();
+  }
+  // 运行中（结网/跑轮）无限循环值守；其余动画主循环 ×3 后自然回落 idle。
   // 停止时连切动画一起冻结（画面完全静止），气泡与提醒照常。
-  if (!paused) player.play(next.anim, { loopForever: next.anim === 'review' });
+  if (!paused) player.play(next.anim, { loopForever: next.anim === 'review' || next.anim === 'running' });
 
   // 待答：跟随状态常驻（问题答完即撤）；失败 6s、完成 10s 一次性提醒
   const stateKeys = new Set(next.stateBubbles.map((b) => b.key));
@@ -1016,7 +1090,7 @@ async function loadSheet(petId: string, updatedAt: number): Promise<void> {
     sheet = img;
     // gaze 行在位（资产高 ≥ 12 行）才启用注视切换；旧资产静默退回原行
     hasGazeRow = img.naturalHeight >= GAZE_ROW * SPRITE_GRID.cellHeight + SPRITE_GRID.cellHeight;
-    contentBoxOf('idle'); // 预热：偷窥对齐与命中区立刻有真值
+    unionBoxOf(); // 预热：全动画行并集框（命中区基准）与偷窥对齐立刻有真值
   }
 }
 
@@ -1027,14 +1101,17 @@ async function boot(): Promise<void> {
   // 宠物选择：settings.pet.petId；资产列表里没有就回落第一只（都没有就空转）
   const [bundle, pets] = await Promise.all([
     fetchJson<{ settings?: { pet?: { petId?: string; notifications?: boolean; size?: string } } }>('/settings'),
-    fetchJson<{ pets: Array<{ id: string; updatedAt: number }> }>('/pets'),
+    fetchJson<{ pets: Array<{ id: string; updatedAt: number; busyAnimation?: string }> }>('/pets'),
   ]);
   settingsNotifications = bundle?.settings?.pet?.notifications ?? true;
   const sizeRaw = bundle?.settings?.pet?.size;
   if (sizeRaw === 'small' || sizeRaw === 'medium' || sizeRaw === 'large') petSize = sizeRaw;
   const wanted = bundle?.settings?.pet?.petId ?? 'weave-spider';
   const pet = pets?.pets.find((p) => p.id === wanted) ?? pets?.pets[0];
-  if (pet) await loadSheet(pet.id, pet.updatedAt);
+  if (pet) {
+    busyAnimation = pet.busyAnimation === 'running' ? 'running' : 'review';
+    await loadSheet(pet.id, pet.updatedAt);
+  }
 
   await refreshAll();
   applyAggregated(aggregate(sessions, dispatches, questions));

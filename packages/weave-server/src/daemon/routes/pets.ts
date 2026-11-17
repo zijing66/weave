@@ -18,7 +18,11 @@ interface PetManifest {
   displayName?: unknown;
   description?: unknown;
   spriteVersionNumber?: unknown;
+  /** 运行中（忙碌）播的行名：缺省 review（检视）。资产自声明，weave 不按 id 判。 */
+  busyAnimation?: unknown;
 }
+
+const BUSY_ANIMATIONS = new Set(['running', 'review']);
 
 /** 读单个 pet.json；损坏/缺字段返回 null（跳过不炸列举）。 */
 async function readPetManifest(dir: string): Promise<{
@@ -26,6 +30,7 @@ async function readPetManifest(dir: string): Promise<{
   displayName: string;
   description: string;
   spriteVersionNumber: number;
+  busyAnimation: string;
   updatedAt: number;
 } | null> {
   let raw: string;
@@ -55,6 +60,10 @@ async function readPetManifest(dir: string): Promise<{
     description: typeof manifest.description === 'string' ? manifest.description : '',
     spriteVersionNumber:
       typeof manifest.spriteVersionNumber === 'number' ? manifest.spriteVersionNumber : 1,
+    busyAnimation:
+      typeof manifest.busyAnimation === 'string' && BUSY_ANIMATIONS.has(manifest.busyAnimation)
+        ? manifest.busyAnimation
+        : 'review',
     updatedAt: Math.floor(
       Math.max(msStat?.mtimeMs ?? 0, webpStat?.mtimeMs ?? 0, pngStat?.mtimeMs ?? 0),
     ),

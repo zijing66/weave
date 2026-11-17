@@ -21,10 +21,15 @@ description: 孵化一只 weave 桌面宠物——生成精灵图各行、拼装
 | 6 | waiting | 0-5 |
 | 7 | running | 0-5 |
 | 8 | review | 0-5 |
-| 9 | 注视方向 A（000→157.5°，顺时针） | 0-7 |
-| 10 | 注视方向 B（180→337.5°） | 0-7 |
+| 9 | enter（入场亮相） | 0-7 |
+| 10 | sleep（蜷起睡觉） | 0-5 |
 
-- 单元 192×208；标准行未用到的格子必须全透明；`000°` = 向上看（不是正面）。
+- 单元 192×208；标准行未用到的格子必须全透明。
+- **切格铁律**：每帧角色在它自己的 192 格内居中，**绝不越出格边界**——生成图
+  角色常挤在条带中央，整条居中会让相邻帧互相借位（`72-191 + 0-119` 同格），
+  播放时表现成「两只宠物闪现」。生成后逐格检查包围盒：内容触到 0 或 191 即重切。
+- row 11 是可选的注视增补行（idle 六帧的视线变体，weave-spider v3 专属玩法），
+  新宠物**不画**——缺行宿主静默回落 row 0，画了反而占文件体积。
 - 动画时长表是宿主内建的，manifest 不写。
 - `pet.json` 形状：
 
@@ -34,12 +39,16 @@ description: 孵化一只 weave 桌面宠物——生成精灵图各行、拼装
   "displayName": "Pet Name",
   "description": "One short sentence.",
   "spriteVersionNumber": 2,
-  "spritesheetPath": "spritesheet.webp"
+  "spritesheetPath": "spritesheet.webp",
+  "busyAnimation": "running"
 }
 ```
 
 `spriteVersionNumber: 2` 必须写——缺了按 v1（9 行）解读，2288 高的图会被拒。
 只做 9 行标准动画时写 `1`、整图 1536×1872。
+
+`busyAnimation`（可选）= 运行中（忙碌工作态）播哪一行：`running`（干活隐喻，
+如跑轮）或 `review`（检视，缺省）。按角色的隐喻选，别默认照抄。
 
 ## 落点
 
@@ -76,10 +85,11 @@ weave 的宠物目录由 daemon 提供：`GET /api/pets` 的 `root` 字段就是
   - `jumping` 起跳-腾空-落地（不画影子/尘土）；
   - `failed` 沮丧/出错反应（委屈耷拉、翻倒均可，不画漂浮符号）；
   - `waiting` 期待地等你回应（前倾、举手、眼巴巴）；
-  - `running` 忙碌工作态（打字/思考/扫描，**不是**字面跑步）；
+  - `running` 忙碌工作态（打字/思考/扫描，**不是**字面跑步——仓鼠这类有明确
+    「干活隐喻」的角色就画隐喻本体，如跑转轮）；
   - `review` 专注检视成果（眯眼、凑近、点头）；
-  - 行 9/10 十六个注视方向构成一条连续顺时针弧线，相邻格动作连续、
-    四个基数方向（上/右/下/左）必须一眼可辨。
+  - `enter` 入场亮相（落定即 idle 第一帧的姿态，衔接要顺）；
+  - `sleep` 蜷起闭眼呼吸（值守循环，帧间变化小）。
 - 禁止：文字、阴影、光晕、脱离身体的特效、出格裁切、格间串姿。
 
 ### 3. 拼装与校验（本 skill 自带脚本，纯 node 零依赖）
@@ -91,7 +101,8 @@ node <skill-dir>/scripts/assemble-pet.mjs \
   --pet-id <pet-id> \
   --display-name "<Name>" \
   --description "<one sentence>" \
-  --version 2
+  --version 2 \
+  --busy-animation running|review
 ```
 
 `<run-dir>/rows/` 里每行一个 PNG 条带：`row-0.png` … `row-10.png`（v1 只到
@@ -105,7 +116,8 @@ row-8）。脚本负责：切格 → 尺寸校验（每格恰好 192×208）→ 
 ### 4. 目检
 
 打开 `contact-sheet.png` 逐行核对：身份一致、状态语义正确、无裁切、无背景残留。
-注视行把 16 格按顺序扫一遍：基数方向不清 = 重生成整行。
+拼装日志里的 `EMPTY` / `touches cell edge` 逐条核对：触边格基本就是切格越界，
+回生成图按帧重切（每帧各自居中进 192 格），不要靠缩小角色蒙混。
 
 ### 5. 安装
 

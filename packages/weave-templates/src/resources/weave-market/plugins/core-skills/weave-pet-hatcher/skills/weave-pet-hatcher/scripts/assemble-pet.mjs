@@ -13,7 +13,7 @@ const COLS = 8;
 const ROW_FRAMES = [6, 8, 8, 4, 5, 8, 6, 6, 6, 8, 8];
 const ROW_NAMES = [
   'idle', 'running-right', 'running-left', 'waving', 'jumping',
-  'failed', 'waiting', 'running', 'review', 'look-a', 'look-b',
+  'failed', 'waiting', 'running', 'review', 'enter', 'sleep',
 ];
 
 function parseArgs(argv) {
@@ -29,7 +29,7 @@ function parseArgs(argv) {
 function usage(msg) {
   console.error(`assemble-pet: ${msg}
 usage: node assemble-pet.mjs --rows-dir <dir> --out-dir <dir> --pet-id <id> \\
-  --display-name "<Name>" --description "<text>" [--version 1|2]`);
+  --display-name "<Name>" --description "<text>" [--version 1|2] [--busy-animation running|review]`);
   process.exit(2);
 }
 
@@ -40,6 +40,7 @@ const petId = args['pet-id'];
 const displayName = args['display-name'] ?? petId;
 const description = args['description'] ?? '';
 const version = Number(args['version'] ?? 2);
+const busyAnimation = args['busy-animation'] === 'running' ? 'running' : 'review';
 if (!rowsDir || !outDir || !petId) usage('rows-dir / out-dir / pet-id are required');
 if (![1, 2].includes(version)) usage('--version must be 1 or 2');
 if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(petId)) {
@@ -196,11 +197,16 @@ function chromaToAlpha(rgba, width, height) {
   for (const c of key.slice(1)) {
     if (Math.hypot(c[0] - key[0][0], c[1] - key[0][1], c[2] - key[0][2]) > 40) return false;
   }
+  // 纯底判定：距离 ≤ BASE 的像素是「底色本身」（生图底色常不纯，色距 ~20——
+  // 只按比例降 alpha 会给整块背景留 20%+ 不透明度的底色雾），直接全透明。
+  // HARD 过渡带只服务角色边缘的抗锯齿圈。
+  const BASE = 48;
   const HARD = 90;
   for (let p = 0; p < width * height; p++) {
     const i = p * 4;
     const d = Math.hypot(rgba[i] - key[0][0], rgba[i + 1] - key[0][1], rgba[i + 2] - key[0][2]);
-    if (d < HARD) rgba[i + 3] = Math.min(rgba[i + 3], Math.round((d / HARD) * rgba[i + 3]));
+    if (d <= BASE) rgba[i + 3] = 0;
+    else if (d < HARD) rgba[i + 3] = Math.min(rgba[i + 3], Math.round(((d - BASE) / (HARD - BASE)) * rgba[i + 3]));
     if (rgba[i + 3] === 0) {
       rgba[i] = key[0][0];
       rgba[i + 1] = key[0][1];
@@ -240,6 +246,24 @@ for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
 		process.exit(1);
 	}
 	const despilled = chromaToAlpha(img.rgba, img.width, img.height);
+	// 每格内容包围盒盘点：EMPTY（空格）与触边（内容贴到 192 格边 = 疑似切格
+	// 越界串姿——生成图角色挤条带中央时相邻帧会互相借位，播放即「两只闪现」）
+	// 都点名报出来，串格是目检最难看出的坑。
+	for (let f = 0; f < framesExpected; f++) {
+		let x0 = CELL_W, y0 = CELL_H, x1 = -1, y1 = -1;
+		for (let y = 0; y < CELL_H; y++) {
+			for (let x = 0; x < CELL_W; x++) {
+				if (img.rgba[(y * img.width + f * CELL_W + x) * 4 + 3] > 8) {
+					if (x < x0) x0 = x;
+					if (x > x1) x1 = x;
+					if (y < y0) y0 = y;
+					if (y > y1) y1 = y;
+				}
+			}
+		}
+		if (x1 < 0) console.log(`  cell ${f}: EMPTY`);
+		else if (x0 === 0 || x1 === CELL_W - 1) console.log(`  cell ${f}: touches cell edge (bbox x${x0}-${x1}) — check for cross-cell bleed`);
+	}
 	for (let y = 0; y < CELL_H; y++) {
 		for (let x = 0; x < img.width; x++) {
 			const si = (y * img.width + x) * 4;
@@ -263,6 +287,7 @@ writeFileSync(
 			description,
 			spriteVersionNumber: version,
 			spritesheetPath: 'spritesheet.png',
+			busyAnimation,
 		},
 		null,
 		2,
