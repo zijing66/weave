@@ -11,12 +11,14 @@ import { WEAVE_VERSION } from '../version.js';
 import { readDaemonState } from '../daemon/state.js';
 import type { McpServerConfig } from '@weavecode/harness';
 import { generateHookHandler } from '@weavecode/harness';
-import { generateSettingsJson, mergeSettingsJson, statusLineIsWeave } from '@weavecode/harness';
+import { generateSettingsJson, mergeSettingsJson } from '@weavecode/harness';
 import { DEFAULT_HOOKS, HARNESS_DIRS, type PlatformInfo } from '@weavecode/core';
 import { RpgRoleRepository, archetypeBaseline, type Hexagon, type RpgRoleRow } from './roles.js';
 import { ROLE_MANIFEST_KEY, readRoleManifest, type RoleManifest } from './role-plugin.js';
 import { BUILTIN_ROLE_TEMPLATES, COORDINATOR_PERSONA, COORDINATOR_SKILLS, handbookPersonaSection } from '../install/role-manifests.js';
 import { BUILTIN_MCP_SERVERS } from '../install/builtin-mcp.js';
+import { generateStatuslineScript } from '../statusline/generator.js';
+import { readStatuslineConfig } from '../statusline/manager.js';
 
 /**
  * 角色 provisioning（RPG 稿 §三 / RPG-1）：建角色 = 建角色仓库（独立 project）+
@@ -107,7 +109,9 @@ async function ensureMcpJsonIgnored(dir: string): Promise<void> {
  * 内建仓的项目档采集安装（幂等）：hook-handler 脚本 + `.claude/settings.json`
  * 的 weave 采集组。与 `weave init` 同源——组形（`captureHookGroup`）、脚本正文
  * （`generateHookHandler`）、settings 合并（`mergeSettingsJson`）全部出自 harness
- * 单源，这里只做编排。不装 statusline（出厂仓对话页有它即可，不需要终端条）。
+ * 单源，这里只做编排。statusline 脚本与普通仓同一套（2026-11-16 裁决：对话页
+ * 底条只读渲染脚本的 git 缓存、不做第二份探测——不装脚本底条连 git 块都没有，
+ * 当初「对话页有它即可」的前提不成立）。
  */
 async function ensureProjectCapture(dir: string): Promise<void> {
   const claudeDir = path.join(dir, HARNESS_DIRS.claude.projectDir);
@@ -152,9 +156,11 @@ async function ensureProjectCapture(dir: string): Promise<void> {
     helpersDir,
   });
   const merged = mergeSettingsJson(existing, generated);
-  // statusLine 指向不物化的 statusline.cjs（components 只有 helpers 开着时它跟
-  // hooks 同门）——出厂仓不需要终端条，摘掉避免宿主每轮跑一个不存在的脚本。
-  if (statusLineIsWeave(merged['statusLine'])) delete merged['statusLine'];
+  // statusline 脚本与普通仓同一套：读生效配置（出厂仓无本地档 = 跟随全局模板）
+  // 生成落盘；mergeSettingsJson 生成的 statusLine 键指向它，保留不摘——对话页
+  // 底条的 git 块只读渲染脚本写的缓存（单源，不二探），不装脚本 = 底条缺席。
+  const statusline = generateStatuslineScript(await readStatuslineConfig(dir));
+  await writeFile(path.join(helpersDir, 'statusline.cjs'), statusline, 'utf-8');
   await writeFile(file, `${JSON.stringify(merged, null, 2)}\n`, 'utf-8');
 }
 
