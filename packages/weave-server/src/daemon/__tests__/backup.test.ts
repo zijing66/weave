@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import {
   BackupEngine,
   BACKUP_TABLES,
+  applyPendingRestore,
+  clearPendingRestore,
+  writePendingRestore,
+  readPendingRestore,
   pruneOldBackups,
   stampOf,
   type BackupProgress,
@@ -15,10 +19,19 @@ import type { GitResult, WorktreeGitExec } from '../worktree.js';
 
 function makeDb(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL, meta TEXT)`);
+  // projects/settings 的形状贴真 SCHEMA（还原回灌走真建表，行必须灌得进）；
+  // 其余测试只断言行数，最小列即可。
+  db.exec(`CREATE TABLE projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+    token TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'init', registered_at TEXT NOT NULL,
+    last_seen_at TEXT, meta TEXT, sort_order INTEGER, archived_at TEXT, hidden INTEGER,
+    superagent INTEGER NOT NULL DEFAULT 0)`);
   db.exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   db.exec(`CREATE TABLE hook_events (id INTEGER PRIMARY KEY, payload TEXT)`);
-  db.exec(`INSERT INTO projects (name, meta) VALUES ('p1', '{"hideWindow":true}')`);
+  db.exec(
+    `INSERT INTO projects (path, name, token, registered_at, meta)
+     VALUES ('D:/proj', 'p1', 'tok-p1', '2026-11-01T00:00:00Z', '{"hideWindow":true}')`,
+  );
   db.exec(`INSERT INTO settings (key, value) VALUES ('locale', 'zh-CN')`);
   db.exec(`INSERT INTO hook_events (payload) VALUES ('big')`);
   return db;
@@ -163,6 +176,76 @@ describe('pruneOldBackups', () => {
     expect(existsSync(path.join(dir, 'weave-backup-2026-11-05-010000.tar.gz'))).toBe(true);
     expect(existsSync(path.join(dir, 'weave.db.bak-xxx'))).toBe(true);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('applyPendingRestore', () => {
+  /** 真包（BackupEngine 打出）+ 假 APPDATA + 待还原单，跑启动闸。 */
+  async function restoreFixture(): Promise<{ root: string; pkg: string }> {
+    const root = makeRoot();
+    const db = makeDb();
+    ensureTables(db, false);
+    // 包里带一行与现库不同的值，还原后应读到包里的
+    db.prepare(
+      `INSERT INTO projects (path, name, token, registered_at, meta)
+       VALUES ('D:/pkg', 'from-package', 'tok-pkg', '2026-11-01T00:00:00Z', '{}')`,
+    ).run();
+    const engine = new BackupEngine({
+      db,
+      exec: fakeGit({}),
+      dataRoot: root,
+      now: () => new Date(2026, 10, 11, 1, 0, 0),
+    });
+    const run = await engine.run(false);
+    if (run == null) throw new Error(engine.status.lastError ?? 'backup failed');
+    return { root, pkg: run.file };
+  }
+
+  it('开库前吞 pending：换上包里的表数据，原库留 .pre-restore 档', async () => {
+    const { root, pkg } = await restoreFixture();
+    const savedAppData = process.env.APPDATA;
+    process.env.APPDATA = root; // paths.ts 的 getDataDir() 认它（win32）
+    try {
+      await writePendingRestore({ file: pkg, at: new Date().toISOString() });
+      // 探针：pending 单真写到了假 APPDATA 下（getDataDir = APPDATA\weave）
+      expect(process.env.APPDATA).toBe(root);
+      // 现场库先落一个（生产恒在；启动闸第一步是把它改名让位）
+      const liveDbDir = path.join(root, 'weave', 'data');
+      mkdirSync(liveDbDir, { recursive: true });
+      const live = new DatabaseSync(path.join(liveDbDir, 'weave.db'));
+      live.exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY)`);
+      live.close();
+      const dirAt = path.join(root, 'weave', 'cache', 'tmp');
+      expect(existsSync(path.join(dirAt, 'restore-pending.json'))).toBe(true);
+      expect(readPendingRestore()).not.toBeNull();
+      expect(applyPendingRestore()).toBe(true);
+      const dbPath = path.join(root, 'weave', 'data', 'weave.db'); // getDataDir = APPDATA\weave
+      expect(existsSync(dbPath)).toBe(true);
+      // 原库让位留档
+      const kept = readdirSync(path.join(root, 'weave', 'data')).filter((n) => n.startsWith('weave.db.pre-restore-'));
+      expect(kept.length).toBe(1);
+      // 包里的行回来了
+      const restored = new DatabaseSync(dbPath);
+      const names = restored.prepare('SELECT name FROM projects ORDER BY id').all() as Array<{ name: string }>;
+      restored.close();
+      expect(names.map((n) => n.name)).toContain('from-package');
+    } finally {
+      clearPendingRestore();
+      process.env.APPDATA = savedAppData;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('无 pending = no-op', () => {
+    const savedAppData = process.env.APPDATA;
+    const root = makeRoot();
+    process.env.APPDATA = root;
+    try {
+      expect(applyPendingRestore()).toBe(false);
+    } finally {
+      process.env.APPDATA = savedAppData;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

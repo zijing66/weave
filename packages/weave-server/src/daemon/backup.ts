@@ -1,9 +1,10 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { readFileSync, renameSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { gzipSync } from 'node:zlib';
-import type { DatabaseSync } from 'node:sqlite';
-import { getBackupsDir, getDataRoot, getUploadsDir } from '../db/paths.js';
-import { SCHEMA_VERSION } from '../db/db.js';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import { DatabaseSync } from 'node:sqlite';
+import { getBackupsDir, getDataRoot, getUploadsDir, getTmpDir, getDbPath } from '../db/paths.js';
+import { SCHEMA_VERSION, SCHEMA } from '../db/db.js';
 import { marketDir } from '../market/manifest.js';
 import { WEAVE_VERSION } from '../version.js';
 import { defaultWorktreeGitExec, type WorktreeGitExec } from './worktree.js';
@@ -145,6 +146,35 @@ function tarGzip(entries: TarEntry[]): Buffer {
   return gzipSync(Buffer.concat(chunks), { level: 6 });
 }
 
+export interface BackupManifest {
+  kind: string;
+  version: string;
+  schemaVersion: number;
+  createdAt: string;
+  includeHistory: boolean;
+  tables: Record<string, number>;
+  market: { repos: number; skipped: number };
+}
+
+/** ustar 最小读侧（gunzip + 逐头解析）：还原面只取包内条目，零新依赖。 */
+export function untarEntries(buf: Buffer): TarEntry[] {
+  const raw = gunzipSync(buf);
+  const out: TarEntry[] = [];
+  for (let off = 0; off + TAR_BLOCK <= raw.length; ) {
+    const name = raw.toString('utf8', off, off + 100).replace(/\0.*$/, '');
+    const prefix = raw.toString('utf8', off + 345, off + 500).replace(/\0.*$/, '');
+    if (name.length === 0) break;
+    const size = parseInt(raw.toString('utf8', off + 124, off + 136).replace(/[\0 ]/g, ''), 8) || 0;
+    off += TAR_BLOCK;
+    if (size > 0) {
+      out.push({ name: prefix ? `${prefix}/${name}` : name, data: raw.subarray(off, off + size), mtime: new Date() });
+      const pad = TAR_BLOCK - (size % TAR_BLOCK);
+      off += size + (pad < TAR_BLOCK ? pad : 0);
+    }
+  }
+  return out;
+}
+
 // --- 进度估算 ----------------------------------------------------------------
 
 /**
@@ -236,6 +266,22 @@ export class BackupEngine {
     } finally {
       this.running = false;
       this.progress = null;
+    }
+  }
+
+  /** 读包的 manifest（无效包返回 null——还原前先验，不盲覆）。 */
+  async readManifest(file: string): Promise<BackupManifest | null> {
+    try {
+      const buf = await readFile(file);
+      for (const entry of untarEntries(buf)) {
+        if (entry.name === 'manifest.json') {
+          const m = JSON.parse(entry.data.toString('utf8')) as BackupManifest;
+          return m.kind === 'weave-backup' ? m : null;
+        }
+      }
+      return null;
+    } catch {
+      return null;
     }
   }
 
@@ -465,4 +511,128 @@ async function gitTrackedFiles(repo: string, exec: WorktreeGitExec): Promise<str
   const r = await exec('git', ['ls-files', '-z'], { cwd: repo });
   if (r.code !== 0) return null;
   return r.stdout.split('\0').filter((s) => s.length > 0);
+}
+
+// --- 还原（pending 文件 + 启动闸）---------------------------------------------
+//
+// 活 daemon 开着 weave.db（Windows 文件锁），不能原地覆写——还原面走「先约后办」：
+// 路由校验 + 安全备份 + 落 pending 文件 → 触发优雅停机（WAL 并回）；下一次启动
+// 在 openDatabase 之前吞掉 pending（applyPendingRestore），换上包里的库再开。
+
+/** pending 文件落 `<cache>/tmp/restore-pending.json`。 */
+function pendingRestorePath(): string {
+  return path.join(getTmpDir(), 'restore-pending.json');
+}
+
+export interface PendingRestore {
+  file: string;
+  at: string;
+}
+
+/** 落待还原单（启动闸读它）；写不进 = 还原约不上，路由层要如实报错。 */
+export async function writePendingRestore(pending: PendingRestore): Promise<void> {
+  const file = pendingRestorePath();
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(pending), 'utf8');
+}
+
+export function readPendingRestore(): PendingRestore | null {
+  try {
+    const p = JSON.parse(readFileSync(pendingRestorePath(), 'utf8')) as PendingRestore;
+    return typeof p.file === 'string' && path.isAbsolute(p.file) ? p : null;
+  } catch {
+    return null; // 本就不在 / 半截文件 = 没有还原约单
+  }
+}
+
+export function clearPendingRestore(): void {
+  try {
+    rmSync(pendingRestorePath());
+  } catch {
+    /* 本就不在 */
+  }
+}
+
+/**
+ * 启动闸（openDatabase 之前调用）：有 pending 就解包覆写——weave.db（含 -wal/-shm
+ * 先摘掉）、market/（整目录换）、uploads/（includeHistory 才有，缺目录即跳过）。
+ * 原库改名 `.pre-restore-<时刻>` 留档不删；失败时 pending 清掉、异常上抛（daemon
+ * 起不来比带着旧库静默继续诚实）。返回 true = 应用了一次还原（调用方打启动日志）。
+ */
+export function applyPendingRestore(): boolean {
+  const pending = readPendingRestore();
+  if (!pending) return false;
+  try {
+    const buf = readFileSync(pending.file);
+    const entries = untarEntries(buf);
+    const byPrefix = (prefix: string): TarEntry[] => entries.filter((e) => e.name.startsWith(prefix));
+    const dataRoot = getDataRoot();
+    const dbPath = getDbPath();
+
+    // 活库让位：改名留档（-wal/-shm 一并摘——它们属于旧库的半截事务）
+    const keep = `${dbPath}.pre-restore-${stampOf(new Date())}`;
+    renameSync(dbPath, keep);
+    for (const suffix of ['-wal', '-shm']) {
+      try {
+        rmSync(dbPath + suffix);
+      } catch {
+        /* 本就不在 */
+      }
+    }
+
+    // DB 表 → 新库：建库 + 逐表回灌（NDJSON 一行一 row；建表走真 SCHEMA 才有索引）
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(SCHEMA);
+      for (const entry of byPrefix('db/')) {
+        const table = path.basename(entry.name, '.ndjson');
+        if (!/^[a-z_]+$/.test(table)) continue; // 包内表名白名单形
+        const rows = entry.data.toString('utf8').split('\n').filter((s) => s.length > 0);
+        for (const line of rows) {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          const cols = Object.keys(row);
+          db.prepare(
+            `INSERT OR REPLACE INTO ${table} (${cols.map((c) => `"${c}"`).join(',')})
+             VALUES (${cols.map(() => '?').join(',')})`,
+          ).run(...cols.map((c) => row[c] as import('node:sqlite').SQLInputValue));
+        }
+      }
+    } finally {
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      db.close();
+    }
+
+    // market/：整目录换（先搬走旧的再解新）
+    const marketRoot = marketDir(dataRoot);
+    try {
+      renameSync(marketRoot, `${marketRoot}.pre-restore`);
+    } catch {
+      /* 本就没有 */
+    }
+    for (const entry of byPrefix('market/')) {
+      const rel = entry.name.slice('market/'.length);
+      const file = path.join(marketRoot, rel);
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, entry.data);
+    }
+
+    // uploads/：同样整目录换；包里没有（includeHistory 没勾）就不动现目录
+    const uploadsRoot = getUploadsDir(dataRoot);
+    const uploadEntries = byPrefix('uploads/');
+    if (uploadEntries.length > 0) {
+      try {
+        renameSync(uploadsRoot, `${uploadsRoot}.pre-restore`);
+      } catch {
+        /* 本就没有 */
+      }
+      for (const entry of uploadEntries) {
+        const file = path.join(uploadsRoot, entry.name.slice('uploads/'.length));
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, entry.data);
+      }
+    }
+    return true;
+  } finally {
+    clearPendingRestore();
+  }
 }

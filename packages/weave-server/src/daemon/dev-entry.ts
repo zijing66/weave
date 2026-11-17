@@ -13,7 +13,7 @@ import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { openDatabase } from '../db/db.js';
-import { BackupEngine } from './backup.js';
+import { BackupEngine, applyPendingRestore } from './backup.js';
 import { startBackupScheduler } from './backup-scheduler.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
@@ -141,6 +141,12 @@ for (const key of TERMINAL_LOCATOR_ENV_KEYS) delete process.env[key];
 async function main(): Promise<void> {
   // 三档目录搬迁（data/ local/ cache/）必须先于写状态与开库：库文件自己也在搬。
   ensureDataLayout();
+  // 待还原单（设置页备份还原约下的）：开库前吞掉——换上包里的库再开。
+  try {
+    if (applyPendingRestore()) console.log('[dev] backup restore applied');
+  } catch (e) {
+    console.error('[dev] backup restore failed:', e);
+  }
   const port = (await isPortFree(DEFAULT_PORT))
     ? DEFAULT_PORT
     : await findFreePort(DEFAULT_PORT + 1);

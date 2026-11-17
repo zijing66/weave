@@ -186,6 +186,12 @@ export const settingsApi = {
       method: 'PUT',
       body: JSON.stringify(backup),
     }),
+  /** 还原约单（confirm 逐字校验；安全备份后优雅停机，daemon 重启时真覆写）。 */
+  restoreBackup: (file: string, confirm: string): Promise<{ ok: boolean; safetyBackup: string; restarted: boolean }> =>
+    apiFetch<{ ok: boolean; safetyBackup: string; restarted: boolean }>('/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ file, confirm }),
+    }),
   /** user 档采集状态行（§6-2d：跨项目事件采集的地基）。 */
   getCapture: (): Promise<CaptureRow[]> =>
     apiFetch<{ rows: CaptureRow[] }>('/capture').then((r) => r.rows),

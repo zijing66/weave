@@ -14,7 +14,7 @@ import { projectKey } from '../repositories/projects.js';
  * Skill/MCP *state* is NEVER persisted — it is always read live from the
  * filesystem.
  */
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   path          TEXT NOT NULL UNIQUE,
