@@ -505,6 +505,8 @@ export async function handleHooksRoutes(
             });
             return true;
           }
+          // 拉起成功那一拍把已积压的队列立即试递（不等 15s 兜底/下一条事件）
+          deps.messageDeliverer.kickFlush(id);
         }
       }
       const result = await deps.messageDeliverer.send({
@@ -619,6 +621,7 @@ export async function handleHooksRoutes(
       sendJson(res, 502, { error: `会话未运行，自动打开失败：${opened.error}` });
       return true;
     }
+    deps.messageDeliverer.kickFlush(sessionId);
     const text =
       `[weave 并回修补] 你所在 worktree 的分支 ${entry.branch} 并回主干 ${target} 时出现冲突：` +
       `${entry.message ?? '(详见合并报告)'}。` +

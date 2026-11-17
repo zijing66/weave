@@ -78,6 +78,9 @@ export type HookBusMessage =
       reason: 'unacked' | 'failed';
       at: string;
     }
+  /** 活动解闸：目标会话来了 hook 事件（宿主活着）→ unacked 暂停闸提前解除、
+   *  队列续排；行保持「已发出未回执」等人重发（不发此帧则 web 倒计时挂到行消失）。 */
+  | { kind: 'message.stallReleased'; messageId: string; sessionId: string; at: string }
   | {
       kind: 'message.finished';
       messageId: string;

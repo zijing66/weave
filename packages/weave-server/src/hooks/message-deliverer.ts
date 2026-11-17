@@ -959,6 +959,11 @@ export class MessageDeliverer {
     return this.queuedSessions.has(sessionId);
   }
 
+  /** 拉起成功那一拍的冲洗踢脚：不等 15s 兜底/下一条事件，队列立即试递。 */
+  kickFlush(sessionId: string): void {
+    void this.flushSession(sessionId);
+  }
+
   /**
    * 在途计数（sessionId → 条数）：队列 pending（未送达）∪ 内存 delivering/running
    * （在飞）。会话行角标用——终态（injected/delivered/succeeded/…）不计。
@@ -1393,6 +1398,12 @@ export class MessageDeliverer {
   noteActivity(sessionId: string): void {
     if (this.gate.noteActivity(sessionId)) {
       // 翻牌即解闸：队头在等的那条已落定，续排排空积压
+      if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
+      return;
+    }
+    // 活动解闸：宿主活着就是旁证——unacked 闸挂着（回执比对不上）时只解闸续排，
+    // 不翻牌；行保持「已发出未回执」等人重发，队列不陪它冻满 30s+90s。
+    if (this.gate.releaseStallOnActivity(sessionId)) {
       if (this.queuedSessions.has(sessionId)) this.scheduleFlushContinuation(sessionId);
     }
   }

@@ -1231,6 +1231,44 @@ describe('MessageDeliverer 裁决表', () => {
     expect(deliverer.getMessage(plainId)?.acked).not.toBe(true);
   });
 
+  it('活动解闸：普通文本行挂上 unacked 闸后，宿主活动旁证只解闸续排、不翻 acked（行等人重发）', async () => {
+    db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const deliverer = new MessageDeliverer(
+      makeDeps({
+        ackStallMs: 40, // 未回执闸快速落定
+        ackStallReleaseMs: 60_000, // 解除窗拉长：解闸只能来自 noteActivity
+        terminal: {
+          available: () => true,
+          listPanes: async () => [{ id: 'pane-1', title: 'msg-target', cwd: PROJECT_PATH }],
+          sendText,
+          sendKeys: vi.fn(),
+          closePane: vi.fn(),
+        },
+      }),
+    );
+    pushEvent(SESSION_ID, 'Stop');
+
+    const r = await deliverer.send({
+      toSessionId: SESSION_ID,
+      text: '正文比对不上的长文本消息（宿主变形后永远等不到 UPS 匹配）',
+      mode: 'prompt',
+      fromKind: 'dashboard',
+      forceTerminal: true,
+    });
+    const id = (r as { messageId: string }).messageId;
+    // 40ms 后 unacked 闸落定：行 stalled、releaseAt 已发
+    await new Promise((res) => setTimeout(res, 80));
+    expect(deliverer.getMessage(id)).toMatchObject({ status: 'delivered', stalled: true });
+
+    // 宿主来了任何事件（noteActivity）：闸解除、行保持未回执挂着（不翻 acked）
+    deliverer.noteActivity(SESSION_ID);
+    const after = deliverer.getMessage(id)!;
+    expect(after.stalled).not.toBe(true);
+    expect(after.acked).not.toBe(true);
+    expect(busEvents.filter((m) => m.kind === 'message.stallReleased' && m.messageId === id)).toHaveLength(1);
+  });
+
   it('bash 命令（活动旁证翻牌、无认领事件）同样常驻在途视图——执行完就消失 = 「刚才那条命令呢」', async () => {
     db.prepare('UPDATE sessions SET title = ? WHERE session_id = ?').run('msg-target', SESSION_ID);
     const sendText = vi.fn().mockResolvedValue(undefined);

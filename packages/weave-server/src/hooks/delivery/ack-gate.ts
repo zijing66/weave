@@ -154,6 +154,28 @@ export class AckGate {
     return flipped;
   }
 
+  /**
+   * 活动解闸（不翻牌）：会话来了任何 hook 事件 = 宿主活着且在消费。unacked 闸
+   * 挂着时队列冻结最长 30s+90s——回执比对不上（宿主把正文变形）的行没必要陪冻，
+   * 旁证一到就**只解闸续排**：行保持「已发出未回执」挂着等人重发，不翻 acked
+   * （「发了没进」的判断权仍归未回执闸，闸自己照常 30s 落定该行）。
+   */
+  releaseStallOnActivity(sessionId: string): boolean {
+    const cause = this.store.stalled.get(sessionId);
+    if (cause?.reason !== 'unacked') return false;
+    this.store.stalled.delete(sessionId);
+    this.release(sessionId, cause.messageId);
+    const current = this.store.memory.get(cause.messageId);
+    if (current) this.store.memory.set(cause.messageId, { ...current, stalled: false });
+    this.events.emit({
+      kind: 'message.stallReleased',
+      messageId: cause.messageId,
+      sessionId,
+      at: new Date().toISOString(),
+    });
+    return true;
+  }
+
   /** 翻牌收尾（armCommandAck / noteActivity 共用）：标 acked + 撤防 + 帧。 */
   private acknowledge_(sessionId: string, messageId: string): void {
     const current = this.store.memory.get(messageId);
