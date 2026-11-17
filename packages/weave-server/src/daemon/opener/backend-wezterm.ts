@@ -25,6 +25,7 @@ import {
   weztermLiveMuxes,
   weztermLiveMuxesCached,
   weztermMuxForId,
+  weztermSocketPathDead,
   weztermStepError,
   type WeztermMux,
 } from './wezterm-probe.js';
@@ -373,6 +374,9 @@ export class WeztermBackend extends TerminalBackend {
     const [paneKey, socketKey] = TERMINAL_LOCATOR_ENV.wezterm;
     const socket = env[socketKey];
     if (!env[paneKey] || !socket) return null;
+    // 死实例（GUI pid 没了 = 路径永久失效）直接判不中，交调用方回落标题+cwd——
+    // force 探死 socket 是白等一枪 5s 超时（mux 迟滞窗里回落也被拖住，409 成因）。
+    if (weztermSocketPathDead(socket)) return null;
     // 只探会话自己上报的那个 socket（绕过探活闸）：投递路径已知目标，全量扫一遍
     // both slow and cooled-down gates can misfire as "pane not found".
     const { muxes } = await weztermLiveMuxes(true, socket);

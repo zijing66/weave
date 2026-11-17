@@ -53,6 +53,7 @@ export {
   weztermLiveMuxesCached,
   weztermMuxForId,
   weztermSocketCandidates,
+  weztermSocketPathDead,
 } from './opener/wezterm-probe.js';
 export type { CaptureResult, WeztermMux } from './opener/wezterm-probe.js';
 export {

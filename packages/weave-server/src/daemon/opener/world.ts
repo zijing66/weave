@@ -62,11 +62,17 @@ export async function listProjectPanes(
   platform: NodeJS.Platform = process.platform,
 ): Promise<PromptPaneTarget[]> {
   const backend = terminalBackendFor(terminal, platform);
-  const panes = panesAtDir(await backend.listPromptPanes(), dir, platform);
+  let panes = panesAtDir(await backend.listPromptPanes(), dir, platform);
   if (panes.length === 0 && ((await backend.countWindows([dir])).get(dir) ?? 0) > 0) {
-    throw new Error(
-      `Terminal preset "${backend.preset}" cannot close open panes remotely — pick wezterm in settings`,
-    );
+    // 计数有值而枚举空 = 两路口径错位（mux 迟滞窗里实时枚举超时/空世界、计数
+    // 吃的是 10s 缓存旧账）——先作废缓存重试一次再下「关不了」的结论。
+    invalidateWeztermMuxCache();
+    panes = panesAtDir(await backend.listPromptPanes(), dir, platform);
+    if (panes.length === 0) {
+      throw new Error(
+        `Terminal preset "${backend.preset}" cannot close open panes remotely — pick wezterm in settings`,
+      );
+    }
   }
   return panes;
 }

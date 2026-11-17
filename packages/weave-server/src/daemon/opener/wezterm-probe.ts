@@ -186,6 +186,17 @@ export function weztermGuiPidOf(socket: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/**
+ * 该 socket 路径是否**确定已死**（`gui-sock-<pid>` 的 GUI 进程没了）：路径与 GUI
+ * pid 绑定，pid 死则路径永久失效（新 GUI 必然是新 pid → 新路径）。同步零 spawn
+ * ——定位链拿它做死 socket 快速失败，不白等一枪 5s 超时。非 gui-sock 形态判死
+ * 无据，恒 false（照旧交给探活）。
+ */
+export function weztermSocketPathDead(socket: string): boolean {
+  const pid = weztermGuiPidOf(socket);
+  return pid !== null && !weztermPidAlive(pid);
+}
+
 /** 目录下 pid 仍活的 gui-sock 完整路径（pid 大→小 ≈ 新→旧）；io 失败当空目录。
  * 排序不碰 stat：win 下 AF_UNIX socket 文件 statSync 一律 EACCES。 */
 function weztermGuiSocksIn(dir: string): string[] {
@@ -431,6 +442,8 @@ export async function weztermMuxForId(muxKey: string): Promise<WeztermMux | null
     (s) => weztermMuxKey(s) === muxKey,
   );
   if (!socket) return null;
+  // 死实例（GUI pid 没了）快速失败：路径永久失效，force 探它只是白等一枪超时。
+  if (weztermSocketPathDead(socket)) return null;
   const { muxes } = await weztermLiveMuxes(true, socket);
   return muxes.find((m) => weztermMuxKey(m.socket) === muxKey) ?? null;
 }

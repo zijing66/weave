@@ -32,6 +32,7 @@ import {
   weztermMuxKey,
   weztermPaneFromEnv,
   weztermSocketCandidates,
+  weztermSocketPathDead,
   weztermCliArgs,
   winRaiseEncodedScript,
   wtInjectEncodedScript,
@@ -873,6 +874,15 @@ describe('SocketProbeGate — 陈旧 socket 不再反复探', () => {
 
     gate.succeeded('/sock-c');
     expect(gate.shouldProbe('/sock-c', t0 + 2)).toBe(true);
+  });
+});
+
+describe('weztermSocketPathDead — gui-sock 路径的同步判死（零 spawn）', () => {
+  it('GUI pid 已死 → 路径确定失效；非 gui-sock 形态判死无据 → false', () => {
+    // 本进程 pid 必然活着：构一个「活实例」与「死 pid」对照
+    expect(weztermSocketPathDead(`C:\\socks\\gui-sock-${process.pid}`)).toBe(false);
+    expect(weztermSocketPathDead('C:\\socks\\gui-sock-99999999')).toBe(true);
+    expect(weztermSocketPathDead('C:\\socks\\bare-sock')).toBe(false);
   });
 });
 
