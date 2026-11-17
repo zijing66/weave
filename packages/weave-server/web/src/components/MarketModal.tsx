@@ -122,6 +122,9 @@ export interface MarketModalProps {
 
 const EMPTY_ASSETS: LibraryAssets = { skills: [], mcp: [], files: [], plugins: [] };
 
+/** MCP 配置虚拟源 id（不存在于 libraries 表；-1 安全）。 */
+const MCP_VIEW_ID = -1;
+
 export function MarketModal({
   onClose,
   projects,
@@ -143,13 +146,13 @@ export function MarketModal({
   const [market, setMarket] = useState<MarketItem[]>([]);
   /** MCP 共享行（聚合托管项目实配；随 /mcp-shared 拉取）。 */
   const [sharedMcp, setSharedMcp] = useState<McpSharedRow[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  /** 当前选中源；默认 = MCP 配置虚拟源（2026-11-17 用户裁决：进市场即见 MCP 配置）。 */
+  const [selectedId, setSelectedId] = useState<number | null>(MCP_VIEW_ID);
   /** 库资产缓存（id → 四类扫描结果）；搜索时全量补齐。 */
   const [libCache, setLibCache] = useState<Map<number, LibraryAssets>>(new Map());
   const [query, setQuery] = useState('');
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [mcpFormOpen, setMcpFormOpen] = useState(false);
   /** 位置弹层锚定的行键（installationKeyOfRow 形）。 */
   const [locationsKey, setLocationsKey] = useState<string | null>(null);
   const [installIndex, setInstallIndex] = useState<Map<string, InstallationRow[]>>(new Map());
@@ -213,9 +216,9 @@ export function MarketModal({
     [libCache],
   );
 
-  // 选中源 → 拉资产
+  // 选中源 → 拉资产（MCP 配置虚拟源不拉库资产）
   useEffect(() => {
-    if (selectedId !== null) void loadLibrary(selectedId).catch(() => setLibCache((prev) => new Map(prev).set(selectedId, EMPTY_ASSETS)));
+    if (selectedId !== null && selectedId !== MCP_VIEW_ID) void loadLibrary(selectedId).catch(() => setLibCache((prev) => new Map(prev).set(selectedId, EMPTY_ASSETS)));
   }, [selectedId, loadLibrary]);
 
   // 搜索态：跨全部源——没缓存的库并行补齐（一次性，之后纯内存过滤）
@@ -267,7 +270,6 @@ export function MarketModal({
   const layerRefs = {
     locationsKey,
     sourcesOpen,
-    mcpFormOpen,
     expandedUid,
   };
   const layerRef = useRef(layerRefs);
@@ -282,7 +284,6 @@ export function MarketModal({
       const l = layerRef.current;
       if (l.locationsKey) setLocationsKey(null);
       else if (l.sourcesOpen) setSourcesOpen(false);
-      else if (l.mcpFormOpen) setMcpFormOpen(false);
       else if (l.expandedUid) setExpandedUid(null);
       else closeRef.current();
     };
@@ -298,10 +299,6 @@ export function MarketModal({
     }
     if (l.sourcesOpen) {
       setSourcesOpen(false);
-      return true;
-    }
-    if (l.mcpFormOpen) {
-      setMcpFormOpen(false);
       return true;
     }
     if (l.expandedUid) {
@@ -531,17 +528,17 @@ export function MarketModal({
               {t('market.manageSources')}
             </button>
           </Tooltip>
-          <Tooltip label={t('market.addMcp')} side="top">
+          <Tooltip label={t('market.mcpConfig')} side="top">
             <button
               type="button"
-              onClick={() => setMcpFormOpen((v) => !v)}
+              onClick={() => setSelectedId(MCP_VIEW_ID)}
               className={cn(
                 'shrink-0 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700',
-                mcpFormOpen && 'bg-neutral-700 text-neutral-100',
+                selectedId === MCP_VIEW_ID && 'bg-neutral-700 text-neutral-100',
               )}
             >
               <Server className="mr-1 inline h-3 w-3" />
-              {t('market.addMcp')}
+              {t('market.mcpConfig')}
             </button>
           </Tooltip>
           <button
@@ -634,20 +631,6 @@ export function MarketModal({
           </div>
         )}
 
-        {/* MCP 手填表单 */}
-        {mcpFormOpen && (
-          <div className="shrink-0 border-b border-edge/[0.06] px-3 py-2">
-            <McpForm
-              onInstall={(name, config) => {
-                void (async () => {
-                  await onInstallMcp(name, config, 'user', 'claude', null);
-                  reloadInstallations();
-                })();
-              }}
-            />
-          </div>
-        )}
-
         {/* 体：左源右列 */}
         <div className="flex min-h-0 flex-1">
           {/* 左栏：市场源（搜索态置灰） */}
@@ -660,6 +643,23 @@ export function MarketModal({
             <p className="px-1 text-10 font-semibold uppercase text-neutral-500">
               {t('market.sources')}
             </p>
+            {/* MCP 配置虚拟源：聚合全部托管项目实配（点击进该视图） */}
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('');
+                setSelectedId(MCP_VIEW_ID);
+              }}
+              className={cn(
+                'flex w-full cursor-pointer select-none items-center gap-1 rounded-md border px-2 py-1.5',
+                selectedId === MCP_VIEW_ID
+                  ? 'border-neutral-700 bg-neutral-800/80'
+                  : 'border-edge/[0.06] bg-edge/[0.015] hover:bg-edge/[0.04]',
+              )}
+            >
+              <Server className="h-3 w-3 shrink-0 text-blue-400" />
+              <span className="min-w-0 truncate text-xs text-neutral-200">{t('market.mcpConfig')}</span>
+            </button>
             {[...builtinMarkets, ...localMarkets, ...gitMarkets].map((item) => (
               <SourceRow
                 key={item.id}
@@ -683,8 +683,8 @@ export function MarketModal({
 
           {/* 右栏：资产行清单 */}
           <div className="min-w-0 flex-1 overflow-y-auto p-2">
-            {/* 多选批操作条：勾选若干资源 → 统一滑条一次装到同一落点 */}
-            {rows.length > 0 && (
+            {/* 多选批操作条：勾选若干资源 → 统一滑条一次装到同一落点（MCP 配置视图行内已有分段控制器，不进多选） */}
+            {rows.length > 0 && (searching || (selectedId !== null && selectedId !== MCP_VIEW_ID)) && (
               <div className="mb-2 flex flex-wrap items-center gap-2 rounded bg-neutral-950/60 p-2">
                 <button
                   type="button"
@@ -721,8 +721,8 @@ export function MarketModal({
                 )}
               </div>
             )}
-            {/* <lg：源 chips 行（搜索态隐藏） */}
-            {!searching && (
+            {/* <lg：源 chips 行（搜索态与 MCP 配置视图隐藏） */}
+            {!searching && selectedId !== MCP_VIEW_ID && (
               <div className="mb-2 flex flex-wrap gap-1 lg:hidden">
                 {[...builtinMarkets, ...localMarkets, ...gitMarkets].map((item) => (
                   <button
@@ -747,12 +747,65 @@ export function MarketModal({
                 {t('market.noLibrarySelected')}
               </p>
             )}
-            {(searching || selectedId !== null) && rows.length === 0 && (
+            {/* MCP 配置视图：聚合清单（折叠行，展开可编辑 JSON/表单）+ 手动添加 */}
+            {!searching && selectedId === MCP_VIEW_ID && (
+              <McpConfigView
+                shared={sharedMcp}
+                projects={projects}
+                installIndex={installIndex}
+                onInstall={(name, config, scope, agent, project) =>
+                  void fb.run(
+                    'mkt-mcp-shared-install',
+                    async () => {
+                      await onInstallMcp(name, config, scope, agent, project);
+                      reloadInstallations();
+                      api
+                        .listMcpShared()
+                        .then((r) => setSharedMcp(r.shared))
+                        .catch(() => {});
+                      show('success', t('library.installedOk', { name }));
+                    },
+                    { fail: (e) => t('errors.installFailed', { error: errorText(e) }) },
+                  )
+                }
+                onUninstall={(name, scope, agent, project) =>
+                  void fb.run(
+                    'mkt-mcp-shared-install',
+                    async () => {
+                      await onUninstallMcp(name, scope, agent, project);
+                      reloadInstallations();
+                      api
+                        .listMcpShared()
+                        .then((r) => setSharedMcp(r.shared))
+                        .catch(() => {});
+                      show('success', t('skillGrid.uninstalled', { name }));
+                    },
+                    { fail: (e) => t('errors.uninstallFailed', { error: errorText(e) }) },
+                  )
+                }
+                onManualAdd={(name, config, scope, agent, project) =>
+                  void fb.run(
+                    'mkt-mcp-manual',
+                    async () => {
+                      await onInstallMcp(name, config, scope, agent, project);
+                      reloadInstallations();
+                      api
+                        .listMcpShared()
+                        .then((r) => setSharedMcp(r.shared))
+                        .catch(() => {});
+                      show('success', t('library.installedOk', { name }));
+                    },
+                    { fail: (e) => t('errors.mcpInstallFailed', { error: errorText(e) }) },
+                  )
+                }
+              />
+            )}
+            {(searching || (selectedId !== null && selectedId !== MCP_VIEW_ID)) && rows.length === 0 && (
               <p className="p-6 text-center text-xs text-neutral-500">
                 {searching ? t('market.noResults') : t('library.scanning')}
               </p>
             )}
-            {rows.map((row) => (
+            {selectedId !== MCP_VIEW_ID && rows.map((row) => (
               <MarketRowView
                 key={row.uid}
                 row={row}
@@ -877,11 +930,12 @@ function SourceRow({
           ? 'border-neutral-700 bg-neutral-800/80'
           : 'border-edge/[0.06] bg-edge/[0.015] hover:bg-edge/[0.04]',
       )}
-      title={item.path}
     >
-      <span className="min-w-0 truncate text-xs text-neutral-200">
-        {item.managed && item.resourceId ? item.resourceId : item.path}
-      </span>
+      <Tooltip label={item.path} side="top" className="min-w-0 flex-1">
+        <span className="min-w-0 truncate text-xs text-neutral-200">
+          {item.managed && item.resourceId ? item.resourceId : item.path}
+        </span>
+      </Tooltip>
       <span className="ml-auto flex shrink-0 items-center gap-1">
         {statusCfg && (
           <span className={cn('rounded px-1.5 py-0.5 text-10', statusCfg.cls)}>{statusCfg.label}</span>
@@ -1031,9 +1085,11 @@ function MarketRowView({
           <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
         )}
         {iconOfKind(row.kind)}
-        <span className="min-w-0 truncate text-xs font-medium text-neutral-200" title={row.name}>
-          {row.name}
-        </span>
+        <Tooltip label={row.name} side="top" className="min-w-0">
+          <span className="min-w-0 truncate text-xs font-medium text-neutral-200">
+            {row.name}
+          </span>
+        </Tooltip>
         {plugin && <span className="shrink-0 font-mono text-10 text-neutral-500">v{plugin.version}</span>}
         {plugin ? (
           <Badge className={cn('shrink-0', KIND_STYLES[plugin.kind])}>
@@ -1045,12 +1101,15 @@ function MarketRowView({
           </Badge>
         )}
         {row.shared && (
-          <span
-            className="shrink-0 rounded bg-blue-900/30 px-1.5 py-0.5 text-10 text-blue-300"
-            title={`${t('market.sharedFrom')}: ${row.shared.sourceProjectName}`}
+          <Tooltip
+            label={`${t('market.sharedFrom')}: ${row.shared.sourceProjectName}`}
+            side="top"
+            className="shrink-0"
           >
-            {t('market.sharedBadge')} · {row.shared.sourceProjectName}
-          </span>
+            <span className="rounded bg-blue-900/30 px-1.5 py-0.5 text-10 text-blue-300">
+              {t('market.sharedBadge')} · {row.shared.sourceProjectName}
+            </span>
+          </Tooltip>
         )}
         {plugin?.targets && plugin.targets.length > 0 && (
           <span className="shrink-0 text-10 text-neutral-600">
@@ -1109,9 +1168,9 @@ function MarketRowView({
       {expanded && (
         <div className="space-y-2 border-t border-edge/[0.06] px-3 py-2">
           {plugin?.description && (
-            <p className="text-11 text-neutral-500" title={plugin.description}>
-              {plugin.description}
-            </p>
+            <Tooltip label={plugin.description} side="top" className="w-fit max-w-full">
+              <p className="truncate text-11 text-neutral-500">{plugin.description}</p>
+            </Tooltip>
           )}
           {plugin && plugin.components.length > 0 && (
             <div className="flex flex-wrap items-center gap-1">
@@ -1124,9 +1183,11 @@ function MarketRowView({
           )}
           {plugin && plugin.skills.length > 0 && (
             <div>
-              <p className="mb-0.5 text-10 text-neutral-600" title={t('library.pluginSkillsFollowTip')}>
-                {t('library.pluginSkillsLabel')}
-              </p>
+              <Tooltip label={t('library.pluginSkillsFollowTip')} side="top" className="w-fit">
+                <p className="mb-0.5 text-10 text-neutral-600">
+                  {t('library.pluginSkillsLabel')}
+                </p>
+              </Tooltip>
               <div className="flex flex-wrap gap-1">
                 {plugin.skills.map((sname) => (
                   <Badge key={sname} variant="skill" className="px-1.5 text-10">
@@ -1210,9 +1271,9 @@ function InstallLevelSlider({
 
   return (
     <div className="flex items-center gap-2">
-      <span className="w-32 max-w-32 shrink-0 truncate text-11 text-neutral-400" title={nameTip ?? name}>
-        {name}
-      </span>
+      <Tooltip label={nameTip ?? name} side="top" className="w-32 max-w-32 shrink-0">
+        <span className="min-w-0 truncate text-11 text-neutral-400">{name}</span>
+      </Tooltip>
       <span className="text-10 shrink-0 text-neutral-600">{harnessUiOf(agent).label}</span>
       {/* 分段控制器（segmented control）：选中段浮起白底，禁用段灰字不可点 */}
       <span
@@ -1223,14 +1284,13 @@ function InstallLevelSlider({
         {LEVELS.map((lv) => {
           const active = lv === currentLevel;
           const usable = enabledOf(lv);
-          return (
+          const btn = (
             <button
               key={lv}
               type="button"
               role="radio"
               aria-checked={active}
               disabled={loading || (!active && !usable)}
-              title={!usable && lv !== 'uninstalled' ? t('market.sliderDisabledScope', { level: t(LEVEL_KEY[lv]) }) : undefined}
               onClick={() => tryLevel(lv)}
               className={cn(
                 'rounded px-1.5 py-0.5 text-10 transition-colors',
@@ -1243,6 +1303,17 @@ function InstallLevelSlider({
             >
               {t(LEVEL_KEY[lv])}
             </button>
+          );
+          return !usable && lv !== 'uninstalled' ? (
+            <Tooltip
+              key={lv}
+              label={t('market.sliderDisabledScope', { level: t(LEVEL_KEY[lv]) })}
+              side="top"
+            >
+              {btn}
+            </Tooltip>
+          ) : (
+            btn
           );
         })}
       </span>
@@ -1420,34 +1491,339 @@ function InstallTargetPicker({
           })}
         </div>
       )}
-      <div className="flex items-center">
-        <FeedbackIcon
-          state={installState}
-          className="h-3 w-3"
-          icon={<Download className="h-3 w-3" />}
-        />
-        {loading && (
+      {loading && (
+        <div className="flex items-center">
+          <FeedbackIcon
+            state={installState}
+            className="h-3 w-3"
+            icon={<Download className="h-3 w-3" />}
+          />
           <span className="ml-1 text-11 text-neutral-400">{t('library.installing')}</span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/** MCP 手填表单（自 LibraryPanel 迁入，提交走注入的 onInstallMcp）。 */
+/** MCP 配置视图：聚合托管项目实配清单（折叠行：分段控制器 + 展开编辑）+ 手动添加。 */
+function McpConfigView({
+  shared,
+  projects,
+  installIndex,
+  onInstall,
+  onUninstall,
+  onManualAdd,
+}: {
+  shared: McpSharedRow[];
+  projects: ProjectRow[];
+  installIndex: Map<string, InstallationRow[]>;
+  onInstall: (
+    name: string,
+    config: McpServerConfig,
+    scope: AssetScope,
+    agent: AssetAgent,
+    project: ProjectRow | null,
+  ) => void;
+  onUninstall: (
+    name: string,
+    scope: AssetScope,
+    agent: AssetAgent,
+    project: ProjectRow | null,
+  ) => void;
+  onManualAdd: (
+    name: string,
+    config: McpServerConfig,
+    scope: AssetScope,
+    agent: AssetAgent,
+    project: ProjectRow | null,
+  ) => void;
+}) {
+  const t = useT();
+  const [formOpen, setFormOpen] = useState(false);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-2">
+      {/* 手动添加（折叠条）：添加时选项目或全局 */}
+      <div className="rounded-md border border-edge/[0.06] bg-edge/[0.015]">
+        <button
+          type="button"
+          onClick={() => setFormOpen((v) => !v)}
+          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left"
+        >
+          {formOpen ? (
+            <ChevronDown className="h-3 w-3 shrink-0 text-neutral-600" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
+          )}
+          <Server className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+          <span className="text-xs font-medium text-neutral-200">{t('market.addMcp')}</span>
+        </button>
+        {formOpen && (
+          <div className="border-t border-edge/[0.06] px-3 py-2">
+            <McpForm
+              projects={projects}
+              onInstall={(name, config, scope, agent, project) => {
+                onManualAdd(name, config, scope, agent, project);
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 聚合清单：一行一个 server（harness×名去重），折叠行 */}
+      {shared.length === 0 ? (
+        <p className="rounded-md border border-dashed border-edge/[0.06] p-3 text-xs text-neutral-600">
+          {t('market.mcpConfigEmpty')}
+        </p>
+      ) : (
+        shared.map((s) => {
+          const key = `${s.harness}:${s.name}`;
+          const installedRows = (installIndex.get(`mcp\0${s.name}`) ?? []).filter(
+            (r) => r.harness === s.harness,
+          );
+          return (
+            <McpConfigRow
+              key={key}
+              shared={s}
+              projects={projects}
+              installedRows={installedRows}
+              expanded={expandedKey === key}
+              onToggle={() => setExpandedKey((prev) => (prev === key ? null : key))}
+              onInstall={onInstall}
+              onUninstall={onUninstall}
+            />
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+/** MCP 配置单行：头行（名 + harness + 来源项目徽标 + 已装 N 处）+ 展开
+ *  体（每项目分段控制器安装 + 配置编辑 JSON/表单双视图）。 */
+function McpConfigRow({
+  shared,
+  projects,
+  installedRows,
+  expanded,
+  onToggle,
+  onInstall,
+  onUninstall,
+}: {
+  shared: McpSharedRow;
+  projects: ProjectRow[];
+  installedRows: InstallationRow[];
+  expanded: boolean;
+  onToggle: () => void;
+  onInstall: (
+    name: string,
+    config: McpServerConfig,
+    scope: AssetScope,
+    agent: AssetAgent,
+    project: ProjectRow | null,
+  ) => void;
+  onUninstall: (
+    name: string,
+    scope: AssetScope,
+    agent: AssetAgent,
+    project: ProjectRow | null,
+  ) => void;
+}) {
+  const t = useT();
+  /** 安装目标 harness（默认 = 来源实配的 harness；可切到其他 harness 装同款配置）。 */
+  const [agent, setAgent] = useState<AssetAgent>(shared.harness);
+  const agentInstalledRows = installedRows.filter((r) => r.harness === agent);
+  return (
+    <div className="rounded-md border border-edge/[0.06] bg-edge/[0.015]">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 max-lg:flex-wrap"
+      >
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-neutral-600" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-neutral-600" />
+        )}
+        <Server className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+        <Tooltip label={shared.name} side="top" className="min-w-0">
+          <span className="min-w-0 truncate text-xs font-medium text-neutral-200">
+            {shared.name}
+          </span>
+        </Tooltip>
+        <Badge className="shrink-0 bg-blue-900/40 text-blue-300">{t('toolkit.kind.mcp')}</Badge>
+        {/* harness 切换 tab：安装目标 harness（来源实配的 harness 高亮起点） */}
+        <span
+          role="radiogroup"
+          aria-label="harness"
+          className="shrink-0 inline-flex items-center rounded bg-neutral-900 p-0.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(['claude', 'codex'] as AssetAgent[]).map((h) => (
+            <button
+              key={h}
+              type="button"
+              role="radio"
+              aria-checked={agent === h}
+              onClick={() => setAgent(h)}
+              className={cn(
+                'rounded px-1.5 py-0.5 text-10',
+                agent === h ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300',
+              )}
+            >
+              {harnessUiOf(h).label}
+            </button>
+          ))}
+        </span>
+        <Tooltip
+          label={`${t('market.sharedFrom')}: ${shared.sourceProjectName}${shared.alsoIn.length > 0 ? ` · ${shared.alsoIn.map((a) => a.projectName).join(', ')}` : ''}`}
+          side="top"
+          className="shrink-0"
+        >
+          <span className="rounded bg-blue-900/30 px-1.5 py-0.5 text-10 text-blue-300">
+            {t('market.sharedBadge')} · {shared.sourceProjectName}
+            {shared.alsoIn.length > 0 && ` +${shared.alsoIn.length}`}
+          </span>
+        </Tooltip>
+        {agentInstalledRows.length > 0 && (
+          <span className="ml-auto shrink-0 rounded bg-emerald-900/40 px-1.5 py-0.5 text-10 text-emerald-300">
+            {t('market.installedCount', { n: agentInstalledRows.length })}
+          </span>
+        )}
+      </div>
+      {expanded && (
+        <div className="space-y-2 border-t border-edge/[0.06] px-3 py-2">
+          <McpConfigEditor config={shared.config} />
+          <div className="rounded bg-neutral-950/60 p-2">
+            <p className="mb-1.5 text-11 text-neutral-500">
+              {t('market.installTo')}
+              <span className="ml-1 text-10 text-neutral-600">
+                ({t('market.installToHarness', { harness: harnessUiOf(agent).label })})
+              </span>
+            </p>
+            <div className="space-y-1">
+              {projects.map((p) => {
+                const installed = agentInstalledRows.some((r) => r.projectId === p.id);
+                return (
+                  <InstallLevelSlider
+                    key={p.id}
+                    name={p.name}
+                    nameTip={p.path}
+                    agent={agent}
+                    agentScopes={['project', 'user']}
+                    currentLevel={installed ? 'project' : 'uninstalled'}
+                    onChange={(level, scope) => {
+                      if (level === 'uninstalled' && scope) {
+                        onUninstall(shared.name, scope, agent, p);
+                      } else if (scope) {
+                        onInstall(shared.name, shared.config, scope, agent, p);
+                      }
+                    }}
+                    loading={false}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** MCP 配置编辑：JSON 原文 / 表单双视图切换（只展示；提交走行内分段控制器）。 */
+function McpConfigEditor({ config }: { config: McpServerConfig }) {
+  const t = useT();
+  const [mode, setMode] = useState<'json' | 'form'>('json');
+  const json = JSON.stringify(config, null, 2);
+  return (
+    <div className="rounded bg-neutral-950/60 p-2">
+      <div className="mb-1.5 flex items-center gap-1">
+        <span className="text-11 text-neutral-500">{t('market.mcpConfigEdit')}</span>
+        <div className="ml-auto flex items-center rounded bg-neutral-900 p-0.5">
+          {(['json', 'form'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                'rounded px-2 py-0.5 text-11',
+                mode === m ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300',
+              )}
+            >
+              {t(m === 'json' ? 'market.mcpConfigJson' : 'market.mcpConfigForm')}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === 'json' ? (
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-neutral-900 p-2 font-mono text-11 text-neutral-300">
+          {json}
+        </pre>
+      ) : (
+        <div className="space-y-1 text-11 text-neutral-300">
+          {'command' in config ? (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <span className="text-neutral-500">{t('library.mcpCommandPlaceholder')}:</span>
+                <span className="font-mono">{config.command}</span>
+              </div>
+              {config.args && config.args.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-neutral-500">{t('library.mcpArgsPlaceholder')}:</span>
+                  <span className="font-mono break-all">{config.args.join(' ')}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <span className="text-neutral-500">url:</span>
+              <span className="font-mono break-all">{config.url}</span>
+            </div>
+          )}
+          {'env' in config && config.env && Object.keys(config.env).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <span className="text-neutral-500">{t('library.mcpEnvPlaceholder')}:</span>
+              <span className="font-mono break-all">
+                {Object.entries(config.env).map(([k, v]) => `${k}=${v}`).join(', ')}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** MCP 手填表单（自 LibraryPanel 迁入；添加时选项目或全局）。 */
 function McpForm({
+  projects,
   onInstall,
 }: {
-  onInstall: (name: string, config: McpServerConfig) => void;
+  projects: ProjectRow[];
+  onInstall: (
+    name: string,
+    config: McpServerConfig,
+    scope: AssetScope,
+    agent: AssetAgent,
+    project: ProjectRow | null,
+  ) => void;
 }) {
   const [name, setName] = useState('');
   const [command, setCommand] = useState('');
   const [args, setArgs] = useState('');
   const [env, setEnv] = useState('');
+  const [target, setTarget] = useState<string>('__global__');
   const t = useT();
-  const { show } = useToast();
-  const fb = useActionFeedback();
-  const submitState = fb.stateOf('mkt-mcp-submit');
+  const submitState = useActionFeedback().stateOf('mkt-mcp-manual');
 
   function submit() {
     const n = name.trim();
@@ -1463,22 +1839,22 @@ function McpForm({
       const i = line.indexOf('=');
       if (i > 0) envMap[line.slice(0, i)] = line.slice(i + 1);
     }
-    void fb.run(
-      'mkt-mcp-submit',
-      async () => {
-        await onInstall(n, {
-          command: cmd,
-          ...(argList && { args: argList }),
-          ...(Object.keys(envMap).length > 0 && { env: envMap }),
-        });
-        show('success', t('library.installedOk', { name: n }));
-        setName('');
-        setCommand('');
-        setArgs('');
-        setEnv('');
+    const p = projects.find((x) => String(x.id) === target) ?? null;
+    onInstall(
+      n,
+      {
+        command: cmd,
+        ...(argList && { args: argList }),
+        ...(Object.keys(envMap).length > 0 && { env: envMap }),
       },
-      { fail: (e) => t('errors.mcpInstallFailed', { error: errorText(e) }) },
+      p ? 'project' : 'user',
+      'claude',
+      p,
     );
+    setName('');
+    setCommand('');
+    setArgs('');
+    setEnv('');
   }
 
   return (
@@ -1507,6 +1883,18 @@ function McpForm({
         placeholder={t('library.mcpEnvPlaceholder')}
         className="w-44 font-mono"
       />
+      <select
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+        className="shrink-0 rounded border border-edge/[0.1] bg-neutral-900 px-2 py-1 text-11 text-neutral-200"
+      >
+        <option value="__global__">{t('market.destGlobal')}</option>
+        {projects.map((x) => (
+          <option key={x.id} value={String(x.id)}>
+            {x.name}
+          </option>
+        ))}
+      </select>
       <button
         type="button"
         onClick={submit}

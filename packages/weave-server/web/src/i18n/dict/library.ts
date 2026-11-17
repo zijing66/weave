@@ -150,6 +150,12 @@ export const libraryZh = {
   'market.batchApply': '批量应用到',
   'market.batchSelected': '已选 {n} 项',
   'market.batchConfirmMsg': '把 {n} 个选中资源安装到{dest}？',
+  'market.mcpConfig': 'MCP配置',
+  'market.mcpConfigEmpty': '暂无任何托管项目的 MCP 实配，用上方「手动添加 MCP」创建一条。',
+  'market.mcpConfigEdit': '配置',
+  'market.mcpConfigJson': 'JSON',
+  'market.mcpConfigForm': '表单',
+  'market.installToHarness': '装到 {harness}',
 };
 
 export const libraryEn: Record<keyof typeof libraryZh, string> = {
@@ -305,4 +311,10 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'market.batchApply': 'Apply to',
   'market.batchSelected': '{n} selected',
   'market.batchConfirmMsg': 'Install {n} selected assets to {dest}?',
+  'market.mcpConfig': 'MCP Config',
+  'market.mcpConfigEmpty': 'No MCP config found in any managed project yet — create one with "Add MCP" above.',
+  'market.mcpConfigEdit': 'Config',
+  'market.mcpConfigJson': 'JSON',
+  'market.mcpConfigForm': 'Form',
+  'market.installToHarness': 'installs to {harness}',
 };
