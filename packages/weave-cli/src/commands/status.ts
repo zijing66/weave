@@ -2,7 +2,6 @@ import path from 'node:path';
 import os from 'node:os';
 import { readFile } from 'node:fs/promises';
 import {
-  fileExists,
   logger,
   formatTable,
   HARNESS_DIRS,
@@ -10,7 +9,7 @@ import {
   HARNESS_KEYS,
   type Harness,
 } from '@weavecode/core';
-import { createRuntimeRegistry, type AssetSurface, type FileAssetCategory } from '@weavecode/harness';
+import { createRuntimeRegistry, fileExists, type AssetSurface, type FileAssetCategory } from '@weavecode/harness';
 import { WEAVE_VERSION } from '@weavecode/server';
 import { checkHarness } from '../init/harness-checks.js';
 import { t } from '../i18n/index.js';

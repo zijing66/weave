@@ -5,13 +5,10 @@ import {
   type InitResult,
   type PlatformInfo,
   type Harness,
-  detectPlatform,
   resolveComponents,
   DEFAULT_HOOKS,
   DEFAULT_MCP,
   HARNESS_KEYS,
-  ensureDir,
-  fileExists,
   logger,
 } from '@weavecode/core';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -19,6 +16,7 @@ import {
 import { templateRegistry } from '@weavecode/templates';
 import { WEAVE_VERSION } from '@weavecode/server';
 import type { InitContext } from '@weavecode/harness';
+import { detectPlatform, ensureDir, fileExists } from '@weavecode/harness';
 import type { ClaudeMdTemplate } from './claudemd-gen.js';
 import { writeInstructionFiles } from './instruction-files.js';
 import { buildInitRegistry } from './wiring.js';
