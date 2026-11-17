@@ -80,7 +80,7 @@ describe('BackupEngine', () => {
     });
     const result = await engine.run(false);
     expect(result).not.toBeNull();
-    expect(result!.file).toContain('weave-backup-2026-11-11-010000.tar.gz');
+    expect(result!.file).toContain('weave-backup-2026-11-11-01-00-00.tar.gz');
     expect(result!.marketRepos).toBe(1);
     expect(result!.tables).toBe(2); // projects 1 + settings 1
     // 状态面：完成 + 不在跑
@@ -266,6 +266,6 @@ describe('backup scheduler 判据', () => {
   });
 
   it('stampOf 与包名族一致（保留期按文件名判的前提）', () => {
-    expect(stampOf(new Date(2026, 10, 11, 1, 0, 5))).toBe('2026-11-11-010005');
+    expect(stampOf(new Date(2026, 10, 11, 1, 0, 5))).toBe('2026-11-11-01-00-05');
   });
 });

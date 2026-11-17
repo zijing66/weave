@@ -401,10 +401,14 @@ export class BackupEngine {
 
 // --- 辅助 --------------------------------------------------------------------
 
-/** 备份包文件名时刻戳（本地时刻 `YYYY-MM-DD-HHmmss`，与配置备份 id 同族）。 */
+/**
+ * 备份包文件名时刻戳：本地时刻 `YYYY-MM-DD-HH-MM-SS`（全连字符分段，ISO 风、
+ * 段位自明——旧无连字符的 HHmmss 尾段要靠位置数）。包名正则（prune/清单/前端
+ * 标签）都吃这个形；旧形包在保留期内仍被 prune 的双形正则认到、过期自然滚掉。
+ */
 export function stampOf(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 }
 
 /** 表总字节估算（dbstat 精确值代价高，配置面量级用 COUNT×均宽足够）。 */
@@ -477,10 +481,10 @@ export async function pruneOldBackups(backupsDir: string, now: Date): Promise<nu
   const cutoff = now.getTime() - BACKUP_RETENTION_DAYS * 86400_000;
   let pruned = 0;
   for (const name of names) {
-    const m = name.match(/^weave-backup-(\d{4}-\d{2}-\d{2}-\d{6})\.tar\.gz$/);
+    // 双形兼容：现行 `...-HH-MM-SS` 与旧 `...-HHmmss`（改形前的存量包，期内认到、过期自然滚掉）
+    const m = name.match(/^weave-backup-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}-\d{6})\.tar\.gz$/);
     if (!m) continue;
-    const [, s] = m;
-    const d = parseStamp(s);
+    const d = parseStamp(m[1]!);
     if (d && d.getTime() < cutoff) {
       try {
         await (await import('node:fs/promises')).rm(path.join(backupsDir, name));
@@ -494,7 +498,7 @@ export async function pruneOldBackups(backupsDir: string, now: Date): Promise<nu
 }
 
 function parseStamp(s: string): Date | null {
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})-?(\d{2})-?(\d{2})$/);
   if (!m) return null;
   return new Date(
     Number(m[1]),

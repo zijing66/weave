@@ -84,7 +84,10 @@ export async function handleBackupRoutes(
       sendJson(res, 400, { error: `confirm text mismatch — type "${RESTORE_CONFIRM_TEXT}" exactly` });
       return true;
     }
-    if (typeof body.file !== 'string' || !/^weave-backup-[\d-]+\.tar\.gz$/.test(body.file)) {
+    if (
+      typeof body.file !== 'string' ||
+      !/^weave-backup-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}-\d{6})\.tar\.gz$/.test(body.file)
+    ) {
       sendJson(res, 400, { error: '"file" must be a weave-backup package name' });
       return true;
     }
@@ -154,7 +157,7 @@ async function listPackages(): Promise<Array<{ name: string; bytes: number; at: 
   }
   const rows: Array<{ name: string; bytes: number; at: string }> = [];
   for (const name of names) {
-    const m = name.match(/^weave-backup-(\d{4}-\d{2}-\d{2}-\d{6})\.tar\.gz$/);
+    const m = name.match(/^weave-backup-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}-\d{6})\.tar\.gz$/);
     if (!m) continue;
     try {
       const st = await stat(path.join(getBackupsDir(), name));

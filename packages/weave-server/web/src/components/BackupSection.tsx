@@ -155,7 +155,7 @@ export function BackupSection() {
         {st?.lastResult && !running && (
           <span className="min-w-0 flex-1 truncate text-10 text-neutral-600">
             {t('settings.backupLastRun', {
-              time: new Date(st.lastResult.file.match(/-(\d{4}-\d{2}-\d{2}-\d{6})/)?.[1]?.replace(/-(\d{2})-(\d{2})-(\d{2})$/, ' $1:$2:$3') ?? '').toLocaleString(),
+              time: stampLabel(st.lastResult.file),
               size: fmtBytes(st.lastResult.bytes),
             })}
           </span>
@@ -287,6 +287,14 @@ function RestoreConfirmDialog(props: {
     </div>,
     document.body,
   );
+}
+
+/** 包名时刻戳（`weave-backup-YYYY-MM-DD-HH-MM-SS.tar.gz`，旧形 HHmmss 也认）→ 本地时刻；认不出回包名原文。 */
+function stampLabel(file: string): string {
+  const m = file.match(/-(\d{4})-(\d{2})-(\d{2})-(\d{2})-?(\d{2})-?(\d{2})\.tar\.gz$/);
+  if (!m) return file;
+  const [, y, mo, d, h, mi, s] = m;
+  return new Date(Number(y), Number(mo)! - 1, Number(d), Number(h), Number(mi), Number(s)).toLocaleString();
 }
 
 function fmtBytes(bytes: number): string {
