@@ -145,7 +145,7 @@ function aggregate(
 let lastRunningAt = 0;
 const JUST_FINISHED_MS = 3 * 60_000;
 /** 空闲多久后转睡觉：全部会话静默超过此时长 = 没人盯着，蜷起来值守。 */
-const SLEEP_AFTER_MS = 10 * 60_000;
+const SLEEP_AFTER_MS = 1 * 60_000;
 
 function wasRunningRecently(now: number): boolean {
   return lastRunningAt > 0 && now - lastRunningAt < JUST_FINISHED_MS;
@@ -685,11 +685,11 @@ function syncRegion(): void {
   postToHost(`region:${rx},${ry},${rw},${rh}`);
 }
 
-/** 休息（idle/sleep）时头右上飘 zzz；位置跟着绘制区与视线微移走，停止时冻住。
+/** 睡眠（sleep）时头右上飘 zzz；位置跟着绘制区与视线微移走，停止时冻住。
  * 字号与浮距按宠物档等比缩放（small 为基准 1）。 */
 function syncZzz(): void {
   const cur = player.current();
-  const resting = cur === 'idle' || cur === 'sleep';
+  const resting = cur === 'sleep';
   zzzEl.classList.toggle('show', resting);
   zzzEl.classList.toggle('frozen', paused);
   if (!resting) return;
@@ -697,8 +697,10 @@ function syncZzz(): void {
   zzzEl.style.setProperty('--zzz-scale', s.toFixed(2));
   const r = currentPetRect();
   const box = contentBoxOf(cur);
+  // 倒挂睡眠行：丝线顶到格顶会把 y0 拉满格，zzz 会飘到窗顶离头太远——锚回身体段
+  const bodyTop = cur === 'sleep' && box ? Math.max(box.y0, Math.round(SPRITE_GRID.cellHeight * 0.35)) : box?.y0;
   const right = box ? r.x + ((box.x1 + 1) / SPRITE_GRID.cellWidth) * r.w : r.x + r.w;
-  const top = box ? r.y + (box.y0 / SPRITE_GRID.cellHeight) * r.h : r.y;
+  const top = bodyTop !== undefined ? r.y + (bodyTop / SPRITE_GRID.cellHeight) * r.h : r.y;
   // 容器（44×40×s）右上角锚在头部右上：偏移量随容器放大同步调大
   zzzEl.style.left = `${Math.round(right - 22 * s)}px`;
   zzzEl.style.top = `${Math.round(top - 20 * s)}px`;
@@ -804,7 +806,7 @@ function applyAggregated(next: Aggregated): void {
   // 静默兜底窗就是防抖（单点内），pet 再加第二层只会引入两边不同步。
   // 运行中（结网/跑轮）无限循环值守；其余动画主循环 ×3 后自然回落 idle。
   // 停止时连切动画一起冻结（画面完全静止），气泡与提醒照常。
-  if (!paused) player.play(next.anim, { loopForever: next.anim === 'review' || next.anim === 'running' });
+  if (!paused) player.play(next.anim, { loopForever: next.anim === 'review' || next.anim === 'running' || next.anim === 'sleep' });
 
   // 待答：跟随状态常驻（问题答完即撤）；失败 6s、完成 10s 一次性提醒
   const stateKeys = new Set(next.stateBubbles.map((b) => b.key));
