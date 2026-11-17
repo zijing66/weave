@@ -382,7 +382,10 @@ export function FileBrowserModal({
       });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [query, dir, load, activeProjectId]);
+    // picked 必须在依赖里：pickProject 改 picked 时其余参数往往原样（聚焦项目的
+    // 根目录 = 同参），不进依赖 effect 不重跑、进项目就永远不拉数据。同参闪现
+    // 由闸挡（pickProject 已把 lastLoadKeyRef 置 null 放行这一次）。
+  }, [query, dir, load, activeProjectId, picked]);
 
   useEffect(() => () => ctrlRef.current?.abort(), []);
 
@@ -766,6 +769,9 @@ export function FileBrowserModal({
     visited.current.clear();
     setQuery('');
     setViewing(null);
+    // 聚焦项目再点击进入：projectId/dir/query 全都没变，effect 依赖不动 +
+    // lastLoadKeyRef 同参 → 不闸这里 load 永不发起，中栏空白（entries 已清）。
+    lastLoadKeyRef.current = null;
     if (targetPath) {
       const slash = targetPath.lastIndexOf('/');
       setDir(slash >= 0 ? targetPath.slice(0, slash) : '');
