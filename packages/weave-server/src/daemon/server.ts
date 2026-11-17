@@ -276,7 +276,7 @@ export interface WeaveServerDeps {
  */
 export function weaveRequestHandler(
   deps: WeaveServerDeps,
-): (req: IncomingMessage, res: ServerResponse) => void {
+): ((req: IncomingMessage, res: ServerResponse) => void) & { beginDrain: () => void } {
   // Ensure a long-lived fingerprint cache so update detection reuses hashes.
   const fingerprintCache = deps.fingerprintCache ?? new FingerprintCache();
   const apiLog = deps.apiLog ?? new ApiLogger();
@@ -284,7 +284,17 @@ export function weaveRequestHandler(
   // 序号与缓冲随连接数翻倍（同一帧被记 N 次）。
   const sseHub = deps.sseHub ?? new SseHub(deps);
   const serverDeps: WeaveServerDeps = { ...deps, fingerprintCache, apiLog, sseHub };
-  return (req, res) => {
+  // 排空标记（MCP 客户端韧性）：shutdown 先置位再 server.close()——排空窗与停机
+  // 后到达的请求拿到 503 + Retry-After 而不是挂到进程退出被硬杀（socket 层半开 /
+  // RST 客户端不可辨识）；客户端收到 Retry-After 会退避重试，daemon 回来即自愈。
+  let draining = false;
+  const handler = (req: IncomingMessage, res: ServerResponse) => {
+    if (draining) {
+      res.setHeader('connection', 'close');
+      res.setHeader('retry-after', '2');
+      sendJson(res, 503, { error: 'weave daemon is restarting, retry shortly' });
+      return;
+    }
     apiLog.begin(req, res);
     // 兜底闸：路由层任何抛错（readJson 的坏 JSON、zod parse 失败等）都落 500——
     // 不接住就是 unhandledRejection，Node 直接崩进程（2026-11-10 实测 effort 路由
@@ -299,11 +309,40 @@ export function weaveRequestHandler(
       }
     });
   };
+  /** shutdown 链的排空闸入口（dev-entry/start 的 shutdown 第一拍调用）。 */
+  handler.beginDrain = () => {
+    draining = true;
+  };
+  return handler;
 }
 
 /** Create the daemon HTTP server (no TLS; 绑定地址由调用方 listen 决定，认证经 deps.auth)。 */
 export function createWeaveServer(deps: WeaveServerDeps): Server {
   return http.createServer(weaveRequestHandler(deps));
+}
+
+/**
+ * 优雅停机的连接层排空：close() 只停接受新连接，keep-alive 空闲连接与在飞
+ * 请求要显式收尾（client 尝试复用死连接 = ECONNREFUSED / socket hang up）。
+ * 在飞请求给 1s 宽限后 destroy（SSE 等长连接不会自然结束）；空闲 keep-alive
+ * 直接摘。shutdown 链里放在 server.close() 之后调用。
+ */
+export function drainServerConnections(server: Server): void {
+  for (const key of ['connections', 'idleConnections'] as const) {
+    const set = (server as unknown as Record<string, unknown>)[key];
+    if (!(set instanceof Set)) continue;
+    for (const conn of set) {
+      const socket = conn as import('node:net').Socket;
+      const req = (socket as { _httpMessage?: IncomingMessage | null })._httpMessage;
+      if (req) {
+        // 在飞：宽限 1s 后断（流式响应收不了尾，客户端按失败重试）
+        const t = setTimeout(() => socket.destroy(), 1_000);
+        t.unref();
+      } else {
+        socket.end(); // 空闲 keep-alive：发 FIN 走正常关闭，客户端连接池干净出清
+      }
+    }
+  }
 }
 
 async function handleRequest(

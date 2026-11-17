@@ -69,7 +69,7 @@ import { defaultWorktreeGitExec, startWorktreeMergeSweeper, type SessionWorktree
 import { hooksRoot } from '../hooks/mirror.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
 import { WatchService } from '../watch/watch-service.js';
-import { weaveRequestHandler } from './server.js';
+import { drainServerConnections, weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
@@ -736,6 +736,7 @@ async function main(): Promise<void> {
   });
 
   // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
+  let beginDrain: (() => void) | null = null;
   const requestHandler = weaveRequestHandler({
     projects,
     port,
@@ -804,6 +805,7 @@ async function main(): Promise<void> {
     auth,
     requestShutdown: () => shutdownRef.fn?.(),
   });
+  beginDrain = requestHandler.beginDrain;
   const server = http.createServer(requestHandler);
 
   // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；失败降级仅警告）。
@@ -846,8 +848,13 @@ async function main(): Promise<void> {
     dashboardPusher.stop();
     mdnsAdvertiser?.stop();
     federationHeartbeat?.stop();
+    // MCP 客户端韧性：先立排空闸（新请求 503+Retry-After）再收连接——keep-alive
+    // 空闲连接发 FIN 走干净关闭、在飞给 1s 宽限，客户端连接池不留死连接。
+    beginDrain?.();
     server.close();
+    drainServerConnections(server);
     tls?.server.close();
+    if (tls) drainServerConnections(tls.server);
     // WAL 并回主库再退（与生产入口同口径）：升级/重启后不必回放孤儿 -wal
     const closeDb = (): void => {
       try {

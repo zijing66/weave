@@ -83,7 +83,7 @@ import { WatchService } from '../watch/watch-service.js';
 import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectProjectUpdateCounts } from '../install/updates.js';
-import { weaveRequestHandler } from './server.js';
+import { drainServerConnections, weaveRequestHandler } from './server.js';
 import { startTlsServer, type TlsListener } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
@@ -784,6 +784,7 @@ export function startDaemon(): void {
   });
 
   // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
+  let beginDrain: (() => void) | null = null;
   const requestHandler = weaveRequestHandler({
     projects,
     port: state.port,
@@ -852,6 +853,7 @@ export function startDaemon(): void {
     backupEngine,
     auth,
   });
+  beginDrain = requestHandler.beginDrain;
   const server = http.createServer(requestHandler);
 
   // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；端口被占等失败仅警告降级）。
@@ -896,8 +898,13 @@ export function startDaemon(): void {
     dashboardPusher.stop();
     mdnsAdvertiser?.stop();
     federationHeartbeat?.stop();
+    // MCP 客户端韧性：先立排空闸（新请求 503+Retry-After）再收连接——keep-alive
+    // 空闲连接发 FIN 走干净关闭、在飞给 1s 宽限，客户端连接池不留死连接。
+    beginDrain?.();
     server.close();
+    drainServerConnections(server);
     tls?.server.close();
+    if (tls) drainServerConnections(tls.server);
     // 等 inbox worker 真停（terminate 是异步的，worker 的 DB 连接/WAL 锁要
     // 干净释放）再退——立刻 exit 会把锁释放甩给 OS 慢慢收，紧跟的 start
     // 撞上垂死锁（boot log 实测过 database is locked）。兜底 3s：worker
