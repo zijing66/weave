@@ -158,8 +158,8 @@ export function MarketModal({
   const [gitUrl, setGitUrl] = useState('');
   const [marketStatus, setMarketStatus] = useState<Map<number, MarketUpdateStatus>>(new Map());
   /** 多选批操作：选中行 uid 集 + 开关态（有选中即开）。 */
+  const [bulkMode, setBulkMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<string[]>([]);
-  const bulkMode = bulkSelected.length > 0;
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -688,9 +688,10 @@ export function MarketModal({
               <div className="mb-2 flex flex-wrap items-center gap-2 rounded bg-neutral-950/60 p-2">
                 <button
                   type="button"
-                  onClick={() =>
-                    setBulkSelected((prev) => (prev.length > 0 ? [] : rows.slice(0, 1).map((r) => r.uid)))
-                  }
+                  onClick={() => {
+                    setBulkMode((v) => !v);
+                    setBulkSelected([]);
+                  }}
                   className={cn(
                     'shrink-0 rounded px-2 py-0.5 text-11',
                     bulkMode ? 'bg-blue-900/40 text-blue-200' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
@@ -1163,6 +1164,7 @@ const LEVEL_KEY: Record<InstallLevel, MessageKey> = {
  *  滑到新档弹 ConfirmDialog 确认后才发装卸动作；已在档位 = 滑动无效。 */
 function InstallLevelSlider({
   name,
+  nameTip,
   agent,
   agentScopes,
   currentLevel,
@@ -1170,6 +1172,8 @@ function InstallLevelSlider({
   loading,
 }: {
   name: string;
+  /** 名称悬停提示（项目行带路径——重名项目靠它区分）。 */
+  nameTip?: string;
   agent: AssetAgent;
   /** 该 harness 该类别可装范围（矩阵派生；无该面的档自动禁用）。 */
   agentScopes: AssetScope[];
@@ -1178,17 +1182,11 @@ function InstallLevelSlider({
   loading: boolean;
 }) {
   const t = useT();
-  /** 悬停/拖动预览档；确认弹窗打开时锁住展示。 */
-  const [draft, setDraft] = useState<InstallLevel | null>(null);
   const [confirm, setConfirm] = useState<{
     level: InstallLevel;
     scope: AssetScope | null;
     uninstall: boolean;
   } | null>(null);
-  const shown = draft ?? currentLevel;
-  const idx = LEVELS.indexOf(shown);
-  const last = LEVELS.length - 1;
-  const pct = (idx / last) * 100;
 
   // 档位可用性：local 只对插件启停链开放（落装仍两档，2026-11-16 定案）；
   // project/user 面缺失自动禁用。
@@ -1212,75 +1210,41 @@ function InstallLevelSlider({
 
   return (
     <div className="flex items-center gap-2">
-      <span className="w-32 max-w-32 shrink-0 truncate text-11 text-neutral-400" title={name}>
+      <span className="w-32 max-w-32 shrink-0 truncate text-11 text-neutral-400" title={nameTip ?? name}>
         {name}
       </span>
       <span className="text-10 shrink-0 text-neutral-600">{harnessUiOf(agent).label}</span>
-      <span className="relative inline-flex h-4 min-w-0 flex-1 items-center">
-        <span
-          className="relative h-1.5 w-full rounded-full"
-          style={{
-            background:
-              'linear-gradient(to right, rgba(255,255,255,0.05), rgba(255,255,255,0.14) 50%, rgba(255,255,255,0.05))',
-          }}
-        >
-          <span
-            className="absolute inset-y-0 left-0 rounded-full bg-emerald-700/70"
-            style={{ width: `${pct}%` }}
-          />
-          {LEVELS.map((lv, i) => (
-            <span
+      {/* 分段控制器（segmented control）：选中段浮起白底，禁用段灰字不可点 */}
+      <span
+        role="radiogroup"
+        aria-label={t('market.sliderTip')}
+        className="ml-auto inline-flex shrink-0 items-center rounded-md bg-neutral-900 p-0.5"
+      >
+        {LEVELS.map((lv) => {
+          const active = lv === currentLevel;
+          const usable = enabledOf(lv);
+          return (
+            <button
               key={lv}
-              style={{ left: `${(i / last) * 100}%` }}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={loading || (!active && !usable)}
+              title={!usable && lv !== 'uninstalled' ? t('market.sliderDisabledScope', { level: t(LEVEL_KEY[lv]) }) : undefined}
+              onClick={() => tryLevel(lv)}
               className={cn(
-                'absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full',
-                i <= idx ? 'bg-emerald-300' : 'bg-neutral-600',
-                !enabledOf(lv) && lv !== 'uninstalled' && 'opacity-40',
+                'rounded px-1.5 py-0.5 text-10 transition-colors',
+                active
+                  ? 'bg-neutral-700 text-neutral-100 shadow-sm'
+                  : usable
+                    ? 'text-neutral-500 hover:text-neutral-300'
+                    : 'cursor-not-allowed text-neutral-700',
               )}
-            />
-          ))}
-          <span
-            style={{ left: `${pct}%` }}
-            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-emerald-300 bg-neutral-200 shadow"
-          />
-          {/* 透明 range：拖动/触屏/方向键免费；松手（onChange 终值）即出确认 */}
-          <input
-            type="range"
-            min={0}
-            max={last}
-            step={1}
-            value={idx}
-            aria-label={t('market.sliderTip')}
-            disabled={loading}
-            onChange={(e) => {
-              const lv = LEVELS[Number(e.target.value)]!;
-              setDraft(null);
-              tryLevel(lv);
-            }}
-            onInput={(e) => setDraft(LEVELS[Number((e.target as HTMLInputElement).value)]!)}
-            onMouseUp={() => setDraft(null)}
-            onTouchEnd={() => setDraft(null)}
-            onBlur={() => setDraft(null)}
-            className="absolute inset-x-0 -top-1.5 bottom-[-6px] w-full cursor-pointer appearance-none bg-transparent opacity-0 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none"
-          />
-        </span>
-      </span>
-      <span className="w-44 shrink-0 text-right text-10 text-neutral-500">
-        {LEVELS.map((lv, i) => (
-          <button
-            key={lv}
-            type="button"
-            disabled={loading || !enabledOf(lv)}
-            onClick={() => tryLevel(lv)}
-            className={cn(
-              'mr-1 rounded px-1 text-10',
-              i === idx ? 'text-emerald-300' : 'text-neutral-500 hover:text-neutral-300',
-              !enabledOf(lv) && 'cursor-not-allowed opacity-40',
-            )}
-          >
-            {t(LEVEL_KEY[lv])}
-          </button>
-        ))}
+            >
+              {t(LEVEL_KEY[lv])}
+            </button>
+          );
+        })}
       </span>
       <ConfirmDialog
         open={confirm !== null}
@@ -1397,10 +1361,6 @@ function InstallTargetPicker({
   const activeAgent = sharedHarness ?? agent;
   const agentScopes = surfaces.find((s) => s.harness === activeAgent)?.scopes ?? [];
 
-  /** 全局（user 档）当前档：该面有 user 档才参与滑条。 */
-  const hasUserScope = agentScopes.includes('user');
-  const globalInstalled = installedRows.some((r) => r.projectId === null);
-
   const handleChange = (
     projectId: number | null,
     level: InstallLevel,
@@ -1414,7 +1374,7 @@ function InstallTargetPicker({
   };
 
   const loading = installState === 'loading';
-  const anySlider = hasUserScope || projects.length > 0;
+  const anySlider = projects.length > 0;
 
   return (
     <div className="space-y-1.5 rounded bg-neutral-950/60 p-2">
@@ -1443,22 +1403,13 @@ function InstallTargetPicker({
       {!anySlider && <p className="text-11 text-neutral-600">{t('market.chooseProjectCapsule')}</p>}
       {anySlider && (
         <div className="space-y-1">
-          {hasUserScope && (
-            <InstallLevelSlider
-              name={t('market.destGlobal')}
-              agent={activeAgent}
-              agentScopes={agentScopes}
-              currentLevel={globalInstalled ? 'user' : 'uninstalled'}
-              onChange={(_level, scope) => handleChange(null, _level, scope)}
-              loading={loading}
-            />
-          )}
           {projects.map((p) => {
             const installed = installedRows.some((r) => r.projectId === p.id);
             return (
               <InstallLevelSlider
                 key={p.id}
                 name={p.name}
+                nameTip={p.path}
                 agent={activeAgent}
                 agentScopes={agentScopes}
                 currentLevel={installed ? 'project' : 'uninstalled'}
