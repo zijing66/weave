@@ -205,3 +205,51 @@ describe('宿主丢弃的空壳会话不等 1 小时保活期', () => {
     expect(sessions.getBySessionId('cx-fresh')).toBeDefined();
   });
 });
+
+/** 收纳的自动关 pane（用户裁决 2026-11-17）：超收纳阈值且活着的会话关 pane 收尾——
+ *  不删会话行，只是让宿主随 pane 退出。 */
+describe('归档自动关 pane', () => {
+  const sweepArchive = (
+    liveness: [string, boolean][],
+    archiveDays: number | (() => number),
+  ): { closePane: ReturnType<typeof vi.fn> } => {
+    const closePane = vi.fn(async () => ({}));
+    new SessionSweeper({
+      sessions,
+      events,
+      dispatches,
+      livenessOf: () => new Map(liveness),
+      archiveCloser: { closePane },
+      archiveDays,
+    }).sweep();
+    return { closePane };
+  };
+
+  it('超阈值且活着 → 关 pane、会话行保留；阈值内 / 查无登记 → 不关', () => {
+    seed('ar-old', ['SessionStart', 'UserPromptSubmit', 'Stop']);
+    age('ar-old', 6 * 86_400_000);
+    seed('ar-new', ['SessionStart', 'UserPromptSubmit', 'Stop']);
+    age('ar-new', 2 * 86_400_000);
+    seed('ar-dead', ['SessionStart', 'UserPromptSubmit', 'Stop']);
+    age('ar-dead', 6 * 86_400_000);
+
+    const { closePane } = sweepArchive(
+      [['ar-old', true], ['ar-new', true], ['ar-dead', false]],
+      5,
+    );
+    // 异步关（allSettled），行不删
+    expect(closePane).toHaveBeenCalledWith('ar-old');
+    expect(closePane).not.toHaveBeenCalledWith('ar-new');
+    expect(closePane).not.toHaveBeenCalledWith('ar-dead');
+    expect(sessions.getBySessionId('ar-old')).toBeDefined();
+  });
+
+  it('阈值 0 / 未配 closer = 关闭收纳', () => {
+    seed('ar-off', ['SessionStart', 'UserPromptSubmit', 'Stop']);
+    age('ar-off', 30 * 86_400_000);
+    const a = sweepArchive([['ar-off', true]], 0);
+    expect(a.closePane).not.toHaveBeenCalled();
+    const b = sweepArchive([], 5);
+    expect(b.closePane).not.toHaveBeenCalled();
+  });
+});

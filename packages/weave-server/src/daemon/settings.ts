@@ -94,9 +94,11 @@ export interface EventsSettings {
   retentionDays: number;
 }
 
-/** 会话闲置移除保留天数（= lastSeenAt 起算的无操作窗，到期自动移除会话行）。 */
+/** 会话闲置移除保留天数（= lastSeenAt 起算的无操作窗，到期自动移除会话行）+
+ *  列表收纳天数（超过 n 天没活动的旧会话折叠进列表底部「已收纳」区）。 */
 export interface SessionsSettings {
   idleDays: number;
+  archiveDays: number;
 }
 
 /** 会话扩展点：陈旧闸窗（毫秒；回放中超龄事件记 skipped:stale 不执行）。 */
@@ -175,8 +177,12 @@ export const DEFAULT_EVENTS_SETTINGS: EventsSettings = {
  *  档仍留有 30-90 天窗口可看；新会话随首个事件即建档，不会被快清误伤。 */
 export const DEFAULT_SESSION_IDLE_DAYS = 90;
 
+/** 列表收纳阈值（默认 5 天前的会话收进「已收纳」区；展示层策略，不影响任何服务端行为）。 */
+export const DEFAULT_SESSION_ARCHIVE_DAYS = 5;
+
 export const DEFAULT_SESSIONS_SETTINGS: SessionsSettings = {
   idleDays: DEFAULT_SESSION_IDLE_DAYS,
+  archiveDays: DEFAULT_SESSION_ARCHIVE_DAYS,
 };
 
 export const DEFAULT_EXTENSION_STALE_MS = 10 * 60_000;
@@ -434,6 +440,10 @@ function mergeDefaults(raw: unknown): DaemonSettings {
     Number.isInteger(sessions.idleDays) && (sessions.idleDays as number) >= 1
       ? (sessions.idleDays as number)
       : DEFAULT_SESSIONS_SETTINGS.idleDays;
+  const archiveDays =
+    Number.isInteger(sessions.archiveDays) && (sessions.archiveDays as number) >= 0
+      ? (sessions.archiveDays as number)
+      : DEFAULT_SESSION_ARCHIVE_DAYS;
   return {
     terminal: {
       preset: ALL_TERMINAL_PRESETS.includes(term.preset as TerminalPreset)
@@ -446,7 +456,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
       enabled: typeof hooks.enabled === 'boolean' ? hooks.enabled : DEFAULT_HOOKS_SETTINGS.enabled,
     },
     events: { retentionDays: retention },
-    sessions: { idleDays },
+    sessions: { idleDays, archiveDays },
     extensions: {
       staleMs:
         Number.isFinite(extensions.staleMs) && (extensions.staleMs as number) > 0
@@ -522,6 +532,7 @@ const KEYS = {
   hooksEnabled: 'hooks.enabled',
   eventRetentionDays: 'events.retentionDays',
   sessionIdleDays: 'sessions.idleDays',
+  sessionArchiveDays: 'sessions.archiveDays',
   extensionStaleMs: 'extensions.staleMs',
   startupLaunchOnLogin: 'startup.launchOnLogin',
   serverBindHost: 'server.bindHost',
@@ -590,8 +601,17 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.eventRetentionDays)
       ? { events: { retentionDays: Number(map.get(KEYS.eventRetentionDays)) } }
       : {}),
-    ...(map.has(KEYS.sessionIdleDays)
-      ? { sessions: { idleDays: Number(map.get(KEYS.sessionIdleDays)) } }
+    ...(map.has(KEYS.sessionIdleDays) || map.has(KEYS.sessionArchiveDays)
+      ? {
+          sessions: {
+            ...(map.has(KEYS.sessionIdleDays)
+              ? { idleDays: Number(map.get(KEYS.sessionIdleDays)) }
+              : {}),
+            ...(map.has(KEYS.sessionArchiveDays)
+              ? { archiveDays: Number(map.get(KEYS.sessionArchiveDays)) }
+              : {}),
+          },
+        }
       : {}),
     ...(map.has(KEYS.extensionStaleMs)
       ? { extensions: { staleMs: Number(map.get(KEYS.extensionStaleMs)) } }
@@ -662,6 +682,10 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     [
       KEYS.sessionIdleDays,
       String(settings.sessions?.idleDays ?? DEFAULT_SESSION_IDLE_DAYS),
+    ],
+    [
+      KEYS.sessionArchiveDays,
+      String(settings.sessions?.archiveDays ?? DEFAULT_SESSION_ARCHIVE_DAYS),
     ],
     [
       KEYS.extensionStaleMs,

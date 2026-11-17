@@ -61,6 +61,8 @@ export interface DaemonSettings {
   federation?: { discovery: boolean; enabled: boolean; autoAccept?: boolean };
   /** 终端开窗行为：落子后把隐藏的目标窗拉回可见（默认开；mirror of daemon settings）。 */
   terminalFocus?: { focusOnOpen: boolean };
+  /** mirror of daemon settings（web 不能 import 含 node:fs 的包；SettingsModal 另有本地扩展）。 */
+  sessions?: { idleDays: number; archiveDays?: number };
 }
 
 /** 一份自定义头（原样注入导出 HTML 的 `</head>` 之前；只在导出文件里生效）。 */

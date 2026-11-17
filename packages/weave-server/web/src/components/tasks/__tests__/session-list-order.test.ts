@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SessionRow } from '@/lib/api';
-import { byActivity, mergeNewRows } from '../SessionList';
+import { byActivity, mergeNewRows, archiveExempt, olderThanDays } from '../SessionList';
 
 const row = (over: Partial<SessionRow>): SessionRow => ({
   sessionId: 's',
@@ -58,5 +58,33 @@ describe('mergeNewRows（成员增删时的顺序快照合并）', () => {
 
   it('无成员变化时内容不变（同序引用由调用方检查）', () => {
     expect(mergeNewRows(['a', 'b'], ['a', 'b'])).toEqual(['a', 'b']);
+  });
+});
+
+describe('olderThanDays / archiveExempt（收纳分区）', () => {
+  const NOW = Date.parse('2026-11-17T00:00:00.000Z');
+  const daysAgo = (n: number): string => new Date(NOW - n * 86_400_000).toISOString();
+  const base = { pidAlive: false as const };
+
+  it('lastSeenAt 超过 n 天才收纳；n=0 关闭', () => {
+    const r = row({ lastSeenAt: daysAgo(6), pidAlive: null });
+    expect(olderThanDays(r, 5, NOW)).toBe(true);
+    expect(olderThanDays(row({ lastSeenAt: daysAgo(5), pidAlive: null }), 5, NOW)).toBe(false);
+    expect(olderThanDays(r, 0, NOW)).toBe(false);
+  });
+
+  it('豁免：运行中/失败/选中/活进程/待答/在途/失败投递/草稿都不收纳，就绪旧会话收纳', () => {
+    const old = (over: Partial<SessionRow>): SessionRow => row({ lastSeenAt: daysAgo(30), ...over });
+    const noSignals = { question: false, inflight: 0, failed: 0, draft: false };
+    expect(archiveExempt(old(base), 'open', false, noSignals)).toBe(false);
+    expect(archiveExempt(old({ ...base, pidAlive: true }), 'open', false, noSignals)).toBe(true);
+    for (const status of ['running', 'compacting', 'failed'] as const) {
+      expect(archiveExempt(old(base), status, false, noSignals)).toBe(true);
+    }
+    expect(archiveExempt(old(base), 'open', true, noSignals)).toBe(true);
+    expect(archiveExempt(old(base), 'open', false, { ...noSignals, question: true })).toBe(true);
+    expect(archiveExempt(old(base), 'open', false, { ...noSignals, inflight: 2 })).toBe(true);
+    expect(archiveExempt(old(base), 'open', false, { ...noSignals, failed: 1 })).toBe(true);
+    expect(archiveExempt(old(base), 'open', false, { ...noSignals, draft: true })).toBe(true);
   });
 });

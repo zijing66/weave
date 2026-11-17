@@ -18,6 +18,7 @@ import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
 import {
+  Archive,
   Bell,
   Cat,
   ChevronDown,
@@ -84,14 +85,16 @@ import {
 } from '@/lib/font-scale';
 
 /** api.ts 的 DaemonSettings mirror（外部批次维护）暂未含 events/sessions——本地扩展。 */
-type DaemonSettingsExt = DaemonSettings & {
+type DaemonSettingsExt = Omit<DaemonSettings, 'events' | 'sessions'> & {
   events?: { retentionDays: number };
-  sessions?: { idleDays: number };
+  sessions?: { idleDays?: number; archiveDays?: number };
 };
 
 /** 与 server DEFAULT_EVENT_RETENTION_DAYS / DEFAULT_SESSION_IDLE_DAYS 一致的展示兜底。 */
 const DEFAULT_RETENTION_DAYS = 90;
 const DEFAULT_SESSION_IDLE_DAYS = 90;
+/** 与 server DEFAULT_SESSION_ARCHIVE_DAYS 一致。 */
+const DEFAULT_SESSION_ARCHIVE_DAYS = 5;
 
 /** 字节可读形状（清理面的容量标注；与对话附件格的 sizeLabel 同口径）。 */
 function fmtBytes(bytes: number): string {
@@ -628,7 +631,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             }
           : {}),
       };
-      const saved = await api.putDaemonSettings(payload);
+      const saved = await api.putDaemonSettings(payload as DaemonSettings);
       setSettings(saved as DaemonSettingsExt);
       setApiKeyInput((saved as DaemonSettingsExt).ai?.apiKey ?? '');
       setDecisionKeyInput((saved as DaemonSettingsExt).decision?.apiKey ?? '');
@@ -883,9 +886,39 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 min={1}
                 max={3650}
                 onChange={(v) =>
-                  setSettings((s) => (s ? { ...s, sessions: { idleDays: v } } : s))
+                  setSettings((s) =>
+                    s ? { ...s, sessions: { ...s.sessions, idleDays: v } } : s,
+                  )
                 }
                 title={t('settings.sessionIdleDays')}
+              />
+              <span className="text-11 text-neutral-500">{t('settings.daysUnit')}</span>
+            </div>
+          </div>
+
+          {/* 会话列表收纳：超过 n 天没活动的旧会话折叠进列表底部「已收纳」区
+              （运行中/失败/选中等例外永不收纳；0 = 关闭）。纯展示层策略。 */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+              <Archive className="h-3.5 w-3.5 text-neutral-500" />
+              {t('settings.sessionArchiveDays')}
+              <FieldHint>
+                {t('settings.sessionArchiveDaysHint', {
+                  n: settings?.sessions?.archiveDays ?? DEFAULT_SESSION_ARCHIVE_DAYS,
+                })}
+              </FieldHint>
+            </label>
+            <div className="flex items-center gap-2">
+              <NumberStepper
+                value={settings?.sessions?.archiveDays ?? DEFAULT_SESSION_ARCHIVE_DAYS}
+                min={0}
+                max={3650}
+                onChange={(v) =>
+                  setSettings((s) =>
+                    s ? { ...s, sessions: { ...s.sessions, archiveDays: v } } : s,
+                  )
+                }
+                title={t('settings.sessionArchiveDays')}
               />
               <span className="text-11 text-neutral-500">{t('settings.daysUnit')}</span>
             </div>

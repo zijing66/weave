@@ -8,7 +8,7 @@ import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Bell, BellRing, Check, Copy, Eye, EyeOff, FileWarning, HelpCircle, Loader2, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
+import { Archive, Bell, BellRing, Check, ChevronDown, Copy, Eye, EyeOff, FileWarning, HelpCircle, Loader2, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { api } from '@/lib/api';
@@ -111,6 +111,36 @@ export interface TerminalBlock {
 
 /** 渲染项：终端块 或 未分组的散行。 */
 export type SessionListEntry = TerminalBlock | { kind: 'row'; row: SessionRow };
+
+/**
+ * 收纳例外（这些会话永不进「已收纳」区，无论多旧）：活着/在跑/压缩中/失败、
+ * 选中、有待答、有未读消息信号（在途/失败/草稿）、pid 存活——「还值得看一眼」
+ * 的状态压过「旧」。
+ */
+export function archiveExempt(
+  row: SessionRow,
+  status: SessionStatus,
+  selected: boolean,
+  signals: { question: boolean; inflight: number; failed: number; draft: boolean },
+): boolean {
+  return (
+    status === 'running' ||
+    status === 'compacting' ||
+    status === 'failed' ||
+    selected ||
+    !!row.pidAlive ||
+    signals.question ||
+    signals.inflight > 0 ||
+    signals.failed > 0 ||
+    signals.draft
+  );
+}
+
+/** lastSeenAt 距今超过 n 天（收纳阈值判定；n=0 关闭收纳）。 */
+export function olderThanDays(row: SessionRow, days: number, now: number): boolean {
+  if (days <= 0) return false;
+  return now - Date.parse(row.lastSeenAt) > days * 86_400_000;
+}
 
 /**
  * 终端分块（窗口管理）：**同一块可见屏幕**上的会话聚成一块，块的位置 = 首成员
@@ -261,6 +291,7 @@ export function SessionList({
   onUnwatch,
   onDelete,
   deleteStateOf,
+  archiveDays = 5,
 }: {
   sessions: SessionRow[];
   statuses: Map<string, SessionStatus>;
@@ -307,6 +338,9 @@ export function SessionList({
   onDelete: (sessionId: string) => void;
   /** 删除按钮的反馈态（loading → ✅ → 还原）。 */
   deleteStateOf?: (sessionId: string) => ActionState;
+  /** 收纳阈值（天）：lastSeenAt 超过它且无豁免信号的旧会话折进底部「已收纳」区；
+   *  0 = 关闭收纳。全局设置 sessions.archiveDays 下发（默认 5）。 */
+  archiveDays?: number;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -387,6 +421,23 @@ export function SessionList({
     return [...unseen, ...ordered];
   }, [sessions, appliedIds]);
 
+  // ---- 收纳分区：超龄且无豁免的旧会话沉到列表底部「已收纳」区（默认展开状态
+  // 记忆在 sessionStorage）；收起时不渲染行 DOM（懒挂载——数据在内存，展开才渲染）。
+  const [archivedOpen, setArchivedOpen] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('weave:sessions-archived-open') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('weave:sessions-archived-open', archivedOpen ? '1' : '0');
+    } catch {
+      /* 隐私模式：内存态即可 */
+    }
+  }, [archivedOpen]);
+
   const rowEls = useRef(new Map<string, HTMLLIElement>());
   useFlipRows(rowEls);
 
@@ -399,6 +450,22 @@ export function SessionList({
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, [hasDeadline]);
+
+  const { activeRows, archivedRows } = useMemo(() => {
+    const active: SessionRow[] = [];
+    const archived: SessionRow[] = [];
+    for (const s of rows) {
+      const status = statuses.get(s.sessionId) ?? 'open';
+      const exempt = archiveExempt(s, status, s.sessionId === selectedId, {
+        question: questionOf?.(s.sessionId) != null,
+        inflight: inflightOf(s.sessionId),
+        failed: failedOf(s.sessionId),
+        draft: draftIds.has(s.sessionId),
+      });
+      (exempt || !olderThanDays(s, archiveDays, now) ? active : archived).push(s);
+    }
+    return { activeRows: active, archivedRows: archived };
+  }, [rows, statuses, selectedId, questionOf, inflightOf, failedOf, draftIds, archiveDays, now]);
 
   useEffect(() => {
     if (editingId) inputRef.current?.focus();
@@ -774,8 +841,9 @@ export function SessionList({
     );
   };
 
-  /** 分块后的渲染项：同屏会话聚块，散行原位（见 groupByTerminal）。 */
-  const entries = useMemo(() => groupByTerminal(rows), [rows]);
+  /** 分块后的渲染项：同屏会话聚块，散行原位（见 groupByTerminal）——只对主体区
+   *  做；收纳区平铺（旧会话不再按终端聚块，块头反而碍事）。 */
+  const entries = useMemo(() => groupByTerminal(activeRows), [activeRows]);
 
   return (
     <ul className="space-y-1.5">
@@ -842,6 +910,36 @@ export function SessionList({
             );
           })()
         ),
+      )}
+      {/* 已收纳区：超龄旧会话沉底（运行中/失败/选中/有待答/有未读信号的永不收纳）。
+          分隔条 = 细线夹折叠头（与回退点分隔同视觉语言），展开/收起；收起时行 DOM
+          不渲染（懒挂载）。行样式淡化、hover 恢复——「还在，但不常看」。 */}
+      {archivedRows.length > 0 && (
+        <li>
+          <button
+            type="button"
+            aria-expanded={archivedOpen}
+            onClick={() => setArchivedOpen((v) => !v)}
+            className="flex w-full items-center gap-2 py-1 text-10 text-neutral-500 transition-colors hover:text-neutral-300"
+          >
+            <span className="h-px flex-1 border-t border-dashed border-edge/[0.12]" />
+            <Archive className="h-3 w-3 shrink-0" />
+            <span className="shrink-0">
+              {t('tasks.archivedCount', { n: archivedRows.length })}
+            </span>
+            <ChevronDown className={cn('h-3 w-3 shrink-0 transition-transform', !archivedOpen && '-rotate-90')} />
+            <span className="h-px flex-1 border-t border-dashed border-edge/[0.12]" />
+          </button>
+          {archivedOpen && (
+            <ul className="mt-1.5 space-y-1.5 opacity-80 transition-opacity [&>li>*:first-child:hover]:opacity-100">
+              {archivedRows.map((s) => (
+                <li key={s.sessionId} ref={registerRow(s.sessionId)}>
+                  {renderRow(s)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </li>
       )}
       {answerFor &&
         (() => {

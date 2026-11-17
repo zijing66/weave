@@ -363,6 +363,22 @@ export function TasksPanel({
       })
       .catch(() => {});
   }, []);
+
+  // 会话列表收纳阈值（全局设置 sessions.archiveDays；0 = 关闭收纳）：设置保存推
+  // invalidate('settings')，这里也挂同一失效器。
+  const [archiveDays, setArchiveDays] = useState(5);
+  useEffect(() => {
+    api
+      .getDaemonSettings()
+      .then((r) => setArchiveDays(r.settings.sessions?.archiveDays ?? 5))
+      .catch(() => {});
+    return registerInvalidator('settings', () =>
+      api
+        .getDaemonSettings()
+        .then((r) => setArchiveDays(r.settings.sessions?.archiveDays ?? 5))
+        .catch(() => {}),
+    );
+  }, []);
   useEffect(() => {
     refreshMessagingCaps();
   }, [refreshMessagingCaps]);
@@ -1468,6 +1484,7 @@ export function TasksPanel({
             onUnwatch={onUnwatch}
             onDelete={handleDeleteSession}
             deleteStateOf={deleteStateOf}
+            archiveDays={archiveDays}
           />
         )}
       </aside>

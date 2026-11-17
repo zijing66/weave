@@ -6,6 +6,10 @@ import { combinedLivenessOf } from '../daemon/liveness.js';
 
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
 
+/** 归档关闭的静默窗：回合跑着时宿主不发事件（长工具/长思考），最近事件太近
+ *  说明可能正在干活——关 pane 就是打断工作。5 分钟与前端 STALE_TURN_MS 同口径。 */
+const ARCHIVE_CLOSE_QUIET_MS = 5 * 60_000;
+
 /**
  * 定时清过期会话，两条判据：
  * 1. `autoDeleteAt`（期限与档位唯一事实源 = sessions 仓储的 `listWithCounts`：没等到
@@ -25,6 +29,14 @@ export class SessionSweeper {
       orchestrationEngine?: Pick<OrchestrationEngine, 'sweepTerminated'>;
       /** 存活图来源（空壳判据要用）；不给就只按期限清。 */
       livenessOf?: () => Map<string, boolean>;
+      /** 列表收纳的自动关 pane（用户裁决 2026-11-17：超收纳天数还开着终端窗口的
+       *  会话，先关 pane 让宿主随 pane 退出，再由前端沉进「已收纳」区；会话行
+       *  与对话照常保留——这是收尾，不是删除）。null/缺省 = 不做。 */
+      archiveCloser?: { closePane(sessionId: string): Promise<unknown> } | null;
+      /** 收纳阈值（天；settings sessions.archiveDays，现取——设置改动即时生效）。≤0 = 关闭。 */
+      archiveDays?: number | (() => number);
+      /** 关完补一拍终端分块刷新（角标/分组立刻跟上）；缺省不打。 */
+      terminalRefresher?: { refreshNow(): void | Promise<void> };
       /** 分块上传的半截件（过期回收；同轮顺带扫）。 */
       uploadSessions?: { sweep(): Promise<number> };
     },
@@ -36,6 +48,9 @@ export class SessionSweeper {
     const now = this.now();
     const liveness = this.deps.livenessOf?.();
     let purged = 0;
+    /** 归档关闭的候选（本轮先收集，清完统一异步关——closePane 是 await 慢操作，
+     *  不吊 sweep 的同步路径）。 */
+    const toArchiveClose: string[] = [];
     for (const row of this.deps.sessions.listWithCounts()) {
       if (liveness && shellDiscardedByHost(row, liveness, now)) {
         purgeSession(this.deps, row.sessionId);
@@ -43,9 +58,31 @@ export class SessionSweeper {
         continue;
       }
       const deadline = row.autoDeleteAt == null ? null : Date.parse(row.autoDeleteAt);
-      if (deadline == null || now < deadline) continue;
+      if (deadline == null || now < deadline) {
+        // 没到删除期限但超过收纳阈值且进程还活着：自动关 pane（事件静默窗内的
+        // 可能还在跑回合，不关——关了就是打断工作）。判活用存活图（claude 注册表
+        // + codex 锁探针；查不到登记不关——宁可漏关不误关）。
+        const rawDays = this.deps.archiveDays;
+        const days = typeof rawDays === 'function' ? rawDays() : (rawDays ?? 0);
+        if (
+          days > 0 &&
+          this.deps.archiveCloser &&
+          liveness?.get(row.sessionId) === true &&
+          now - Date.parse(row.lastSeenAt) > days * 86_400_000 &&
+          now - Date.parse(row.lastSeenAt) > ARCHIVE_CLOSE_QUIET_MS
+        ) {
+          toArchiveClose.push(row.sessionId);
+        }
+        continue;
+      }
       purgeSession(this.deps, row.sessionId);
       purged++;
+    }
+    if (toArchiveClose.length > 0) {
+      const closer = this.deps.archiveCloser!;
+      void Promise.allSettled(toArchiveClose.map((id) => closer.closePane(id))).then(() => {
+        this.deps.terminalRefresher?.refreshNow();
+      });
     }
     // 与过期会话无关的孤儿上传件（选了图没发出去、事件早已清掉的）同轮收走；
     // 分块上传留下半截件的同理（异步扫，不吊这一拍）
@@ -80,6 +117,12 @@ export function startSessionSweeper(
     uploadSessions?: { sweep(): Promise<number> };
     /** 存活图来源；缺省合并图（claude 注册表 + codex 锁探针缓存）。 */
     livenessOf?: () => Map<string, boolean>;
+    /** 列表收纳的自动关 pane（透传 SessionSweeper）。 */
+    archiveCloser?: { closePane(sessionId: string): Promise<unknown> } | null;
+    /** 收纳阈值（天；现取函数或常量）。 */
+    archiveDays?: number | (() => number);
+    /** 关完补一拍终端分块刷新。 */
+    terminalRefresher?: { refreshNow(): void | Promise<void> };
   },
 ): NodeJS.Timeout {
   return new SessionSweeper({ ...deps, livenessOf: deps.livenessOf ?? combinedLivenessOf }).start();

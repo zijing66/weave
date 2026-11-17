@@ -104,6 +104,9 @@ export const settingsZh = {
   'settings.sessionIdleDays': '会话闲置保留天数',
   'settings.sessionIdleDaysHint':
     '收到过消息的会话无操作 {n} 天后自动移除；没有消息的新会话 1 小时后过期。会话行内标注剩余存活时间。',
+  'settings.sessionArchiveDays': '会话收纳天数',
+  'settings.sessionArchiveDaysHint':
+    '超过 {n} 天没活动的会话折叠进会话列表底部「已收纳」区（运行中/失败/选中的不收纳）；0 = 关闭收纳。展开时才加载。',
   'settings.daysUnit': '天',
   'settings.cleanStorage': '对话附件存储',
   'settings.cleanStorageHint':
@@ -310,6 +313,9 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.sessionIdleDays': 'Session idle retention (days)',
   'settings.sessionIdleDaysHint':
     'Prompted sessions are removed after {n} idle days; new sessions with no prompt expire in 1 hour. Each row shows its remaining lifetime.',
+  'settings.sessionArchiveDays': 'Session archive (days)',
+  'settings.sessionArchiveDaysHint':
+    'Sessions idle for over {n} days collapse into the "Archived" section at the bottom of the list (running/failed/selected stay visible); 0 disables archiving. Rows load on expand.',
   'settings.daysUnit': 'days',
   'settings.cleanStorage': 'Conversation attachments',
   'settings.cleanStorageHint':

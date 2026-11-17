@@ -103,7 +103,7 @@ describe('发送前的会话拉起', () => {
     ensureOpen = vi.fn(async () => ({ ok: true, ack: 'session-start' }));
     deps = {
       hookSessions: new SessionRepository(db),
-      messageDeliverer: { send },
+      messageDeliverer: { send, kickFlush: () => {} },
       ensureOpen,
     } as unknown as WeaveServerDeps;
   });
