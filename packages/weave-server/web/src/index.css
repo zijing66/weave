@@ -269,21 +269,30 @@
   animation: harness-breathe 1.6s ease-in-out infinite;
 }
 
-/* 项目卡待答呼吸边框：amber 一明一暗 + 一圈极淡光晕，提示「这里等人回答」。
-   只动 border-color / box-shadow，不动元素 opacity——内容不许跟着整卡闪。 */
+/* 项目卡高亮呼吸边框：一明一暗 + 一圈极淡光晕，提示「这里有事」。颜色经
+   --breath-color 取（默认 amber=待答问答；消息信号红/amber/blue 档各自覆写），
+   keyframes 里不焊死色值——焊死会把 Tailwind 的边框色类整个盖掉。只动
+   border-color / box-shadow，不动元素 opacity——内容不许跟着整卡闪。 */
 @keyframes weave-question-breath {
   0%,
   100% {
-    border-color: rgba(251, 191, 36, 0.35);
-    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+    border-color: color-mix(in srgb, var(--breath-color) 35%, transparent);
+    box-shadow: 0 0 0 0 transparent;
   }
   50% {
-    border-color: rgba(251, 191, 36, 0.85);
-    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.12);
+    border-color: color-mix(in srgb, var(--breath-color) 85%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--breath-color) 12%, transparent);
   }
 }
 .weave-question-breath {
+  --breath-color: rgb(251, 191, 36);
   animation: weave-question-breath 2.2s ease-in-out infinite;
+}
+.weave-breath-red {
+  --breath-color: rgb(239, 68, 68);
+}
+.weave-breath-blue {
+  --breath-color: rgb(96, 165, 250);
 }
 
 /* 生成中滚动带：新事件一到，新的那条从下面滚进来顶掉旧的。 */

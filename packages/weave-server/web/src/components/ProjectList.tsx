@@ -85,6 +85,9 @@ interface ProjectListProps {
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
   /** 该项目下待答的阻塞问题数：有则卡片边框换成与会话行问答图标同一档 amber。 */
   pendingQuestionsOf?: (projectId: number) => number;
+  /** 该项目下会话的消息信号（会话行消息图标同款三态汇总）：失败红 > 在途 amber
+   *  > 草稿 blue，一次只亮一档；null = 无信号不占位。 */
+  messageSignalOf?: (projectId: number) => { kind: 'failed' | 'inflight' | 'draft'; n: number } | null;
   /** Row 快速操作：该项目已打开的终端数（可见屏幕，后端自定单位；0 = 无角标）。 */
   terminalsOf?: (projectId: number) => number;
   /** 该项目处于系统级隐藏态的终端窗数（角标的隐藏小标；0/探不到不摆）。 */
@@ -218,6 +221,7 @@ export function ProjectList({
   onCloseTerminal,
   sessionStatsOf,
   pendingQuestionsOf,
+  messageSignalOf,
   terminalsOf,
   terminalsHiddenOf,
   onReorder,
@@ -626,6 +630,8 @@ export function ProjectList({
           const terminalsVisible = Math.max(0, terminals - terminalsHidden);
           // 有待答问题 → 边框换成与会话行问答图标同一档 amber（扫一眼就知道哪张卡要人答）
           const pendingQuestions = pendingQuestionsOf?.(p.id) ?? 0;
+          // 该项目下的消息信号（App 汇总；null = 无信号）
+          const messageSignal = messageSignalOf?.(p.id) ?? null;
           // G6 角色可见桥：出征徽章数（active 出征指向本项目）+ 该 house 成员折叠行。
           const expeditionBadge = expeditionBadgeCountOf(bridgeExpeditions, p.id);
           const bridgeRows =
@@ -656,7 +662,13 @@ export function ProjectList({
               title={
                 pendingQuestions > 0
                   ? t('project.questionsPending', { n: pendingQuestions })
-                  : undefined
+                  : messageSignal?.kind === 'failed'
+                    ? t('tasks.messageFailed', { n: messageSignal.n })
+                    : messageSignal?.kind === 'inflight'
+                      ? t('tasks.messageInflight', { n: messageSignal.n })
+                      : messageSignal?.kind === 'draft'
+                        ? t('tasks.draftUnsent')
+                        : undefined
               }
               className={cn(
                 'group relative rounded-xl border transition-colors duration-200',
@@ -665,6 +677,15 @@ export function ProjectList({
                   : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10]',
                 // 待答：静态 amber 打底 + 呼吸动效（只闪边框与光晕，内容不跟着闪）
                 pendingQuestions > 0 && 'border-amber-400/60 hover:border-amber-400/70 weave-question-breath',
+                // 消息信号（会话行消息图标同款三态提到项目维度，一次只亮一档）：
+                // 与待答同款高亮框——边框换色 + 呼吸，色板与优先级与会话行气泡
+                // 完全一致；呼吸色经 --breath-color 档位类覆写（默认 amber）。
+                messageSignal?.kind === 'failed' &&
+                  'border-red-500/40 hover:border-red-500/50 weave-question-breath weave-breath-red',
+                messageSignal?.kind === 'inflight' &&
+                  'border-amber-400/40 hover:border-amber-400/50 weave-question-breath',
+                messageSignal?.kind === 'draft' &&
+                  'border-blue-400/40 hover:border-blue-400/50 weave-question-breath weave-breath-blue',
                 isDragging && 'z-10 opacity-80',
               )}
               onMouseEnter={() => onHoverProject?.(p.id)}

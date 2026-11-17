@@ -26,6 +26,7 @@ import { useCardCounts } from '@/hooks/use-card-counts';
 import { useAssetMutations, pluginEffective } from '@/hooks/use-asset-mutations';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
+import { draftSessionIds, subscribeDraftChanges } from '@/components/tasks/draft-editor';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
 import { Badge } from '@/components/ui/badge';
@@ -210,7 +211,32 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     projectStats,
     statuses: sessionStatuses,
     questions: sessionQuestions,
+    inflight: inflightCounts,
+    failedDeliveries,
   } = useSessionStatus();
+  // 有未发送草稿的会话（真源在 sessionStorage，服务端一无所知）——与 SessionList
+  // 同一套订阅（draft-editor 的变更事件），项目卡消息信号把草稿也折进同口径。
+  const [draftIds, setDraftIds] = useState<Set<string>>(() => draftSessionIds());
+  useEffect(() => {
+    const sync = () => setDraftIds(draftSessionIds());
+    sync();
+    return subscribeDraftChanges(sync);
+  }, []);
+  /** projectId → 会话级消息信号汇总（会话行消息图标同款三态，一次只亮一档：
+   *  失败红 > 在途 amber > 草稿 blue；按项目内各会话取最靠后的态）。 */
+  const messageSignalByProject = useMemo(() => {
+    const map = new Map<number, { kind: 'failed' | 'inflight' | 'draft'; n: number }>();
+    for (const s of allSessions ?? []) {
+      if (s.projectId == null) continue;
+      const failed = failedDeliveries.get(s.sessionId) ?? 0;
+      const inflight = inflightCounts.get(s.sessionId) ?? 0;
+      const kind: 'failed' | 'inflight' | 'draft' | null =
+        failed > 0 ? 'failed' : inflight > 0 ? 'inflight' : draftIds.has(s.sessionId) ? 'draft' : null;
+      if (!kind) continue;
+      map.set(s.projectId, { kind, n: kind === 'draft' ? 1 : failed > 0 ? failed : inflight });
+    }
+    return map;
+  }, [allSessions, failedDeliveries, inflightCounts, draftIds]);
   /** projectId → 待答问题数（项目行边框预警用；与会话行问答图标同一份数据、
    *  同一个「不含收尾屏」口径）。 */
   const pendingQuestionsByProject = useMemo(() => {
@@ -957,6 +983,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       onSyncNow={(p) => void syncNowWithFeedback(p)}
       sessionStatsOf={(id) => projectStats.get(id)}
       pendingQuestionsOf={(id) => pendingQuestionsByProject.get(id) ?? 0}
+      messageSignalOf={(id) => messageSignalByProject.get(id) ?? null}
       terminalsOf={(id) => terminalCounts[id] ?? 0}
       terminalsHiddenOf={(id) => hiddenCounts[id] ?? 0}
       onReorder={reorderProjects}
