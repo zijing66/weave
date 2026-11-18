@@ -12,6 +12,7 @@ import {
   weztermLiveMuxes,
   weztermLiveMuxesCached,
   weztermStepError,
+  SLOW_ACTION_TIMEOUT_MS,
   probeGate,
   type WeztermMux,
 } from './wezterm-probe.js';
@@ -535,8 +536,8 @@ export async function weztermSpawnPane(
     : planWeztermNewWindow(dir, workspace);
   // 新窗 spawn 单独放宽（30s）：mux IPC 迟滞实测可拖到分钟级、5s 超时照常成功
   //（窗口已落地只是回执晚到）——低频动作多等无害；list/send-text 维持 5s。
-  const spawned = await weztermCli(spawnArgs, socket, split ? undefined : 30_000);
-  if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, socket, spawned));
+  const spawned = await weztermCli(spawnArgs, socket, split ? undefined : SLOW_ACTION_TIMEOUT_MS);
+  if (!spawned?.ok) throw new Error(weztermStepError(spawnArgs, socket, spawned, SLOW_ACTION_TIMEOUT_MS));
   const paneId = spawned.out.trim();
   if (!/^\d+$/.test(paneId)) {
     throw new Error(`wezterm[${basename(socket)}] ${spawnArgs.join(' ')}: unexpected pane id "${paneId}"`);

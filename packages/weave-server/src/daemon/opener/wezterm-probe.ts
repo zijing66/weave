@@ -53,6 +53,10 @@ export function weztermActiveWorkspaceOf(jsonText: string | null): string | null
 }
 
 const CAPTURE_TIMEOUT_MS = 5000;
+/** 低频一次性动作（新窗 spawn / 唤出 activate-pane / 关 pane kill-pane）单独放宽：
+ *  mux IPC 迟滞实测可拖到分钟级、超时往往只是回执晚到动作已成——多等无害（7ae0de27 先例）。 */
+const SLOW_ACTION_TIMEOUT_MS = 30_000;
+export { SLOW_ACTION_TIMEOUT_MS };
 
 /** 捕获型子调用结果：ok=rc0 且未超时；out/err 供上层拼错误文案。 */
 export interface CaptureResult {
@@ -142,10 +146,10 @@ export function weztermCliArgs(args: readonly string[]): string[] {
 }
 
 /** cli 步骤失败的诊断文案：socket + 命令 + stderr/超时，经路由 400 → 前端 toast。 */
-export function weztermStepError(args: string[], socket: string, r: CaptureResult | null): string {
+export function weztermStepError(args: string[], socket: string, r: CaptureResult | null, timeoutMs = CAPTURE_TIMEOUT_MS): string {
   const cmd = `wezterm[${basename(socket)}] ${args.join(' ')}`;
   if (r === null) return `${cmd}: executable not found`;
-  if (r.timedOut) return `${cmd}: timed out after ${CAPTURE_TIMEOUT_MS}ms`;
+  if (r.timedOut) return `${cmd}: timed out after ${timeoutMs}ms`;
   return r.err ? `${cmd}: ${r.err}` : `${cmd}: exited with failure`;
 }
 

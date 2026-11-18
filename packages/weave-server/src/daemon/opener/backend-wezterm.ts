@@ -27,6 +27,7 @@ import {
   weztermMuxForId,
   weztermSocketPathDead,
   weztermStepError,
+  SLOW_ACTION_TIMEOUT_MS,
   type WeztermMux,
 } from './wezterm-probe.js';
 import {
@@ -185,8 +186,8 @@ export class WeztermBackend extends TerminalBackend {
     );
     if (!pane) throw new Error('That terminal is gone — reopen the list');
     const args = ['cli', 'activate-pane', '--pane-id', String(pane.paneId)];
-    const res = await weztermCli(args, mux.socket);
-    if (!res?.ok) throw new Error(weztermStepError(args, mux.socket, res));
+    const res = await weztermCli(args, mux.socket, SLOW_ACTION_TIMEOUT_MS);
+    if (!res?.ok) throw new Error(weztermStepError(args, mux.socket, res, SLOW_ACTION_TIMEOUT_MS));
     if (this.platform !== 'win32') return;
     await winRaiseTerminalWindow({
       guiPid: weztermGuiPidOf(mux.socket) ?? undefined,
@@ -480,7 +481,7 @@ export class WeztermBackend extends TerminalBackend {
     if (!mux) throw new Error('wezterm instance is gone — cannot close the pane');
     const pane = String(parsed.paneId);
     const args = ['cli', 'kill-pane', '--pane-id', pane];
-    const killed = await weztermCli(args, mux.socket);
+    const killed = await weztermCli(args, mux.socket, SLOW_ACTION_TIMEOUT_MS);
     if (killed?.ok) return;
     if (killed?.timedOut) {
       const listed = await weztermCli(['cli', 'list', '--format', 'json'], mux.socket);
@@ -489,7 +490,7 @@ export class WeztermBackend extends TerminalBackend {
       );
       if (listed?.ok && !still) return; // pane 已没了 = 关成了（回执被迟滞截断）
     }
-    throw new Error(weztermStepError(args, mux.socket, killed));
+    throw new Error(weztermStepError(args, mux.socket, killed, SLOW_ACTION_TIMEOUT_MS));
   }
 
   /** 读 pane 可视屏（`cli get-text`）：mux 定位口径与 sendKeys 同；失败 null（不猜）。 */
