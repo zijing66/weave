@@ -1743,15 +1743,6 @@ export function SessionMessages({
                 <CheckCheck className="h-3 w-3" />
                 {t(allPicked ? 'tasks.convDeselectAll' : 'tasks.convSelectAll')}
               </button>
-              <button
-                type="button"
-                disabled={picked.size === 0}
-                onClick={copyPicked}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
-              >
-                <Copy className="h-3 w-3" />
-                {t('tasks.convCopy')}
-              </button>
               <Tooltip label={t('tasks.convShare')}>
               <button
                 type="button"
@@ -2474,17 +2465,16 @@ export function SessionMessages({
                 </>
               ) : (
                 <>
-                  {/* 系统分享面板（移动端把图发出去的正路）：有 Web Share 才出这项 */}
-                  {shareViaSheet() && (
-                    <button
-                      type="button"
-                      onClick={() => shareImage('share')}
-                      className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
-                    >
-                      <Share2 className="h-3 w-3 text-neutral-500" />
-                      {t('tasks.convShareSheet')}
-                    </button>
-                  )}
+                  {/* 复制文本居首（2026-11-18 用户标注排序 1–6）：高频操作放最上，与
+                      「复制图片」同图标但语义不同——这是气泡文本（带时刻戳）。 */}
+                  <button
+                    type="button"
+                    onClick={copyPicked}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <Copy className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convCopy')}
+                  </button>
                   <button
                     type="button"
                     onClick={() => shareImage('clipboard')}
@@ -2503,20 +2493,31 @@ export function SessionMessages({
                   </button>
                   <button
                     type="button"
-                    onClick={exportHtml}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
-                  >
-                    <FileCode className="h-3 w-3 text-neutral-500" />
-                    {t('tasks.convShareHtml')}
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => exportMarkdown(pickedEntries())}
                     className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
                   >
                     <FileText className="h-3 w-3 text-neutral-500" />
                     {t('tasks.convShareMd')}
                   </button>
+                  <button
+                    type="button"
+                    onClick={exportHtml}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <FileCode className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convShareHtml')}
+                  </button>
+                  {/* 系统分享面板（移动端把图发出去的正路）：有 Web Share 才出这项 */}
+                  {shareViaSheet() && (
+                    <button
+                      type="button"
+                      onClick={() => shareImage('share')}
+                      className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                    >
+                      <Share2 className="h-3 w-3 text-neutral-500" />
+                      {t('tasks.convShareSheet')}
+                    </button>
+                  )}
                 </>
               )}
             </div>,
