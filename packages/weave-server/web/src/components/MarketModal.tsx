@@ -55,6 +55,7 @@ import {
   Package,
   Puzzle,
   RefreshCw,
+  SearchCheck,
   Server,
   Trash2,
   X,
@@ -405,6 +406,27 @@ export function MarketModal({
     );
   }
 
+  /** 单源刷新（检查到有更新后，检查钮变同步钮）：重拷/重 clone + 重查。 */
+  async function handleRefreshOne(item: MarketItem) {
+    await fb.run(
+      `mkt-refresh-one:${item.id}`,
+      async () => {
+        await api.refreshMarketCache([item.id]);
+        await refreshMarket();
+        setLibCache(new Map());
+        if (selectedId !== null) void loadLibrary(selectedId);
+        const recheck = await api.checkMarketUpdates([item.id]);
+        setMarketStatus((prev) => {
+          const next = new Map(prev);
+          for (const r of recheck) next.set(r.id, r.status);
+          return next;
+        });
+        show('success', t('library.refreshDone', { n: 1 }));
+      },
+      { fail: (e) => t('library.refreshFailed', { error: errorText(e) }) },
+    );
+  }
+
   async function handleRefreshAll() {
     const ids = [...marketStatus.entries()]
       .filter(([, s]) => s === 'update-available')
@@ -676,9 +698,11 @@ export function MarketModal({
                 onRemove={(it) => (it.managed ? setRemoveTarget(it) : void removeItem(it))}
                 onMigrate={(it) => void migrateLibrary(it)}
                 onCheck={(it) => void handleCheckOne(it)}
+                onRefresh={(it) => void handleRefreshOne(it)}
                 removeState={fb.stateOf(`mkt-remove:${item.id}`)}
                 migrateState={fb.stateOf(`mkt-migrate:${item.id}`)}
                 checkState={fb.stateOf(`mkt-check-one:${item.id}`)}
+                refreshState={fb.stateOf(`mkt-refresh-one:${item.id}`)}
               />
             ))}
             {market.length === 0 && (
@@ -746,9 +770,11 @@ export function MarketModal({
                     onRemove={(it) => (it.managed ? setRemoveTarget(it) : void removeItem(it))}
                     onMigrate={(it) => void migrateLibrary(it)}
                     onCheck={(it) => void handleCheckOne(it)}
+                    onRefresh={(it) => void handleRefreshOne(it)}
                     removeState={fb.stateOf(`mkt-remove:${item.id}`)}
                     migrateState={fb.stateOf(`mkt-migrate:${item.id}`)}
                     checkState={fb.stateOf(`mkt-check-one:${item.id}`)}
+                    refreshState={fb.stateOf(`mkt-refresh-one:${item.id}`)}
                   />
                 ))}
               </div>
@@ -907,9 +933,11 @@ function SourceRow({
   onRemove,
   onMigrate,
   onCheck,
+  onRefresh,
   removeState,
   migrateState,
   checkState,
+  refreshState,
 }: {
   item: MarketItem;
   selected: boolean;
@@ -918,9 +946,11 @@ function SourceRow({
   onRemove: (item: MarketItem) => void;
   onMigrate: (item: MarketItem) => void;
   onCheck: (item: MarketItem) => void;
-  removeState: string;
-  migrateState: string;
-  checkState: string;
+  onRefresh: (item: MarketItem) => void;
+  removeState: ActionState;
+  migrateState: ActionState;
+  checkState: ActionState;
+  refreshState: ActionState;
 }) {
   const t = useT();
   const sourceCfg = {
@@ -960,26 +990,44 @@ function SourceRow({
       </Tooltip>
       <span className="ml-auto flex shrink-0 items-center gap-1">
         {statusCfg && (
-          <span className={cn('rounded px-1.5 py-0.5 text-10', statusCfg.cls)}>{statusCfg.label}</span>
+          <span className={cn('shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-10', statusCfg.cls)}>
+            {statusCfg.label}
+          </span>
         )}
-        <span className={cn('rounded px-1.5 py-0.5 text-10', sourceCfg.cls)}>{sourceCfg.label}</span>
-        {/* 动作钮组（右侧成排、带边框；builtin 源无 origin 不摆检查更新） */}
-        <span className="flex shrink-0 items-center gap-0.5 rounded border border-edge/[0.1] p-0.5">
+        <span className={cn('shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-10', sourceCfg.cls)}>
+          {sourceCfg.label}
+        </span>
+        {/* 动作钮两枚独立、依次排列（方形带边框按钮，同弹窗内按钮观感；builtin 源无 origin 不摆检查更新） */}
+        <span className="flex shrink-0 items-center gap-1">
           {!item.builtin && (
-            <Tooltip label={t('library.checkUpdatesTip')} side="top">
+            <Tooltip
+              label={status === 'update-available' ? t('library.refreshUpdatesTip') : t('library.checkUpdatesTip')}
+              side="top"
+            >
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onCheck(item);
+                  (status === 'update-available' ? onRefresh : onCheck)(item);
                 }}
-                disabled={checkState === 'loading'}
-                className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-blue-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                disabled={checkState === 'loading' || refreshState === 'loading'}
+                className={cn(
+                  'flex h-6 w-6 items-center justify-center rounded border border-edge/[0.12] bg-edge/[0.03] hover:bg-edge/[0.08] disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                  status === 'update-available'
+                    ? 'text-orange-300 hover:text-orange-200'
+                    : 'text-neutral-400 hover:text-blue-400',
+                )}
               >
                 <FeedbackIcon
-                  state={checkState}
-                  className="h-3 w-3"
-                  icon={<RefreshCw className="h-3 w-3" />}
+                  state={status === 'update-available' ? refreshState : checkState}
+                  className="h-3.5 w-3.5"
+                  icon={
+                    status === 'update-available' ? (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    ) : (
+                      <SearchCheck className="h-3.5 w-3.5" />
+                    )
+                  }
                 />
               </button>
             </Tooltip>
@@ -993,9 +1041,9 @@ function SourceRow({
                   onMigrate(item);
                 }}
                 disabled={migrateState === 'loading'}
-                className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-blue-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                className="flex h-6 w-6 items-center justify-center rounded border border-edge/[0.12] bg-edge/[0.03] text-neutral-400 hover:bg-edge/[0.08] hover:text-blue-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
               >
-                <FolderOpen className="h-3 w-3" />
+                <FolderOpen className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
           )}
@@ -1008,9 +1056,9 @@ function SourceRow({
                   onRemove(item);
                 }}
                 disabled={removeState === 'loading'}
-                className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+                className="flex h-6 w-6 items-center justify-center rounded border border-edge/[0.12] bg-edge/[0.03] text-neutral-400 hover:bg-edge/[0.08] hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
               >
-                <Trash2 className="h-3 w-3" />
+                <Trash2 className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
           )}
