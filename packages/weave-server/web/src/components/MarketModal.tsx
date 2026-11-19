@@ -45,6 +45,7 @@ import { Input } from '@/components/ui/input';
 import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Download,
   FileCode,
@@ -146,8 +147,8 @@ export function MarketModal({
   const [market, setMarket] = useState<MarketItem[]>([]);
   /** MCP 共享行（聚合托管项目实配；随 /mcp-shared 拉取）。 */
   const [sharedMcp, setSharedMcp] = useState<McpSharedRow[]>([]);
-  /** 当前选中源；默认 = MCP 配置虚拟源（2026-11-17 用户裁决：进市场即见 MCP 配置）。 */
-  const [selectedId, setSelectedId] = useState<number | null>(MCP_VIEW_ID);
+  /** 当前选中源；null = 空面板（来源列表态）。MCP 配置走头部按钮，不是默认页。 */
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   /** 库资产缓存（id → 四类扫描结果）；搜索时全量补齐。 */
   const [libCache, setLibCache] = useState<Map<number, LibraryAssets>>(new Map());
   const [query, setQuery] = useState('');
@@ -251,7 +252,8 @@ export function MarketModal({
     };
   }, [searching, market, libCache]);
 
-  /** 当前展示的行集：搜索 = 全部源并集过滤排序；否则 = 选中源的摊平行。 */
+  /** 当前展示的行集：搜索 = 全部源并集过滤排序；否则 = 选中源的摊平行。
+   *  MCP 共享行只属于 MCP 配置视图（专属渲染），不混进这里的兜底。 */
   const rows: MarketRow[] = useMemo(() => {
     const shared = rowsOfSharedMcp(sharedMcp);
     if (searching) {
@@ -261,7 +263,7 @@ export function MarketModal({
       ];
       return filterAndRankRows(all, query);
     }
-    if (selectedId === null) return shared;
+    if (selectedId === null) return [];
     const assets = libCache.get(selectedId);
     return assets ? rowsOfLibrary(selectedId, assets) : [];
   }, [searching, query, libCache, selectedId, sharedMcp]);
@@ -380,6 +382,24 @@ export function MarketModal({
         const results = await api.checkMarketUpdates();
         setMarketStatus(new Map(results.map((r) => [r.id, r.status])));
         show('success', t('library.checkDone', { n: results.filter((r) => r.status === 'update-available').length }));
+      },
+      { fail: (e) => t('library.checkFailed', { error: errorText(e) }) },
+    );
+  }
+
+  /** 单源检查更新（来源行的检查图标）：只查这一个，结果并入 status 表。 */
+  async function handleCheckOne(item: MarketItem) {
+    await fb.run(
+      `mkt-check-one:${item.id}`,
+      async () => {
+        const results = await api.checkMarketUpdates([item.id]);
+        setMarketStatus((prev) => {
+          const next = new Map(prev);
+          for (const r of results) next.set(r.id, r.status);
+          return next;
+        });
+        const hit = results.filter((r) => r.status === 'update-available').length;
+        show('success', t('library.checkDone', { n: hit }));
       },
       { fail: (e) => t('library.checkFailed', { error: errorText(e) }) },
     );
@@ -643,23 +663,6 @@ export function MarketModal({
             <p className="px-1 text-10 font-semibold uppercase text-neutral-500">
               {t('market.sources')}
             </p>
-            {/* MCP 配置虚拟源：聚合全部托管项目实配（点击进该视图） */}
-            <button
-              type="button"
-              onClick={() => {
-                setQuery('');
-                setSelectedId(MCP_VIEW_ID);
-              }}
-              className={cn(
-                'flex w-full cursor-pointer select-none items-center gap-1 rounded-md border px-2 py-1.5',
-                selectedId === MCP_VIEW_ID
-                  ? 'border-neutral-700 bg-neutral-800/80'
-                  : 'border-edge/[0.06] bg-edge/[0.015] hover:bg-edge/[0.04]',
-              )}
-            >
-              <Server className="h-3 w-3 shrink-0 text-blue-400" />
-              <span className="min-w-0 truncate text-xs text-neutral-200">{t('market.mcpConfig')}</span>
-            </button>
             {[...builtinMarkets, ...localMarkets, ...gitMarkets].map((item) => (
               <SourceRow
                 key={item.id}
@@ -672,8 +675,10 @@ export function MarketModal({
                 }}
                 onRemove={(it) => (it.managed ? setRemoveTarget(it) : void removeItem(it))}
                 onMigrate={(it) => void migrateLibrary(it)}
+                onCheck={(it) => void handleCheckOne(it)}
                 removeState={fb.stateOf(`mkt-remove:${item.id}`)}
                 migrateState={fb.stateOf(`mkt-migrate:${item.id}`)}
+                checkState={fb.stateOf(`mkt-check-one:${item.id}`)}
               />
             ))}
             {market.length === 0 && (
@@ -721,31 +726,44 @@ export function MarketModal({
                 )}
               </div>
             )}
-            {/* <lg：源 chips 行（搜索态与 MCP 配置视图隐藏） */}
-            {!searching && selectedId !== MCP_VIEW_ID && (
-              <div className="mb-2 flex flex-wrap gap-1 lg:hidden">
+            {/* <lg：来源列表（未选源时显示；左栏在 <lg 整列隐藏，这里是移动端的
+                「先列表后明细」导航——与桌面左栏同构，含检查更新/移除） */}
+            {!searching && selectedId === null && (
+              <div className="space-y-1 lg:hidden">
+                <p className="px-1 text-10 font-semibold uppercase text-neutral-500">
+                  {t('market.sources')}
+                </p>
                 {[...builtinMarkets, ...localMarkets, ...gitMarkets].map((item) => (
-                  <button
+                  <SourceRow
                     key={item.id}
-                    type="button"
-                    onClick={() => setSelectedId(item.id)}
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-11',
-                      selectedId === item.id
-                        ? 'bg-neutral-700 text-neutral-100'
-                        : 'bg-neutral-800 text-neutral-400',
-                    )}
-                  >
-                    {item.resourceId ?? item.path}
-                  </button>
+                    item={item}
+                    selected={false}
+                    status={marketStatus.get(item.id)}
+                    onSelect={() => {
+                      setQuery('');
+                      setSelectedId(item.id);
+                    }}
+                    onRemove={(it) => (it.managed ? setRemoveTarget(it) : void removeItem(it))}
+                    onMigrate={(it) => void migrateLibrary(it)}
+                    onCheck={(it) => void handleCheckOne(it)}
+                    removeState={fb.stateOf(`mkt-remove:${item.id}`)}
+                    migrateState={fb.stateOf(`mkt-migrate:${item.id}`)}
+                    checkState={fb.stateOf(`mkt-check-one:${item.id}`)}
+                  />
                 ))}
               </div>
             )}
 
-            {!searching && selectedId === null && (
-              <p className="p-6 text-center text-xs text-neutral-500">
-                {t('market.noLibrarySelected')}
-              </p>
+            {/* <lg：明细态的返回列表按钮 */}
+            {!searching && selectedId !== null && (
+              <button
+                type="button"
+                onClick={() => setSelectedId(null)}
+                className="mb-2 flex items-center gap-1 rounded bg-neutral-800 px-2 py-1 text-11 text-neutral-300 hover:bg-neutral-700 lg:hidden"
+              >
+                <ChevronLeft className="h-3 w-3" />
+                {t('market.sources')}
+              </button>
             )}
             {/* MCP 配置视图：聚合清单（折叠行，展开可编辑 JSON/表单）+ 手动添加 */}
             {!searching && selectedId === MCP_VIEW_ID && (
@@ -888,8 +906,10 @@ function SourceRow({
   onSelect,
   onRemove,
   onMigrate,
+  onCheck,
   removeState,
   migrateState,
+  checkState,
 }: {
   item: MarketItem;
   selected: boolean;
@@ -897,8 +917,10 @@ function SourceRow({
   onSelect: () => void;
   onRemove: (item: MarketItem) => void;
   onMigrate: (item: MarketItem) => void;
+  onCheck: (item: MarketItem) => void;
   removeState: string;
   migrateState: string;
+  checkState: string;
 }) {
   const t = useT();
   const sourceCfg = {
@@ -941,36 +963,58 @@ function SourceRow({
           <span className={cn('rounded px-1.5 py-0.5 text-10', statusCfg.cls)}>{statusCfg.label}</span>
         )}
         <span className={cn('rounded px-1.5 py-0.5 text-10', sourceCfg.cls)}>{sourceCfg.label}</span>
-        {item.source === 'legacy' && (
-          <Tooltip label={t('library.migrateTip')} side="top">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMigrate(item);
-              }}
-              disabled={migrateState === 'loading'}
-              className="text-neutral-500 hover:text-blue-400 disabled:cursor-not-allowed"
-            >
-              <FolderOpen className="h-3 w-3" />
-            </button>
-          </Tooltip>
-        )}
-        {!item.builtin && (
-          <Tooltip label={item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')} side="top">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(item);
-              }}
-              disabled={removeState === 'loading'}
-              className="text-neutral-500 hover:text-red-400 disabled:cursor-not-allowed"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
-          </Tooltip>
-        )}
+        {/* 动作钮组（右侧成排、带边框；builtin 源无 origin 不摆检查更新） */}
+        <span className="flex shrink-0 items-center gap-0.5 rounded border border-edge/[0.1] p-0.5">
+          {!item.builtin && (
+            <Tooltip label={t('library.checkUpdatesTip')} side="top">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCheck(item);
+                }}
+                disabled={checkState === 'loading'}
+                className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-blue-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+              >
+                <FeedbackIcon
+                  state={checkState}
+                  className="h-3 w-3"
+                  icon={<RefreshCw className="h-3 w-3" />}
+                />
+              </button>
+            </Tooltip>
+          )}
+          {item.source === 'legacy' && (
+            <Tooltip label={t('library.migrateTip')} side="top">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMigrate(item);
+                }}
+                disabled={migrateState === 'loading'}
+                className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-blue-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+              >
+                <FolderOpen className="h-3 w-3" />
+              </button>
+            </Tooltip>
+          )}
+          {!item.builtin && (
+            <Tooltip label={item.managed ? t('library.removeMarketTip') : t('library.removeLegacyTip')} side="top">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(item);
+                }}
+                disabled={removeState === 'loading'}
+                className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-red-400 disabled:cursor-not-allowed [&_svg]:pointer-events-none"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </Tooltip>
+          )}
+        </span>
       </span>
     </div>
   );

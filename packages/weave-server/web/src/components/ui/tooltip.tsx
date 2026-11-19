@@ -109,7 +109,7 @@ export function Tooltip(props: {
               top: box.pos?.top ?? -9999,
               transform: 'translateX(-50%)',
             }}
-            className="pointer-events-none z-[70] max-w-64 rounded-lg border border-edge/[0.12] bg-neutral-900 px-2.5 py-1.5 text-11 leading-4 text-neutral-300 shadow-mac"
+            className="pointer-events-none z-[70] max-w-64 rounded-lg border border-edge/[0.12] bg-neutral-900 px-2.5 py-1.5 text-11 leading-4 text-neutral-300 shadow-mac [overflow-wrap:anywhere] break-words"
           >
             {props.label}
           </div>,
