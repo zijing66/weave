@@ -91,14 +91,14 @@ describe('claude 配置面', () => {
     expect(after['userCrutch']).toEqual({ a: 1 });
   });
 
-  it('global 档写回只动文档键，其余键（projects 等）不动', async () => {
+  it('global 档全量读写：外部键（projects 等）读得到、写回原样保留', async () => {
     const home = tmpHome();
     const file = path.join(home, '.claude.json');
     const globalKeys = CLAUDE_CONFIG.catalog('global').keys.map((k) => k.key);
     fs.writeFileSync(file, JSON.stringify({ projects: { '/x': {} }, [globalKeys[0]]: 'old' }), 'utf8');
 
     const before = await CLAUDE_CONFIG.read('global', ctxOf(home));
-    expect(before['projects']).toBeUndefined();
+    expect(before['projects']).toEqual({ '/x': {} });
     expect(before[globalKeys[0]]).toBe('old');
 
     await CLAUDE_CONFIG.write('global', ctxOf(home), { [globalKeys[0]]: 'new' });

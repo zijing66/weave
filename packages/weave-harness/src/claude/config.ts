@@ -208,6 +208,8 @@ export const CLAUDE_CONFIG: ConfigSurface = {
 
   async read(file, ctx) {
     const raw = await readRawObject(resolveFile(file, ctx));
+    // global 档（.claude.json）是宿主状态文件：全量透出，词表只是其中一小部分
+    if (file === 'global') return raw;
     const tops = topKeysOf(file);
     const out: Record<string, unknown> = {};
     for (const k of tops) if (k in raw) assignPath(out, k, raw[k]);
@@ -217,6 +219,13 @@ export const CLAUDE_CONFIG: ConfigSurface = {
   async write(file, ctx, values) {
     const target = resolveFile(file, ctx);
     const current = await readRawObject(target);
+    // global 档（.claude.json）是宿主状态文件：按原样整份落（caller 只动词表键），
+    // 词表外的键（projects 等）不丢；不在这里做删除合并——删除走 values 显式给
+    if (file === 'global') {
+      const next: Record<string, unknown> = { ...current, ...values };
+      await writeRawObject(target, next);
+      return;
+    }
     const tops = topKeysOf(file);
     // 就着原对象改：未知键与「没动过的键」保持原位，只在末尾追加新键（少制造 diff 噪声）
     const next: Record<string, unknown> = { ...current };
