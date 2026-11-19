@@ -268,11 +268,13 @@ export function FileBrowserModal({
   /** 数据面生效的 projectId/projectName：进项目跟 picked，首屏跟 focused。 */
   const activeProjectId = picked?.id ?? focused?.id ?? projectId;
   const activeProjectName = picked?.name ?? focused?.name ?? projectName;
-  /** 切项目（含弹窗初开）重读该项目的最近打开账；校验态一并作废。 */
+  /** 切项目（含弹窗初开）重读该项目的最近打开账；校验态一并作废。
+   *  historyOpen 也在依赖里：面板挂载后写入的账（他处写桶 / 本弹窗早前会话）
+   *  只有开面板那一拍重读才看得见——只认 activeProjectId 会永远显示旧 state。 */
   useEffect(() => {
     setHistory(activeProjectId ? loadFileHistory(activeProjectId) : []);
     setHistoryAlive(null);
-  }, [activeProjectId]);
+  }, [activeProjectId, historyOpen]);
   /** 面板开着才惰性校验：按各条目的父目录子树现查（一次拉 200 条够覆盖），
    *  全部回来才亮出死活（查完前按钮都可点——不因校验在途卡住跳转）。 */
   useEffect(() => {
