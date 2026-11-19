@@ -114,7 +114,7 @@ import { MergeLadderRepository } from '../rpg/merge-ladder.js';
 import { mergeSessionWorktreeViaLadder, rebindExpeditionOnClaim } from '../rpg/expedition-session.js';
 import { RpgInvitationRepository } from '../rpg/invitations.js';
 import { PeerRepository } from '../repositories/peers.js';
-import { getPeerTokensDir, getCertsDir, getDataRoot, getBackupsDir } from '../db/paths.js';
+import { getPeerTokensDir, getCertsDir, getBackupsDir } from '../db/paths.js';
 import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
 import { certFingerprint } from './federation.js';
 import { startFederationHeartbeat, type FederationHeartbeat } from './federation-heartbeat.js';
@@ -733,7 +733,10 @@ async function main(): Promise<void> {
     engine: backupEngine,
     config: () => readDaemonSettingsSync().backup ?? { enabled: true, hour: 1, includeHistory: false },
     hasBackupToday: async () => {
-      const names = await readdir(getBackupsDir(getDataRoot())).catch(() => [] as string[]);
+      // 与引擎写盘同目录（getBackupsDir() 无参 = <cache>/backups）：带 dataRoot
+      // 会再拼一层成 <data>/cache/backups——查的是个空目录，闸永假，热更新重启
+      // 每轮都补跑一次备份（2026-11-19 实测）。
+      const names = await readdir(getBackupsDir()).catch(() => [] as string[]);
       const today = new Date();
       const p = (n: number) => String(n).padStart(2, '0');
       const prefix = `weave-backup-${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())}-`;
