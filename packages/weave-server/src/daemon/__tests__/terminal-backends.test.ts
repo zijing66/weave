@@ -230,9 +230,11 @@ describe('终端后端 — 枚举能力归后端（调用方不再列 preset 白
     // 会话活在 wezterm pane 里，pane env 才是归属凭据，不能被开窗偏好否掉。
     current = settings('wt');
     expect(channel.available()).toBe(true);
-    // 启发式回落的枚举面仍只在 preset 指向的世界里：wt 不是文本通道 → 空表，
-    // 不跨世界拿标题+cwd 去猜（否则 macOS terminal preset 的用户会被误 ESC）。
-    await expect(channel.listPanes()).resolves.toEqual([]);
+    // 枚举面仍只在 preset 指向的世界里：wt 的 pane 表来自它自己的进程反查
+    // （id = `wt:<pid>`、无标题通道），绝不跨世界拿别的终端的标题+cwd 去猜。
+    const wtPanes = await channel.listPanes();
+    expect(wtPanes.length).toBeGreaterThan(0);
+    for (const pane of wtPanes) expect(pane.id).toMatch(/^wt:\d+$/);
     // 定位键不全 → 认不出世界，判 null（不猜，也不为此枚举 mux）
     await expect(channel.locatePane({ WEZTERM_PANE: '7' })).resolves.toBeNull();
     // 没人认领的 pane id → 通道自身拒绝（文本通道不再有「配置的后端」这条兜底路径）

@@ -141,6 +141,11 @@ export function wtPanesAsWindows(
 
 async function listWtPanes(): Promise<{ pid: number; cwd: string | null }[]> {
   if (process.platform !== 'win32') return [];
+  return wtPanes(await wtProcDumpRows());
+}
+
+async function wtProcDumpRows(): Promise<WtProcRow[]> {
+  if (process.platform !== 'win32') return [];
   const r = await captureCommand(
     'powershell.exe',
     ['-NoProfile', '-Command', WT_PROC_DUMP],
@@ -148,7 +153,12 @@ async function listWtPanes(): Promise<{ pid: number; cwd: string | null }[]> {
     WT_DUMP_TIMEOUT_MS,
   );
   if (!r?.ok) return [];
-  return wtPanes(parseWtProcDump(r.out));
+  return parseWtProcDump(r.out);
+}
+
+/** wtPanes 的全量行版（closePane 回溯整树 / HWND 差集共用同一张进程表）。 */
+export async function wtPanesDetailed(): Promise<WtProcRow[]> {
+  return wtProcDumpRows();
 }
 
 /** 探活结果短缓存（10s，同 muxCache）：一枪 ~3.4s 的 PowerShell，角标轮询
@@ -161,6 +171,11 @@ export async function wtPanesCached(): Promise<{ pid: number; cwd: string | null
   const panes = await listWtPanes();
   wtPaneCache = { at: Date.now(), panes };
   return panes;
+}
+
+/** 关 pane / 落子后的缓存作废口：紧随的枚举与计数看实时世界（同 wezterm 口径）。 */
+export function invalidateWtPaneCache(): void {
+  wtPaneCache = null;
 }
 
 /**
@@ -181,6 +196,84 @@ export function parseWtTargetId(id: string): string | null {
   return m ? m[1]! : null;
 }
 
+
+/** EnumWindows 一枪：pid → 该进程名下全部顶层窗 HWND（含隐藏）。 */
+const WT_ENUM_WINDOWS_PS = [
+  "$src = @'",
+  'using System; using System.Text; using System.Runtime.InteropServices;',
+  'public class WeaveWtEnum {',
+  '  delegate bool EnumProc(IntPtr h, IntPtr param);',
+  '  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr param);',
+  '  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);',
+  '  public static System.Collections.Generic.List<long> Of(uint target) {',
+  '    var list = new System.Collections.Generic.List<long>();',
+  '    EnumWindows(delegate(IntPtr h, IntPtr p) {',
+  '      uint pid; GetWindowThreadProcessId(h, out pid);',
+  '      if (pid == target) list.Add(h.ToInt64());',
+  '      return true;',
+  '    }, IntPtr.Zero);',
+  '    return list;',
+  '  }',
+  '}',
+  "'@",
+  'Add-Type -TypeDefinition $src',
+  '[WeaveWtEnum]::Of([uint32]$env:WEAVE_WT_ENUM_PID) | ForEach-Object { $_ }',
+].join('\n');
+
+/** 某进程名下全部顶层窗 HWND（含隐藏；失败 = 空表，差集认窗退标题老路）。 */
+export async function wtOwnedHwnds(pid: number): Promise<number[]> {
+  const r = await captureCommand(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WT_ENUM_WINDOWS_PS],
+    { ...process.env, WEAVE_WT_ENUM_PID: String(pid) },
+    15000,
+  );
+  if (!r?.ok) return [];
+  return r.out
+    .split('\n')
+    .map((l) => Number(l.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+/**
+ * spawn 前后对 WT 宿主进程拍 HWND 差集 → 刚开那个 OS 窗口（自动隐藏的精确抓手，
+ * 不读标题）。**必须过滤辅助窗**：wgl 探测窗（`probing window`）与 DDE Server
+ * Window / IME 一类隐藏辅助窗随每次操作同拍出现，不过滤差集恒歧义（实测）。
+ */
+export function wtHwndDiff(before: readonly number[], after: readonly number[]): number[] {
+  const seen = new Set(before);
+  return after.filter((h) => !seen.has(h));
+}
+
+/**
+ * 差集里挑「真窗口」：先按标题读过滤辅助窗（DDE/IME 不可见无标题不碍事），
+ * 剩多个时取**可见**的那个（wgl 探测窗可能不可见）。调用方拿不到真相（0 个或
+ * 全不可见）返回 null——宁可退标题老路也不猜。
+ */
+export async function wtPickRealWindow(hwnds: readonly number[]): Promise<number | null> {
+  if (hwnds.length === 0) return null;
+  if (hwnds.length === 1) return hwnds[0]!;
+  // 多候选：靠可见性二选一（真窗可见；辅助窗多不可见）。可见性也分不出 = 不猜。
+  const r = await captureCommand(
+    'powershell',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class WVis { [DllImport(\"user32.dll\")] public static extern bool IsWindowVisible(IntPtr h); }'",
+      `$ids = @(${hwnds.map((h) => String(h)).join(',')})`,
+      'foreach ($h in $ids) { if ([WVis]::IsWindowVisible([IntPtr][int64]$h)) { $h } }',
+    ],
+    undefined,
+    15000,
+  );
+  if (!r?.ok) return null;
+  const visible = r.out
+    .split('\n')
+    .map((l) => Number(l.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  return visible.length === 1 ? visible[0]! : null;
+}
 
 /** wt 的 pane id ↔ 会话进程号；坏 id → null。 */
 export function parseWtPaneId(id: string): number | null {

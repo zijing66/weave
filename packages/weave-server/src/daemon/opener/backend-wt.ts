@@ -1,16 +1,28 @@
 import { basename } from 'node:path';
+import { spawn } from 'node:child_process';
 import { pidAlive } from '../claude-liveness.js';
 import { countWindowsByDir, normalizeDirKey } from './wezterm-mux.js';
 import {
   parseWtPaneId,
   parseWtTargetId,
+  wtHwndDiff,
   wtInjectKeys,
+  invalidateWtPaneCache,
+  wtOwnedHwnds,
   wtPanePidFromEnv,
   wtPanesAsWindows,
   wtPanesCached,
+  wtPanesDetailed,
+  wtPickRealWindow,
   wtWindowSlug,
 } from './wt.js';
-import { winRaiseTerminalWindow, winWindowVisibility } from './win-raise.js';
+import {
+  normTitle,
+  winListOwnedWindows,
+  winRaiseTerminalWindow,
+  winSetVisibilityByHwnd,
+  winWindowVisibility,
+} from './win-raise.js';
 import { BRACKETED_PASTE_END, BRACKETED_PASTE_START, throughCmd } from './shared.js';
 import {
   PRESET_CANDIDATES,
@@ -19,12 +31,31 @@ import {
   hasPasteMarkers,
   pasteKeyChunks,
   type LaunchOrigin,
+  type PromptPaneTarget,
   type TerminalLaunch,
 } from './backend.js';
 
 /** 单枪原文上限（原文 → base64 进环境块，整块 ~32k 字符，留出继承 env 的余量）。 */
 const WT_PROMPT_CHUNK_BYTES = 12_288;
 import type { AttachTarget } from './wezterm-mux.js';
+
+/**
+ * cwd → 最近落子的 OS 窗 HWND（自动隐藏的查询入口；三个 hide 调用点只有 cwd）。
+ * 同 wezterm 的 spawnedPaneByCwd 同形：最新覆盖、超量裁旧。内存账——daemon 重启
+ * 丢账只是退标题老路，不值得落盘。
+ */
+const spawnedHwndByCwd = new Map<string, { hwnd: number; at: number }>();
+const SPAWNED_CWD_MAX = 32;
+
+function noteWtSpawnedWindow(dir: string, hwnd: number): void {
+  const key = normalizeDirKey(dir, 'win32');
+  if (!key) return;
+  spawnedHwndByCwd.set(key, { hwnd, at: Date.now() });
+  if (spawnedHwndByCwd.size > SPAWNED_CWD_MAX) {
+    const oldest = [...spawnedHwndByCwd.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) spawnedHwndByCwd.delete(oldest[0]);
+  }
+}
 
 /**
  * Windows Terminal（win32）：无官方枚举 API，反查走进程树——每个 pane 的
@@ -43,6 +74,61 @@ export class WtBackend extends TerminalBackend {
 
   candidates(dir: string, run?: string[]): TerminalLaunch[] {
     return PRESET_CANDIDATES.wt(dir, run, this.platform);
+  }
+
+  /**
+   * 带命令落子（覆写）：**先拍 HWND 快照**再 spawn——现代 wt 是「多窗一进程」
+   * （monarch，实测一个 WindowsTerminal.exe 进程名下挂多个顶层 OS 窗），标题认窗
+   * 恒歧义，自动隐藏只能靠 spawn 前后差集认出刚开那个窗（HWND 直打，见
+   * hideSpawnedWindow）。候选路径（wt 不可用回落 powershell/cmd）拿不到差集，
+   * 让 scheduleHideWindow 退标题老路。
+   */
+  override async run(dir: string, argv: string[]): Promise<LaunchOrigin | null> {
+    if (this.platform !== 'win32') return super.run(dir, argv);
+    // 快照对象 = 当前全部 WT 宿主进程名下的窗（新窗可能落进任一实例）
+    const wtProcs = (await wtPanesDetailed()).filter((r) => r.name === 'windowsterminal.exe');
+    const before: number[] = [];
+    for (const wt of wtProcs) before.push(...(await wtOwnedHwnds(wt.pid)));
+    await this.spawnFirst(
+      this.candidates(dir, argv),
+      `Terminal preset "${this.preset}" cannot run a command here — pick another preset in settings`,
+    );
+    // spawn 后重拍：新增的 HWND 就是刚开的窗，记账给 hideSpawnedWindow 直打。
+    // 窗口期短——宿主 OSC / shell 的 title 命令会很快改写窗标题——短轮询抢在改写前认。
+    void (async () => {
+      try {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          await new Promise((r) => setTimeout(r, attempt === 0 ? 1500 : 2000));
+          const after: number[] = [];
+          const wtProcsAfter = (await wtPanesDetailed()).filter(
+            (r) => r.name === 'windowsterminal.exe',
+          );
+          for (const wt of wtProcsAfter) after.push(...(await wtOwnedHwnds(wt.pid)));
+          let hwnd = await wtPickRealWindow(wtHwndDiff(before, after));
+          // 复用窗（命名窗已存在 → new-tab 进 tab、无新 OS 窗）：差集恒空。退一步按
+          // 「new-tab 后新 tab 即活动 tab ⇒ OS 窗口标题 = 刚设的 tab 标题」认——
+          // tab 标题带 spinner/状态前缀（`✳ wt-hide`），标题认取「剥前缀后等于
+          // basename」的唯一命中（monarch 多窗下歧义即弃，宁缺毋错藏）。
+          if (hwnd === null) {
+            const want = normTitle(basename(dir));
+            const titled: number[] = [];
+            for (const wt of wtProcsAfter) {
+              for (const w of await winListOwnedWindows(wt.pid)) {
+                if (normTitle(w.title) === want) titled.push(w.hwnd);
+              }
+            }
+            if (titled.length === 1) hwnd = titled[0]!;
+          }
+          if (hwnd !== null) {
+            noteWtSpawnedWindow(dir, hwnd);
+            return;
+          }
+        }
+      } catch {
+        // 差集认窗失败 = 退标题老路（scheduleHideWindow 的 setTimeout 分支）
+      }
+    })();
+    return null;
   }
 
   override async countWindows(dirs: readonly string[]): Promise<Map<string, number>> {
@@ -195,5 +281,84 @@ export class WtBackend extends TerminalBackend {
     const pid = parseWtPaneId(paneId);
     if (pid == null) throw new Error(`Invalid prompt pane "${paneId}"`);
     await wtInjectKeys(pid, keys);
+  }
+
+  /**
+   * prompt 层② 枚举：进程表即 pane 表。pid 就是 pane id（与 locatePane 同一
+   * 表示法），cwd 来自 shell 链尾的 PEB；标题拿不到（wt 无通道）= null——
+   * 层② 回落标题匹配时只剩 cwd 一条腿，枚举照常给全。
+   */
+  override async listPromptPanes(): Promise<PromptPaneTarget[]> {
+    if (this.platform !== 'win32') return [];
+    const panes = await wtPanesCached();
+    return panes.map((p) => ({ id: `wt:${p.pid}`, title: null, cwd: p.cwd }));
+  }
+
+  /**
+   * 关 pane（会话生命周期收尾 / 项目关终端）：对 pane 根进程**整树** taskkill。
+   * **只杀 CLAUDE_PID 会留空 shell pane**（claude 死了 cmd 还在、pane 不关、cwd
+   * 仍指项目根——实测 bswmanager 攒 4 个残留）；回溯到 WT 直接子进程再把整树收掉，
+   * pane 才真消失。pane 已没了（pid 不在进程表）按成功收——收尾语义是「pane 关掉」，
+   * 不是「杀一个正在跑的进程」。
+   */
+  override async closePane(paneId: string): Promise<void> {
+    const pid = parseWtPaneId(paneId);
+    if (pid == null) throw new Error(`Invalid prompt pane "${paneId}"`);
+    const rows = await wtPanesDetailed();
+    const paneRow = rows.find((r) => r.pid === pid);
+    if (!paneRow) return; // pane 已没了：按成功收
+    // 根 = 该进程向上第一个「WT 直接子进程」；pane pid 自己就是根时直接用
+    const wtPids = new Set(rows.filter((r) => r.name === 'windowsterminal.exe').map((r) => r.pid));
+    const byPid = new Map(rows.map((r) => [r.pid, r]));
+    let root = paneRow;
+    for (let i = 0; i < 8 && root.parentPid !== 0 && !wtPids.has(root.parentPid); i++) {
+      const parent = byPid.get(root.parentPid);
+      if (!parent) break;
+      root = parent;
+    }
+    // 根定了：/T 收整树、/F 强杀——pane 的 shell 树里可能有挂着的宿主进程（claude
+    // 跑着长命令），优雅关不掉只会留下更多的残留 pane——这里是会话生命周期收尾。
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        'taskkill',
+        ['/PID', String(root.pid), '/T', '/F'],
+        { windowsHide: true, stdio: 'ignore' },
+      );
+      child.on('error', reject);
+      child.on('close', (code) => {
+        invalidateWtPaneCache();
+        code === 0 ? resolve() : reject(new Error(`taskkill exited ${code}`));
+      });
+    });
+  }
+
+  /**
+   * 自动隐藏精确通道（win32）：run() 落子时 HWND 差集认出的窗直打 SW_HIDE——
+   * 不读标题。现代 wt「多窗一进程」下标题认窗恒歧义（实测一进程 4 顶层窗），
+   * 这条是唯一可靠的自动隐藏路径。差集例程要两枪进程表（~3.4s×2），比 spawn
+   * 慢一拍 ⇒ **带轮询等账**（同 wezterm 的 hideSpawnedWeztermWindow 形状）。
+   * 返回 true = 已藏掉；false = 无账（回落路径的 spawn / 复用窗 / 等超时），
+   * 调用方退标题认窗。
+   */
+  override async hideSpawnedWindow(dir: string): Promise<boolean> {
+    if (this.platform !== 'win32') return false;
+    const key = normalizeDirKey(dir, 'win32');
+    if (!key) return false;
+    const deadline = Date.now() + 12_000;
+    for (;;) {
+      const spawned = spawnedHwndByCwd.get(key);
+      if (spawned) {
+        try {
+          await winSetVisibilityByHwnd(spawned.hwnd, 'hide');
+          return true;
+        } catch {
+          // 窗已关 / 句柄失效：摘账退老路
+          spawnedHwndByCwd.delete(key);
+          return false;
+        }
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
 }
