@@ -86,8 +86,9 @@ export function SessionShuttlePicker({
   /** 桌面两栏的焦点在哪一栏（窄屏没有「两栏焦点」，跟下钻的屏走——见 focusCol）。 */
   const [col, setCol] = useState<'projects' | 'sessions'>('sessions');
   const [sessIdx, setSessIdx] = useState(0);
-  /** Space 勾选的会话（选择序保序）：多选后 Enter = 整批落定；单选路径不经过它。 */
-  const [picked, setPicked] = useState<Array<{ sessionId: string; name: string }>>([]);
+  /** Space 勾选的会话（选择序保序）：多选后 Enter = 整批落定；单选路径不经过它。
+   *  project 随行记（胶囊 tooltip 揭示所属项目——勾的行往往已滚出视野）。 */
+  const [picked, setPicked] = useState<Array<{ sessionId: string; name: string; project?: string }>>([]);
   /** Space 勾选的项目（焦点在项目栏时同款多选；与会话账互斥——勾的项目不进会话账）。 */
   const [pickedProjects, setPickedProjects] = useState<Array<{ projectId: number; name: string }>>([]);
   /** 窄屏两屏下钻：项目列表 ⇄ 会话列表（同 FilePicker 的 list/preview）。 */
@@ -170,18 +171,13 @@ export function SessionShuttlePicker({
   /** 右栏行是不是联邦行（两形行的取值字段同名：sessionId/title；状态图标对端恒灰点）。 */
   const rightIsPeer = peerIdx != null && !flat;
 
-  // 换项目 / 换 peer / 换搜索词：右栏高亮收回首条；行集缩短时高亮收回界内；勾选账清掉
-  // （勾的是「这一屏的行」，换屏后旧勾容易变成看不见的幽灵选择）。
-  // 项目 checkbox 也改 projIdx（同拍勾选）——清账 effect 不能把刚勾上的抹掉：
-  // 按钮里翻 projIdx 时不带清账标记，effect 只在「换屏」语义（键盘/点行下钻）清。
-  const clearOnScreenChange = useRef(true);
+  // 换项目 / 换 peer / 换搜索词：右栏高亮收回首条；行集缩短时高亮收回界内。
+  // 勾选账不清：多选的意义就是跨项目挑多条（勾 A 项目的会话 → 切到 B 项目再勾
+  // → Enter 整批落定），换焦点就清账正好把这个流程打断（2026-11-18 用户报障
+  // 「勾选项切换聚焦后丢失」）；勾账按 sessionId/projectId 记，行看不见也只是
+  // 账在、随时可取消，不构成幽灵选择。
   useEffect(() => {
     setSessIdx(0);
-    if (clearOnScreenChange.current) {
-      setPicked([]);
-      setPickedProjects([]);
-    }
-    clearOnScreenChange.current = true;
   }, [query, projIdx, peerIdx]);
   useEffect(() => {
     setSessIdx((i) => Math.min(i, Math.max(0, rightRows.length - 1)));
@@ -334,10 +330,11 @@ export function SessionShuttlePicker({
       const hit = rightRows[sessIdx];
       if (!hit) return;
       const name = sessionLabel(hit.title, hit.sessionId);
+      const project = rightIsPeer ? null : ((hit as SessionRow).projectId != null ? (projectName.get((hit as SessionRow).projectId!) ?? `#${(hit as SessionRow).projectId}`) : undefined);
       setPicked((prev) =>
         prev.some((p) => p.sessionId === hit.sessionId)
           ? prev.filter((p) => p.sessionId !== hit.sessionId)
-          : [...prev, { sessionId: hit.sessionId, name }],
+          : [...prev, { sessionId: hit.sessionId, name, project: project ?? undefined }],
       );
       return;
     }
@@ -370,14 +367,14 @@ export function SessionShuttlePicker({
     focused
       ? cn(
           'relative text-neutral-100',
-          accent === 'project' ? 'bg-blue-500/20' : 'bg-violet-500/20',
+          accent === 'project' ? 'bg-cyan-500/20' : 'bg-violet-500/20',
         )
       : accent === 'project'
-        ? 'bg-blue-500/[0.05] text-neutral-300'
+        ? 'bg-cyan-500/[0.05] text-neutral-300'
         : 'bg-violet-500/[0.07] text-neutral-200';
   /** 焦点行的左缘竖条（绝对定位覆盖整行高）：颜色即焦点色。 */
   const focusBar = (accent: 'project' | 'session'): string =>
-    accent === 'project' ? 'bg-blue-400' : 'bg-violet-400';
+    accent === 'project' ? 'bg-cyan-400' : 'bg-violet-400';
 
   return createPortal(
     <div
@@ -498,7 +495,7 @@ export function SessionShuttlePicker({
                         className={cn('absolute inset-y-0 left-0 w-[3px] rounded-full', focusBar('project'))}
                       />
                     )}
-                    <Folder className="h-3.5 w-3.5 shrink-0 text-blue-300/80" />
+                    <Folder className="h-3.5 w-3.5 shrink-0 text-cyan-300/80" />
                     <span className="min-w-0 flex-1 truncate">{g.name}</span>
                     <span className="shrink-0 text-10 tabular-nums text-neutral-600">{g.rows.length}</span>
                     {/* checkbox 勾选（2026-11-15 用户裁决：移动端点不到 Space，勾选
@@ -513,8 +510,6 @@ export function SessionShuttlePicker({
                         aria-label={t('tasks.sessionPickerCheck')}
                         onClick={(e) => {
                           e.stopPropagation();
-                          // 勾选即焦点切换：不带「换屏清账」语义（刚勾的不能被清）
-                          clearOnScreenChange.current = false;
                           setProjIdx(i);
                           setCol('projects');
                           const name = g.name;
@@ -527,8 +522,8 @@ export function SessionShuttlePicker({
                         className={cn(
                           'shrink-0 rounded-[3px] border p-px transition-colors',
                           projPicked
-                            ? 'border-blue-400 bg-blue-500/80 text-white'
-                            : 'border-neutral-600 text-transparent hover:border-blue-400/70',
+                            ? 'border-cyan-400 bg-cyan-500/80 text-white'
+                            : 'border-neutral-600 text-transparent hover:border-cyan-400/70',
                         )}
                       >
                         <Check className="h-2.5 w-2.5" strokeWidth={3.5} />
@@ -669,10 +664,12 @@ export function SessionShuttlePicker({
                         setSessIdx(i);
                         setCol('sessions');
                         const name = sessionLabel(s.title, s.sessionId);
+                        const projectId = (s as SessionRow).projectId;
+                        const project = projectId != null ? (projectName.get(projectId) ?? `#${projectId}`) : undefined;
                         setPicked((prev) =>
                           prev.some((p) => p.sessionId === s.sessionId)
                             ? prev.filter((p) => p.sessionId !== s.sessionId)
-                            : [...prev, { sessionId: s.sessionId, name }],
+                            : [...prev, { sessionId: s.sessionId, name, project }],
                         );
                       }}
                       className={cn(
@@ -691,6 +688,46 @@ export function SessionShuttlePicker({
           </ul>
         </div>
 
+        {/* 已选条（2026-11-18 用户裁决，与文件选择器同款）：所有已选项逐枚成胶囊
+            （项目蓝 / 会话紫同行色），胶囊悬停浮现移除 X——跨项目挑的多条在这里
+            全程可见可撤，不依赖回到原屏找 checkbox。flex+wrap 不上横向滚动。 */}
+        {(pickedProjects.length > 0 || picked.length > 0) && (
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-edge/[0.06] px-3 py-1.5">
+            {pickedProjects.map((p) => (
+              <span
+                key={`p${p.projectId}`}
+                className="group flex items-center gap-1 rounded-full border border-cyan-400/40 bg-cyan-500/15 py-0.5 pl-2 pr-1 text-10 text-cyan-200"
+              >
+                <span className="max-w-40 truncate">{p.name}</span>
+                <button
+                  type="button"
+                  aria-label={t('tasks.sessionPickerRemove')}
+                  onClick={() => setPickedProjects((prev) => prev.filter((q) => q.projectId !== p.projectId))}
+                  className="rounded-full text-cyan-300/60 opacity-0 transition-opacity group-hover:opacity-100 hover:text-cyan-100"
+                >
+                  <X className="h-2.5 w-2.5" strokeWidth={3} />
+                </button>
+              </span>
+            ))}
+            {picked.map((p) => (
+              <span
+                key={p.sessionId}
+                className="group flex items-center gap-1 rounded-full border border-violet-400/40 bg-violet-500/15 py-0.5 pl-2 pr-1 text-10 text-violet-200"
+              >
+                <span className="max-w-40 truncate" title={p.project ? `${p.project} · ${p.name}` : p.name}>{p.name}</span>
+                <button
+                  type="button"
+                  aria-label={t('tasks.sessionPickerRemove')}
+                  onClick={() => setPicked((prev) => prev.filter((q) => q.sessionId !== p.sessionId))}
+                  className="rounded-full text-violet-300/60 opacity-0 transition-opacity group-hover:opacity-100 hover:text-violet-100"
+                >
+                  <X className="h-2.5 w-2.5" strokeWidth={3} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* 底条：条数（多选时并排勾选数）+ 确认钮 + 按键说明。确认钮常显（桌面也有）：
             checkbox 勾选后不依赖 Enter 键序——移动端没有键盘，「确认选择」必须是
             一枚看得见的钮（2026-11-15 用户反馈：选完项目无法确定）。 */}
@@ -698,7 +735,7 @@ export function SessionShuttlePicker({
           <span>
             {t('tasks.sessionPickerCount', { n: rightRows.length })}
             {pickedProjects.length > 0 && (
-              <span className="ml-1.5 font-medium text-blue-300">
+              <span className="ml-1.5 font-medium text-cyan-300">
                 {t('tasks.sessionPickerPicked', { n: pickedProjects.length })}
               </span>
             )}

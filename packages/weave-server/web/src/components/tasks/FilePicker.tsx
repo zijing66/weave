@@ -1534,15 +1534,29 @@ export function FilePicker({
               </MobileFadePanels>
             )}
           </div>
-          {/* 已选条：有勾选就整批落定（顺序 = 点选顺序）。窄屏也摆——触屏只能靠它 */}
+          {/* 已选条：有勾选就整批落定（顺序 = 点选顺序）。窄屏也摆——触屏只能靠它。
+              逐枚胶囊列出（2026-11-18 用户裁决，与会话穿梭选择器同款），悬停浮现
+              移除 X 可单独撤销；路径长，胶囊内 max-w 截断 + title 揭示全文。 */}
           {picked.length > 0 && (
-            <div className="flex shrink-0 items-center gap-2 border-t border-edge/[0.06] bg-blue-500/[0.06] px-3 py-1.5">
-              <span className="min-w-0 flex-1 truncate text-11 text-blue-200">
-                {t('tasks.filePickedCount', { n: picked.length })}
-                <span className="ml-1.5 truncate font-mono text-10 text-neutral-500">
-                  {picked.map((p) => p.name).join('、')}
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-edge/[0.06] bg-blue-500/[0.06] px-3 py-1.5">
+              {picked.map((p) => (
+                <span
+                  key={p.path}
+                  className="group flex items-center gap-1 rounded-full border border-blue-400/40 bg-blue-500/15 py-0.5 pl-2 pr-1 text-10 text-blue-200"
+                >
+                  <span className="max-w-56 truncate font-mono" title={p.path}>
+                    {p.path}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={t('tasks.fileClearPicked')}
+                    onClick={() => setPicked((prev) => prev.filter((q) => q.path !== p.path))}
+                    className="rounded-full text-blue-300/60 opacity-0 transition-opacity group-hover:opacity-100 hover:text-blue-100"
+                  >
+                    <X className="h-2.5 w-2.5" strokeWidth={3} />
+                  </button>
                 </span>
-              </span>
+              ))}
               <button
                 type="button"
                 onClick={() => setPicked([])}
