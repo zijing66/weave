@@ -40,7 +40,9 @@ import { cn } from '@/lib/utils';
 const PAGE = 10;
 
 const MENU_W = 168;
-const MENU_H = 72;
+/** 分享菜单项数比对话面板少（无 HTML/Markdown 导出），高度上限取同款 132：
+ *  择向判据略大无害（与 conv-widgets 的 MENU_H 同口径）。 */
+const MENU_H = 132;
 
 /** 触屏双击开菜单的两枚门槛（与对话面板同口径）：两击落在同一条折叠条、
  *  间隔不超过 DOUBLE_TAP_MS；位移超过 TAP_SLOP 就当是滚动。 */
@@ -107,10 +109,11 @@ const rowsImageEntries = (
     ];
   });
 
-/** 弹出菜单两副面孔：折叠条右键（进多选）/ 底栏分享图片（复制 | 下载）。 */
+/** 弹出菜单两副面孔：折叠条右键（进多选）/ 底栏分享（复制 | 下载）。分享那份的
+ *  形状与定位方式与对话面板同款（右沿对齐 + 择向弹，见 conv-widgets 的 ConvMenu）。 */
 type SideMenu =
   | { kind: 'row'; x: number; y: number; id: number }
-  | { kind: 'share'; x: number; y: number };
+  | { kind: 'share'; right: number; top?: number; bottom?: number; up: boolean };
 
 /** 多选态折叠条旁的勾选框（点击面是整条，这里只显示状态）。 */
 function CheckBox({ on }: { on: boolean }) {
@@ -418,10 +421,21 @@ export function SideQuestionDialog({
     );
   };
 
-  /** 分享菜单往上开：底栏在下沿，向下没有可用的地方。 */
+  /** 分享菜单与对话面板同款择向：下方放得下就向下弹，否则向上弹；右沿对齐按钮
+      （旁路弹窗底栏在下沿，窄窗时向上是常态，但择向不用猜）。 */
   const openShareMenu = (e: React.MouseEvent<HTMLButtonElement>): void => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ kind: 'share', x: r.right - MENU_W, y: r.top - MENU_H });
+    const roomBelow = window.innerHeight - r.bottom;
+    const up = roomBelow < MENU_H + 8;
+    setMenu({
+      kind: 'share',
+      // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+      right: cssPx(Math.max(8, window.innerWidth - r.right)),
+      ...(up
+        ? { bottom: cssPx(window.innerHeight - r.top + 4) }
+        : { top: cssPx(r.bottom + 4) }),
+      up,
+    });
   };
 
   /** 触屏双击开菜单（桌面走右键）。多选只是菜单里的一项，双击也只开菜单。 */
@@ -658,15 +672,7 @@ export function SideQuestionDialog({
                     <CheckCheck className="h-3 w-3" />
                     {t(allPicked ? 'tasks.convDeselectAll' : 'tasks.convSelectAll')}
                   </button>
-                  <button
-                    type="button"
-                    disabled={picked.size === 0}
-                    onClick={() => copyRows(pickedRows)}
-                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-2 py-1 text-11 text-neutral-200 transition-colors hover:border-edge/20 disabled:opacity-40"
-                  >
-                    <Copy className="h-3 w-3" />
-                    {t('tasks.convCopy')}
-                  </button>
+                  {/* 「复制文本」只在分享菜单里（与对话面板同款——工具条不重复摆） */}
                   <Tooltip label={t('tasks.convShare')} side="top">
                     <button
                       type="button"
@@ -730,11 +736,19 @@ export function SideQuestionDialog({
           <div
             data-side-menu
             className="fixed z-[60] rounded-lg border border-edge/[0.1] bg-neutral-900 py-1 shadow-mac"
-            style={{
-              // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
-              left: cssPx(Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8))),
-              top: cssPx(Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H))),
-            }}
+            style={
+              menu.kind === 'share'
+                ? {
+                    // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+                    right: menu.right,
+                    ...(menu.up ? { bottom: menu.bottom } : { top: menu.top }),
+                  }
+                : {
+                    // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值再乘一次）。
+                    left: cssPx(Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8))),
+                    top: cssPx(Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H))),
+                  }
+            }
             onClick={(e) => e.stopPropagation()}
           >
             {menu.kind === 'row' ? (
@@ -748,16 +762,16 @@ export function SideQuestionDialog({
               </button>
             ) : (
               <>
-                {canShareImage() && (
-                  <button
-                    type="button"
-                    onClick={() => shareImage('share')}
-                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
-                  >
-                    <Share2 className="h-3 w-3 text-neutral-500" />
-                    {t('tasks.convShareSheet')}
-                  </button>
-                )}
+                {/* 与对话面板分享菜单同序（2026-11-18 用户标注 1-6）：复制文本、
+                    复制图片、下载 PNG。旁路没有 HTML/Markdown 导出面。 */}
+                <button
+                  type="button"
+                  onClick={() => copyRows(pickedRows)}
+                  className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                >
+                  <Copy className="h-3 w-3 text-neutral-500" />
+                  {t('tasks.convCopy')}
+                </button>
                 <button
                   type="button"
                   onClick={() => shareImage('clipboard')}
@@ -774,6 +788,16 @@ export function SideQuestionDialog({
                   <Download className="h-3 w-3 text-neutral-500" />
                   {t('tasks.convShareDownload')}
                 </button>
+                {canShareImage() && (
+                  <button
+                    type="button"
+                    onClick={() => shareImage('share')}
+                    className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-11 text-neutral-200 hover:bg-edge/[0.06]"
+                  >
+                    <Share2 className="h-3 w-3 text-neutral-500" />
+                    {t('tasks.convShareSheet')}
+                  </button>
+                )}
               </>
             )}
           </div>,
