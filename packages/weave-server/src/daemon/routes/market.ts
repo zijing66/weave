@@ -21,6 +21,9 @@ import {
   uninstallGlobalSkill,
   readGlobalSkillGroups,
   resolveGlobalSkillDir,
+  listAssetDirFiles,
+  readAssetDirFile,
+  isDirectoryFollow,
   listGlobalSkillFiles,
   readGlobalSkillFile,
   ClaudeJsonCorruptError,
@@ -618,6 +621,9 @@ export async function handleMarketRoutes(
       } else {
         sendJson(res, 400, { error: 'Invalid "category" (skill|mcp|plugin|command|agent|workflow|rule|output-style)' });
       }
+      // 位置快照失效：市场行「已装 N 处」与滑条返显共用这一帧（watch 账异步落，
+      // 装完的响应先回——帧到才返显）。
+      deps.dataBus?.emit({ key: 'installations' });
     } catch (e) {
       sendInstallError(res, e);
     }
@@ -741,6 +747,7 @@ export async function handleMarketRoutes(
         return true;
       }
       sendJson(res, 200, { ok: true });
+      deps.dataBus?.emit({ key: 'installations' });
     } catch (e) {
       sendInstallError(res, e);
     }
@@ -808,6 +815,73 @@ export async function handleMarketRoutes(
       return true;
     }
     sendJson(res, 200, { checks: await checkHarness(project.path) });
+    return true;
+  }
+
+  // --- 市场库资产文件浏览（资源市场查看器：skill / 插件包整目录）。rel 由
+  //     服务端拼到库根下判界，客户端不交绝对路径；软链跟随同全局 skill 端点 ---
+  const libSkillFilesMatch = pathname.match(/^\/libraries\/(\d+)\/asset-files$/);
+  if (libSkillFilesMatch && req.method === 'GET') {
+    if (!deps.libraries) {
+      sendJson(res, 503, { error: 'Libraries unavailable' });
+      return true;
+    }
+    const lib = deps.libraries.getById(Number(libSkillFilesMatch[1]));
+    if (!lib) {
+      sendJson(res, 404, { error: 'Library not found' });
+      return true;
+    }
+    const rel = url.searchParams.get('rel');
+    if (!rel) {
+      sendJson(res, 400, { error: 'Missing "rel" query parameter' });
+      return true;
+    }
+    const posix = path.normalize(rel).replace(/\\/g, '/');
+    if (path.isAbsolute(rel) || posix.split('/').some((seg) => seg === '..')) {
+      sendJson(res, 400, { error: 'Invalid "rel"' });
+      return true;
+    }
+    const dir = path.join(lib.path, posix);
+    if (!(await isDirectoryFollow(dir))) {
+      sendJson(res, 404, { error: 'Asset directory not found' });
+      return true;
+    }
+    sendJson(res, 200, { files: await listAssetDirFiles(dir) });
+    return true;
+  }
+  const libSkillFileMatch = pathname.match(/^\/libraries\/(\d+)\/asset-file$/);
+  if (libSkillFileMatch && req.method === 'GET') {
+    if (!deps.libraries) {
+      sendJson(res, 503, { error: 'Libraries unavailable' });
+      return true;
+    }
+    const lib = deps.libraries.getById(Number(libSkillFileMatch[1]));
+    if (!lib) {
+      sendJson(res, 404, { error: 'Library not found' });
+      return true;
+    }
+    const rel = url.searchParams.get('rel');
+    const filePath = url.searchParams.get('path');
+    if (!rel || !filePath) {
+      sendJson(res, 400, { error: 'Missing "rel" or "path" query parameter' });
+      return true;
+    }
+    const posix = path.normalize(rel).replace(/\\/g, '/');
+    if (path.isAbsolute(rel) || posix.split('/').some((seg) => seg === '..')) {
+      sendJson(res, 400, { error: 'Invalid "rel"' });
+      return true;
+    }
+    const dir = path.join(lib.path, posix);
+    if (!(await isDirectoryFollow(dir))) {
+      sendJson(res, 404, { error: 'Asset directory not found' });
+      return true;
+    }
+    try {
+      const file = await readAssetDirFile(dir, filePath);
+      sendJson(res, 200, { path: filePath, content: file.content, size: file.size });
+    } catch (e) {
+      sendReaderError(res, e);
+    }
     return true;
   }
 

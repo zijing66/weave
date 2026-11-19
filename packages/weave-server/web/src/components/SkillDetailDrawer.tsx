@@ -28,6 +28,7 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { cn, tildePath } from '@/lib/utils';
 import { useT } from '@/i18n/I18nProvider';
 import { splitFrontmatter } from '@/lib/markdown';
+import { useBackPop } from '@/lib/back-pop';
 import { subscribeFrame } from '@/lib/sse';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
 import { harnessUiOf } from '@/lib/harness-meta';
@@ -191,6 +192,8 @@ export function SkillDetailDrawer({
   onUninstall,
   onClose,
   home,
+  market,
+  footerHint,
 }: {
   projectId: number;
   name: string;
@@ -213,9 +216,15 @@ export function SkillDetailDrawer({
   custom: boolean;
   onUninstall: () => void;
   onClose: () => void;
+  /** 市场通道：文件取市场库副本（listLibraryAssetFiles / readLibraryAssetFile）。
+   *  设置时三种取数通道并存：market 优先，其次 global，最后 project files。 */
+  market?: { libraryId: number; rel: string };
+  /** 覆写底部提示（市场态带库来源，资源管理三态提示不适用）。 */
+  footerHint?: string;
 }) {
   const t = useT();
   const isGlobal = scope === 'user' && !!source;
+  const isMarket = !!market;
   // Global rows start with no files and fetch them (follows symlinks).
   const [fileList, setFileList] = useState<AssetEntry[]>(files);
   const [selected, setSelected] = useState<AssetEntry | null>(() => {
@@ -224,6 +233,20 @@ export function SkillDetailDrawer({
   });
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Esc / 移动端返回手势 = 关抽屉（市场态抽屉盖在市场页上，返回先收抽屉）。
+  useBackPop(true, () => {
+    onClose();
+    return true;
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
   // Bumped by the live watcher when the open file changes on disk.
   const [refreshNonce, setRefreshNonce] = useState(0);
   // Keeps the watcher's match target current without re-subscribing.
@@ -260,7 +283,25 @@ export function SkillDetailDrawer({
 
   // Fetch the global skill's file list (symlinks resolved server-side), then
   // default-select SKILL.md. Project rows already have their files passed in.
+  // Market rows fetch from the library copy (server-confined to lib root + rel).
   useEffect(() => {
+    if (isMarket && market) {
+      let cancelled = false;
+      api
+        .listLibraryAssetFiles(market.libraryId, market.rel)
+        .then((list) => {
+          if (cancelled) return;
+          setFileList(list);
+          const md = list.find((f) => f.relPath.endsWith('/SKILL.md'));
+          setSelected((prev) => prev ?? md ?? list[0] ?? null);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(String(e));
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
     if (!isGlobal) return;
     let cancelled = false;
     api
@@ -277,7 +318,7 @@ export function SkillDetailDrawer({
     return () => {
       cancelled = true;
     };
-  }, [projectId, isGlobal, source, name, pluginKey]);
+  }, [projectId, isMarket, isGlobal, market, source, name, pluginKey]);
 
   useEffect(() => {
     if (!selected) {
@@ -288,8 +329,9 @@ export function SkillDetailDrawer({
     let cancelled = false;
     setContent(null);
     setError(null);
-    const req =
-      isGlobal
+    const req = isMarket
+      ? api.readLibraryAssetFile(market!.libraryId, market!.rel, selected.relPath)
+      : isGlobal
         ? api.readGlobalSkillFile(projectId, {
             source: source!,
             name,
@@ -307,7 +349,7 @@ export function SkillDetailDrawer({
     return () => {
       cancelled = true;
     };
-  }, [projectId, isGlobal, source, name, pluginKey, selected, refreshNonce]);
+  }, [projectId, isMarket, isGlobal, market, source, name, pluginKey, selected, refreshNonce]);
 
   // Live watch (global only): the daemon watches the personal skill roots
   // (following symlinks), so edits to a symlinked skill's ORIGINAL files push
@@ -454,7 +496,12 @@ export function SkillDetailDrawer({
 
       {/* Footer hint */}
       <div className="flex items-center gap-2 p-2 border-t border-edge/[0.06] text-11 text-neutral-500">
-        {scope === 'project' ? (
+        {footerHint ? (
+          <>
+            <Folder className="h-3 w-3" />
+            {footerHint}
+          </>
+        ) : scope === 'project' ? (
           <>
             <Folder className="h-3 w-3" />
             {t('skillDetail.projectScopeHint', {

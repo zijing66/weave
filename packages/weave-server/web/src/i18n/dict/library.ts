@@ -156,6 +156,8 @@ export const libraryZh = {
   'market.mcpConfigJson': 'JSON',
   'market.mcpConfigForm': '表单',
   'market.installToHarness': '装到 {harness}',
+  'market.viewDetail': '查看内容',
+  'market.viewFromLibrary': '市场副本 · 只读',
 };
 
 export const libraryEn: Record<keyof typeof libraryZh, string> = {
@@ -317,4 +319,6 @@ export const libraryEn: Record<keyof typeof libraryZh, string> = {
   'market.mcpConfigJson': 'JSON',
   'market.mcpConfigForm': 'Form',
   'market.installToHarness': 'installs to {harness}',
+  'market.viewDetail': 'View contents',
+  'market.viewFromLibrary': 'Market copy · read-only',
 };

@@ -119,7 +119,7 @@ async function pathExists(p: string): Promise<boolean> {
 /** True if `p` is a directory, following symlinks (so symlinked skill dirs
  * under ~/.claude/skills/ are counted, which `Dirent.isDirectory()` alone
  * would miss because it reports the link type, not the target). */
-async function isDirectoryFollow(p: string): Promise<boolean> {
+export async function isDirectoryFollow(p: string): Promise<boolean> {
   try {
     return (await stat(p)).isDirectory();
   } catch {
@@ -541,6 +541,81 @@ export async function readGlobalSkillFile(dir: string, relPath: string): Promise
   const root = dirReal.endsWith(path.sep) ? dirReal : dirReal + path.sep;
   if (absReal !== dirReal && !absReal.startsWith(root)) {
     throw new AssetNotFoundError(`Resolved path escapes the skill directory: "${relPath}"`);
+  }
+  const content = await readFile(abs, 'utf-8');
+  return { content, size: s.size };
+}
+
+// --- market library asset file listing / reading（资源市场查看器通道）---
+
+/** List files under an absolute directory (symlinks followed, hidden entries
+ * skipped), paths relative to that directory. The caller resolves the library
+ * root + asset relPath — this only walks; containment is the caller's job. */
+export async function listAssetDirFiles(dir: string): Promise<AssetEntry[]> {
+  const out: AssetEntry[] = [];
+  const walk = async (cur: string, rel: string): Promise<void> => {
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = await readdir(cur, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      const childAbs = path.join(cur, e.name);
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if ((e.isDirectory() || e.isSymbolicLink()) && (await isDirectoryFollow(childAbs))) {
+        await walk(childAbs, childRel);
+      } else if (e.isFile() || e.isSymbolicLink()) {
+        try {
+          const s = await stat(childAbs);
+          if (s.isFile()) {
+            out.push({ absPath: childAbs, relPath: childRel, category: 'skill', agent: 'claude', mtimeMs: s.mtimeMs });
+          }
+        } catch {
+          // vanished between readdir and stat — skip
+        }
+      }
+    }
+  };
+  await walk(dir, '');
+  return out.sort((a, b) => a.relPath.localeCompare(b.relPath));
+}
+
+/** Read a text file from an absolute directory, confined to it (same rules as
+ * readGlobalSkillFile: relative posix path, `..` rejected, symlink-resolved
+ * containment). */
+export async function readAssetDirFile(dir: string, relPath: string): Promise<ProjectFile> {
+  const posix = path.normalize(relPath).replace(/\\/g, '/');
+  if (path.isAbsolute(relPath)) {
+    throw new AssetNotFoundError(`Absolute paths are not allowed: "${relPath}"`);
+  }
+  if (posix.split('/').some((seg) => seg === '..')) {
+    throw new AssetNotFoundError(`Path traversal is not allowed: "${relPath}"`);
+  }
+  const abs = path.join(dir, posix);
+  let s;
+  try {
+    s = await stat(abs);
+  } catch {
+    throw new AssetNotFoundError(`File not found: "${relPath}"`);
+  }
+  if (!s.isFile()) {
+    throw new AssetNotFoundError(`Not a file: "${relPath}"`);
+  }
+  if (s.size > MAX_BYTES) {
+    throw new FileTooLargeError(`File exceeds ${MAX_BYTES} bytes: "${relPath}"`);
+  }
+  let dirReal = dir;
+  let absReal = abs;
+  try {
+    [dirReal, absReal] = await Promise.all([realpath(dir), realpath(abs)]);
+  } catch {
+    throw new AssetNotFoundError(`File not found: "${relPath}"`);
+  }
+  const root = dirReal.endsWith(path.sep) ? dirReal : dirReal + path.sep;
+  if (absReal !== dirReal && !absReal.startsWith(root)) {
+    throw new AssetNotFoundError(`Resolved path escapes the asset directory: "${relPath}"`);
   }
   const content = await readFile(abs, 'utf-8');
   return { content, size: s.size };

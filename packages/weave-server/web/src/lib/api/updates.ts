@@ -175,6 +175,15 @@ export const updatesApi = {
     if (q.pluginKey) params.set('pluginKey', q.pluginKey);
     return apiFetch<ProjectFile>(`/projects/${projectId}/skills/global/file?${params}`);
   },
+  /** 市场库资产（skill/插件包）文件浏览：rel 是资产相对库根的目录；服务端判界。 */
+  listLibraryAssetFiles: (libraryId: number, rel: string): Promise<AssetEntry[]> =>
+    apiFetch<{ files: AssetEntry[] }>(
+      `/libraries/${libraryId}/asset-files?rel=${encodeURIComponent(rel)}`,
+    ).then((r) => r.files),
+  readLibraryAssetFile: (libraryId: number, rel: string, path: string): Promise<ProjectFile> =>
+    apiFetch<ProjectFile>(
+      `/libraries/${libraryId}/asset-file?rel=${encodeURIComponent(rel)}&path=${encodeURIComponent(path)}`,
+    ),
   /** 插件工具行（每键 × 每可装档一行；effective/安装态服务端算好）。 */
   listPluginState: (projectId: number): Promise<PluginRow[]> =>
     apiFetch<{ rows: PluginRow[] }>(`/projects/${projectId}/plugins/state`).then(

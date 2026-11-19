@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import {
   api,
   type AssetAgent,
@@ -42,12 +41,15 @@ import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import type { ActionState } from '@/lib/feedback-core';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
+import { Combobox } from '@/components/ui/combobox';
 import { KIND_KEY, KIND_STYLES } from '@/components/ToolkitSection';
+import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
+  Eye,
   FileCode,
   FolderOpen,
   GitBranch,
@@ -62,12 +64,13 @@ import {
 } from 'lucide-react';
 
 /**
- * 资源市场弹层页（VS Code Extensions 式）：左源右列、搜索优先、单行 + 已装
- * N 处徽标、安装时选落点（不跟随锚定项目）。骨架复用 FileBrowserModal 范式
- * （portal + 遮罩 + ESC 分层 + useBackPop）；开闭态不进 URL（先例裁决）。
+ * 资源市场（VS Code Extensions 式）：左源右列、搜索优先、单行 + 已装
+ * N 处徽标、安装时选落点（不跟随锚定项目）。整页路由 /market 的页面体
+ * （App 主区挂载，不再 portal 弹层）；ESC 分层与 useBackPop 保留，
+ * onClose = 离开 /market（App 落 navigate）。
  *
  * 安装 handler 由 App 注入（use-asset-mutations 预包装，带显式 target）；
- * 弹层装完自己 refetch /installations 刷徽标。
+ * 装完自己 refetch /installations 刷徽标。
  */
 
 export interface MarketModalProps {
@@ -118,8 +121,10 @@ export interface MarketModalProps {
   ) => void | Promise<void>;
   /** 插件包卸载 = toolkit uninstall（恒项目落点）。 */
   onUninstallPlugin: (plugin: MarketPluginAsset, target: ProjectRow) => void | Promise<void>;
-  /** 跳转：关弹层 + 进该项目（null = 全局）的资源管理。 */
+  /** 跳转：离开市场进该项目（null = 全局）的资源管理。 */
   onJumpToProject: (projectId: number | null) => void;
+  /** 锚定项目 id（全局/项目详情抽屉取文件用；市场页无锚定 → 0 占位）。 */
+  projectId: number;
 }
 
 const EMPTY_ASSETS: LibraryAssets = { skills: [], mcp: [], files: [], plugins: [] };
@@ -140,6 +145,7 @@ export function MarketModal({
   onUninstallFileAsset,
   onUninstallPlugin,
   onJumpToProject,
+  projectId,
 }: MarketModalProps) {
   const t = useT();
   const { show } = useToast();
@@ -165,6 +171,8 @@ export function MarketModal({
   /** 多选批操作：选中行 uid 集 + 开关态（有选中即开）。 */
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<string[]>([]);
+  /** 详情查看（SkillDetailDrawer 走市场通道）：行 uid → {libraryId, rel}。 */
+  const [viewing, setViewing] = useState<{ uid: string; name: string; libraryId: number; rel: string } | null>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -194,6 +202,13 @@ export function MarketModal({
   useEffect(
     () => registerInvalidator('market', () => void refreshMarket()),
     [refreshMarket],
+  );
+
+  // 安装返显：装/卸成功后服务端发 installations 失效帧（watch 账异步落，装完的
+  // 响应先回）——帧到即重拉位置快照，滑条/徽标随之点亮。
+  useEffect(
+    () => registerInvalidator('installations', () => reloadInstallations()),
+    [reloadInstallations],
   );
 
   /** 拉一个库的资产进缓存（已缓存则跳过）。 */
@@ -531,19 +546,14 @@ export function MarketModal({
   const localMarkets = market.filter((m) => m.source === 'dir' || m.source === 'legacy');
   const gitMarkets = market.filter((m) => m.source === 'git');
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 max-lg:p-0"
-      onClick={onClose}
-    >
+  return (
+    <>
       <div
         ref={dialogRef}
         tabIndex={-1}
         className={cn(
-          'relative flex min-h-0 w-full flex-col overflow-hidden bg-neutral-900 focus:outline-none',
-          'flex h-[80%] max-w-5xl rounded-xl border border-edge/[0.08] shadow-mac max-lg:h-full max-lg:max-w-none max-lg:rounded-none',
+          'relative flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-neutral-900 focus:outline-none',
         )}
-        onClick={(e) => e.stopPropagation()}
       >
         {/* 头：标题 + 搜索 + 源管理 + MCP 表单 + 关闭 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] px-3 py-2 max-lg:flex-wrap">
@@ -867,6 +877,14 @@ export function MarketModal({
                 capabilities={capabilities}
                 projects={projects}
                 onToggle={() => setExpandedUid((prev) => (prev === row.uid ? null : row.uid))}
+                onView={
+                  (row.kind === 'skill' && row.skill) || (row.kind === 'plugin' && row.plugin)
+                    ? () => {
+                        const rel = row.kind === 'skill' ? row.skill!.relPath : row.plugin!.relPath;
+                        setViewing({ uid: row.uid, name: row.name, libraryId: row.marketId, rel });
+                      }
+                    : null
+                }
                 onOpenLocations={() =>
                   setLocationsKey((prev) => (prev === installationKeyOfRow(row) ? null : installationKeyOfRow(row)))
                 }
@@ -919,8 +937,24 @@ export function MarketModal({
         }}
         onClose={() => setRemoveTarget(null)}
       />
-    </div>,
-    document.body,
+      {/* 详情查看（资源管理同款查看器，市场通道取文件）：主区右侧 absolute 抽屉 */}
+      {viewing && (
+        <SkillDetailDrawer
+          key={viewing.uid}
+          projectId={projectId}
+          name={viewing.name}
+          scope="user"
+          files={[]}
+          outdated={false}
+          custom={false}
+          onUninstall={() => setViewing(null)}
+          onClose={() => setViewing(null)}
+          home={null}
+          market={{ libraryId: viewing.libraryId, rel: viewing.rel }}
+          footerHint={t('market.viewFromLibrary')}
+        />
+      )}
+    </>
   );
 }
 
@@ -1126,6 +1160,7 @@ function MarketRowView({
   onInstall,
   onUninstall,
   installState,
+  onView,
 }: {
   row: MarketRow;
   bulkMode: boolean;
@@ -1145,6 +1180,8 @@ function MarketRowView({
   onInstall: (target: { scope: AssetScope; projectId: number | null; agent: AssetAgent }) => void;
   onUninstall: (target: { scope: AssetScope; projectId: number | null; agent: AssetAgent }) => void;
   installState: ActionState;
+  /** 打开详情查看器（skill/插件包行才有；null = 该行类型不可看）。 */
+  onView: (() => void) | null;
 }) {
   const t = useT();
   const plugin = row.plugin;
@@ -1207,6 +1244,20 @@ function MarketRowView({
           <span className="shrink-0 text-10 text-neutral-600">
             {plugin.targets.map((h) => harnessUiOf(h).label).join('+')}
           </span>
+        )}
+        {onView && (
+          <Tooltip label={t('market.viewDetail')} side="top" className="shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onView();
+              }}
+              className="rounded p-0.5 text-neutral-500 hover:bg-neutral-800 hover:text-blue-400 [&_svg]:pointer-events-none"
+            >
+              <Eye className="h-3 w-3" />
+            </button>
+          </Tooltip>
         )}
         {installedCount > 0 && (
           <Tooltip label={t('market.installedLocations')} side="top" className="ml-auto shrink-0">
@@ -1457,18 +1508,15 @@ function BulkInstallSlider({
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <select
+      <Combobox
+        className="min-w-40 rounded border border-edge/[0.1] bg-neutral-900 px-2 py-0.5 text-11"
         value={target}
-        onChange={(e) => setTarget(e.target.value)}
-        className="rounded border border-edge/[0.1] bg-neutral-900 px-2 py-0.5 text-11 text-neutral-200"
-      >
-        <option value="__global__">{t('market.destGlobal')}</option>
-        {projects.map((x) => (
-          <option key={x.id} value={String(x.id)}>
-            {x.name}
-          </option>
-        ))}
-      </select>
+        options={[
+          { value: '__global__', label: t('market.destGlobal') },
+          ...projects.map((x) => ({ value: String(x.id), label: x.name })),
+        ]}
+        onChange={setTarget}
+      />
       <button
         type="button"
         disabled={loading}
@@ -1537,7 +1585,7 @@ function InstallTargetPicker({
   };
 
   const loading = installState === 'loading';
-  const anySlider = projects.length > 0;
+  const anySlider = projects.length > 0 || agentScopes.includes('user');
 
   return (
     <div className="space-y-1.5 rounded bg-neutral-950/60 p-2">
@@ -1566,8 +1614,20 @@ function InstallTargetPicker({
       {!anySlider && <p className="text-11 text-neutral-600">{t('market.chooseProjectCapsule')}</p>}
       {anySlider && (
         <div className="space-y-1">
+          {/* 全局（user 档）行：与「已装 N 处」同账——徽标把 user 档计进去，
+              这里就得有对应的行可看可卸，否则数目对不上。 */}
+          {agentScopes.includes('user') && (
+            <InstallLevelSlider
+              name={t('market.locationGlobal')}
+              agent={activeAgent}
+              agentScopes={agentScopes}
+              currentLevel={installedRows.some((r) => r.projectId === null && r.harness === activeAgent) ? 'user' : 'uninstalled'}
+              onChange={(level, scope) => handleChange(null, level, scope)}
+              loading={loading}
+            />
+          )}
           {projects.map((p) => {
-            const installed = installedRows.some((r) => r.projectId === p.id);
+            const installed = installedRows.some((r) => r.projectId === p.id && r.harness === activeAgent);
             return (
               <InstallLevelSlider
                 key={p.id}
@@ -1975,18 +2035,15 @@ function McpForm({
         placeholder={t('library.mcpEnvPlaceholder')}
         className="w-44 font-mono"
       />
-      <select
+      <Combobox
+        className="shrink-0 min-w-36 rounded border border-edge/[0.1] bg-neutral-900 px-2 py-1 text-11"
         value={target}
-        onChange={(e) => setTarget(e.target.value)}
-        className="shrink-0 rounded border border-edge/[0.1] bg-neutral-900 px-2 py-1 text-11 text-neutral-200"
-      >
-        <option value="__global__">{t('market.destGlobal')}</option>
-        {projects.map((x) => (
-          <option key={x.id} value={String(x.id)}>
-            {x.name}
-          </option>
-        ))}
-      </select>
+        options={[
+          { value: '__global__', label: t('market.destGlobal') },
+          ...projects.map((x) => ({ value: String(x.id), label: x.name, hint: x.path })),
+        ]}
+        onChange={setTarget}
+      />
       <button
         type="button"
         onClick={submit}

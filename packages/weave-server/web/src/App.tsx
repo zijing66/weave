@@ -302,12 +302,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   }, []);
 
   // 全局 Ctrl/Cmd+P 开资源市场（浏览器默认打印在 dashboard 无意义，拦掉）。
+  // 整页路由：/market ⇄ 回主视图（effect 在下方 mainCategory 声明之后，TDZ 安全）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
-        e.preventDefault();
-        setMarketOpen((v) => !v);
-      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
         e.preventDefault();
         setBrowserPickerOpen((v) => !v);
@@ -319,6 +316,19 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
 
   // Main area
   const [mainCategory, setMainCategory] = useState<MainCategory>('tasks');
+
+  // Ctrl/Cmd+P：/market ⇄ 回主视图（要读 mainCategory，故在声明之后挂）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (parseRoute(path).kind === 'market') navigate({ kind: 'global', category: mainCategory });
+        else navigate({ kind: 'market' });
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [path, mainCategory]);
   // Files-page asset tab: lifted here so it survives category switches
   // (leaving files and coming back keeps the tab; starts on skills).
   // 资源管理页视图（提升到此，切分类来回不丢）：'packs' = 以插件包为主；'files' = 只读文件视图
@@ -511,6 +521,13 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       setInitialSessionId(null);
       return;
     }
+    if (route.kind === 'market') {
+      setRpgMode(false);
+      setGlobalMode(false);
+      setMarketOpen(true);
+      return;
+    }
+    setMarketOpen(false);
     const target = projects.find((p: ProjectRow) => p.id === route.projectId);
     if (!target) {
       // 项目没了（归档/删除）的旧链接：落到全局，别留一个指不到项目的地址
@@ -1023,10 +1040,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             <TrafficLight />
             {/* 组合标（图形 + 手写 WEAVE 单词）：图形部分固定品牌色，单词吃 currentColor。 */}
             <WeaveLogo className="h-[18px] w-auto text-neutral-200" />
-            {/* 资源市场（独立弹层页，Ctrl/Cmd+P）：安装落点在弹层内选定，不跟随锚定项目。 */}
+            {/* 资源市场（整页路由 /market，Ctrl/Cmd+P）：安装落点在页内选定，不跟随锚定项目。 */}
             <Tooltip label={`${t('app.openMarket')} (Ctrl+P)`} side="top">
               <button
-                onClick={() => setMarketOpen(true)}
+                onClick={() => navigate({ kind: 'market' })}
                 className="rounded-lg p-1.5 text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors"
               >
                 <Library className="h-4 w-4" />
@@ -1135,8 +1152,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
 
           <div className="flex flex-1 overflow-hidden">
             {/* Level 1 — global config (pseudo-project) + projects。
-                <lg 收进滑出抽屉（见底部 mobilePanel overlay）。rpgMode 整屏接管时隐藏。 */}
-            {!rpgMode && isDesktop && (
+                <lg 收进滑出抽屉（见底部 mobilePanel overlay）。rpgMode / 资源市场整页接管时隐藏。 */}
+            {!rpgMode && !marketOpen && isDesktop && (
               <>
                 <aside
                   style={{ width: leftW }}
@@ -1150,7 +1167,28 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
 
             {/* Level 2 + 3 — categories + detail */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
-              {rpgMode ? (
+              {marketOpen ? (
+                // 资源市场整页：主区 100% 交给 MarketModal（弹层壳改页面壳），返回走顶栏按钮/Ctrl+P。
+                <MarketModal
+                  onClose={() => navigate({ kind: 'global', category: mainCategory })}
+                  projectId={anchorId}
+                  projects={projects}
+                  capabilities={installCaps}
+                  onInstallSkill={(skill, scope, agent, target) => handleInstallSkill(skill, scope, agent, target)}
+                  onInstallMcp={(name, config, scope, agent, target) => handleInstallMcp(name, config, scope, agent, target)}
+                  onInstallFileAsset={(file, scope, target) => handleInstallFileAsset(file, scope, target)}
+                  onInstallPlugin={(plugin, target) => handleInstallPlugin(plugin, target)}
+                  onUninstallSkill={(name, scope, agent, target) => handleUninstallSkill(name, scope, agent, target)}
+                  onUninstallMcp={(name, scope, agent, target) => handleUninstallMcp(name, scope, agent, target)}
+                  onUninstallFileAsset={(file, scope, target) => handleUninstallFileAsset(file, scope, target)}
+                  onUninstallPlugin={(plugin, target) => handleUninstallPluginMarket(plugin, target)}
+                  onJumpToProject={(projectId) => {
+                    // null = 全局伪项目；行点击即跳对应项目的资源管理卡（'files' = 资源管理）
+                    if (projectId === null) navigate({ kind: 'global', category: 'files' });
+                    else navigate({ kind: 'project', projectId, category: 'files', sessionId: null });
+                  }}
+                />
+              ) : rpgMode ? (
                 // RPG 游戏视图整屏接管（E4 验收③ + G2.5 全屏化）：顶栏/左栏/rpg
                 // 头部行全部退场，主区 100% 给满屏世界；返回项目视图收进 HUD
                 // 左上角徽章（RpgView 内部浮层，onBack 回 App 既有的选中项目出口）。
@@ -1476,29 +1514,6 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           projectName={projects.find((p) => !p.archivedAt)?.name ?? ''}
           projects={projects.filter((p) => !p.archivedAt)}
           onClose={() => setBrowserPickerOpen(false)}
-        />
-      )}
-      {/* 资源市场弹层页：安装 handler 失败必抛（弹层 fb.run 统一报错），
-          装完弹层自己 refetch /installations 刷「已装 N 处」徽标。 */}
-      {marketOpen && (
-        <MarketModal
-          onClose={() => setMarketOpen(false)}
-          projects={projects}
-          capabilities={installCaps}
-          onInstallSkill={(skill, scope, agent, target) => handleInstallSkill(skill, scope, agent, target)}
-          onInstallMcp={(name, config, scope, agent, target) => handleInstallMcp(name, config, scope, agent, target)}
-          onInstallFileAsset={(file, scope, target) => handleInstallFileAsset(file, scope, target)}
-          onInstallPlugin={(plugin, target) => handleInstallPlugin(plugin, target)}
-          onUninstallSkill={(name, scope, agent, target) => handleUninstallSkill(name, scope, agent, target)}
-          onUninstallMcp={(name, scope, agent, target) => handleUninstallMcp(name, scope, agent, target)}
-          onUninstallFileAsset={(file, scope, target) => handleUninstallFileAsset(file, scope, target)}
-          onUninstallPlugin={(plugin, target) => handleUninstallPluginMarket(plugin, target)}
-          onJumpToProject={(projectId) => {
-            setMarketOpen(false);
-            // null = 全局伪项目；行点击即跳对应项目的资源管理卡（'files' = 资源管理）
-            if (projectId === null) navigate({ kind: 'global', category: 'files' });
-            else navigate({ kind: 'project', projectId, category: 'files', sessionId: null });
-          }}
         />
       )}
       {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
