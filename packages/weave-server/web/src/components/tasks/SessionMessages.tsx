@@ -1040,9 +1040,9 @@ export function SessionMessages({
           // 气泡区用满宽度，右边与控制行（模式/模型）对齐。
           className={cn(
             'relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain',
-            // overflow-anchor:none：向上翻页的滚动补偿由 scrollFix 手动做（Safari 无
-            // 原生锚定、必须保留）；Chrome 的原生滚动锚定会再调一次 scrollTop，
-            // 两套叠加 = 补两遍、视口跳走（用户报「加载历史后对话跳转异常」）。
+            // overflow-anchor:none：向上翻页的视口定位由翻页锚（pageAnchor）手动做
+            // （Safari 无原生锚定、必须保留）；Chrome 的原生滚动锚定会再调一次
+            // scrollTop，两套叠加 = 补两遍、视口跳走（用户报「加载历史后对话跳转异常」）。
             '[overflow-anchor:none]',
             embedded ? 'rounded border border-edge/[0.1] bg-neutral-950 p-2' : 'pr-1',
           )}

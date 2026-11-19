@@ -399,7 +399,11 @@ export function useConvThread(deps: {
       setHeadDone(events.length < CONV_PAGE);
       const older = conversationOf(events, lifecycle, harness);
       if (older.length > 0) {
-        scrollFix.current = threadRef.current?.scrollHeight ?? null;
+        // 视口锚：翻页那拍视口顶压着的那条气泡（含它到容器顶的偏移）。插入历史后
+        // 按锚恢复原位（见 pageAnchor 的 layout effect），异步撑高期间反复重放。
+        pageAnchor.current = anchorAtTop();
+        anchorTicks.current = 0;
+        lastHeight.current = threadRef.current?.scrollHeight ?? 0;
         // 按 key 去重合并：翻页与 SSE 增量竞态时同一条目会两路各到一份，
         // 不去重就是「历史里冒出重复气泡、中间还夹着断档」的观感。
         setEntries((prev) => {
@@ -425,16 +429,47 @@ export function useConvThread(deps: {
     sessionId,
   ]);
 
-  /** 向上翻页插入新条目后要补的滚动高度（渲染后按差值补，视口不跳）。 */
-  const scrollFix = useRef<number | null>(null);
+  /** 向上翻页的视口锚（2026-11-19 用户裁决换掉 scrollHeight 差补偿）：翻页那拍记下
+   *  视口顶那条气泡，插入历史后把它滚回原位。旧法按「插入前后 scrollHeight 差」
+   *  一把补——补那一拍历史里的长旁白叠层/图片还没撑高，撑高发生在补拍之后就把
+   *  视口顶走，中间的气泡被整段跳过（报障：22:57 前后 7 条提问「丢失」）；锚法
+   *  在异步内容陆续撑高期间反复重放（撑高→锚又偏了→再滚回去），锚落位且不再
+   *  撑高才收手，不设固定拍数。 */
+  const pageAnchor = useRef<{ key: string; offset: number } | null>(null);
+  /** 锚重放的计数与收手判定：连续两拍 scrollHeight 不变且锚已落位 = 稳定。 */
+  const anchorTicks = useRef(0);
+  const lastHeight = useRef(0);
+  /** 锚重放的驱动器：rAF 里递增触发上方 layout effect 重跑（entries 不变也要重放）。 */
+  const [forceReflowTick, setForceReflowTick] = useState(0);
   const threadRef = useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
     const el = threadRef.current;
-    if (!el || scrollFix.current === null) return;
-    el.scrollTop += el.scrollHeight - scrollFix.current;
-    scrollFix.current = null;
-  }, [entries]);
+    const a = pageAnchor.current;
+    if (!el || !a) return;
+    const node = scrollOf(a.key);
+    if (node) {
+      el.scrollTop =
+        node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - a.offset;
+    }
+    // 稳定收手：内容不再撑高（连续两拍同高）就摘账；还在撑（图片/叠层迟渲染）
+    // 就下一帧再来——rAF 自排，直到稳定或锚随翻页/新页被覆盖。
+    if (el.scrollHeight === lastHeight.current) {
+      anchorTicks.current += 1;
+    } else {
+      anchorTicks.current = 0;
+      lastHeight.current = el.scrollHeight;
+    }
+    if (anchorTicks.current < 2) {
+      requestAnimationFrame(() => {
+        if (pageAnchor.current === a) setForceReflowTick((t) => t + 1);
+      });
+      return;
+    }
+    pageAnchor.current = null;
+    lastHeight.current = 0;
+    anchorTicks.current = 0;
+  }, [entries, forceReflowTick]);
 
   /**
    * 会话滚动位置记忆（用户裁决 2026-11-11）：关窗时记下**视口顶那条气泡**的键
@@ -689,7 +724,7 @@ export function useConvThread(deps: {
     entries, setEntries, headDone, loadingEarlier, loadEarlier,
     thread, outbox, visible, newestAssistantKey, newestUserKey, newestQueuedId, now,
     error, setError,
-    threadRef, contentRef, scrollFix,
+    threadRef, contentRef,
     stick, atBottom, lastScroll, lastAnchor, restoreAnchor, anchorAtTop, userScrolled,
     compacting, interrupted, generating, failed, liveText,
     pull,
