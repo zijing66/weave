@@ -1199,7 +1199,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                             onClick={() => setUpdatesOpen((v) => !v)}
                             aria-expanded={updatesOpen}
                             className={cn(
-                            'shrink-0 inline-flex items-center gap-1 rounded-full bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium hover:bg-orange-900/60',
+                            'shrink-0 inline-flex items-center gap-1 rounded-full border border-orange-500/40 bg-orange-900/40 text-orange-300 px-2.5 py-1 text-xs font-medium hover:bg-orange-900/60',
                             updatesOpen && 'ring-1 ring-orange-500/50',
                           )}
                         >
@@ -1262,7 +1262,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                               { fail: (e) => t('errors.syncFailed', { error: errorText(e) }) },
                             )
                           }
-                          className="shrink-0 inline-flex items-center gap-1 rounded-full bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
+                          className="shrink-0 inline-flex items-center gap-1 rounded-full border border-blue-500/40 bg-blue-900/40 text-blue-300 px-2.5 py-1 text-xs font-medium hover:bg-blue-900/60"
                         >
                           <FeedbackIcon state={fb.stateOf('sync:all')} className="h-3 w-3" />
                           {t('app.syncAll')}
@@ -1275,7 +1275,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       <Tooltip label={t('project.needsInitTip')} side="top">
                         <button
                           onClick={() => selected && void runInitWithFeedback(selected)}
-                          className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium hover:bg-amber-900/60"
+                          className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium hover:bg-amber-900/60"
                         >
                           <FeedbackIcon
                             state={fb.stateOf(`init:${selected?.id}`)}
@@ -1297,7 +1297,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       >
                         <button
                           onClick={() => selected && void runInitWithFeedback(selected)}
-                          className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium hover:bg-amber-900/60"
+                          className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-900/40 text-amber-300 px-2.5 py-1 text-xs font-medium hover:bg-amber-900/60"
                         >
                           <FeedbackIcon
                             state={fb.stateOf(`init:${selected?.id}`)}

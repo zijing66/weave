@@ -143,10 +143,10 @@ export function McpGrid({
                         disabled={enableState === 'loading'}
                         onClick={() => cycleEnable(s)}
                         className={cn(
-                          'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
+                          'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-10 font-medium disabled:cursor-not-allowed [&_svg]:pointer-events-none',
                           state === 'on'
-                            ? 'bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
-                            : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
+                            ? 'border-emerald-500/40 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60'
+                            : 'border-neutral-600/40 bg-neutral-800 text-neutral-500 hover:bg-neutral-700',
                         )}
                       >
                         <FeedbackIcon

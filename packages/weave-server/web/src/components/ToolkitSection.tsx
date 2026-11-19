@@ -417,7 +417,7 @@ export function ToolkitSection({
                 userTouchedFold.current = true;
                 setCollapsed(anyExpanded ? new Set(allFoldKeys) : new Set());
               }}
-              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-neutral-600/50 bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700"
             >
               {anyExpanded ? (
                 <ChevronsDownUp className="h-3 w-3" />

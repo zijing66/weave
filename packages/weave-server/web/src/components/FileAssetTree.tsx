@@ -447,7 +447,7 @@ export function FileAssetTree({
             <button
               type="button"
               onClick={toggleAll}
-              className="inline-flex items-center gap-1 rounded-full bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
+              className="inline-flex items-center gap-1 rounded-full border border-neutral-600/50 bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
             >
               {anyCollapsed ? (
                 <ChevronsUpDown className="h-2.5 w-2.5" />
