@@ -10,6 +10,7 @@ import {
   Folder,
   Globe,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
   ChevronsDownUp,
@@ -31,6 +32,8 @@ import { splitFrontmatter } from '@/lib/markdown';
 import { useBackPop } from '@/lib/back-pop';
 import { subscribeFrame } from '@/lib/sse';
 import { FrontmatterCard } from '@/components/FrontmatterCard';
+import { MobileFadePanels } from '@/components/FileColumnsBrowser';
+import { useMediaQuery } from '@/lib/use-media-query';
 import { harnessUiOf } from '@/lib/harness-meta';
 
 type FileNode = { type: 'file'; file: AssetEntry };
@@ -223,6 +226,7 @@ export function SkillDetailDrawer({
   footerHint?: string;
 }) {
   const t = useT();
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
   const isGlobal = scope === 'user' && !!source;
   const isMarket = !!market;
   // Global rows start with no files and fetch them (follows symlinks).
@@ -280,15 +284,25 @@ export function SkillDetailDrawer({
   /** One button that flips between expand-all and collapse-all. */
   const toggleAll = () =>
     anyCollapsed ? setCollapsed(new Set()) : setCollapsed(new Set(allDirPaths));
+  // <lg 抽屉不分屏（宽度不够）：文件列表 / 预览两态切换，点文件进预览。
+  const [mobilePane, setMobilePane] = useState<'list' | 'preview'>('list');
+  const selectFile = (f: AssetEntry) => {
+    setSelected(f);
+    setMobilePane('preview');
+  };
 
   // Fetch the global skill's file list (symlinks resolved server-side), then
   // default-select SKILL.md. Project rows already have their files passed in.
   // Market rows fetch from the library copy (server-confined to lib root + rel).
+  // 依赖只取 market 的原始值字段——调用方传内联字面量时对象身份每渲染都变，
+  // 依赖对象会把列表/内容反复重拉。
+  const marketLibraryId = market?.libraryId;
+  const marketRel = market?.rel;
   useEffect(() => {
-    if (isMarket && market) {
+    if (isMarket && marketLibraryId !== undefined && marketRel !== undefined) {
       let cancelled = false;
       api
-        .listLibraryAssetFiles(market.libraryId, market.rel)
+        .listLibraryAssetFiles(marketLibraryId, marketRel)
         .then((list) => {
           if (cancelled) return;
           setFileList(list);
@@ -318,7 +332,7 @@ export function SkillDetailDrawer({
     return () => {
       cancelled = true;
     };
-  }, [projectId, isMarket, isGlobal, market, source, name, pluginKey]);
+  }, [projectId, isMarket, isGlobal, marketLibraryId, marketRel, source, name, pluginKey]);
 
   useEffect(() => {
     if (!selected) {
@@ -330,7 +344,7 @@ export function SkillDetailDrawer({
     setContent(null);
     setError(null);
     const req = isMarket
-      ? api.readLibraryAssetFile(market!.libraryId, market!.rel, selected.relPath)
+      ? api.readLibraryAssetFile(marketLibraryId!, marketRel!, selected.relPath)
       : isGlobal
         ? api.readGlobalSkillFile(projectId, {
             source: source!,
@@ -349,7 +363,7 @@ export function SkillDetailDrawer({
     return () => {
       cancelled = true;
     };
-  }, [projectId, isMarket, isGlobal, market, source, name, pluginKey, selected, refreshNonce]);
+  }, [projectId, isMarket, isGlobal, marketLibraryId, marketRel, source, name, pluginKey, selected, refreshNonce]);
 
   // Live watch (global only): the daemon watches the personal skill roots
   // (following symlinks), so edits to a symlinked skill's ORIGINAL files push
@@ -423,52 +437,55 @@ export function SkillDetailDrawer({
         </div>
       </div>
 
-      {/* Body: file list + preview */}
+      {/* Body: file list + preview。桌面（≥lg）左右分屏；<lg 不分屏——MobileFadePanels
+          两态（文件列表 ↔ 预览），点文件进预览，与文件选择器同一套窄屏文法。 */}
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-56 shrink-0 border-r border-edge/[0.06] overflow-y-auto p-2 space-y-0.5">
-          {tree.length > 0 && (
-            <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-edge/[0.06]">
-              <Tooltip
-                label={
-                  anyCollapsed
-                    ? t('skillDetail.expandAllDirs')
-                    : t('skillDetail.collapseAllDirs')
-                }
-              >
-                <button
-                  onClick={toggleAll}
-                  className="inline-flex items-center gap-1 rounded-full border border-neutral-600/50 bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
-                >
-                  {anyCollapsed ? (
-                    <ChevronsUpDown className="h-2.5 w-2.5" />
-                  ) : (
-                    <ChevronsDownUp className="h-2.5 w-2.5" />
-                  )}
-                  {anyCollapsed ? t('skillDetail.expandAll') : t('skillDetail.collapseAll')}
-                </button>
-              </Tooltip>
-            </div>
-          )}
-          {tree.length === 0 && (
-            <p className="text-xs text-neutral-600">
-              {isGlobal ? t('common.loading') : t('skillDetail.noFiles')}
-            </p>
-          )}
-          {tree.map((node) => (
-            <FileTreeNode
-              key={node.type === 'dir' ? node.path : node.file.relPath}
-              node={node}
-              depth={0}
-              selectedRel={selected?.relPath}
-              onSelect={setSelected}
-              collapsed={collapsed}
-              onToggle={toggle}
-              home={home}
-            />
-          ))}
-        </aside>
+        {isDesktop ? (
+          <>
+            <aside className="w-56 shrink-0 border-r border-edge/[0.06] overflow-y-auto p-2 space-y-0.5">
+              {tree.length > 0 && (
+                <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-edge/[0.06]">
+                  <Tooltip
+                    label={
+                      anyCollapsed
+                        ? t('skillDetail.expandAllDirs')
+                        : t('skillDetail.collapseAllDirs')
+                    }
+                  >
+                    <button
+                      onClick={toggleAll}
+                      className="inline-flex items-center gap-1 rounded-full border border-neutral-600/50 bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
+                    >
+                      {anyCollapsed ? (
+                        <ChevronsUpDown className="h-2.5 w-2.5" />
+                      ) : (
+                        <ChevronsDownUp className="h-2.5 w-2.5" />
+                      )}
+                      {anyCollapsed ? t('skillDetail.expandAll') : t('skillDetail.collapseAll')}
+                    </button>
+                  </Tooltip>
+                </div>
+              )}
+              {tree.length === 0 && (
+                <p className="text-xs text-neutral-600">
+                  {isGlobal ? t('common.loading') : t('skillDetail.noFiles')}
+                </p>
+              )}
+              {tree.map((node) => (
+                <FileTreeNode
+                  key={node.type === 'dir' ? node.path : node.file.relPath}
+                  node={node}
+                  depth={0}
+                  selectedRel={selected?.relPath}
+                  onSelect={setSelected}
+                  collapsed={collapsed}
+                  onToggle={toggle}
+                  home={home}
+                />
+              ))}
+            </aside>
 
-        <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-4">
           {error && <p className="text-red-400 text-xs">{error}</p>}
           {content == null && !error && (
             <p className="text-xs text-neutral-500">{t('common.loading')}</p>
@@ -491,7 +508,80 @@ export function SkillDetailDrawer({
           {selected?.relPath.endsWith('/SKILL.md') && content === '' && (
             <p className="text-xs text-neutral-600">{t('skillDetail.emptySkillMd')}</p>
           )}
-        </div>
+            </div>
+          </>
+        ) : (
+          <MobileFadePanels active={mobilePane} hasLeft={false}>
+            <div className="hidden" />
+            <aside className="overflow-y-auto p-2 space-y-0.5">
+              {tree.length > 0 && (
+                <div className="flex items-center gap-1 pb-1.5 mb-1 border-b border-edge/[0.06]">
+                  <button
+                    onClick={toggleAll}
+                    className="inline-flex items-center gap-1 rounded-full border border-neutral-600/50 bg-neutral-800 text-neutral-400 px-1.5 py-0.5 text-10 hover:bg-neutral-700 [&_svg]:pointer-events-none"
+                  >
+                    {anyCollapsed ? (
+                      <ChevronsUpDown className="h-2.5 w-2.5" />
+                    ) : (
+                      <ChevronsDownUp className="h-2.5 w-2.5" />
+                    )}
+                    {anyCollapsed ? t('skillDetail.expandAll') : t('skillDetail.collapseAll')}
+                  </button>
+                </div>
+              )}
+              {tree.length === 0 && (
+                <p className="text-xs text-neutral-600">
+                  {isGlobal ? t('common.loading') : t('skillDetail.noFiles')}
+                </p>
+              )}
+              {tree.map((node) => (
+                <FileTreeNode
+                  key={node.type === 'dir' ? node.path : node.file.relPath}
+                  node={node}
+                  depth={0}
+                  selectedRel={selected?.relPath}
+                  onSelect={selectFile}
+                  collapsed={collapsed}
+                  onToggle={toggle}
+                  home={home}
+                />
+              ))}
+            </aside>
+            <div className="overflow-y-auto p-3">
+              {mobilePane === 'preview' && (
+                <button
+                  onClick={() => setMobilePane('list')}
+                  className="mb-2 inline-flex items-center gap-1 rounded-full bg-neutral-800/70 px-2 py-0.5 text-11 text-neutral-300 hover:bg-neutral-700"
+                >
+                  <ChevronLeft className="h-3 w-3 shrink-0" />
+                  {t('skillDetail.backToFiles')}
+                </button>
+              )}
+              {error && <p className="text-red-400 text-xs">{error}</p>}
+              {content == null && !error && (
+                <p className="text-xs text-neutral-500">{t('common.loading')}</p>
+              )}
+              {parsed && (
+                <>
+                  {parsed.frontmatter && <FrontmatterCard data={parsed.frontmatter} />}
+                  <div className="prose prose-invert prose-sm max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                      {parsed.body}
+                    </ReactMarkdown>
+                  </div>
+                </>
+              )}
+              {content != null && !isMarkdown && (
+                <pre className="text-xs font-mono text-neutral-300 whitespace-pre-wrap break-all bg-neutral-900 rounded-md p-3 border border-edge/[0.06]">
+                  {content}
+                </pre>
+              )}
+              {selected?.relPath.endsWith('/SKILL.md') && content === '' && (
+                <p className="text-xs text-neutral-600">{t('skillDetail.emptySkillMd')}</p>
+              )}
+            </div>
+          </MobileFadePanels>
+        )}
       </div>
 
       {/* Footer hint */}

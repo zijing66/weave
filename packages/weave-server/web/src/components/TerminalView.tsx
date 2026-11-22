@@ -16,6 +16,14 @@ interface TerminalViewProps {
   initialCommand?: string;
 }
 
+/** 输出合帧窗：ConPTY/WS 把一个 TUI 重绘帧拆成多个 chunk 分批到达（实测簇均
+ *  ~6 chunk、簇间隔 33–500ms），逐 chunk 渲染会把「上移重画状态条→下移归位」
+ *  的中间态画出来——光标随状态条刷新乱跳（实测 54% 渲染态光标不在帧末位置）。
+ *  到达间隔 32ms 内的 chunk 并成一次 write（帧间自然边界即冲刷），120ms 上限
+ *  防连续快流饿死；合帧后实测 0 闪烁。 */
+const COALESCE_MS = 32;
+const COALESCE_MAX_MS = 120;
+
 // xterm 6 缺少上游 #5759：组词期间 TUI 输出会移动光标，但 textarea/组词层
 // 不跟着重定位 ⇒ IME 候选框停在旧位置、把整屏顶偏。修法 = 组词期间每次
 // 渲染都重同步两个元素的坐标（7.0.0 上游修复的等价物）。
@@ -72,6 +80,35 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
     /** 重放有过缺口（旧 Host / ring 截断）⇒ 屏上是残片，拿到写权后清屏重绘。 */
     let replayGap = false;
     let lastWheelAt = 0;
+    // 合帧写：全部写入走同一队列（gap 横幅/退出提示也一样），顺序不乱。
+    let pendingOut = '';
+    let outSince = 0;
+    let outTimer: number | null = null;
+    const flushOut = (): void => {
+      if (outTimer !== null) {
+        window.clearTimeout(outTimer);
+        outTimer = null;
+      }
+      if (pendingOut === '') return;
+      const data = pendingOut;
+      pendingOut = '';
+      outSince = 0;
+      // write 是异步解析：滚动必须挂在完成回调，否则这一拍仍按旧 buffer 钉底，
+      // 大块 TUI 重绘解析完后又把光标推到视口外。
+      term.write(data, () => {
+        if (Date.now() - lastWheelAt > 1500) term.scrollToBottom();
+      });
+    };
+    const queueOut = (data: string): void => {
+      pendingOut += data;
+      if (outSince === 0) outSince = Date.now();
+      if (Date.now() - outSince >= COALESCE_MAX_MS) {
+        flushOut();
+        return;
+      }
+      if (outTimer !== null) window.clearTimeout(outTimer);
+      outTimer = window.setTimeout(flushOut, COALESCE_MS);
+    };
     const client = new TerminalClient(instanceId, interactive ? 'interactive' : 'readonly', {
       onFrame: (frame: TerminalFrame) => {
         switch (frame.type) {
@@ -79,15 +116,11 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
             setStatus('live');
             break;
           case 'terminal.output':
-            // write 是异步解析：滚动必须挂在完成回调，否则这一拍仍按旧 buffer 钉底，
-            // 大块 TUI 重绘解析完后又把光标推到视口外。
-            term.write(frame.data, () => {
-              if (Date.now() - lastWheelAt > 1500) term.scrollToBottom();
-            });
+            queueOut(frame.data);
             break;
           case 'terminal.gap':
             replayGap = true;
-            term.write(
+            queueOut(
               frame.reason === 'replay-unsupported'
                 ? '\r\n\x1b[90m── 历史回放不可用（Runtime Host 版本旧），触发重绘以恢复当前屏 ──\x1b[0m\r\n'
                 : '\r\n\x1b[90m── 输出缺口（' + (frame.until ?? '?') + ' 前）──\x1b[0m\r\n',
@@ -106,6 +139,7 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
             // 再触发重绘，残字与错位重叠不会留在屏上。缺口本身仍由 gap 帧如实标注。
             if (replayGap) {
               replayGap = false;
+              flushOut();
               term.write('\x1b[2J\x1b[3J\x1b[H');
             }
             fit.fit();
@@ -120,12 +154,14 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
             //（TerminalClient 已停摆），给恢复引导。
             setStatus('exited');
             setLease('pending');
+            flushOut();
             term.write('\r\n\x1b[90m── 实例已退出 ──\x1b[0m\r\n');
             break;
           case 'error':
             if (frame.fatal) {
               setStatus('exited');
               setLease('pending');
+              flushOut();
               term.write('\r\n\x1b[90m── 实例已不存在（Runtime Host 崩溃或实例已退出）──\x1b[0m\r\n');
             }
             break;
@@ -162,6 +198,7 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       window.removeEventListener('resize', onResize);
       holderEl?.removeEventListener('wheel', markUserScroll);
       holderEl?.removeEventListener('touchmove', markUserScroll);
+      if (outTimer !== null) window.clearTimeout(outTimer);
       client.close();
       term.dispose();
     };

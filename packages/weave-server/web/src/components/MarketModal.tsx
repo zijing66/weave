@@ -944,6 +944,7 @@ export function MarketModal({
           projectId={projectId}
           name={viewing.name}
           scope="user"
+          readOnly
           files={[]}
           outdated={false}
           custom={false}

@@ -4,6 +4,13 @@ CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用�
 
 ## 2026-11-21
 
+- **Web Terminal「光标随状态条乱跳」根因定案（实测）**：Claude TUI 不用备用屏/滚动区，纯普通缓冲 + CUP 绝对定位 + `
+` 流式追加；其每个重绘帧（上移重画状态条→下移归位输入框）被 ConPTY/WS 分帧拆成簇均 ~6 个 chunk（簇间隔 33–500ms、簇内 ≤16ms），逐 chunk `term.write` 让 xterm 把中间态渲染出来——对本会话活实例只读采样 10s 回放量化：**54% 渲染态光标不在帧末位置**。修法 = `TerminalView` 输出合帧（32ms 到达窗合并写、120ms 上限防连续快流饿死、全部写入走同一队列保序），同一时间轴回放合帧后 **0 闪烁**（465 写 → 81 写 = 81 TUI 帧）。早前「write 完成回调钉底 + wheel/touchmove 判用户滚动」仍保留（修的是另一层：异步解析期按旧 buffer 滚动）。
+- **xterm.js 6.0 buffer API 语义备注**：`cursorY` 是屏内行号（0..rows-1，随 baseY 平移），不是缓冲绝对行——拿 `cursorY - baseY` 当视口行是错的（本次排查曾据此走了弯路）；`isCursorInViewport` 在有回滚时恒 false，同为坑。
+
+## 2026-11-21（前批）
+
+
 - **资源监控 v1 立项落地（§13.3，用户裁决）**：Agent（TUI 宿主）进程 CPU/Mem 采集在 Windows 需周期起 PowerShell 子进程，用户裁决「采，60s 粒度」（推荐档：开销砍半 ~1% 单核、趋势监控够用）。落地形状：daemon 与 Runtime Host 零开销自采（10s，Host 走 `resource.updated` IPC 事件自报 CPU%/RSS + 每实例 PTY 吞吐累计字节）；Agent 进程 60s 一枪批量查活实例 pid（Windows = PowerShell `Get-Process` 一枪全查、POSIX = /proc 零开销），**仅 `dataBus.hasSubscribers()` 有人看时才打**；1 小时历史环形（60s 一格）进程内存不落库；帧 = 既有 SSE hookBus 域 `metrics.snapshot`（与 dashboard.* 同通道，不轮询不扩 DataKey），首连 onAttach 推全量；前端 Dashboard 资源卡如实缺席（WS 延迟 / 渲染耗时 / Journal 写入延迟未实现不摆）。supervisor `onEvent` 由单槽改多播（终端网关与资源采样同一份 Host 帧流）。
 
 ## 2026-11-20
