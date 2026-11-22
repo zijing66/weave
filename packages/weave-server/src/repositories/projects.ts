@@ -7,7 +7,7 @@ export interface ProjectRow {
   path: string;
   name: string;
   token: string;
-  source: 'init' | 'scan';
+  source: 'init' | 'scan' | 'dashboard';
   registeredAt: string;
   lastSeenAt: string | null;
   meta: string | null;
@@ -26,7 +26,7 @@ export interface RegisterProjectInput {
   path: string;
   name: string;
   token: string;
-  source: 'init' | 'scan';
+  source: 'init' | 'scan' | 'dashboard';
   /** 起源头标记内建仓库（provisionRole 传 true）。 */
   hidden?: boolean;
   /** 起源头标记超级代理项目（scaffoldCoordinator 传 true）。 */
@@ -203,7 +203,7 @@ function toProject(row: Record<string, unknown>): ProjectRow {
     path: String(row.path),
     name: String(row.name),
     token: String(row.token),
-    source: row.source as 'init' | 'scan',
+    source: row.source as 'init' | 'scan' | 'dashboard',
     registeredAt: String(row.registered_at),
     lastSeenAt: row.last_seen_at == null ? null : String(row.last_seen_at),
     meta: row.meta == null ? null : String(row.meta),

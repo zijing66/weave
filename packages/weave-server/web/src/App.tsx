@@ -41,6 +41,7 @@ import { FileBrowserModal } from '@/components/FileBrowserModal';
 import { Resizer } from '@/components/Resizer';
 import { Tooltip } from '@/components/ui/tooltip';
 import { TerminalView } from '@/components/TerminalView';
+import { OnboardingCard, onboardingDismissed, onboardingStarted } from '@/components/OnboardingCard';
 import { SettingsModal } from '@/components/SettingsModal';
 import { CommandPalette } from '@/components/CommandPalette';
 import { cn } from '@/lib/utils';
@@ -280,6 +281,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   /** 资源市场弹层页（顶栏按钮唤起；开闭态不进 URL——先例裁决）。 */
   const [marketOpen, setMarketOpen] = useState(false);
+  /** 首启引导卡显隐：完成判据看项目行（有 canStartSession 即收）；关闭记忆 localStorage。 */
+  const [onboardingOff, setOnboardingOff] = useState(
+    () => onboardingDismissed() && onboardingStarted(),
+  );
   /** 项目文件浏览器（只读 modal）：全局搜索的文件结果与全项目浏览器共用。 */
   const [fileBrowser, setFileBrowser] = useState<{ projectId: number; path?: string } | null>(null);
   /** 全项目文件浏览器（Ctrl+B / 顶栏按钮）：FileBrowserModal 的全项目模式。 */
@@ -737,9 +742,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
 
   /** 项目级 Web 终端（Web 预设下「在终端中打开」= Runtime Host 的 headless shell
    *  实例）：全屏弹层承载 TerminalView，X 只收起（detach），shell 进程照跑。 */
-  const [projectTerminal, setProjectTerminal] = useState<{ instanceId: string; label: string } | null>(
-    null,
-  );
+  const [projectTerminal, setProjectTerminal] = useState<{
+    instanceId: string;
+    label: string;
+    autoCommand?: string;
+  } | null>(null);
 
   /** 开目录/终端条按钮：explorer/terminal 各一把 fb 键（行内三态 + 吞连点），
       失败 toast；成功无 toast——窗口弹出本身就是反馈。
@@ -1388,6 +1395,28 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                       <SkeletonMain />
                     ) : (
                       <>
+                        {/* 首启引导卡：用户从没跑过 weave init（无 source='init' 的
+                            普通项目）时置顶——superagent 内建仓不算（fresh install 里
+                            它是唯一项目），未 init 项目的 harness fallback（claude 恒在）
+                            也不算「已接入」。用户关闭（localStorage）或完成 init 即消失。 */}
+                        {(() => {
+                          const normal = projects.filter((p) => !p.hidden && !p.archivedAt);
+                          const started = normal.some((p) => p.source === 'init');
+                          if (started || onboardingOff) return null;
+                          return (
+                            <div className={globalMode && mainCategory === 'tasks' ? 'pb-3' : 'pb-3'}>
+                              <div className="mx-auto max-w-2xl">
+                                <OnboardingCard
+                                  projects={normal}
+                                  onProjectTerminal={(instanceId, label, autoCommand) =>
+                                    setProjectTerminal({ instanceId, label, autoCommand })
+                                  }
+                                  onDismissed={() => setOnboardingOff(true)}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })()}
                         {/* 首页仪表盘：只在全局总览的默认（任务）页摆，切到别的分类不跟 */}
                         {globalMode && mainCategory === 'tasks' && (
                           <DashboardOverview sessions={allSessions} statuses={sessionStatuses} />
@@ -1549,7 +1578,10 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             </Tooltip>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-edge/[0.08] bg-black/90">
-            <TerminalView instanceId={projectTerminal.instanceId} />
+            <TerminalView
+              instanceId={projectTerminal.instanceId}
+              initialCommand={projectTerminal.autoCommand}
+            />
           </div>
         </div>
       )}

@@ -12,6 +12,8 @@ import { TerminalClient, type TerminalFrame } from '@/lib/terminal';
 interface TerminalViewProps {
   instanceId: string;
   interactive?: boolean;
+  /** 连上后一次性注入的命令（带 \r 结尾；只发一拍，重连不再补发）。 */
+  initialCommand?: string;
 }
 
 // xterm 6 缺少上游 #5759：组词期间 TUI 输出会移动光标，但 textarea/组词层
@@ -39,16 +41,18 @@ function patchImeAnchor(term: Terminal): void {
   });
 }
 
-export function TerminalView({ instanceId, interactive = true }: TerminalViewProps) {
+export function TerminalView({ instanceId, interactive = true, initialCommand }: TerminalViewProps) {
   const holder = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const clientRef = useRef<TerminalClient | null>(null);
+  const initialSentRef = useRef(false);
   const [status, setStatus] = useState<'connecting' | 'live' | 'disconnected' | 'exited'>('connecting');
   const [lease, setLease] = useState<'pending' | 'granted' | 'denied'>('pending');
 
   useEffect(() => {
     setStatus('connecting');
     setLease('pending');
+    initialSentRef.current = false;
     const term = new Terminal({
       fontFamily: "'Weave Nerd Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace",
       fontSize: 12,
@@ -92,6 +96,11 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
           case 'lease.granted':
             setLease('granted');
             client.startLeaseHeartbeat(frame.leaseId);
+            if (initialCommand && !initialSentRef.current) {
+              // 等一拍让 shell 提示符先出来（spawn 到 prompt 就绪有一拍间隙）
+              setTimeout(() => client.stdin(initialCommand), 500);
+              initialSentRef.current = true;
+            }
             // TUI 是重绘型字节流：PTY resize 触发宿主整屏重画——重放有缺口时屏上
             // 只是残片（旧 Host 无 replay / ring 从半帧截断），先清屏（含回滚缓冲）
             // 再触发重绘，残字与错位重叠不会留在屏上。缺口本身仍由 gap 帧如实标注。
@@ -156,7 +165,7 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
       client.close();
       term.dispose();
     };
-  }, [instanceId, interactive]);
+  }, [instanceId, interactive, initialCommand]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

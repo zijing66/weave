@@ -24,7 +24,11 @@ export interface RegisterResult {
  *
  * Idempotent: re-registering an existing path reuses its original token.
  */
-export function registerProject(targetDir: string, source: 'init' | 'scan', dbPath?: string): RegisterResult {
+export function registerProject(
+  targetDir: string,
+  source: 'init' | 'scan' | 'dashboard',
+  dbPath?: string,
+): RegisterResult {
   const db = openDatabase(dbPath);
   try {
     const projects = new ProjectRepository(db);

@@ -151,6 +151,18 @@ export interface ProjectFileListing {
 export const projectApi = {
   listProjects: (): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects').then((r) => r.projects),
+  /** dashboard 注册项目（首启引导卡的「接项目」）：与 CLI init 同一份注册层，幂等。 */
+  registerProject: (path: string): Promise<{ project: ProjectRow }> =>
+    apiFetch<{ project: ProjectRow }>('/projects', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  /** 机器级 harness 安装态（引导卡）：与项目行内 600s 版本缓存分开的短 TTL 探测。 */
+  harnessInstallStatus: (): Promise<
+    Array<{ harness: string; installed: boolean; version: string | null }>
+  > => apiFetch<{ status: Array<{ harness: string; installed: boolean; version: string | null }> }>(
+    '/harness-install-status',
+  ).then((r) => r.status),
   /** 归档项目面（仅基础信息；历史会话已在归档时清空）。 */
   listArchivedProjects: (): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects/archived').then((r) => r.projects),

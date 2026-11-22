@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isHarness, type Harness } from '@weavecode/core';
+import { isHarness, HARNESS_KEYS, type Harness } from '@weavecode/core';
+import { HARNESS_DRIVERS } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
 import { messagingSurfaceFor } from '../../surfaces.js';
 import { readBody, sendJson } from '../http.js';
+import { generateToken } from '../auth.js';
 import { handleProjectInit } from './project-init.js';
 import { readDaemonSettings } from '../settings.js';
 import {
@@ -16,7 +18,7 @@ import {
 } from '../opener.js';
 import { purgeProjectPipeline } from '../hook-pipeline.js';
 import { hooksRoot } from '../../hooks/mirror.js';
-import { projectHarnesses, withProjectHarnesses } from '../project-harnesses.js';
+import { projectHarnesses, probeBinVersion, withProjectHarnesses } from '../project-harnesses.js';
 import { scheduleBootstrapInjection } from '../session-open.js';
 import { getUploadsDir } from '../../db/paths.js';
 import { PENDING_WT_PREFIX, createSessionWorktree, upsertWorktreeEntry } from '../worktree.js';
@@ -24,6 +26,10 @@ import { PENDING_WT_PREFIX, createSessionWorktree, upsertWorktreeEntry } from '.
 /** GET /terminals/visibility 的短 TTL 缓存（桌宠菜单频繁开关不打爆逐窗探测）。 */
 let visCountCache: { at: number; value: { visible: number; hidden: number } } | null = null;
 const VIS_COUNT_TTL_MS = 15_000;
+
+/** GET /harness-install-status 的短 TTL 缓存：装完 init 后引导卡要能看到「已装」。 */
+let installStatusCache: { at: number; value: Promise<unknown> } | null = null;
+const INSTALL_STATUS_TTL_MS = 15_000;
 
 /** 项目配置（projects.meta.storage）：存储目录 + 终端窗口行为。 */
 export interface ProjectStorage {
@@ -553,6 +559,68 @@ export async function handleProjectRoutes(
     sendJson(res, 200, {
       projects: await withProjectHarnesses(deps.projects.list(), deps.harnesses),
     });
+    return true;
+  }
+
+  // POST /projects — dashboard 注册项目（首启引导卡的「接项目」）：与 CLI init
+  // 同一份仓储层（RPG provisioning 先例），幂等复用原 token；token 落
+  // `<dir>/.weave/token` 供 hook 上报（registerProject 的同款语义）。
+  if (pathname === '/projects' && req.method === 'POST') {
+    let body: { path?: string };
+    try {
+      body = JSON.parse(await readBody(req)) as { path?: string };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.path !== 'string' || !path.isAbsolute(body.path)) {
+      sendJson(res, 400, { error: 'Invalid "path" (absolute path required)' });
+      return true;
+    }
+    try {
+      const stat = await fs.promises.stat(body.path);
+      if (!stat.isDirectory()) throw new Error(`Not a directory: ${body.path}`);
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : 'Path not accessible' });
+      return true;
+    }
+    const existing = deps.projects.getByPath(body.path);
+    const row = deps.projects.register({
+      path: body.path,
+      name: path.basename(body.path),
+      token: existing?.token ?? generateToken(),
+      source: 'dashboard',
+    });
+    try {
+      fs.mkdirSync(path.join(row.path, '.weave'), { recursive: true });
+      fs.writeFileSync(path.join(row.path, '.weave', 'token'), row.token + '\n', {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+    } catch {
+      // token 落盘失败不拦注册（hook 上报晚一拍再补）
+    }
+    sendJson(res, 200, {
+      project: (await withProjectHarnesses([row], deps.harnesses))[0],
+    });
+    return true;
+  }
+
+  // GET /harness-install-status — 机器级 harness 安装态（首启引导卡展示
+  // 「这台机器装没装 claude/codex」）。与项目行内的 600s 版本 promise 缓存
+  // 分开：这里短 TTL（装完 init 后回卡上能很快看到已装）。
+  if (pathname === '/harness-install-status' && req.method === 'GET') {
+    if (!installStatusCache || Date.now() - installStatusCache.at >= INSTALL_STATUS_TTL_MS) {
+      const value = Promise.all(
+        HARNESS_KEYS.map(async (h) => {
+          const bin = HARNESS_DRIVERS[h].resume?.bin;
+          const version = bin ? await probeBinVersion(bin) : null;
+          return { harness: h, installed: version !== null, version };
+        }),
+      );
+      installStatusCache = { at: Date.now(), value };
+    }
+    sendJson(res, 200, { status: await installStatusCache.value });
     return true;
   }
 

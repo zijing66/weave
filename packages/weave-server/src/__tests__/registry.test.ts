@@ -93,6 +93,17 @@ describe('registerProject', () => {
     db.close();
   });
 
+  it('dashboard 来源同样落库（首启引导卡的注册入口）', () => {
+    const target = join(dir, 'project');
+    mkdirSync(target, { recursive: true });
+
+    registerProject(target, 'dashboard', dbPath);
+
+    const db = openDatabase(dbPath);
+    expect(new ProjectRepository(db).getByPath(target)?.source).toBe('dashboard');
+    db.close();
+  });
+
   it('同一目录的不同写法命中同一行——不重复登记、不换 token', () => {
     const target = join(dir, 'project');
     mkdirSync(target, { recursive: true });
