@@ -26,10 +26,10 @@ import type { AttachTarget, SessionTerminal } from './wezterm-mux.js';
 class AutoBackend extends TerminalBackend {
   private readonly parts: TerminalBackend[];
 
-  constructor(platform: NodeJS.Platform) {
+  constructor(platform: NodeJS.Platform, preset: TerminalPreset = 'auto') {
     // 文本通道随 attachBackend 走（win32=wt / darwin=Terminal.app 都没有，
     // 其余平台是 wezterm）；候选序里本就没有 wezterm，darwin 除外逻辑同反查。
-    super('auto', true, platform, platform !== 'win32' && platform !== 'darwin');
+    super(preset, true, platform, platform !== 'win32' && platform !== 'darwin');
     const order: Partial<Record<NodeJS.Platform, TerminalPreset[]>> = {
       win32: ['wt', 'powershell', 'cmd'],
       darwin: ['terminal', 'iterm'],
@@ -51,6 +51,11 @@ class AutoBackend extends TerminalBackend {
       if (run && part.preset === 'iterm') return [];
       return part.candidates(dir, run);
     });
+  }
+
+  /** Web 终端 preset：会话宿主是 Runtime Host 里的 PTY，不开系统窗口。 */
+  override get hostsSessions(): 'window' | 'headless' {
+    return this.preset === 'web' ? 'headless' : 'window';
   }
 
   /**
@@ -118,6 +123,9 @@ const BACKEND_FACTORIES: Record<
   TerminalPreset,
   (terminal: TerminalSettings, platform: NodeJS.Platform) => TerminalBackend
 > = {
+  // web：会话本身起在 Runtime Host、由 dashboard 右栏渲染；系统窗口只在
+  // 「项目目录 / 投递兜底 resume」这类场景按自动候选开（不接管外部窗）。
+  web: (_terminal, platform) => new AutoBackend(platform, 'web'),
   auto: (_terminal, platform) => new AutoBackend(platform),
   wt: (_terminal, platform) => new WtBackend(platform),
   powershell: (_terminal, platform) =>

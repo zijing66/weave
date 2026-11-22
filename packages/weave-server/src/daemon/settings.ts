@@ -13,8 +13,11 @@ import { DEFAULT_BIND_HOST } from './port.js';
  * heal to the defaults. Keys are declared in KEYS and written as a full set.
  */
 
-/** Which terminal "open in terminal" launches. `auto` probes per platform. */
+/** Which terminal "open in terminal" launches. `auto` probes per platform.
+ *  `web` = 浏览器内 Web 终端（会话起在 Runtime Host，dashboard 右栏同区切换）；
+ *  真要开一个系统终端窗口（项目目录 / 投递兜底 resume）时按平台自动候选。 */
 export type TerminalPreset =
+  | 'web'
   | 'auto'
   // Windows
   | 'wt' // Windows Terminal
@@ -160,7 +163,7 @@ export interface HtmlExportSettings {
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
-  preset: 'auto',
+  preset: 'web',
   customCommand: '',
 };
 
@@ -290,6 +293,7 @@ export function resolveLocale(raw: unknown): Locale {
 }
 
 export const ALL_TERMINAL_PRESETS: TerminalPreset[] = [
+  'web',
   'auto',
   'wt',
   'powershell',
@@ -311,6 +315,7 @@ export interface TerminalPresetMeta {
 }
 
 const PRESET_LABELS: Record<TerminalPreset, string> = {
+  web: 'Web 终端（浏览器内）',
   auto: '自动（探测可用终端）',
   wt: 'Windows Terminal',
   powershell: 'PowerShell',
@@ -333,10 +338,10 @@ const PRESET_LABELS: Record<TerminalPreset, string> = {
 export function terminalPresetsFor(platform: NodeJS.Platform): TerminalPresetMeta[] {
   const ids: TerminalPreset[] =
     platform === 'win32'
-      ? ['auto', 'wt', 'wezterm', 'powershell', 'cmd', 'custom']
+      ? ['web', 'auto', 'wt', 'wezterm', 'powershell', 'cmd', 'custom']
       : platform === 'darwin'
-        ? ['auto', 'terminal', 'iterm', 'wezterm', 'ghostty', 'custom']
-        : ['auto', 'gnome', 'konsole', 'wezterm', 'ghostty', 'custom'];
+        ? ['web', 'auto', 'terminal', 'iterm', 'wezterm', 'ghostty', 'custom']
+        : ['web', 'auto', 'gnome', 'konsole', 'wezterm', 'ghostty', 'custom'];
   return ids.map((id) => ({ id, label: PRESET_LABELS[id] }));
 }
 

@@ -25,6 +25,7 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
     setStatus('connecting');
     setLease('pending');
     const term = new Terminal({
+      fontFamily: "'Weave Nerd Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace",
       fontSize: 12,
       cursorBlink: true,
       convertEol: false,
@@ -38,6 +39,9 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
       fit.fit();
     }
 
+    /** 重放有过缺口（旧 Host / ring 截断）⇒ 屏上是残片，拿到写权后清屏重绘。 */
+    let replayGap = false;
+    let lastWheelAt = 0;
     const client = new TerminalClient(instanceId, interactive ? 'interactive' : 'readonly', {
       onFrame: (frame: TerminalFrame) => {
         switch (frame.type) {
@@ -46,13 +50,31 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
             break;
           case 'terminal.output':
             term.write(frame.data);
+            // TUI 是整屏重绘型（无 alt screen），重绘往 scrollback 堆旧帧；视口
+            // 一旦离开底部，光标行就滚出视野（「光标不在输入框」）。输出到达
+            // 即钉回底部，刚被用户滚上去的短窗内除外（留出读历史的间隙）。
+            if (Date.now() - lastWheelAt > 1500) term.scrollToBottom();
             break;
           case 'terminal.gap':
-            term.write('\r\n\x1b[90m── 输出缺口（' + (frame.until ?? '?') + ' 前）──\x1b[0m\r\n');
+            replayGap = true;
+            term.write(
+              frame.reason === 'replay-unsupported'
+                ? '\r\n\x1b[90m── 历史回放不可用（Runtime Host 版本旧），触发重绘以恢复当前屏 ──\x1b[0m\r\n'
+                : '\r\n\x1b[90m── 输出缺口（' + (frame.until ?? '?') + ' 前）──\x1b[0m\r\n',
+            );
             break;
           case 'lease.granted':
             setLease('granted');
             client.startLeaseHeartbeat(frame.leaseId);
+            // TUI 是重绘型字节流：PTY resize 触发宿主整屏重画——重放有缺口时屏上
+            // 只是残片（旧 Host 无 replay / ring 从半帧截断），先清屏（含回滚缓冲）
+            // 再触发重绘，残字与错位重叠不会留在屏上。缺口本身仍由 gap 帧如实标注。
+            if (replayGap) {
+              replayGap = false;
+              term.write('\x1b[2J\x1b[3J\x1b[H');
+            }
+            fit.fit();
+            client.resize(term.cols, term.rows);
             break;
           case 'lease.denied':
           case 'lease.released':
@@ -71,6 +93,11 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
     if (interactive) {
       // TUI 的键序原样进 stdin；写权在 WebSocket open 后申请。
       term.onData((data) => client.stdin(data));
+      // 记下用户主动滚动的时刻，1.5s 内不钉底（否则根本读不了历史）。
+      term.onScroll((newPos: number) => {
+        void newPos;
+        lastWheelAt = Date.now();
+      });
     }
 
     const onResize = () => {

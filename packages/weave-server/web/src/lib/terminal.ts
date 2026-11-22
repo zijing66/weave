@@ -7,7 +7,7 @@
 export type TerminalFrame =
   | { type: 'attached'; instanceId: string; lastSequence: number; mode: string }
   | { type: 'terminal.output'; instanceId: string; sequence: number; data: string }
-  | { type: 'terminal.gap'; instanceId: string; after?: number; until?: number }
+  | { type: 'terminal.gap'; instanceId: string; after?: number; until?: number; reason?: 'replay-unsupported' }
   | { type: 'terminal.resize'; instanceId: string; sequence: number; cols: number; rows: number }
   | { type: 'lease.granted'; instanceId: string; leaseId: string; expiresAt: number }
   | { type: 'lease.denied'; instanceId: string }

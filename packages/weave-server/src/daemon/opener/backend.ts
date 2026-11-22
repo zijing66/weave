@@ -107,6 +107,12 @@ export abstract class TerminalBackend {
     readonly textAddressable: boolean = false,
   ) {}
 
+  /** 会话的宿主形态：`window` = 外部终端窗口（缺省）；`headless` = Runtime Host
+   *  里的 PTY（Web 终端 preset）——开会话这一个入口据此分派，调用方不按 preset 判。 */
+  get hostsSessions(): 'window' | 'headless' {
+    return 'window';
+  }
+
   /** 启动候选（按序尝试，第一个起的算成功）；空 = 本平台不支持该 preset。 */
   abstract candidates(dir: string, run?: string[]): TerminalLaunch[];
 
@@ -286,9 +292,9 @@ export class CandidatesBackend extends TerminalBackend {
   }
 }
 
-/** 各 preset 的候选表（纯数据）；`auto` 由这些具名条目组合，不再各抄一遍。 */
+/** 各 preset 的候选表（纯数据）；`auto` / `web` 由这些具名条目组合，不再各抄一遍。 */
 export const PRESET_CANDIDATES: Record<
-  Exclude<TerminalPreset, 'auto' | 'custom' | 'wezterm'>,
+  Exclude<TerminalPreset, 'auto' | 'web' | 'custom' | 'wezterm'>,
   (dir: string, run: string[] | undefined, platform: NodeJS.Platform) => TerminalLaunch[]
 > = {
   wt: (dir, run, platform) =>

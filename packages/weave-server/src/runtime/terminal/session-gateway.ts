@@ -25,6 +25,7 @@ interface Client {
   send: (text: string) => boolean;
   instanceId: string;
   mode: 'readonly' | 'interactive';
+  replaying: boolean;
 }
 
 interface InstanceState {
@@ -60,24 +61,25 @@ export class TerminalGateway {
 
   private onHostEvent(frame: HostEventFrame): void {
     const instanceId = String(frame.instanceId ?? '');
-    if (!instanceId || frame.type !== 'terminal.output') return;
+    if (!instanceId || (frame.type !== 'terminal.output' && frame.type !== 'terminal.resize')) return;
     const s = this.stateOf(instanceId);
     s.lastSequence = Math.max(s.lastSequence, Number(frame.sequence ?? 0));
     const text = JSON.stringify({
-      type: 'terminal.output',
+      type: frame.type,
       instanceId,
       sequence: frame.sequence,
-      data: frame.data ?? '',
+      ...(frame.type === 'terminal.output' ? { data: frame.data ?? '' } : { cols: frame.cols, rows: frame.rows }),
     });
     s.ring.push({ sequence: Number(frame.sequence ?? 0), text });
     if (s.ring.length > LOCAL_RING) s.ring.shift();
-    this.broadcast(instanceId, text);
+    this.broadcast(instanceId, text, Number(frame.sequence ?? 0));
   }
 
-  private broadcast(instanceId: string, text: string): void {
+  private broadcast(instanceId: string, text: string, sequence?: number): void {
     const s = this.instances.get(instanceId);
     if (!s) return;
     for (const c of s.clients.values()) {
+      if (c.replaying && sequence !== undefined) continue;
       if (!c.send(text)) {
         // 背压：客户端消费不动即断开（§13.2 输出写失败不阻塞）——重连时重放
         this.detach(c.id);
@@ -91,57 +93,62 @@ export class TerminalGateway {
     req: TerminalAttachRequest & { clientId: string },
   ): void {
     const s = this.stateOf(req.instanceId);
-    const client: Client = { id: req.clientId, send, instanceId: req.instanceId, mode: req.mode };
+    const client: Client = { id: req.clientId, send, instanceId: req.instanceId, mode: req.mode, replaying: true };
     s.clients.set(client.id, client);
 
-    // 重放：lastSequence 之后；Host ring 里的更早增量由 supervisor 补拉。
-    // 首次接入（无 lastSequence）从 0 整段重放 Host ring——TUI 是重绘型字节流，
-    // 没有历史只有黑屏（实例停着等输入时永远等不来新输出）。
-    if (req.lastSequence === undefined) {
-      void this.replayFromHost(send, req.instanceId, 0);
-    } else {
-      const from = req.lastSequence;
-      const kept = s.ring.filter((e) => e.sequence > from);
-      let expect = from + 1;
-      for (const e of kept) {
-        if (e.sequence > expect) {
-          this.safeSend(send, JSON.stringify({ type: 'terminal.gap', instanceId: req.instanceId, after: expect - 1, until: e.sequence - 1 }));
-        }
-        expect = e.sequence + 1;
-        this.safeSend(send, e.text);
-      }
-      if (s.lastSequence > expect - 1) {
-        // 短窗兜不住的更早缺口（daemon 重启等）：Host ring 补拉
-        void this.replayFromHost(send, req.instanceId, expect - 1);
-      }
-    }
-    this.safeSend(send, JSON.stringify({ type: 'attached', instanceId: req.instanceId, lastSequence: s.lastSequence, mode: req.mode }));
+    void this.finishAttach(client, s, req);
   }
 
-  private async replayFromHost(send: (text: string) => boolean, instanceId: string, after: number): Promise<void> {
-    try {
-      const entries = await this.supervisor.replayAfter(instanceId, after);
-      for (const e of entries) {
-        this.safeSend(
-          send,
-          JSON.stringify({
-            type: e.kind === 'gap' ? 'terminal.gap' : `terminal.${e.kind}`,
+  private async finishAttach(
+    client: Client,
+    s: InstanceState,
+    req: TerminalAttachRequest & { clientId: string },
+  ): Promise<void> {
+    const from = req.lastSequence ?? 0;
+    const { instanceId } = req;
+    const kept = s.ring.filter((e) => e.sequence > from);
+    const localComplete = from > 0 &&
+      s.lastSequence >= from && kept.every((e, i) => e.sequence === from + i + 1);
+    const history: Array<{ sequence: number; text: string }> = [];
+    let replayFailed = false;
+    let unsupported = false;
+    if (!localComplete) {
+      try {
+        const entries = await this.supervisor.replayAfter(instanceId, from);
+        for (const e of entries) {
+          if (e.kind === 'gap') continue;
+          history.push({ sequence: e.sequence, text: JSON.stringify({
+            type: `terminal.${e.kind}`,
             instanceId,
             sequence: e.sequence,
-            ...(e.kind === 'output' ? { data: e.data } : e.kind === 'resize' ? { cols: e.cols, rows: e.rows } : {}),
-          }),
-        );
+            ...(e.kind === 'output' ? { data: e.data } : { cols: e.cols, rows: e.rows }),
+          }) });
+        }
+      } catch (err) {
+        replayFailed = true;
+        unsupported = /unknown request type/.test(String(err));
       }
-    } catch {
-      this.safeSend(send, JSON.stringify({ type: 'terminal.gap', instanceId, after, host: true }));
     }
-  }
+    if (s.clients.get(client.id) !== client) return;
 
-  private safeSend(send: (text: string) => boolean, text: string): void {
-    try {
-      send(text);
-    } catch {
-      /* 客户端已断：detach 由端点的 close 回调负责 */
+    // IPC 回包与实时帧可同批抵达；合并两个有界 ring 再推进水位。
+    const entries = [...history, ...kept, ...s.ring].sort((a, b) => a.sequence - b.sequence);
+    let cursor = from;
+    if (replayFailed && !client.send(JSON.stringify({
+      type: 'terminal.gap', instanceId, after: from,
+      ...(unsupported ? { reason: 'replay-unsupported' } : {}),
+    }))) return this.detach(client.id);
+    for (const e of entries) {
+      if (e.sequence <= cursor) continue;
+      if (!replayFailed && e.sequence > cursor + 1 && !client.send(JSON.stringify({
+        type: 'terminal.gap', instanceId, after: cursor, until: e.sequence - 1,
+      }))) return this.detach(client.id);
+      if (!client.send(e.text)) return this.detach(client.id);
+      cursor = e.sequence;
+    }
+    client.replaying = false;
+    if (!client.send(JSON.stringify({ type: 'attached', instanceId, lastSequence: cursor, mode: req.mode }))) {
+      this.detach(client.id);
     }
   }
 

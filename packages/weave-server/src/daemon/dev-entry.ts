@@ -272,6 +272,7 @@ async function main(): Promise<void> {
       console.error('[weave] runtime host unavailable:', err instanceof Error ? err.message : err);
       runtimeSup.scheduleRetry(); // 30s 周期自愈，连上即停
     });
+  runtimeSup.scheduleReconcile(); // 60s 周期对账（事件泵只覆盖在线窗口）
   const messageDeliverer = new MessageDeliverer({
     sessions: hookSessions,
     projects,
@@ -605,6 +606,8 @@ async function main(): Promise<void> {
     harnesses,
     sessionProbe,
     terminalRefresher,
+    // 终端预设 = web 时会话宿主是 Runtime Host，判死拉起也必须能起实例。
+    runtimeSupervisor: runtimeSup,
     livenessOf: combinedLivenessOf,
   });
   // 编排引擎（与 start.ts 同装配）：判死拉起终端 + 30s cron 一拍。

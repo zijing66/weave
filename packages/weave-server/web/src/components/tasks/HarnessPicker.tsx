@@ -25,6 +25,7 @@ export function HarnessPicker({
   onWorktreeChange,
   headless,
   onHeadlessChange,
+  headlessImplied = false,
   onPick,
   onClose,
 }: {
@@ -39,6 +40,8 @@ export function HarnessPicker({
   /** headless 开关的当前态（父层持有）。 */
   headless: boolean;
   onHeadlessChange: (v: boolean) => void;
+  /** 终端预设 = Web 终端：新会话恒起 headless，开关退成说明文字。 */
+  headlessImplied?: boolean;
   onPick: (harness: ProjectHarness['id']) => void;
   onClose: () => void;
 }) {
@@ -123,12 +126,17 @@ export function HarnessPicker({
         </span>
         <Switch checked={worktree} onChange={onWorktreeChange} title={t('tasks.worktreeToggleTip')} />
       </div>
-      {/* headless（B4）：起在 Runtime Host，不开外部终端窗，Web 终端交互 */}
+      {/* headless（B4）：起在 Runtime Host，不开外部终端窗，Web 终端交互。
+          终端预设 = Web 终端时这不是选项而是前提（恒开），只作说明。 */}
       <div className="flex items-center justify-between gap-2 px-2 pb-1.5 pt-0.5">
         <span className="min-w-0 truncate text-10 text-neutral-500">
           {t('tasks.headlessToggle')}
         </span>
-        <Switch checked={headless} onChange={onHeadlessChange} title={t('tasks.headlessToggleTip')} />
+        {headlessImplied ? (
+          <span className="shrink-0 text-10 text-neutral-400">{t('tasks.headlessImplied')}</span>
+        ) : (
+          <Switch checked={headless} onChange={onHeadlessChange} title={t('tasks.headlessToggleTip')} />
+        )}
       </div>
     </div>,
     document.body,

@@ -185,7 +185,9 @@ export async function startSessionInProject(
     // headless 分叉（B4）：Runtime Host 持 PTY，不开外部终端窗——argv 同一份
     // （能力面取的 resume 规格），后续投递走 supervisor 的 stdin 通道。会话行
     // 照常由 hook 事件建档（env 带 WEAVE_INSTANCE_ID，宿主侧 hook 采集归因）。
-    if (opts.executionMode === 'headless') {
+    // 终端预设选 Web 终端时新会话一律起 headless（那是它的打开方式，客户端
+    // 不必再传 mark；显式 executionMode 仍优先）。
+    if (opts.executionMode === 'headless' || settings.terminal.preset === 'web') {
       if (!deps.runtimeSupervisor) {
         return { ok: false, status: 501, error: 'Runtime host is not available (daemon too old or disabled)' };
       }

@@ -136,7 +136,7 @@ describe('daemon settings persistence (db key-value)', () => {
     db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('NaN', 'events.retentionDays');
     db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('NaN', 'sessions.idleDays');
     const s = await readDaemonSettings();
-    expect(s.terminal.preset).toBe('auto'); // 白名单回落
+    expect(s.terminal.preset).toBe('web'); // 白名单回落
     expect(s.locale).toBe('zh-CN');
     expect(s.events?.retentionDays).toBe(DEFAULT_EVENT_RETENTION_DAYS);
     expect(s.sessions?.idleDays).toBe(DEFAULT_SESSION_IDLE_DAYS);
@@ -257,17 +257,17 @@ describe('daemon settings persistence (db key-value)', () => {
 describe('terminalPresetsFor', () => {
   it('offers only Windows presets on win32', () => {
     const ids = terminalPresetsFor('win32').map((p) => p.id);
-    expect(ids).toEqual(['auto', 'wt', 'wezterm', 'powershell', 'cmd', 'custom']);
+    expect(ids).toEqual(['web', 'auto', 'wt', 'wezterm', 'powershell', 'cmd', 'custom']);
   });
 
   it('offers only macOS presets on darwin', () => {
     const ids = terminalPresetsFor('darwin').map((p) => p.id);
-    expect(ids).toEqual(['auto', 'terminal', 'iterm', 'wezterm', 'ghostty', 'custom']);
+    expect(ids).toEqual(['web', 'auto', 'terminal', 'iterm', 'wezterm', 'ghostty', 'custom']);
   });
 
   it('offers only Linux presets elsewhere', () => {
     const ids = terminalPresetsFor('linux').map((p) => p.id);
-    expect(ids).toEqual(['auto', 'gnome', 'konsole', 'wezterm', 'ghostty', 'custom']);
+    expect(ids).toEqual(['web', 'auto', 'gnome', 'konsole', 'wezterm', 'ghostty', 'custom']);
   });
 
   it('omits Ghostty on Windows, where it has no build', () => {

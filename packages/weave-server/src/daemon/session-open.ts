@@ -1,5 +1,7 @@
 import { stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { isHarness, type Harness } from '@weavecode/core';
+import type { ResumeCommandSpec } from '@weavecode/harness';
 import type { WeaveServerDeps } from './server.js';
 import { readDaemonSettings, type TerminalSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
@@ -39,10 +41,19 @@ export type SessionOpenDeps = Pick<
   | 'opener'
   | 'terminalRefresher'
   | 'messageDeliverer'
+  | 'runtimeSupervisor'
 >;
 
 export type SessionOpenResult =
-  | { ok: true; sessionId: string; command: string; cwd: string; target?: string }
+  | {
+      ok: true;
+      sessionId: string;
+      command: string;
+      cwd: string;
+      target?: string;
+      /** headless 宿主（Web 终端 preset）起的实例 id；外部窗口形态没有。 */
+      instanceId?: string;
+    }
   | { ok: false; status: 400 | 404 | 409 | 501 | 503; error: string };
 
 /** resume 的 sessionId 已知：起点直接落 pane 定位，不走 pending 队列。
@@ -126,12 +137,24 @@ export function scheduleBootstrapInjection(
  * `opts.cwd` 覆盖落点（缺省 = 项目根）：B5 worktree 会话的重开必须原地——转录按
  * 引发它的 cwd 落 slug，换目录 resume 认不到那份转录。
  */
-export async function openSessionTerminal(
+type ResumeTarget = {
+  harness: Harness;
+  spec: ResumeCommandSpec;
+  projectId: number;
+  cwd: string;
+  args: string[];
+};
+
+type ResumeGate =
+  | { ok: true; target: ResumeTarget }
+  | { ok: false; status: 400 | 404 | 409 | 501 | 503; error: string };
+
+/** 交互式 resume 的门禁（外部终端开窗与 Web 终端 headless 恢复共用这一份判据）。 */
+async function resolveResume(
   deps: SessionOpenDeps,
   sessionId: string,
-  target?: string,
-  opts?: { cwd?: string },
-): Promise<SessionOpenResult> {
+  cwd?: string,
+): Promise<ResumeGate> {
   if (!deps.hookSessions) return { ok: false, status: 503, error: 'Hooks subsystem unavailable' };
   const session = deps.hookSessions.getBySessionId(sessionId);
   if (!session) return { ok: false, status: 404, error: 'Session not found' };
@@ -156,13 +179,60 @@ export async function openSessionTerminal(
   if (transcriptState(transcriptPresent, deps.hookSessions.hasRunOf(sessionId)) === false) {
     return { ok: false, status: 409, error: 'Session transcript is missing — nothing to resume' };
   }
-  const opener = deps.opener ?? defaultProjectOpener;
   try {
     const info = await stat(project.path);
     if (!info.isDirectory()) throw new Error(`Not a directory: ${project.path}`);
+  } catch (e) {
+    return { ok: false, status: 400, error: e instanceof Error ? e.message : 'Open failed' };
+  }
+  return {
+    ok: true,
+    target: {
+      harness: src,
+      spec,
+      projectId: session.projectId,
+      cwd: cwd ?? project.path,
+      args: [...(spec.launchArgs ?? []), ...spec.openArgs(sessionId)],
+    },
+  };
+}
+
+/**
+ * 开会话的唯一入口：宿主形态由终端后端自己答（`window` = 外部终端窗口、
+ * `headless` = Runtime Host 里的 PTY），调用方与前端只有一个按钮、一条路由。
+ */
+export async function openSessionTerminal(
+  deps: SessionOpenDeps,
+  sessionId: string,
+  target?: string,
+  opts?: { cwd?: string },
+): Promise<SessionOpenResult> {
+  const resolved = await resolveResume(deps, sessionId, opts?.cwd);
+  if (!resolved.ok) return resolved;
+  const { harness: src, spec, projectId, cwd: runCwd, args } = resolved.target;
+  const argv = [spec.bin, ...args];
+  const opener = deps.opener ?? defaultProjectOpener;
+  try {
     const settings = await readDaemonSettings();
-    const argv = [spec.bin, ...(spec.launchArgs ?? []), ...spec.openArgs(sessionId)];
-    const runCwd = opts?.cwd ?? project.path;
+    if (terminalBackendFor(settings.terminal).hostsSessions === 'headless') {
+      if (!deps.runtimeSupervisor) {
+        return { ok: false, status: 503, error: 'Runtime host is not available (daemon too old or disabled)' };
+      }
+      const instanceId = `wvi-${randomUUID().slice(0, 12)}`;
+      await deps.runtimeSupervisor.spawnInstance(
+        {
+          instanceId,
+          command: spec.bin,
+          args,
+          cwd: runCwd,
+          cols: 100,
+          rows: 30,
+          env: { ...process.env, WEAVE_INSTANCE_ID: instanceId, WEAVE_RUNTIME_HEADLESS: '1' },
+        },
+        { projectId, harness: src },
+      );
+      return { ok: true, sessionId, command: argv.join(' '), cwd: runCwd, instanceId };
+    }
     if (target) {
       // 定点附加的能力归后端：能反查目标的 preset 才有定点通道（wezterm mux /
       // Terminal.app osascript / wt 进程表），其余明确拒绝而非静默忽略——调用方不列白名单。
@@ -182,14 +252,14 @@ export async function openSessionTerminal(
     // 可见性兜底：hideWindow 判据（未设置 = 默认藏，唯一出处 hideWindowOf）命中
     // 就别跟自动隐藏打架（延迟一拍后它自己藏）。
     const hideWindow = hideWindowOf(
-      (deps.projects.getMeta(session.projectId) as { storage?: ProjectStorage } | null)?.storage,
+      (deps.projects.getMeta(projectId) as { storage?: ProjectStorage } | null)?.storage,
     );
     if (hideWindow) {
       // hideWindow 的隐藏动作这里也要做（之前只在 /open 与 new-session 路由有，
       // ensureOpen 拉起的窗口从不藏——设置无效的成因），不做 show 兜底。
-      scheduleHideWindow(deps as unknown as WeaveServerDeps, session.projectId, runCwd);
+      scheduleHideWindow(deps as unknown as WeaveServerDeps, projectId, runCwd);
     } else {
-      restoreVisibilityIfHidden(session.projectId, runCwd, settings.terminal);
+      restoreVisibilityIfHidden(projectId, runCwd, settings.terminal);
     }
     // 角标对账：新 pane 的 cwd 上报有一拍延迟（立即探看不到增量），600ms 后补一枪。
     setTimeout(() => void deps.terminalRefresher?.refreshNow(), 600);

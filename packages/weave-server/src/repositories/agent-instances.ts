@@ -47,7 +47,7 @@ export class AgentInstanceRepository {
 
   markStarting(id: string, runtimeHostId: string, osPid: number): void {
     this.db
-      .prepare(`UPDATE agent_instances SET status = 'starting', runtime_host_id = ?, os_pid = ?, started_at = ? WHERE id = ?`)
+      .prepare(`UPDATE agent_instances SET status = CASE WHEN status = 'created' THEN 'starting' ELSE status END, runtime_host_id = ?, os_pid = ?, started_at = ? WHERE id = ?`)
       .run(runtimeHostId, osPid, new Date().toISOString(), id);
   }
 
@@ -55,6 +55,13 @@ export class AgentInstanceRepository {
     this.db
       .prepare(`UPDATE agent_instances SET status = ?, error_message = ? WHERE id = ?`)
       .run(status, errorMessage ?? null, id);
+  }
+
+  /** Host 确认 started：只推进仍处 starting 的行（已退出/失败的不复活）。 */
+  markRunning(id: string): void {
+    this.db
+      .prepare(`UPDATE agent_instances SET status = 'running' WHERE id = ? AND status = 'starting'`)
+      .run(id);
   }
 
   markExited(id: string, exitCode: number): void {

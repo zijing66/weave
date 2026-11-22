@@ -247,6 +247,14 @@ export async function handleHooksRoutes(
     // 会话所在可见屏幕（列表分块）：探测要吃子进程，只能回隐藏刷新器的**上次快照**
     // （null = 反查不到，不分组），增量经 push 'terminalTopology' 到达——同角标口径。
     const screens = deps.terminalRefresher?.lastSnapshot?.terminals ?? {};
+    // Web 终端可打开性（B4）：只认「活着的 headless 实例 + 已首绑会话」——
+    // 外部终端里的会话没有可 attach 的 PTY，前端据此置灰而不是开一条必 409 的路。
+    const liveHeadless = new Map<string, string>();
+    for (const inst of deps.agentInstances?.listHeadless() ?? []) {
+      if (inst.harnessSessionId && (inst.status === 'running' || inst.status === 'starting')) {
+        liveHeadless.set(inst.harnessSessionId, inst.id);
+      }
+    }
     // 模型别名 → 真名（claude 的 `ANTHROPIC_DEFAULT_<别名>_MODEL` 约定）：下拉要两个
     // 都摆，转录里照会的真名也得认回别名那档。按 harness 分面，各问各的词表。
     const catalog: Record<string, ModelAliasTarget[]> = {};
@@ -269,6 +277,8 @@ export async function handleHooksRoutes(
           ...s,
           pidAlive: pidAliveOf(s, liveness),
           canOpenTerminal: !!(resume?.supported && resume.openArgs),
+          /** Web 终端锚点（活着的 headless 实例 id）；null = 没有可 attach 的实例。 */
+          webInstanceId: liveHeadless.get(s.sessionId) ?? null,
           terminal: screens[s.sessionId] ?? null,
           // 会话 worktree（隔离域 + 并回状态）：见上方 worktree 取值。
           worktree: worktree && {
@@ -411,6 +421,7 @@ export async function handleHooksRoutes(
       command: result.command,
       cwd: result.cwd,
       ...(result.target ? { target: result.target } : {}),
+      ...(result.instanceId ? { instanceId: result.instanceId } : {}),
     });
     return true;
   }

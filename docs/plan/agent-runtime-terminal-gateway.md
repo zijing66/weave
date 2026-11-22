@@ -114,8 +114,9 @@ packages/weave-server/web/src/features/
   TasksPanel 全屏弹层挂 `TerminalView`（xterm）+ 「打开 Web 终端」重开入口
   （`listAgentInstances` 活实例重进即恢复）。**实测定案**：① TLS 监听是独立
   server 实例，`/terminals/ws` 的 upgrade 必须两处同挂（不挂会把 WS 当普通请求
-  回落 SPA 200）；② stdin 协议是字节原文（base64 只在输出向），前端 xterm
-  `onData` 原样直传即可。
+  回落 SPA 200）；② stdin 与 output 都是原文字符串（node-pty 已按 UTF-8 解码、
+  保留 ANSI；协议注释里的 `encoding:"base64"` 是 B0 旧设想，实际未采用），前端
+  xterm `onData` 原样直传、`term.write(data)` 原样渲染即可。
 - 2026-11-20 真实浏览器验收发现四处断链（此前手写 WS 探针直连 daemon ≠ 浏览器
   链路，原「B4 完成」判断过早撤回）并当日修复：
   1. **dev server 黑屏断流** = Vite 只代理 `/api`，`/terminals/ws` 未配 `ws:true`。
@@ -136,7 +137,37 @@ packages/weave-server/web/src/features/
 - 验收：真 claude headless 实例 WS attach + lease 授予 + stdin 逐字符回显全通
   （探针 = `.weave/previews/ws-attach-test.mjs`）；实例长跑与 WS 客户端连接/断开
   解耦（关浏览器不退）✅；重进恢复 = 重开入口重连 attach + ring 重放 ✅。
-  真实浏览器全链（Vite 代理 + 首屏恢复 + 会话行入口）待用户 dev server 复验。
+  2026-11-20 真实浏览器已复验 Vite 代理、Lease、首屏 TUI 恢复：旧 Host 不支持
+  `instance.replay` 时，拿到 Lease 后用 PTY resize 触发 Claude 重绘，屏幕可见。
+  这只恢复当前屏幕，不把旧终端输出伪装成完整历史；普通 gap 与旧 Host 协议不兼容
+  已分开标记。
+- [x] 2026-11-20 浏览器复验（独立 session `weavewt`，Vite dev server）：
+  ① 收起弹层后实例仍 `running`，重开入口接回同一实例、TUI 与输入权恢复；
+  ② 页面存活时强断终端 WS → `TerminalClient` 自动重连（带 `lastSequence`）、
+     新连接拿到 Lease、屏上 `已连接 · 输入已解锁`；控制台不再报
+     `broken close frame containing invalid UTF-8`（三处协议修复：close 帧状态码
+     按 2 字节写、pong 原样回 Buffer、重放不再与实时输出交错——见
+     `session-gateway.test.ts` 新增两条）；
+  ③ **旧 DB 历史兼容**：点开 11/18 已关闭、无 `agent_instances` 绑定的旧会话，
+     对话正文照常从 `hook_events` 读出——升级不要求该会话曾有 Runtime 实例。
+- **终端预设 `web` 与「开会话」单一入口（2026-11-20 用户裁决）**：Web 终端不再是
+  HarnessPicker 里的开关，而是设置页与 wt/wezterm/… 并列的终端预设（**默认第一位**，
+  选中后新会话恒起 headless，开关退成「恒开」说明）。**开会话仍然只有一条入口**
+  （`openSessionTerminal` / `POST /sessions/:id/open-terminal`）：宿主形态由终端后端
+  自答（`TerminalBackend.hostsSessions`，web = `headless`、其余 = `window`），路由与
+  前端不按 preset 分叉、没有第二个 `open-headless` 路由。交互口径：对话与 Web 终端
+  共用右栏同区、默认对话，对话头部与会话卡片的终端按钮进同一处（X 只收起，TUI 照跑）；
+  **已关闭的会话点按钮就地 headless resume**（判据与外部终端开窗同一份
+  `resolveResume`：harness 可解、有 `openArgs`、转录还在），起来后**停在对话面**，
+  实例绑定落地按钮转绿，再点才进 TUI；**正跑在外部终端里的会话接不过来**（置灰并
+  说明「先关掉那个终端」）。会话卡片「已开终端」描绿边（选中蓝边优先），列表头那枚
+  旧的「重开 Web 终端」按钮退役。
+- [ ] 会话行精确对号 headless 实例（`harnessSessionId` 绑定）：存量项目需重跑
+  `weave init` 让 hook-handler 带上 `WEAVE_INSTANCE_ID` 采集键，再产生新事件才会
+  首绑；本次老实例仍为 null，未按「项目唯一活实例」猜绑，故不算通过。
+- **历史边界**：既有 `hook_events` DB 历史与 Harness 原生转录继续作为对话/事件历史，
+  不迁移、不删除；B4 的 Host ring 只负责短期终端字节恢复，Durable Output Journal /
+  Terminal Checkpoint 属于后续稳定性阶段，当前不声称已有长期 ANSI 输出档案。
   codex TUI 交互留待 B5/B6 汇总验。
 
 ### B5 External Attach

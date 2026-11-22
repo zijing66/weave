@@ -9,6 +9,7 @@ export interface ProjectConfig {
 
 /** Which terminal "open in terminal" launches; presets are platform-scoped. */
 export type TerminalPreset =
+  | 'web'
   | 'auto'
   | 'wt'
   | 'powershell'

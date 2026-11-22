@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, Trash2, Workflow, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, SquareTerminal, Trash2, Workflow, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -147,6 +147,7 @@ export function SessionMessages({
   onClose,
   embedded,
   onOpenChain,
+  webTerminal,
 }: {
   sessionId: string;
   /** 会话所属项目（路由锚点；会话可能采集到跨项目事件，过滤只按 sessionId）。 */
@@ -177,6 +178,13 @@ export function SessionMessages({
   embedded?: boolean;
   /** 右上角「事件链」：把事件链开成弹窗（嵌入形态下才有这一枚）。 */
   onOpenChain?: () => void;
+  /** 终端预设 = Web 终端时才给：头部那枚切到右栏终端视图（没有活实例置灰）。 */
+  webTerminal?: {
+    available: boolean;
+    /** 不可用的原因（'busy' = 正跑在外部终端；'gone' = 没有可恢复的转录）。 */
+    reason?: 'busy' | 'gone';
+    onOpen: () => void;
+  } | null;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -856,6 +864,29 @@ export function SessionMessages({
                   >
                     <MessageCircleQuestion className="h-3 w-3 text-violet-400" />
                     <span className="max-lg:hidden">{t('tasks.sideTitle')}</span>
+                    </button>
+                  </Tooltip>
+                )}
+                {webTerminal && (
+                  <Tooltip
+                    label={
+                      webTerminal.available
+                        ? t('tasks.openWebTerminal')
+                        : webTerminal.reason === 'busy'
+                          ? t('tasks.webTerminalBusy')
+                          : t('tasks.webTerminalGone')
+                    }
+                    side="top"
+                  >
+                    <button
+                      type="button"
+                      aria-label={t('tasks.openWebTerminal')}
+                      disabled={!webTerminal.available}
+                      onClick={webTerminal.onOpen}
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 disabled:cursor-not-allowed disabled:hover:border-edge/[0.08] disabled:hover:text-neutral-400 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                    >
+                      <SquareTerminal className="h-3 w-3 text-emerald-400" />
+                      <span className="max-lg:hidden">{t('tasks.webTerminalShort')}</span>
                     </button>
                   </Tooltip>
                 )}

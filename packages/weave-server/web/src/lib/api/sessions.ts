@@ -51,6 +51,8 @@ export interface SessionRow {
   transcriptPresent?: boolean | null;
   /** 「在终端打开」是否可用（服务端按 harness 的 resume 槽派生，web 不自带白名单）。 */
   canOpenTerminal?: boolean;
+  /** Web 终端锚点：活着的 headless 实例 id（服务端派生）；null = 没有可 attach 的实例。 */
+  webInstanceId?: string | null;
   /** 会话 worktree（B5 最小切片；服务端登记派生）：undefined/null = 不隔离。 */
   worktree?:
     | { path: string; branch: string; status: 'active' | 'merged' | 'conflict' | 'error'; message?: string }
@@ -230,13 +232,14 @@ export const sessionApi = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'PATCH', body: JSON.stringify({ title }) },
     ).then((r) => r.session),
-  /** 在默认终端打开会话（独立进程跑 `claude --resume <id>`，不随 daemon 退出）。
+  /** 开会话（唯一入口）：宿主形态由终端后端决定——外部终端 spawn（不随 daemon 退出）
+   *  或 Runtime Host 里的 headless 实例（`instanceId` 回给 Web 终端 attach）。
    *  `target` = 多终端弹窗选定的附加目标（`listProjectTerminals` 的 id）；缺省自动选落点。 */
   openSessionTerminal: (
     sessionId: string,
     target?: string,
-  ): Promise<{ ok: boolean; command: string }> =>
-    apiFetch<{ ok: boolean; command: string }>(
+  ): Promise<{ ok: boolean; command: string; instanceId?: string }> =>
+    apiFetch<{ ok: boolean; command: string; instanceId?: string }>(
       `/sessions/${encodeURIComponent(sessionId)}/open-terminal`,
       { method: 'POST', body: JSON.stringify(target ? { target } : {}) },
     ),

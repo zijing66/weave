@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Harness } from '@weavecode/core/harness';
 import {
   api,
-  type AgentInstanceRow,
   type AnswerPick,
   type HookDispatch,
   type HookEventRow,
@@ -11,6 +10,7 @@ import {
   type ProjectHarness,
   type PromptLimits,
   type SessionWatchRow,
+  type TerminalPreset,
   type TerminalTarget,
   type WatchOn,
 } from '@/lib/api';
@@ -33,7 +33,10 @@ import {
   type LifecycleGroup,
 } from './build-lifecycle-groups';
 import { HARNESS_LIFECYCLE } from './lifecycle';
-import { openTerminalStateOf as openTerminalButtonState } from './conv-model';
+import {
+  openTerminalStateOf as openTerminalButtonState,
+  webTerminalAvailabilityOf,
+} from './conv-model';
 import { canInterrupt, hasTurnSignal, isSessionBusy } from './session-status';
 import { LifecycleMindmap } from '@/components/LifecycleMindmap';
 import { HarnessIcon } from './HarnessIcon';
@@ -41,7 +44,7 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 import { SkeletonRows } from '@/components/ui/skeleton';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search, Square, Terminal, X } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search, Square, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -300,6 +303,18 @@ export function TasksPanel({
   /** 等新会话行落进列表（或超时）：新建会话的 loading 挂到这时为止——spawn 是异步的
    *  （新窗 pane 起来、claude 再发 SessionStart 才落行），POST 一返回就收圈等于
    *  「点完看不出有没有生效」，用户会再点一次起出第二个。 */
+  /** 等该会话在 Runtime Host 里的实例完成绑定（按钮转绿）——headless 起来后
+   *  会话行要等首条 hook 事件才带 webInstanceId。 */
+  const waitWebInstance = useCallback(
+    (sessionId: string): Promise<void> =>
+      gate.current.wait(
+        `webinst:${sessionId}`,
+        () =>
+          sessionsRef.current?.some((s) => s.sessionId === sessionId && !!s.webInstanceId) === true,
+      ),
+    [],
+  );
+
   const waitNewSession = useCallback(
     (known: ReadonlySet<string>): Promise<void> =>
       gate.current.wait(
@@ -631,6 +646,21 @@ export function TasksPanel({
     }
   };
 
+  /** 终端预设（设置页选项，默认 web）：`web` = 会话起在 Runtime Host、右栏同区
+   *  在对话与终端之间切换；其他 preset 仍是外部终端窗口（null = 还没取到）。 */
+  const [terminalPreset, setTerminalPreset] = useState<TerminalPreset | null>(null);
+  useEffect(() => {
+    const load = (): void => {
+      void api
+        .getDaemonSettings()
+        .then((b) => setTerminalPreset(b.settings.terminal.preset))
+        .catch(() => {});
+    };
+    load();
+    return registerInvalidator('settings', load);
+  }, []);
+  const webMode = terminalPreset === 'web';
+
   /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
       独立进程不随 daemon 退出。fb 键按会话隔离——loading 在途吞连点（防重复
       spawn），成功无 toast（窗口弹出即反馈），失败 toast。
@@ -644,9 +674,15 @@ export function TasksPanel({
       void fb.run(
         `openTerm:${sessionId}`,
         async () => {
-          // headless 会话：活实例在 Runtime Host 里，打开 = Web 终端 attach；
-          // 外部终端 resume 会另起一个进程抢同一会话，不走。
-          const pid = sessionsRef.current?.find((s) => s.sessionId === sessionId)?.projectId;
+          const row = sessionsRef.current?.find((s) => s.sessionId === sessionId);
+          const label = harnessUiOf((row?.harness ?? 'claude') as Harness).label;
+          // 有活实例（Web 终端 preset 下的会话就在 Runtime Host 里）→ 直接进 TUI。
+          if (row?.webInstanceId) {
+            setWebTerminal({ instanceId: row.webInstanceId, label });
+            return;
+          }
+          // 其他 preset 下也可能有 headless 实例（弹层里勾过）：先接上，别另起进程抢会话。
+          const pid = row?.projectId;
           if (pid != null) {
             const inst = (await api.listAgentInstances(pid)).find(
               (i) => i.harnessSessionId === sessionId && (i.status === 'running' || i.status === 'starting'),
@@ -656,14 +692,20 @@ export function TasksPanel({
               return;
             }
           }
-          await api.openSessionTerminal(sessionId, target);
+          // 没实例：走唯一入口开会话（宿主形态归终端后端）。headless 起来后停在
+          // 对话面——按钮转绿，再点一下才进 TUI（用户口径）。
+          const opened = await api.openSessionTerminal(sessionId, target);
           await refreshStatus();
+          if (opened.instanceId) {
+            await waitWebInstance(sessionId);
+            return;
+          }
           await waitTerminalAlive(sessionId);
         },
         { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
       );
     },
-    [fb, t, refreshStatus, waitTerminalAlive],
+    [fb, t, refreshStatus, waitTerminalAlive, waitWebInstance],
   );
 
   /** worktree 隔离（B5 最小切片）：弹层里的开关态，面板重开不丢；下一次起会话生效。 */
@@ -672,8 +714,21 @@ export function TasksPanel({
   const [headlessNewSession, setHeadlessNewSession] = useState(false);
   /** 打开中的 Web 终端实例（headless 起会话成功即弹）。 */
   const [webTerminal, setWebTerminal] = useState<{ instanceId: string; label: string } | null>(null);
-  /** 多活实例且无会话可对号时的选单（顶栏入口弹，选一枚打开）。 */
-  const [webTerminalPicker, setWebTerminalPicker] = useState<AgentInstanceRow[] | null>(null);
+
+  /** 对话头部的终端入口：Web 预设恒在（没实例则置灰说明）；其他预设只给真有
+      headless 实例的会话摆，免得每个对话都多一枚用不上的按钮。 */
+  const webTerminalEntry = (
+    sessionId: string,
+  ): { available: boolean; reason?: 'busy' | 'gone'; onOpen: () => void } | null => {
+    const row = projectSessions?.find((x) => x.sessionId === sessionId);
+    if (!webMode && !row?.webInstanceId) return null;
+    const avail = webTerminalAvailabilityOf(row ?? {});
+    return {
+      available: avail === 'live' || avail === 'resume',
+      reason: avail === 'busy' ? ('busy' as const) : avail === 'gone' ? ('gone' as const) : undefined,
+      onOpen: () => runOpenTerminal(sessionId),
+    };
+  };
 
   /** 新建会话：在项目**已打开的终端**里起一个新会话（服务端把 harness 裸 bin
       打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
@@ -686,11 +741,19 @@ export function TasksPanel({
       void fb.run(
         `newSession:${projectId}`,
         async () => {
-          if (headlessNewSession) {
-            // headless（B4）：Runtime Host 持 PTY，POST 回 instanceId 即已起——
-            // 不等会话行（不落会话行的 harness 没有行可等），直接弹 Web 终端。
-            const { instanceId } = await api.startHeadlessSession(projectId, harness);
-            setWebTerminal({ instanceId, label: harnessUiOf(harness ?? 'claude').label });
+          if (headlessNewSession || webMode) {
+            // headless（B4）：Runtime Host 持 PTY。**停在对话面**——会话行绑定
+            // 落地后终端按钮转绿，再点那一下才进 TUI。
+            const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
+            await api.startHeadlessSession(projectId, harness);
+            if (harness && HARNESS_LIFECYCLE[harness].sessionMarkers.length === 0) return;
+            await waitNewSession(known);
+            // 落在新会话的对话面（选中即挂对话；终端等用户再点那一下）。
+            const created = sessionsRef.current?.find((s) => !known.has(s.sessionId));
+            if (created) {
+              setSelectedId(created.sessionId);
+              setWebTerminal(null);
+            }
             return;
           }
           const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
@@ -701,7 +764,7 @@ export function TasksPanel({
         { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
       );
     },
-    [fb, projectId, t, waitNewSession, worktreeNewSession, headlessNewSession],
+    [fb, projectId, t, waitNewSession, worktreeNewSession, headlessNewSession, webMode],
   );
 
   /** 起会话的 harness 弹层（锚在按钮下方，同项目列表的终端弹层口径）：项目选中的
@@ -731,6 +794,12 @@ export function TasksPanel({
    *  （自动落点自己挑放得下的 tab，全满就新开终端；拉不到列表也不阻塞打开）。 */
   const onOpenTerminal = useCallback(
     (sessionId: string): void => {
+      // Web 终端没有「项目终端窗口」可选：直接走实例 attach（无实例由
+      // runOpenTerminal 如实报因，按钮本身也已置灰）。
+      if (webMode) {
+        runOpenTerminal(sessionId);
+        return;
+      }
       const projectId = sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null;
       if (projectId == null) {
         runOpenTerminal(sessionId);
@@ -755,7 +824,7 @@ export function TasksPanel({
         })
         .catch(() => runOpenTerminal(sessionId));
     },
-    [sessions, runOpenTerminal],
+    [sessions, runOpenTerminal, webMode],
   );
   const openTerminalStateOf = useCallback(
     (sessionId: string) =>
@@ -833,6 +902,8 @@ export function TasksPanel({
       appliedSel.current = { project: projectId, sessionId };
       onSelectSession?.(sessionId);
       openConv(sessionId);
+      // 换会话恒回对话视图（终端视图属于「那一条会话」，跟着选中走）。
+      setWebTerminal(null);
       if (!isDesktop) setPaneOpen(true);
     },
     [openConv, isDesktop, onSelectSession, projectId],
@@ -1373,7 +1444,32 @@ export function TasksPanel({
    *  解不出能力（无闭轮事件的 harness）→ 仍是事件链本尊。 */
   const paneEl = (
     <div className="flex min-w-0 min-h-0 flex-1 flex-col">
+      {/* Web 终端与对话同区（默认对话）：打开终端 = 这块换成 xterm，X 收起回对话
+          ——关掉的只是这条 WS（detach），Runtime Host 里的 TUI 进程照常跑。 */}
+      {webTerminal && (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex items-center justify-between gap-2 pb-2">
+            <p className="truncate text-xs font-medium text-neutral-200">
+              {t('tasks.webTerminalTitle')} · {webTerminal.label}
+            </p>
+            <Tooltip label={t('tasks.webTerminalClose')} side="top">
+              <button
+                type="button"
+                aria-label={t('tasks.webTerminalClose')}
+                onClick={() => setWebTerminal(null)}
+                className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+              >
+                <X className="size-4" />
+              </button>
+            </Tooltip>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-edge/[0.08] bg-black/90">
+            <TerminalView instanceId={webTerminal.instanceId} />
+          </div>
+        </div>
+      )}
       {/* 已挂载的对话全在（非选中项只藏不卸，草稿与已选图片都还在） */}
+      <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', webTerminal && 'hidden')}>
       {[...convs.values()].map((c) => (
         <SessionMessages
           key={c.sessionId}
@@ -1390,6 +1486,7 @@ export function TasksPanel({
           onInterrupt={onInterrupt}
           interruptStateOf={interruptStateOf}
           onOpenChain={() => setChainDialog(true)}
+          webTerminal={webTerminalEntry(c.sessionId)}
         />
       ))}
       {/* 能力矩阵在途时不摆事件链（openConv 还挂不上对话，摆了必闪一拍）；
@@ -1403,6 +1500,7 @@ export function TasksPanel({
         ) : (
           chainEl
         ))}
+      </div>
     </div>
   );
 
@@ -1442,7 +1540,7 @@ export function TasksPanel({
               disabled={!canNewSession || newSessionBusy}
               onClick={(e) => onNewSession(e.currentTarget)}
               className={cn(
-                'inline-flex min-w-0 items-center gap-1 whitespace-nowrap rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 transition-colors',
+                'mr-1 inline-flex min-w-0 items-center gap-1 whitespace-nowrap rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 transition-colors',
                 !canNewSession
                   ? 'cursor-not-allowed text-neutral-600'
                   : 'text-neutral-200 hover:bg-neutral-800',
@@ -1456,41 +1554,6 @@ export function TasksPanel({
             />
             {/* 容器 <180px 按钮文字退场（图标恒在，tooltip 有全称）；宽时恢复 */}
               <span className="new-session-label min-w-0">{t('tasks.newSession')}</span>
-            </button>
-          </Tooltip>
-          {/* 重开 Web 终端（B4）：本项目还活着的 headless 实例，点了接着看/接着敲——
-              实例在 Runtime Host 里跑着，弹层关掉只是 detach，重进即恢复。
-              选中会话先对号（harnessSessionId 绑定）；对不上时单实例直开、
-              多实例弹选单——不猜「最后一个」。 */}
-          <Tooltip label={t('tasks.webTerminalReopen')} side="top">
-            <button
-              type="button"
-              onClick={() => {
-                void fb.run(
-                  `reopenWebTerm:${projectId}`,
-                  async () => {
-                    const instances = await api.listAgentInstances(projectId);
-                    const live = instances.filter((i) => i.status === 'running' || i.status === 'starting');
-                    if (live.length === 0) throw new Error(t('tasks.webTerminalNone'));
-                    const picked =
-                      live.find((i) => i.harnessSessionId === selectedId) ??
-                      (live.length === 1 ? live[0] : null);
-                    if (!picked) {
-                      setWebTerminalPicker(live);
-                      return;
-                    }
-                    setWebTerminal({ instanceId: picked.id, label: harnessUiOf(picked.harness as Harness).label });
-                  },
-                  { fail: (e) => errorText(e) },
-                );
-              }}
-              className="inline-flex items-center rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 text-neutral-200 transition-colors hover:bg-neutral-800"
-            >
-              <FeedbackIcon
-                state={fb.stateOf(`reopenWebTerm:${projectId}`)}
-                className="h-3 w-3 shrink-0"
-                icon={<Terminal className="h-3 w-3" />}
-              />
             </button>
           </Tooltip>
           {/* harness 筛选：只过滤列表行与计数；选中态与右栏不受影响。
@@ -1547,6 +1610,7 @@ export function TasksPanel({
             onDelete={handleDeleteSession}
             deleteStateOf={deleteStateOf}
             archiveDays={archiveDays}
+            webMode={webMode}
           />
         )}
       </aside>
@@ -1667,95 +1731,13 @@ export function TasksPanel({
           onWorktreeChange={setWorktreeNewSession}
           headless={headlessNewSession}
           onHeadlessChange={setHeadlessNewSession}
+          headlessImplied={webMode}
           onPick={(harness) => {
             setHarnessPicker(null);
             runNewSession(harness);
           }}
           onClose={() => setHarnessPicker(null)}
         />
-      )}
-
-      {/* Web 终端（B4 headless 实例）：全屏弹层挂 xterm，关掉只是 detach（实例还在跑） */}
-      {webTerminal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setWebTerminal(null)}
-        >
-          <div
-            className="flex h-[86%] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 shadow-mac"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex shrink-0 items-center justify-between border-b border-edge/[0.06] px-3 py-2">
-              <span className="truncate text-xs text-neutral-300">
-                {t('tasks.webTerminalTitle')} · {webTerminal.label}
-              </span>
-              <Tooltip label={t('app.mobileDrawerClose')} side="top">
-                <button
-                  type="button"
-                  aria-label={t('app.mobileDrawerClose')}
-                  onClick={() => setWebTerminal(null)}
-                  className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
-                >
-                  <X className="size-4" />
-                </button>
-              </Tooltip>
-            </div>
-            <TerminalView instanceId={webTerminal.instanceId} />
-          </div>
-        </div>
-      )}
-
-      {/* Web 终端实例选单：多活实例且没有会话对号时（顶栏入口），选一枚打开 */}
-      {webTerminalPicker && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setWebTerminalPicker(null)}
-        >
-          <div
-            className="w-full max-w-md overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 shadow-mac"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-edge/[0.06] px-3 py-2">
-              <span className="truncate text-xs text-neutral-300">{t('tasks.webTerminalPick')}</span>
-              <Tooltip label={t('app.mobileDrawerClose')} side="top">
-                <button
-                  type="button"
-                  aria-label={t('app.mobileDrawerClose')}
-                  onClick={() => setWebTerminalPicker(null)}
-                  className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
-                >
-                  <X className="size-4" />
-                </button>
-              </Tooltip>
-            </div>
-            <div className="max-h-72 overflow-y-auto p-1">
-              {webTerminalPicker.map((inst) => (
-                <button
-                  key={inst.id}
-                  type="button"
-                  onClick={() => {
-                    setWebTerminalPicker(null);
-                    setWebTerminal({ instanceId: inst.id, label: harnessUiOf(inst.harness as Harness).label });
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-edge/[0.06]"
-                >
-                  <span
-                    className={
-                      'inline-block size-2 shrink-0 rounded-full ' +
-                      (inst.status === 'running' ? 'animate-pulse bg-blue-500' : 'bg-amber-500')
-                    }
-                  />
-                  <span className="min-w-0 flex-1 truncate">
-                    {harnessUiOf(inst.harness as Harness).label} · {inst.harnessSessionId ?? inst.id}
-                  </span>
-                  <span className="shrink-0 text-10 text-neutral-600">
-                    {new Date(inst.startedAt ?? inst.createdAt).toLocaleTimeString()}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
       )}
 
       {/* 事件链弹窗：右栏被对话占着时从这里看（右栏没有对话面时事件链仍在原位）。

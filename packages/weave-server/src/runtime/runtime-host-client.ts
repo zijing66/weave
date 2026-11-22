@@ -24,7 +24,7 @@ export class RuntimeHostClient {
   private socket: Socket | null = null;
   private buffer = '';
   private readonly pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-  private events: (frame: HostEventFrame) => void = () => {};
+  private events: Array<(frame: HostEventFrame) => void> = [];
 
   constructor(
     private readonly pipePath: string,
@@ -32,8 +32,9 @@ export class RuntimeHostClient {
     private readonly onDisconnect: () => void = () => {},
   ) {}
 
+  /** 事件订阅（多路：落库与终端网关都要收同一份帧，互不挤占）。 */
   onEvent(cb: (frame: HostEventFrame) => void): void {
-    this.events = cb;
+    this.events.push(cb);
   }
 
   /** 连接 + 握手（hello/ack）；ack 里的实例清单即对账起点。 */
@@ -94,7 +95,12 @@ export class RuntimeHostClient {
         continue;
       }
       // 事件帧（含 terminal.gap 背压标记）
-      this.events({ eventId: String(msg.eventId ?? ''), timestamp: Number(msg.timestamp ?? Date.now()), ...msg });
+      const frame = {
+        eventId: String(msg.eventId ?? ''),
+        timestamp: Number(msg.timestamp ?? Date.now()),
+        ...msg,
+      };
+      for (const cb of this.events) cb(frame);
     }
   }
 

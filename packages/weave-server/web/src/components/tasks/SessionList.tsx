@@ -17,6 +17,7 @@ import { copyText } from '@/lib/clipboard';
 import type { ActionState } from '@/lib/feedback-core';
 import { errorText } from '@/lib/action-feedback';
 import { STATUS_BADGE, STATUS_KEY, type SessionStatus } from './session-status';
+import { webTerminalAvailabilityOf } from './conv-model';
 import { WatchPicker } from './WatchPicker';
 import { QuestionAnswer } from './QuestionAnswer';
 import { SessionStatusIcon } from './SessionStatusIcon';
@@ -292,6 +293,7 @@ export function SessionList({
   onDelete,
   deleteStateOf,
   archiveDays = 5,
+  webMode = false,
 }: {
   sessions: SessionRow[];
   statuses: Map<string, SessionStatus>;
@@ -341,6 +343,9 @@ export function SessionList({
   /** 收纳阈值（天）：lastSeenAt 超过它且无豁免信号的旧会话折进底部「已收纳」区；
    *  0 = 关闭收纳。全局设置 sessions.archiveDays 下发（默认 5）。 */
   archiveDays?: number;
+  /** 终端预设 = Web 终端：按钮语义换成「进右栏 Web 终端」——有活实例就恒可点
+   *  （再点是回到终端视图，不是再 spawn 一个），没实例置灰并说明。 */
+  webMode?: boolean;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -514,6 +519,8 @@ export function SessionList({
     ).length;
     // 转录没了 = `--resume` 接不回来（服务端判；行内提示 + 打开禁用）
     const noTranscript = s.transcriptPresent === false;
+    // 已开终端：外部窗口的 TUI 在跑，或 Web 终端能接（headless 实例活着）。
+    const terminalOpen = !!s.pidAlive || !!s.webInstanceId;
     return (
       <Tooltip
         label={droppingId === s.sessionId ? t('tasks.dropTip') : sessionLabel(s.title, s.sessionId)}
@@ -548,7 +555,9 @@ export function SessionList({
             'group flex min-w-0 flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
             selected
               ? 'border-blue-500/50 bg-blue-500/10'
-              : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10] hover:bg-edge/[0.04]',
+              : terminalOpen
+                ? 'border-emerald-500/40 bg-neutral-900/50 hover:border-emerald-500/60 hover:bg-edge/[0.04]'
+                : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10] hover:bg-edge/[0.04]',
             highlightId === s.sessionId && 'border-rose-400/70',
             droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
           )}
@@ -616,18 +625,24 @@ export function SessionList({
                   转绿：与项目卡同款「有终端在跑」信号。绿即「已开」，按钮一并
                   禁用——再点只会又 spawn 一个宿主进程抢同一会话。loading 的挂法
                   见 TasksPanel（一直挂到转绿），期间同样禁用。 */}
-              {s.canOpenTerminal && (
-                <Tooltip label={t('tasks.openSessionTerminal')}>
+              {s.canOpenTerminal && (() => {
+                const avail = webMode ? webTerminalAvailabilityOf(s) : null;
+                const webReady = avail === 'live' || avail === 'resume';
+                const disabled = webMode
+                  ? !webReady || openTermState === 'loading'
+                  : noTranscript || !!s.pidAlive || openTermState === 'loading';
+                const tip = webMode
+                  ? avail === 'busy'
+                    ? t('tasks.webTerminalBusy')
+                    : avail === 'gone'
+                      ? t('tasks.webTerminalGone')
+                      : t('tasks.openWebTerminal')
+                  : t('tasks.openSessionTerminal');
+                return (
+                <Tooltip label={tip}>
                 <button
                   type="button"
-                  disabled={noTranscript || !!s.pidAlive || openTermState === 'loading'}
-                  title={
-                    noTranscript || s.pidAlive
-                      ? (noTranscript
-                          ? t('tasks.transcriptMissingTip')
-                          : t('tasks.sessionTerminalRunning'))
-                      : undefined
-                  }
+                  disabled={disabled}
                   onClick={(e) => {
                     e.stopPropagation();
                     onOpenTerminal(s.sessionId);
@@ -635,7 +650,7 @@ export function SessionList({
                   className={cn(
                     ACTION_BTN,
                     // 已打开 / 开启中 / 转录已丢：不吃 hover 反馈（否则看着还能点）
-                    (noTranscript || s.pidAlive || openTermState === 'loading') &&
+                    disabled &&
                       'disabled:cursor-not-allowed hover:border-edge/[0.08] hover:bg-edge/[0.02] hover:text-neutral-500',
                   )}
                 >
@@ -644,13 +659,14 @@ export function SessionList({
                     className="h-3 w-3"
                     icon={
                       <SquareTerminal
-                        className={cn('h-3 w-3', s.pidAlive && 'text-emerald-400')}
+                        className={cn('h-3 w-3', (webMode ? avail === 'live' : s.pidAlive) && 'text-emerald-400')}
                       />
                     }
                   />
                 </button>
                 </Tooltip>
-              )}
+                );
+              })()}
               {/* 关 pane / 退出会话：会话进程活着才出现（没得关就不占位）——
                   关掉 = 宿主随 pane 一起退出，会话行与它的对话照常保留，之后仍
                   可 --resume 接回。判活判不动的（codex / 新鲜会话 pidAlive=null）

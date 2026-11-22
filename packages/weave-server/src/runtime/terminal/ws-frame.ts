@@ -31,8 +31,8 @@ export function acceptWebSocket(
 }
 
 /** 单帧写（服务端→客户端不掩码；opcode 1=文本 8=close 9=ping 10=pong）。 */
-export function writeFrame(socket: Duplex, opcode: number, payload: string): void {
-  const data = Buffer.from(payload, 'utf8');
+export function writeFrame(socket: Duplex, opcode: number, payload: string | Buffer): void {
+  const data = typeof payload === 'string' ? Buffer.from(payload, 'utf8') : payload;
   const len = data.length;
   let header: Buffer;
   if (len < 126) {
@@ -56,7 +56,9 @@ export function writeText(socket: Duplex, text: string): void {
 }
 
 export function writeClose(socket: Duplex, code = 1000): void {
-  writeFrame(socket, 0x8, String.fromCharCode(code >> 8, code & 0xff));
+  const payload = Buffer.allocUnsafe(2);
+  payload.writeUInt16BE(code);
+  writeFrame(socket, 0x8, payload);
 }
 
 /** 收帧解析：回调 (opcode, payloadString)；分帧/二进制/控制位异常按协议要求 close。 */
@@ -93,7 +95,7 @@ export function startReading(
           onClose(frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : 1005);
           return;
         case 0x9: // ping → pong
-          writeFrame(socket, 0xa, frame.payload.toString('utf8'));
+          writeFrame(socket, 0xa, frame.payload);
           break;
         default: // pong 忽略；二进制/续帧不支持
           writeClose(socket, 1003);

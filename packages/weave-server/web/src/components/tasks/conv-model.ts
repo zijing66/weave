@@ -562,6 +562,22 @@ export function attachDeliveries(
  * 正在为它拉起终端——消息投递前会对判死的目标走 `ensureOpen`（最长 15s），那期间
  * 按钮必须转圈并禁用，否则再点一次会 spawn 第二个 resume 抢同一会话。
  */
+/** Web 终端可用性：有活实例 = live；没在跑、转录还在 = resume（点了就地恢复）；
+ *  正跑在外部终端里 = busy（PTY 接不过来）；转录没了/不支持 resume = gone。 */
+export type WebTerminalAvailability = 'live' | 'resume' | 'busy' | 'gone';
+
+export function webTerminalAvailabilityOf(row: {
+  webInstanceId?: string | null;
+  pidAlive?: boolean | null;
+  canOpenTerminal?: boolean;
+  transcriptPresent?: boolean | null;
+}): WebTerminalAvailability {
+  if (row.webInstanceId) return 'live';
+  if (row.pidAlive) return 'busy';
+  if (row.canOpenTerminal === false || row.transcriptPresent === false) return 'gone';
+  return 'resume';
+}
+
 export function openTerminalStateOf(fbState: ActionState, opening: boolean): ActionState {
   if (fbState !== 'idle') return fbState;
   return opening ? 'loading' : 'idle';

@@ -4,15 +4,22 @@ import type { RuntimeSupervisor } from '../../supervisor.js';
 import type { TerminalAttachRequest } from '../../protocol.js';
 
 /** 最小假 supervisor：只回答 replayAfter（Gateway 其余面不参与本测）。 */
-function fakeSupervisor(entries: Array<{ kind: 'output'; sequence: number; data: string }>) {
+function fakeSupervisor(
+  entries: Array<{ kind: 'output' | 'resize'; sequence: number; data?: string; cols?: number; rows?: number }>,
+  replayError?: Error,
+) {
   const calls: number[] = [];
+  let onEvent: ((frame: { type: string; instanceId: string; sequence: number; data: string }) => void) | null = null;
   const sup = {
+    onEvent: (cb: typeof onEvent) => { onEvent = cb; },
+    emit: (frame: { type: string; instanceId: string; sequence: number; data: string }) => onEvent?.(frame),
     replayAfter: async (_id: string, after: number) => {
       calls.push(after);
+      if (replayError) throw replayError;
       return entries;
     },
   };
-  return { sup: sup as unknown as RuntimeSupervisor, calls };
+  return { sup: sup as unknown as RuntimeSupervisor, calls, emit: sup.emit };
 }
 
 function attachOnce(gateway: TerminalGateway, req: Partial<TerminalAttachRequest> & { clientId: string }) {
@@ -32,22 +39,56 @@ function attachOnce(gateway: TerminalGateway, req: Partial<TerminalAttachRequest
 
 describe('TerminalGateway attach 重放', () => {
   it('首次接入（无 lastSequence）从 0 重放 Host ring——黑屏根因的回归', async () => {
-    const { sup, calls } = fakeSupervisor([{ kind: 'output', sequence: 7, data: 'SGVsbG8=' }]);
+    const { sup, calls } = fakeSupervisor([{ kind: 'output', sequence: 7, data: 'Hello' }]);
     const gateway = new TerminalGateway(sup);
     const frames = attachOnce(gateway, { clientId: 'c1' });
-    expect(frames.some((f) => f.includes('"type":"attached"'))).toBe(true);
     await new Promise((r) => setTimeout(r, 10));
+    expect(frames.some((f) => f.includes('"type":"attached"'))).toBe(true);
     expect(calls).toEqual([0]);
     expect(frames.some((f) => f.includes('"type":"terminal.output"') && f.includes('"sequence":7'))).toBe(true);
   });
 
-  it('带 lastSequence 的重连不整段重放（只补缺口）', async () => {
-    const { sup, calls } = fakeSupervisor([]);
+  it('旧 Host 不支持 replay 时明确标注协议不兼容，而不是普通输出缺口', async () => {
+    const { sup } = fakeSupervisor([], new Error('unknown request type "instance.replay"'));
+    const frames = attachOnce(new TerminalGateway(sup), { clientId: 'old-host' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(frames.some((f) => JSON.parse(f).reason === 'replay-unsupported')).toBe(true);
+  });
+
+  it('Host 真正不可达时不误称旧版协议', async () => {
+    const { sup } = fakeSupervisor([], new Error('runtime host not connected'));
+    const frames = attachOnce(new TerminalGateway(sup), { clientId: 'offline-host' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(frames.some((f) => JSON.parse(f).reason === 'replay-unsupported')).toBe(false);
+  });
+
+  it('daemon 短窗为空的重连仍向 Host 补拉', async () => {
+    const { sup, calls } = fakeSupervisor([{ kind: 'output', sequence: 4, data: 'next' }]);
     const gateway = new TerminalGateway(sup);
     const frames = attachOnce(gateway, { clientId: 'c2', lastSequence: 3 });
     await new Promise((r) => setTimeout(r, 10));
-    // 本地短窗为空且无更早缺口 → 不找 Host 要任何东西
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([3]);
+    expect(frames.some((f) => f.includes('"sequence":4') && f.includes('next'))).toBe(true);
     expect(frames.filter((f) => f.includes('"type":"attached"'))).toHaveLength(1);
+  });
+
+  it('Host 重放完成前的实时输出排在历史后且不重复', async () => {
+    let resolveReplay!: (value: Array<{ kind: 'output'; sequence: number; data: string }>) => void;
+    let onEvent: ((frame: { type: string; instanceId: string; sequence: number; data: string }) => void) | null = null;
+    const replay = new Promise<Array<{ kind: 'output'; sequence: number; data: string }>>((resolve) => {
+      resolveReplay = resolve;
+    });
+    const sup = {
+      onEvent: (cb: typeof onEvent) => { onEvent = cb; },
+      replayAfter: () => replay,
+    } as unknown as RuntimeSupervisor;
+    const gateway = new TerminalGateway(sup);
+    gateway.start();
+    const frames = attachOnce(gateway, { clientId: 'ordered' });
+    onEvent?.({ type: 'terminal.output', instanceId: 'wvi-test', sequence: 2, data: 'live' });
+    resolveReplay([{ kind: 'output', sequence: 1, data: 'history' }]);
+    await new Promise((r) => setTimeout(r, 10));
+    const output = frames.filter((f) => f.includes('"type":"terminal.output"'));
+    expect(output.map((f) => JSON.parse(f).sequence)).toEqual([1, 2]);
   });
 });

@@ -3,10 +3,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dataRoots, getAuthPath, getDataDir } from '../db/paths.js';
 import { spawnOutsideJob } from '../daemon/spawn-outside-job.js';
-import { reconcileInstances } from './instance-registry.js';
+import { isTerminalStatus, reconcileInstances } from './instance-registry.js';
 import {
   runtimePipePath,
   type AgentInstanceRecord,
+  type AgentInstanceStatus,
   type HostInstanceSummary,
   type InstanceSpawnPayload,
 } from './protocol.js';
@@ -15,6 +16,8 @@ import type { AgentInstanceRepository } from '../repositories/agent-instances.js
 
 /** 启动重连失败后的重试间隔（Host 可能只是 tsx 冷加载慢）。 */
 const RETRY_INTERVAL_MS = 30_000;
+/** 周期对账间隔：把 Host 侧状态变化（exited 等）与卡死的 starting 行收进 DB。 */
+const RECONCILE_INTERVAL_MS = 60_000;
 
 /**
  * Runtime Host 监督者（agent-runtime-host-design.md §4/§8）：探测 pipe → 不通则
@@ -41,6 +44,7 @@ export class RuntimeSupervisor {
   private eventHandler: ((frame: HostEventFrame) => void) | null = null;
   private statusHandler: ((reachable: boolean) => void) | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
+  private reconcileTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly repo: AgentInstanceRepository,
@@ -49,6 +53,7 @@ export class RuntimeSupervisor {
     private readonly log: (msg: string) => void = (m) => console.log(`[weave-runtime-sup] ${m}`),
   ) {}
 
+  /** 额外的事件消费者（终端网关）。落库那一路在 connect 时恒挂，不可被挤占。 */
   onEvent(cb: (frame: HostEventFrame) => void): void {
     this.eventHandler = cb;
     this.client?.onEvent(cb);
@@ -88,6 +93,8 @@ export class RuntimeSupervisor {
         const ack = await client.connect(attempt === 0 ? 1_500 : 15_000);
         this.client = client;
         this.hostId = ack.hostId;
+        // 生命周期帧**恒**落库（daemon 唯一 writer），与终端网关的消费互不覆盖。
+        client.onEvent((frame) => void this.handleEvent(frame));
         if (this.eventHandler) client.onEvent(this.eventHandler);
         this.statusHandler?.(true);
         this.log(`connected (hostId ${ack.hostId}, ${ack.instances.length} instances)`);
@@ -131,10 +138,22 @@ export class RuntimeSupervisor {
     const plan = reconcileInstances(rows, live);
     for (const r of plan.refresh) this.repo.updatePid(r.id, r.osPid, r.harnessSessionId);
     for (const l of plan.lost) this.repo.markFailed(l.id, l.errorMessage);
-    // 活着的行刷新为 running（对账即 Host 事实落库）
-    const liveIds = new Set(live.filter((s) => s.status === 'running').map((s) => s.id));
+    // Host 为状态真源：活行随 Host 汇报刷新（事件泵只覆盖在线窗口，
+    // daemon 重启窗口里 exited 的实例靠这一拍收进 DB）。
+    const liveById = new Map(live.map((s) => [s.id, s]));
     for (const row of rows) {
-      if (liveIds.has(row.id) && row.status !== 'running') this.repo.markStatus(row.id, 'running');
+      const sum = liveById.get(row.id);
+      if (!sum || isTerminalStatus(row.status)) continue;
+      if (row.status !== sum.status) {
+        this.repo.markStatus(row.id, sum.status as AgentInstanceStatus);
+      }
+    }
+    // 终态对账兜底：Host 彻底不报的非终态行（daemon 重启窗口里 spawn 失败的）
+    // 没有事件可等——补判 failed。
+    for (const row of rows) {
+      if (!isTerminalStatus(row.status) && !liveById.has(row.id)) {
+        this.repo.markStatus(row.id, 'failed', 'runtime host no longer reports this instance');
+      }
     }
     if (plan.unknown.length > 0) this.log(`orphan instances (not in DB): ${plan.unknown.map((u) => u.id).join(', ')}`);
     return {
@@ -160,6 +179,16 @@ export class RuntimeSupervisor {
     this.retryTimer.unref();
   }
 
+  /** 周期对账：daemon 起来后常跑（事件泵只覆盖在线窗口，对账收离线窗口的尾巴）。 */
+  scheduleReconcile(): void {
+    if (this.reconcileTimer) return;
+    this.reconcileTimer = setInterval(() => {
+      if (!this.client?.connected) return;
+      this.reconcile().catch(() => {});
+    }, RECONCILE_INTERVAL_MS);
+    this.reconcileTimer.unref();
+  }
+
   /** headless 起会话：先落 created 行 → spawn → started 事件把行推到 running。 */
   async spawnInstance(payload: InstanceSpawnPayload, meta: { projectId: number; harness: string }): Promise<void> {
     await this.ensureHost();
@@ -181,7 +210,8 @@ export class RuntimeSupervisor {
     if (!instanceId) return;
     switch (frame.type) {
       case 'instance.started':
-        // spawn 流程里 markStarting 已落，这里只兜底对账期孤儿
+        // spawn 流程里 markStarting 已落，这里把它推到 running（对账之外的正常路径）
+        this.repo.markRunning(instanceId);
         break;
       case 'instance.exited':
         this.repo.markExited(instanceId, Number(frame.exitCode ?? 0));

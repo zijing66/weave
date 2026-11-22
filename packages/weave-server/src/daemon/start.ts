@@ -271,6 +271,7 @@ export function startDaemon(): void {
       console.error('[weave] runtime host unavailable:', err instanceof Error ? err.message : err);
       runtimeSup.scheduleRetry(); // 30s 周期自愈，连上即停
     });
+  runtimeSup.scheduleReconcile(); // 60s 周期对账（事件泵只覆盖在线窗口）
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
     sessions: hookSessions,
@@ -631,6 +632,8 @@ export function startDaemon(): void {
     harnesses,
     sessionProbe,
     terminalRefresher,
+    // 终端预设 = web 时会话宿主是 Runtime Host，判死拉起也必须能起实例。
+    runtimeSupervisor: runtimeSup,
     livenessOf: combinedLivenessOf,
   });
   // 编排引擎：目标会话判死时拉起终端（与会话列表「打开会话」同一份实现）。

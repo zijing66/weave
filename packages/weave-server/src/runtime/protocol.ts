@@ -81,15 +81,17 @@ export interface RuntimeHostEvent {
 }
 
 /**
- * 终端输出帧：终端是字节流不是文本——ANSI / OSC / 全屏 TUI 必须原样保留，
- * 故 data 恒 base64。sequence 按 instance 单调递增，重连按它重放缺口。
+ * 终端输出帧：终端是字节流不是文本——ANSI / OSC / 全屏 TUI 必须原样保留。
+ * data = node-pty 已按 UTF-8 解码的原文字符串（保留 ANSI；B0 设想的 base64
+ * 未采用，实测接线即原文）。sequence 按 instance 单调递增，重连按它重放缺口。
  */
 export interface TerminalOutputEvent {
   instanceId: string;
   terminalSessionId: string;
   sequence: number;
   timestamp: number;
-  encoding: 'base64';
+  /** 原文（见上）；保留字段名以兼容 B0 类型形状。 */
+  encoding: 'utf8';
   data: string;
 }
 
