@@ -53,9 +53,13 @@ function projectWith(version: string | null): { id: number; path: string } {
 
 beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'weave-init-route-'));
+  // 真跑 init 的子进程会把项目登记进库（registerProject 无 dbPath 通道）——
+  // 不重定向数据根就会写进活库，临时目录删了库行残留（p100/p101 泄漏的真因）。
+  process.env.WEAVE_DATA_DIR = path.join(root, 'data');
 });
 
 afterAll(async () => {
+  delete process.env.WEAVE_DATA_DIR;
   await rm(root, { recursive: true, force: true });
 });
 

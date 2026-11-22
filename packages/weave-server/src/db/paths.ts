@@ -1,8 +1,15 @@
 import path from 'node:path';
 import { detectPlatform } from '@weavecode/harness';
 
-/** Absolute path to the global weave data directory (`<configDir>/weave`). */
+/**
+ * Absolute path to the global weave data directory (`<configDir>/weave`).
+ * `WEAVE_DATA_DIR` 覆盖整个数据根（含库与 data/local/cache 三档）——测试用它把
+ * spawn 出的真 CLI 子进程重定向到临时数据目录，别让 init 的 registerProject
+ * 写进活库（子进程没法传 dbPath，env 是唯一通道；spawn 默认继承父进程 env）。
+ */
 export function getDataDir(): string {
+  const override = process.env.WEAVE_DATA_DIR;
+  if (override && override.trim() !== '') return override;
   return path.join(detectPlatform().configDir, 'weave');
 }
 

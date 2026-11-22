@@ -87,7 +87,7 @@ describe('daemon server — file / mcp / statusline', () => {
     const alpha = data.rows.find((r) => r.harness === 'claude' && r.scope === 'project' && r.key === 'alpha');
     expect(alpha?.detail.command).toBe('npx');
     expect(alpha?.detail.args).toEqual(['x']);
-    expect(alpha?.installScopes).toEqual(['project', 'user']);
+    expect(alpha?.installScopes).toEqual(['project', 'local', 'user']); // local 档 = 77579ce0
     // 项目面行带启停语义：无覆盖 = inherit，effective 跟随 enableAll（未放行 = false）。
     expect(alpha?.enable).toBe('inherit');
     expect(alpha?.effective).toBe(false);

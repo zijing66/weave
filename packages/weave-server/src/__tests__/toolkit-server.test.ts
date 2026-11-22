@@ -101,9 +101,18 @@ describe('daemon /toolkit routes', () => {
       packs: Array<{ id: string; enabled: boolean; installed: boolean; provenance: string; kind: string }>;
     };
     expect(data.packs.map((p) => p.id).sort()).toEqual([
+      // 8 个通用工作法 skill（bbd50fb2 用户裁决进 core-skills）+ 既有内置
+      'diagnose-before-fix',
+      'done-means-verified',
+      'escalate-on-ambiguity',
+      'extract-commonality',
       'file-guard',
       'md-lint',
       'mission-control',
+      'plan-then-execute',
+      'residue-sweep',
+      'scope-discipline',
+      'state-accuracy',
       'weave-orchestration',
       'weave-pet-hatcher',
       'weave-plugin-creator',

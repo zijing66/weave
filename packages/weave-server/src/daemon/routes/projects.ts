@@ -747,14 +747,26 @@ export async function handleProjectRoutes(
       });
       void deps.terminalRefresher.tick(true);
     } else {
-      const world = await readTerminalWorld(deps.projects.list());
+      const projects = deps.projects.list();
       const liveCounts = deps.agentInstances?.liveHeadlessCounts() ?? {};
       const counts: Record<number, number> = {};
-      for (const p of deps.projects.list()) {
-        const n = (world.counts[p.id] ?? 0) + (liveCounts[p.id] ?? 0);
-        if (n > 0) counts[p.id] = n;
+      // 注入缝优先（测试/自定义 opener）：真实后端枚举是兜底，不能越过注入的
+      // countTerminals 自己去探（测试机可能真跑着 wezterm）。
+      const countInjected = deps.opener?.countTerminals;
+      const byPath = countInjected
+        ? await countInjected(projects.map((p) => p.path), await readDaemonSettings().then((s) => s.terminal))
+        : null;
+      if (byPath) {
+        for (const p of projects) counts[p.id] = (byPath.get(p.path) ?? 0) + (liveCounts[p.id] ?? 0);
+        sendJson(res, 200, { counts, hidden: {} });
+      } else {
+        const world = await readTerminalWorld(projects);
+        for (const p of projects) {
+          const n = (world.counts[p.id] ?? 0) + (liveCounts[p.id] ?? 0);
+          if (n > 0) counts[p.id] = n;
+        }
+        sendJson(res, 200, { counts, hidden: world.hidden });
       }
-      sendJson(res, 200, { counts, hidden: world.hidden });
     }
     return true;
   }
