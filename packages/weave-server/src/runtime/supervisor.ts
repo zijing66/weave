@@ -45,12 +45,18 @@ export class RuntimeSupervisor {
   private statusHandler: ((reachable: boolean) => void) | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
   private reconcileTimer: NodeJS.Timeout | null = null;
+  /** daemon 停机后不再拉起 Host（手动停止不复活）。 */
+  private stopped = false;
+  /** 并发 ensureHost 共享一次连接/拉起（后台重连与用户开终端同时到达不双跑）。 */
+  private inflight: Promise<void> | null = null;
 
   constructor(
     private readonly repo: AgentInstanceRepository,
     /** 配置根（`dataRoots` 的 dir 语义：`<configDir>/weave`）；测试可注入。 */
     private readonly dataDir: string = getDataDir(),
     private readonly log: (msg: string) => void = (m) => console.log(`[weave-runtime-sup] ${m}`),
+    /** Host 拉起实现（测试注入假实现，避免测试里真起 node 进程）。 */
+    private readonly spawnImpl: (() => Promise<void>) | null = null,
   ) {}
 
   /** 额外的事件消费者（终端网关、资源采样等多路）。落库那一路在 connect 时恒挂，不可被挤占。 */
@@ -84,14 +90,24 @@ export class RuntimeSupervisor {
     return this.client?.connected ?? false;
   }
 
-  /** 幂等确保 Host 在线（已连即复用；断线即重连/重拉）。 */
+  /** 幂等确保 Host 在线（已连即复用；断线即重连/重拉）。并发调用共享同一次。 */
   async ensureHost(): Promise<void> {
+    if (this.stopped) throw new Error('runtime supervisor stopped');
     if (this.client?.connected) return;
+    if (this.inflight) return this.inflight;
+    this.inflight = this.connect().finally(() => (this.inflight = null));
+    return this.inflight;
+  }
+
+  private async connect(): Promise<void> {
     const token = this.localToken();
     for (let attempt = 0; ; attempt++) {
       const client = new RuntimeHostClient(this.pipePath, token, () => {
         this.log('runtime host disconnected');
         this.statusHandler?.(false);
+        // 运行中断线也要自愈：不带这拍，断线后无新请求的窗口里 Host 永远离线
+        //（reconcile interval 对 disconnected 直接 return）。
+        this.scheduleRetry();
       });
       try {
         const ack = await client.connect(attempt === 0 ? 1_500 : 15_000);
@@ -105,9 +121,23 @@ export class RuntimeSupervisor {
         return;
       } catch {
         client.disconnect();
+        if (this.stopped) throw new Error('runtime supervisor stopped');
         if (attempt >= 1) throw new Error('cannot reach or spawn the runtime host');
-        await this.spawnHost();
+        await (this.spawnImpl ? this.spawnImpl() : this.spawnHost());
       }
+    }
+  }
+
+  /** daemon 停机：停自愈与对账，不再拉起/重连 Host（Host 自身独立存活，不动）。 */
+  stop(): void {
+    this.stopped = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
     }
   }
 
@@ -170,11 +200,11 @@ export class RuntimeSupervisor {
 
   /** 启动重连失败后的周期自愈（ensureHost 幂等；连上即停）。 */
   scheduleRetry(): void {
-    if (this.retryTimer) return;
+    if (this.stopped || this.retryTimer) return;
     this.retryTimer = setTimeout(
       () => {
         this.retryTimer = null;
-        if (this.client?.connected) return;
+        if (this.stopped || this.client?.connected) return;
         this.reconcile()
           .catch(() => this.scheduleRetry()); // 还不通就再等一轮
       },
@@ -185,7 +215,7 @@ export class RuntimeSupervisor {
 
   /** 周期对账：daemon 起来后常跑（事件泵只覆盖在线窗口，对账收离线窗口的尾巴）。 */
   scheduleReconcile(): void {
-    if (this.reconcileTimer) return;
+    if (this.stopped || this.reconcileTimer) return;
     this.reconcileTimer = setInterval(() => {
       if (!this.client?.connected) return;
       this.reconcile().catch(() => {});

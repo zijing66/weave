@@ -73,7 +73,7 @@ describe('getLibraryScan', () => {
     const second = await getLibraryScan(dir);
     expect(second).toEqual(first);
     const file = readCacheFile(dir);
-    expect(file.version).toBe(1);
+    expect(file.version).toBe(2);
     expect(file.skills).toEqual(first.skills);
     expect(file.mcp).toEqual(first.mcp);
   });
@@ -125,7 +125,7 @@ describe('getLibraryScan', () => {
     writeFileSync(join(cacheDirOf(dir), 'scans.json'), '{ not json');
     const scan = await getLibraryScan(dir);
     expect(scan.skills.map((s) => s.name)).toEqual(['alpha']);
-    expect(readCacheFile(dir).version).toBe(1);
+    expect(readCacheFile(dir).version).toBe(2);
   });
 
   it('version 不匹配 = 丢弃重扫', async () => {
@@ -142,7 +142,7 @@ describe('getLibraryScan', () => {
     writeFileSync(
       join(cacheDirOf(dir), 'scans.json'),
       JSON.stringify({
-        version: 1,
+        version: 2,
         root: join(dirname(dir), 'old-root'),
         plugins: [],
         packRoots: [],

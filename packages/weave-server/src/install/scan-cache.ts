@@ -23,7 +23,7 @@ export interface LibraryScan {
 }
 
 const CACHE_FILE = 'scans.json';
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 
 /**
  * 冷层落点：`<lib 的父目录>/.weave-scans/<lib 目录名>/scans.json`——每个库

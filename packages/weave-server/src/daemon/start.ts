@@ -973,6 +973,7 @@ export function startDaemon(): void {
 
   const shutdown = (): void => {
     pluginLoaderRef?.stopWatching(); // 取当前一代 watcher（「重新扫描」会换代，不能存启动时那个 stop）
+    runtimeSup.stop(); // 停机后不再重连/拉起 Host（Host 进程自身独立存活，不杀）
     terminalRefresher.stop();
     livenessRefresher.stop();
     interruptRefresher.stop();

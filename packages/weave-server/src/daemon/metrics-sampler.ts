@@ -29,6 +29,8 @@ const HISTORY_MAX = 60;
 
 export interface MetricsAgentSample {
   instanceId: string;
+  /** 归属项目：全局仪表盘与项目/会话卡共用同一帧，前端按它切自己的视图。 */
+  projectId: number;
   osPid?: number;
   harnessSessionId?: string;
   harness: string;
@@ -192,6 +194,7 @@ export class MetricsSampler {
     for (const r of rows) {
       samples.push({
         instanceId: r.id,
+        projectId: r.projectId,
         ...(r.osPid ? { osPid: r.osPid } : {}),
         ...(r.harnessSessionId ? { harnessSessionId: r.harnessSessionId } : {}),
         harness: r.harness,

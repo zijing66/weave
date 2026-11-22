@@ -96,7 +96,7 @@ import { TerminalGateway } from '../runtime/terminal/session-gateway.js';
 import { attachTerminalWebSocket, terminalUpgradeHandler } from '../runtime/terminal/ws-endpoint.js';
 import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
-import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
+import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
 import { ensureDataLayout } from '../db/layout.js';
 import { pruneFileIndexes } from './project-files.js';
@@ -144,6 +144,28 @@ delete process.env.CLAUDE_CODE_CHILD_SESSION;
 // 从不在任何 pane 里（wezterm 后端新 pane 的 WEZTERM_* 由 wezterm 自己注入）。
 for (const key of TERMINAL_LOCATOR_ENV_KEYS) delete process.env[key];
 
+/**
+ * 端口语义（dev）：6420 被占不静默漂到 6421——漂走会与占着 6420 的 daemon
+ * 开同一个 SQLite（双写者）。占用多半是 tsx watch 热重载窗口里旧进程还在收尾
+ * （3s 兜底 + WS/SSE 排空），等它让出；超窗仍被占 = 真有另一个 daemon 在跑，
+ * 明确报错退出，让用户裁决。
+ */
+async function acquirePort(): Promise<number> {
+  if (await isPortFree(DEFAULT_PORT)) return DEFAULT_PORT;
+  for (let waited = 0; waited < 20_000; waited += 500) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await isPortFree(DEFAULT_PORT)) {
+      console.log('[dev] default port released after reload window — rebinding');
+      return DEFAULT_PORT;
+    }
+  }
+  console.error(
+    `[dev] port ${DEFAULT_PORT} is held by another process (likely a running weave daemon). ` +
+      'Refusing to start a second daemon on the same data directory — stop the other one first.',
+  );
+  process.exit(1);
+}
+
 async function main(): Promise<void> {
   // 三档目录搬迁（data/ local/ cache/）必须先于写状态与开库：库文件自己也在搬。
   ensureDataLayout();
@@ -153,9 +175,7 @@ async function main(): Promise<void> {
   } catch (e) {
     console.error('[dev] backup restore failed:', e);
   }
-  const port = (await isPortFree(DEFAULT_PORT))
-    ? DEFAULT_PORT
-    : await findFreePort(DEFAULT_PORT + 1);
+  const port = await acquirePort();
   writeDaemonState({
     pid: process.pid,
     port,
@@ -911,6 +931,7 @@ async function main(): Promise<void> {
   });
 
   const shutdown = (): void => {
+    runtimeSup.stop(); // 停机后不再重连/拉起 Host（Host 进程自身独立存活，不杀）
     terminalRefresher.stop();
     livenessRefresher.stop();
     interruptRefresher.stop();
