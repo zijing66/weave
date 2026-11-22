@@ -91,6 +91,13 @@ describe('POST /sessions/:id/open-terminal', () => {
     sessionProbe.noteTranscript(SESSION_NEW, empty);
     setDaemonSettingsDb(db);
     hooksTmp = await mkdtemp(path.join(tmpdir(), 'weave-sess-open-hooks-'));
+    // 本文件验外部窗口形态（runInTerminal/runInTerminalAt）——preset 钉死 window 形，
+    // 不随缺省（web=headless）漂移
+    await writeDaemonSettings({
+      terminal: { preset: 'auto', customCommand: '' },
+      locale: 'zh-CN',
+      hooks: { enabled: true },
+    });
     server = createWeaveServer({
       projects,
       port: 0,

@@ -295,6 +295,7 @@ export function startDaemon(): void {
       promptTerminalChannel(() => readDaemonSettingsSync().terminal),
       agentInstances,
       runtimeSup,
+      terminalGateway,
     ),
     // 模态框在场时层② 不盲注（tracker 在下面构造，闭包惰性取）。
     blockedByQuestion: (sessionId) => questionTracker.get(sessionId) != null,
@@ -861,6 +862,7 @@ export function startDaemon(): void {
       promptTerminalChannel(() => readDaemonSettingsSync().terminal),
       agentInstances,
       runtimeSup,
+      terminalGateway,
     ),
     uploads,
     questionTracker,

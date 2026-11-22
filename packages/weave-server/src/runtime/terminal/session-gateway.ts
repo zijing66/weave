@@ -190,6 +190,25 @@ export class TerminalGateway {
 
   // —— Input Lease（多读一写）——
 
+  /** 服务内读屏（HeadlessTerminal.getPaneText 用，不经 WS）：本地 ring 尾部
+   *  原始输出字节拼接（剥 ANSI 后由调用方判据）。daemon 重启窗口（ring 空）与
+   *  无输出返回 null——读不到 ≠ 事实，判据侧自会「不动作」。 */
+  tailText(instanceId: string, chars = 4000): string | null {
+    const s = this.instances.get(instanceId);
+    if (!s || s.ring.length === 0) return null;
+    let out = '';
+    for (let i = s.ring.length - 1; i >= 0 && out.length < chars; i--) {
+      const entry = s.ring[i]!;
+      try {
+        const frame = JSON.parse(entry.text) as { type?: string; data?: string };
+        if (frame.type === 'terminal.output' && frame.data) out = frame.data + out;
+      } catch {
+        /* ring 行恒为合法 JSON，坏行跳过 */
+      }
+    }
+    return out.length > 0 ? out : null;
+  }
+
   leaseInfo(instanceId: string): { lease: InputLease | null } {
     const s = this.instances.get(instanceId);
     return { lease: s?.lease ?? null };

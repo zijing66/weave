@@ -504,8 +504,9 @@ export function SessionList({
     else rowEls.current.delete(sessionId);
   };
 
-  /** 一行会话卡：分块内与散行共用同一份 JSX，位次容器由外层决定。 */
-  const renderRow = (s: SessionRow): ReactNode => {
+  /** 一行会话卡：分块内与散行共用同一份 JSX，位次容器由外层决定。
+   *  `archived` = 已收纳区的行：整体灰色调（还在，但不常看）。 */
+  const renderRow = (s: SessionRow, archived = false): ReactNode => {
     const status = statuses.get(s.sessionId) ?? 'open';
     const selected = s.sessionId === selectedId;
     const cap = s.harness != null ? capabilities?.get(s.harness) : undefined;
@@ -520,8 +521,8 @@ export function SessionList({
     ).length;
     // 转录没了 = `--resume` 接不回来（服务端判；行内提示 + 打开禁用）
     const noTranscript = s.transcriptPresent === false;
-    // 已开终端：外部窗口的 TUI 在跑，或 Web 终端能接（headless 实例活着）。
-    const terminalOpen = !!s.pidAlive || !!s.webInstanceId;
+    // 确知离线（pidAlive === false；null = 查不到不猜）：虚线框，一眼挑出没在跑的
+    const offline = s.pidAlive === false;
     return (
       <Tooltip
         label={droppingId === s.sessionId ? t('tasks.dropTip') : sessionLabel(s.title, s.sessionId)}
@@ -556,9 +557,11 @@ export function SessionList({
             'group flex min-w-0 flex-wrap cursor-pointer items-center gap-x-2 gap-y-1 rounded-xl border p-2 transition-colors',
             selected
               ? 'border-blue-500/50 bg-blue-500/10'
-              : terminalOpen
-                ? 'border-emerald-500/40 bg-neutral-900/50 hover:border-emerald-500/60 hover:bg-edge/[0.04]'
-                : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.10] hover:bg-edge/[0.04]',
+              : archived
+                ? 'border-edge/[0.06] bg-neutral-950/70 opacity-60 transition-opacity hover:opacity-100'
+                : offline
+                  ? 'border-dashed border-edge/30 bg-neutral-900/60 hover:border-edge/40 hover:bg-edge/[0.04]'
+                  : 'border-edge/20 bg-neutral-900/50 hover:border-edge/30 hover:bg-edge/[0.04]',
             highlightId === s.sessionId && 'border-rose-400/70',
             droppingId === s.sessionId && 'border-dashed border-blue-400/70 bg-blue-500/10',
           )}
@@ -948,10 +951,10 @@ export function SessionList({
             <span className="h-px flex-1 border-t border-dashed border-edge/[0.12]" />
           </button>
           {archivedOpen && (
-            <ul className="mt-1.5 space-y-1.5 opacity-80 transition-opacity [&>li>*:first-child:hover]:opacity-100">
+            <ul className="mt-1.5 space-y-1.5">
               {archivedRows.map((s) => (
                 <li key={s.sessionId} ref={registerRow(s.sessionId)}>
-                  {renderRow(s)}
+                  {renderRow(s, true)}
                 </li>
               ))}
             </ul>

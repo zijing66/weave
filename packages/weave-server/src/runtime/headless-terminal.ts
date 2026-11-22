@@ -1,6 +1,7 @@
 import type { PromptTerminal } from '../hooks/message-deliverer.js';
 import type { RuntimeSupervisor } from './supervisor.js';
 import type { AgentInstanceRepository } from '../repositories/agent-instances.js';
+import type { TerminalGateway } from './terminal/session-gateway.js';
 
 /**
  * headless 实例的层② 终端通道（B1 收尾，agent-runtime-host-design.md §5.2）：
@@ -14,6 +15,7 @@ export class HeadlessTerminal implements PromptTerminal {
   constructor(
     private readonly supervisor: RuntimeSupervisor,
     private readonly repo: AgentInstanceRepository,
+    private readonly gateway?: TerminalGateway,
   ) {}
 
   /** Host 在线 = 通道可用（headless 实例能不能投还要看实例本身活着）。 */
@@ -53,13 +55,27 @@ export class HeadlessTerminal implements PromptTerminal {
     await this.supervisor.sendStdin(paneId, keys);
   }
 
-  /** 读屏（中断确认判据用）——B3 Gateway 接管；B1 如实答 null（读不到 ≠ 已停）。 */
-  async getPaneText(_paneId: string): Promise<string | null> {
-    return null;
+  /**
+   * 读屏（中断确认 / 提交探针 / rewind 面板判据用）= Gateway ring 尾部原始输出
+   * 剥 ANSI 后的纯文本（外部后端 capture-pane 同口径）。ring 空（daemon 刚重启 /
+   * 无输出）→ null——读不到 ≠ 事实，判据侧自会「不动作」，绝不猜。
+   * 控制序列里 CR 是换行语义（TUI 整屏重绘流里 LF 只进 scrollback），对齐外部
+   * 后端读屏按行给文本的形态。
+   */
+  async getPaneText(paneId: string): Promise<string | null> {
+    const raw = this.gateway?.tailText(paneId);
+    if (!raw) return null;
+    return stripAnsi(raw).replace(/\r\n?/g, '\n');
   }
 
   /** 关掉实例（会话收尾）——温和 kill，落库走 daemon 事件泵。 */
   async closePane(paneId: string): Promise<void> {
     await this.supervisor.killInstance(paneId).catch(() => {});
   }
+}
+
+/** CSI/OSC/控制序列剥除（读屏判据只吃可见文本；与外部后端 capture-pane 同口径）。 */
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|[\x00-\x08\x0b-\x1f\x7f]/g, '');
 }

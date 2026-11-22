@@ -2,6 +2,7 @@ import type { PromptTerminal } from '../hooks/message-deliverer.js';
 import type { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import { RuntimeSupervisor } from './supervisor.js';
 import { HeadlessTerminal } from './headless-terminal.js';
+import type { TerminalGateway } from './terminal/session-gateway.js';
 
 /**
  * 层② 合并通道（B1 收尾）：headless 实例优先（pane id = instanceId，定位走
@@ -12,8 +13,9 @@ export function mergedTerminalChannel(
   external: PromptTerminal,
   repo: AgentInstanceRepository,
   supervisor?: RuntimeSupervisor,
+  gateway?: TerminalGateway,
 ): PromptTerminal {
-  const headless = supervisor ? new HeadlessTerminal(supervisor, repo) : null;
+  const headless = supervisor ? new HeadlessTerminal(supervisor, repo, gateway) : null;
   const viaHeadless = (paneId: string): boolean =>
     headless !== null && !/^(wez:|wt:|konsole:|iterm:)/.test(paneId);
   return {

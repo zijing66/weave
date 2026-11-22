@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TerminalGateway } from '../session-gateway.js';
+import { HeadlessTerminal } from '../../headless-terminal.js';
 import type { RuntimeSupervisor } from '../../supervisor.js';
 import type { TerminalAttachRequest } from '../../protocol.js';
 
@@ -96,6 +97,44 @@ describe('TerminalGateway attach 重放', () => {
 });
 
 describe('TerminalGateway 实例终态（恢复向导的判据面）', () => {
+  it('tailText 拼 ring 尾部原始输出（读屏判据的供给面）', async () => {
+    const { sup, emit } = fakeSupervisor([]);
+    const gateway = new TerminalGateway(sup);
+    gateway.start();
+    attachOnce(gateway, { clientId: 't1' });
+    emit({ type: 'terminal.output', instanceId: 'wvi-test', sequence: 1, data: 'first\r\n' });
+    emit({ type: 'terminal.output', instanceId: 'wvi-test', sequence: 2, data: 'second' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(gateway.tailText('wvi-test')).toBe('first\r\nsecond');
+    expect(gateway.tailText('wvi-unknown')).toBeNull();
+  });
+
+  it('tailText 跳过 resize 帧只取 output', async () => {
+    const { sup, emit } = fakeSupervisor([]);
+    const gateway = new TerminalGateway(sup);
+    gateway.start();
+    emit({ type: 'terminal.resize', instanceId: 'wvi-test', sequence: 1, cols: 80, rows: 24 } as never);
+    emit({ type: 'terminal.output', instanceId: 'wvi-test', sequence: 2, data: 'text' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(gateway.tailText('wvi-test')).toBe('text');
+  });
+
+  it('HeadlessTerminal.getPaneText 剥 ANSI、CR 归一（外部 capture-pane 同口径）', async () => {
+    const { sup, emit } = fakeSupervisor([]);
+    const gateway = new TerminalGateway(sup);
+    gateway.start();
+    const term = new HeadlessTerminal(sup as never, { get: () => null } as never, gateway);
+    emit({ type: 'terminal.output', instanceId: 'wvi-test', sequence: 1, data: '❯ \x1b[32mok\x1b[0m\r\n· done' });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(await term.getPaneText('wvi-test')).toBe('❯ ok\n· done');
+  });
+
+  it('ring 空（daemon 刚重启/无输出）→ getPaneText null，判据侧不动作', async () => {
+    const { sup } = fakeSupervisor([]);
+    const gateway = new TerminalGateway(sup);
+    const term = new HeadlessTerminal(sup as never, { get: () => null } as never, gateway);
+    expect(await term.getPaneText('wvi-test')).toBeNull();
+  });
   it('attach 时 Host 已不报该实例 → 回致命 error，不装「已连接」', async () => {
     const { sup } = fakeSupervisor([], undefined, []);
     const frames = attachOnce(new TerminalGateway(sup), { clientId: 'late' });
