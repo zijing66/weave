@@ -4,13 +4,14 @@ import { HeadlessTerminal } from '../../headless-terminal.js';
 import type { RuntimeSupervisor } from '../../supervisor.js';
 import type { TerminalAttachRequest } from '../../protocol.js';
 
-/** 最小假 supervisor：只回答 replayAfter / listInstances（Gateway 其余面不参与本测）。 */
+/** 最小假 supervisor：只回答 replayAfter / listInstances / resize（Gateway 其余面不参与本测）。 */
 function fakeSupervisor(
   entries: Array<{ kind: 'output' | 'resize'; sequence: number; data?: string; cols?: number; rows?: number }>,
   replayError?: Error,
   liveIds: string[] = ['wvi-test'],
 ) {
   const calls: number[] = [];
+  const resizes: Array<{ cols: number; rows: number }> = [];
   let onEvent: ((frame: { type: string; instanceId: string; sequence: number; data: string }) => void) | null = null;
   const sup = {
     onEvent: (cb: typeof onEvent) => { onEvent = cb; },
@@ -21,8 +22,11 @@ function fakeSupervisor(
       if (replayError) throw replayError;
       return entries;
     },
+    resize: async (_id: string, cols: number, rows: number) => {
+      resizes.push({ cols, rows });
+    },
   };
-  return { sup: sup as unknown as RuntimeSupervisor, calls, emit: sup.emit };
+  return { sup: sup as unknown as RuntimeSupervisor, calls, resizes, emit: sup.emit };
 }
 
 function attachOnce(gateway: TerminalGateway, req: Partial<TerminalAttachRequest> & { clientId: string }) {
@@ -143,6 +147,22 @@ describe('TerminalGateway 实例终态（恢复向导的判据面）', () => {
     expect(fatal?.fatal).toBe(true);
     expect(fatal?.error).toBe('instance not found');
     expect(frames.some((f) => f.includes('"type":"attached"'))).toBe(false);
+  });
+
+  it('attach 几何对齐：视口 ≠ PTY 现状即代为 resize（双光标根因 A 的回归）', async () => {
+    const { sup, resizes, emit } = fakeSupervisor([]);
+    const gateway = new TerminalGateway(sup);
+    gateway.start();
+    // Host 报过 resize 120×30 → 状态记账
+    emit({ type: 'terminal.resize', instanceId: 'wvi-test', sequence: 1, cols: 120, rows: 30 } as never);
+    // 客户端视口 120×30：一致，不 resize
+    attachOnce(gateway, { clientId: 'aligned', cols: 120, rows: 30 });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resizes).toEqual([]);
+    // 客户端视口 80×24：与 PTY 不一致 → 网关代为对齐
+    attachOnce(gateway, { clientId: 'misaligned', cols: 80, rows: 24 });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resizes).toEqual([{ cols: 80, rows: 24 }]);
   });
 
   it('instance.exited 广播到客户端（前端转终态停重连）', async () => {

@@ -33,6 +33,9 @@ interface InstanceState {
   /** 重放短窗：[{sequence, text}]。 */
   ring: Array<{ sequence: number; text: string }>;
   lastSequence: number;
+  /** 最近已知的 PTY 几何（attach 对齐与去重判据；null = 还没人报过）。 */
+  cols: number | null;
+  rows: number | null;
   lease: InputLease | null;
   leaseTimer: NodeJS.Timeout | null;
 }
@@ -53,7 +56,7 @@ export class TerminalGateway {
   private stateOf(instanceId: string): InstanceState {
     let s = this.instances.get(instanceId);
     if (!s) {
-      s = { clients: new Map(), ring: [], lastSequence: 0, lease: null, leaseTimer: null };
+      s = { clients: new Map(), ring: [], lastSequence: 0, cols: null, rows: null, lease: null, leaseTimer: null };
       this.instances.set(instanceId, s);
     }
     return s;
@@ -75,6 +78,10 @@ export class TerminalGateway {
     if (frame.type !== 'terminal.output' && frame.type !== 'terminal.resize') return;
     const s = this.stateOf(instanceId);
     s.lastSequence = Math.max(s.lastSequence, Number(frame.sequence ?? 0));
+    if (frame.type === 'terminal.resize') {
+      s.cols = Number(frame.cols ?? 0) || s.cols;
+      s.rows = Number(frame.rows ?? 0) || s.rows;
+    }
     const text = JSON.stringify({
       type: frame.type,
       instanceId,
@@ -128,6 +135,16 @@ export class TerminalGateway {
       }
     } catch {
       /* Host 暂不可达：照常重放 */
+    }
+    // 几何对齐（§13.3 稳定性规范：PTY 与 xterm 恒同 cols/rows）：知道 PTY 现状
+    // （Host 报过 terminal.resize）且与 attach 视口不一致时，代为 resize 一次——
+    // readonly 观察者（拿不到 Lease、永远发不了 resize）会把 PTY 的整屏重绘写进
+    // 几何不符的 xterm，旧帧覆盖不到边界外，状态栏残影/双光标即由此来。
+    // PTY 现状未知时不动（盲 resize 会把 PTY 缩到 80×24）；失败不拦。
+    if (s.cols !== null && s.rows !== null && req.cols > 0 && req.rows > 0 && (req.cols !== s.cols || req.rows !== s.rows)) {
+      s.cols = req.cols;
+      s.rows = req.rows;
+      this.supervisor.resize(req.instanceId, req.cols, req.rows).catch(() => {});
     }
     const from = req.lastSequence ?? 0;
     const { instanceId } = req;

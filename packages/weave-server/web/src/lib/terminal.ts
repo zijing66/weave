@@ -29,12 +29,24 @@ export class TerminalClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private leaseId: string | null = null;
   private leaseTimer: ReturnType<typeof setInterval> | null = null;
+  /** attach 报给网关的视口几何（setDimensions 后连接即带真值，缺省 80×24）。 */
+  private cols = 80;
+  private rows = 24;
 
   constructor(
     private readonly instanceId: string,
     private readonly mode: 'readonly' | 'interactive',
     private readonly cb: TerminalClientCallbacks,
   ) {}
+
+  /** 连接前声明视口几何：网关在 attach 时按它对齐 PTY（readonly 观察者没有
+   *  Lease 发不了 resize，只有这条路能把真尺寸带过去）。 */
+  setDimensions(cols: number, rows: number): void {
+    if (cols > 0 && rows > 0) {
+      this.cols = cols;
+      this.rows = rows;
+    }
+  }
 
   connect(): void {
     this.closedByUser = false;
@@ -49,8 +61,8 @@ export class TerminalClient {
           instanceId: this.instanceId,
           lastSequence: this.lastSequence,
           mode: this.mode,
-          cols: 80,
-          rows: 24,
+          cols: this.cols,
+          rows: this.rows,
         }),
       );
       if (this.mode === 'interactive') this.requestControl();

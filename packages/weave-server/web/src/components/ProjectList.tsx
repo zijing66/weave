@@ -15,7 +15,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { api, type HarnessCheck, type ProjectRow, type TerminalTarget, type RpgExpeditionView, type RpgRoleView } from '@/lib/api';
+import { api, type HarnessCheck, type ProjectRow, type TerminalTarget, type AgentInstanceRow, type RpgExpeditionView, type RpgRoleView } from '@/lib/api';
 import { AgentBadge } from '@/components/AgentBadge';
 import { Badge } from '@/components/ui/badge';
 import { useMediaQuery } from '@/lib/use-media-query';
@@ -42,6 +42,8 @@ import {
   ArrowUpRight,
   Eye,
   EyeOff,
+  Cpu,
+  MemoryStick,
   FolderOpen,
   Globe,
   GripVertical,
@@ -82,6 +84,8 @@ interface ProjectListProps {
   openTerminalStateOf?: (projectId: number) => ActionState;
   /** 关掉该项目的已开终端：只关清单里的 pane（终端弹层里勾选 / 单卡关闭的结果）。 */
   onCloseTerminal?: (p: ProjectRow, paneIds: string[]) => void;
+  /** 打开 Runtime Host 托管的 Web Terminal 实例。 */
+  onOpenWebTerminal?: (project: ProjectRow, instance: AgentInstanceRow) => void;
   /** Row badges: 该项目各 harness 的「运行中/就绪」会话计数（全局状态总线供给）。 */
   sessionStatsOf?: (projectId: number) => HarnessSessionCounts[] | undefined;
   /** 该项目下待答的阻塞问题数：有则卡片边框换成与会话行问答图标同一档 amber。 */
@@ -215,6 +219,7 @@ export function ProjectList({
   onSelectGlobal,
   onOpenExplorer,
   onOpenTerminal,
+  onOpenWebTerminal,
   onHoverProject,
   updateSummaryOf,
   onSyncNow,
@@ -317,6 +322,7 @@ export function ProjectList({
     y: number;
     /** null = 还在拉；[] = 拉回来了，一个终端都没有 */
     targets: TerminalTarget[] | null;
+    instances: AgentInstanceRow[];
     /** 勾选的卡片 id（只收可关的那些）——顶部批量关闭按钮按它算。 */
     selected: string[];
     /** 各目标所在 OS 窗口的可见性（targetId → visible/hidden/null；null = 探不到不摆态）。 */
@@ -340,15 +346,16 @@ export function ProjectList({
       x: rect.left,
       y: rect.bottom + 4,
       targets: null,
+      instances: [],
       selected: [],
       visibility: {},
       visBusy: null,
       closeBusy: [],
     });
-    api
-      .listProjectTerminals(p.id)
-      .then((targets) => {
-        setTermMenu((cur) => (cur && cur.project.id === p.id ? { ...cur, targets } : cur));
+    Promise.all([api.listProjectTerminals(p.id), api.listAgentInstances(p.id)])
+      .then(([targets, rows]) => {
+        const instances = rows.filter((r) => r.status === 'running' || r.status === 'starting');
+        setTermMenu((cur) => (cur && cur.project.id === p.id ? { ...cur, targets, instances } : cur));
         // 逐目标查窗口可见性（火力全开也只是一枪 powershell/目标；失败项留 null 不摆态）。
         for (const target of targets) {
           api
@@ -886,7 +893,6 @@ export function ProjectList({
                 >
                   <Settings className="h-3.5 w-3.5" />
                 </QuickButton>
-                <ProjectResourceBadge projectId={p.id} />
                 {/* G6 角色可见桥：有房才摆（badge = 出征中的成员数；点击开折叠区）。 */}
                 {bridgeRows != null && (
                   <QuickButton
@@ -936,6 +942,8 @@ export function ProjectList({
                   )}
                 </div>
               )}
+              {/* 资源徽标：卡内独立一行贴右下角，不与按钮簇同行挤 */}
+              <ProjectResourceBadge projectId={p.id} />
             </li>
               )}
             </SortableProjectLi>
@@ -1106,10 +1114,33 @@ export function ProjectList({
                 </button>
               )}
             </div>
+            {termMenu.instances.length > 0 && (
+              <ul className="space-y-1 pb-1">
+                {termMenu.instances.map((instance) => (
+                  <li key={instance.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenWebTerminal?.(termMenu.project, instance);
+                        setTermMenu(null);
+                      }}
+                      className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-edge/[0.08] px-2 py-2 text-left hover:bg-edge/[0.06]"
+                    >
+                      <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs text-neutral-200">{instance.command}</span>
+                        <span className="block truncate text-10 text-neutral-500">{instance.harnessSessionId ?? instance.id}</span>
+                      </span>
+                      <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             {termMenu.targets === null ? (
               <p className="px-2 py-2 text-11 text-neutral-500">{t('common.loading')}</p>
             ) : termMenu.targets.length === 0 ? (
-              (terminalsOf?.(termMenu.project.id) ?? 0) > 0 && (
+              termMenu.instances.length === 0 && (terminalsOf?.(termMenu.project.id) ?? 0) > 0 && (
                 <p className="px-2 pb-1 text-11 text-neutral-500">
                   {t('project.terminalListUnavailable')}
                 </p>
@@ -1485,17 +1516,29 @@ function ProjectResourceBadge({ projectId }: { projectId: number }) {
   const cpu = agents.some((a) => a.cpuPercent !== undefined)
     ? Math.round(agents.reduce((s, a) => s + (a.cpuPercent ?? 0), 0) * 10) / 10
     : null;
-  const mem = agents.reduce((s, a) => s + (a.memRssBytes ?? 0), 0);
+  const anyMem = agents.some((a) => a.memRssBytes !== undefined);
+  const mem = anyMem ? agents.reduce((s, a) => s + (a.memRssBytes ?? 0), 0) : null;
   return (
-    <Tooltip label={t('project.resTip', { n: agents.length })}>
-      <span className="ml-auto shrink-0 rounded-full bg-edge/[0.06] px-1.5 text-10 leading-4 tabular-nums text-neutral-400">
-        {cpu === null ? 'CPU —' : `CPU ${cpu}%`} · {fmtMem(mem)}
-      </span>
-    </Tooltip>
+    <div className="flex min-w-0 justify-end px-2 pb-1">
+      <Tooltip label={t('project.resTip', { n: agents.length })} className="min-w-0 max-w-full">
+        <span className="flex max-w-full items-center gap-2 truncate rounded-full bg-edge/[0.06] px-2 text-10 leading-5 tabular-nums">
+          <span className="inline-flex min-w-0 items-center gap-1 text-neutral-500">
+            <Cpu className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">{cpu === null ? '—' : `${cpu}%`}</span>
+          </span>
+          <span className="inline-flex min-w-0 items-center gap-1 text-emerald-400">
+            <MemoryStick className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">{mem === null ? '—' : fmtMem(mem)}</span>
+          </span>
+        </span>
+      </Tooltip>
+    </div>
   );
 }
 
-function fmtMem(n: number): string {
-  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} MB`;
-  return `${(n / 1024 / 1024).toFixed(1)} GB`;
+function fmtMem(bytes: number): string {
+  if (bytes < 1024) return `${Math.max(1, Math.round(bytes))} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }

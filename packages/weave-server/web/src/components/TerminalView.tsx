@@ -97,7 +97,25 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       // 大块 TUI 重绘解析完后又把光标推到视口外。
       term.write(data, () => {
         if (Date.now() - lastWheelAt > 1500) term.scrollToBottom();
+        clearStaleCursor();
       });
+    };
+    // 陈旧光标行清理：合帧/scrollToBottom 组合可能把 DOM renderer 的 xterm-cursor
+    // class 定格在旧光标行（该行滚出渲染批次后不重建）——写完按上拍光标行定向
+    // refresh，残留 class 与瞬时双光标即清（双光标链路的渲染面收尾）。
+    let lastCursorRow = -1;
+    const clearStaleCursor = (): void => {
+      try {
+        const b = term.buffer.active;
+        const row = b.cursorY + b.baseY;
+        if (lastCursorRow >= 0 && lastCursorRow !== row) {
+          const viewportRow = lastCursorRow - b.baseY;
+          term.refresh(viewportRow < 0 ? 0 : Math.min(viewportRow, term.rows - 1), term.rows - 1);
+        }
+        lastCursorRow = row;
+      } catch {
+        /* buffer 尚未就绪：跳过 */
+      }
     };
     const queueOut = (data: string): void => {
       pendingOut += data;
@@ -173,6 +191,9 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       onReconnect: () => setStatus('live'),
     });
     clientRef.current = client;
+    // attach 带真实视口几何：网关在 attach 时按它对齐 PTY（readonly 没有 Lease
+    // 发不了 resize，只有这条路能把真尺寸带过去）。
+    client.setDimensions(term.cols, term.rows);
     client.connect();
 
     if (interactive) {
@@ -191,6 +212,7 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
 
     const onResize = () => {
       fit.fit();
+      client.setDimensions(term.cols, term.rows);
       client.resize(term.cols, term.rows);
     };
     window.addEventListener('resize', onResize);

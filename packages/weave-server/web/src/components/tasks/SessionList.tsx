@@ -8,7 +8,7 @@ import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Archive, Bell, BellRing, Check, ChevronDown, Copy, Eye, EyeOff, FileWarning, HelpCircle, Loader2, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
+import { Archive, Bell, BellRing, Check, ChevronDown, Copy, Cpu, Eye, EyeOff, FileWarning, HelpCircle, Loader2, MemoryStick, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { api } from '@/lib/api';
@@ -624,7 +624,6 @@ export function SessionList({
                   </span>
                 </Tooltip>
               )}
-              <SessionResourceChip sessionId={s.sessionId} />
               {/* 能力位由服务端派生（canOpenTerminal = harness 的 resume 槽有
                   openArgs），这里只渲染它——不自带 harness 白名单；路由侧仍做
                   同样的 501 校验。该会话的宿主进程活着（pidAlive）→ 终端图标
@@ -834,13 +833,6 @@ export function SessionList({
                   </Badge>
                 </Tooltip>
               )}
-              <span className="shrink-0 text-10 text-neutral-500">
-                {t('tasks.events', { n: s.eventCount ?? 0 })}
-              </span>
-              {/* 最后更新时刻（lastSeenAt = 最后一条 hook 事件），口径同全局总览会话行 */}
-              <span className="shrink-0 text-10 text-neutral-500">
-                {lastSeenLabel(t, s.lastSeenAt, now)}
-              </span>
               {s.harness && (
                 <AgentBadge agent={s.harness} className="shrink-0 px-1 text-10" />
               )}
@@ -855,6 +847,19 @@ export function SessionList({
                   {remainingLabel(t, remainingMsOf(s, now))}
                 </Badge>
               )}
+            </div>
+            {/* 第 3 行：事件数 + 最后更新时刻（头）与资源 CPU·MEM（尾）一头一尾 */}
+            <div className="flex basis-full items-center justify-between gap-x-2">
+              <span className="flex min-w-0 shrink items-center gap-2 overflow-hidden">
+                <span className="min-w-0 truncate text-10 text-neutral-500">
+                  {t('tasks.events', { n: s.eventCount ?? 0 })}
+                </span>
+                {/* 最后更新时刻（lastSeenAt = 最后一条 hook 事件），口径同全局总览会话行 */}
+                <span className="min-w-0 truncate text-10 text-neutral-500">
+                  {lastSeenLabel(t, s.lastSeenAt, now)}
+                </span>
+              </span>
+              <SessionResourceChip sessionId={s.sessionId} />
             </div>
           </>
         )}
@@ -1016,9 +1021,17 @@ function SessionResourceChip({ sessionId }: { sessionId: string }) {
   const mem = agent.memRssBytes ?? 0;
   return (
     <Tooltip label={t('tasks.resTip')}>
-      <span className="inline-flex shrink-0 items-center rounded border border-edge/[0.06] bg-edge/[0.04] px-1 py-0.5 text-10 leading-none tabular-nums text-neutral-400">
-        {agent.cpuPercent === undefined ? '—' : `${agent.cpuPercent}%`}
-        {mem > 0 && ` · ${mem < 1024 * 1024 ? `${Math.max(1, Math.round(mem / 1024))}M` : `${(mem / 1024 / 1024).toFixed(1)}G`}`}
+      <span className="inline-flex shrink-0 items-center gap-2 rounded border border-edge/[0.06] bg-edge/[0.04] px-1.5 py-1 text-10 leading-none tabular-nums">
+        <span className="inline-flex items-center gap-1 text-neutral-500">
+          <Cpu className="h-3 w-3" aria-hidden="true" />
+          {agent.cpuPercent === undefined ? '—' : `${agent.cpuPercent}%`}
+        </span>
+        {mem > 0 && (
+          <span className="inline-flex items-center gap-1 text-emerald-400">
+            <MemoryStick className="h-3 w-3" aria-hidden="true" />
+            {mem < 1024 * 1024 ? `${(mem / 1024).toFixed(1)} KB` : mem < 1024 * 1024 * 1024 ? `${(mem / 1024 / 1024).toFixed(0)} MB` : `${(mem / 1024 / 1024 / 1024).toFixed(1)} GB`}
+          </span>
+        )}
       </span>
     </Tooltip>
   );

@@ -1014,6 +1014,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       }}
       onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
       onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
+      onOpenWebTerminal={(p, instance) => setProjectTerminal({ instanceId: instance.id, label: p.name })}
       openExplorerStateOf={openExplorerStateOf}
       openTerminalStateOf={openTerminalProjectStateOf}
       onCloseTerminal={closeProjectTerminal}

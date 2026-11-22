@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import type { ResourceReportPayload } from '../runtime/protocol.js';
@@ -66,6 +66,8 @@ export interface MetricsSamplerDeps {
   platform?: NodeJS.Platform;
   /** PowerShell 可执行名（测试注入）。 */
   powershell?: string;
+  /** 进程树读数（测试注入）。 */
+  processTree?: () => Promise<Map<number, ProcessTreeReading>>;
 }
 
 /** 单 pid 采集结果（差分前的原始读数）。 */
@@ -73,6 +75,16 @@ interface PidReading {
   cpuSeconds: number;
   memRssBytes: number;
 }
+
+interface ProcessTreeReading extends PidReading {
+  pid: number;
+  parentPid: number;
+  /** 同一 PID 生命周期身份；防 PID 复用或归属进程变化时拿旧累计 CPU 做差。 */
+  processKey: string;
+  wrapper?: boolean;
+}
+
+export type { ProcessTreeReading };
 
 export class MetricsSampler {
   private readonly timers: NodeJS.Timeout[] = [];
@@ -85,7 +97,7 @@ export class MetricsSampler {
   private hostReport: ResourceReportPayload | null = null;
   private hostSeenAt = 0;
   /** 上拍 Agent 进程读数（CPU% 差分基线）。 */
-  private prevPidReadings = new Map<number, { reading: PidReading; at: number }>();
+  private prevPidReadings = new Map<number, { reading: PidReading; processKey: string; at: number }>();
   /** 上拍实例吞吐（累计字节 → 速率）。 */
   private prevOutputBytes = new Map<string, { bytes: number; at: number }>();
   private agentSamples = new Map<string, MetricsAgentSample>();
@@ -108,7 +120,7 @@ export class MetricsSampler {
 
   start(): void {
     this.timers.push(setInterval(() => this.sampleDaemon(), SAMPLE_MS));
-    this.timers.push(setInterval(() => void this.sampleAgents(), AGENT_SAMPLE_MS));
+    this.timers.push(setInterval(() => this.sampleAgents(), AGENT_SAMPLE_MS));
     this.timers.push(
       setInterval(() => {
         if (this.history.length > 0 || this.lastHistoryAt === 0) this.pushHistoryPoint();
@@ -204,20 +216,21 @@ export class MetricsSampler {
 
     const pids = [...byPid.keys()];
     if (pids.length > 0 && this.shouldSampleAgents()) {
-      const readings = await this.readPids(pids).catch(() => new Map<number, PidReading>());
+      const tree = await this.readProcessTree().catch(() => new Map<number, ProcessTreeReading>());
       const prev = this.prevPidReadings;
       for (const [pid, row] of byPid) {
-        const cur = readings.get(pid);
+        // PTY 根（如 cmd.exe /c）只是包装壳——只沿「壳 + 唯一直接子进程」链下钻到真宿主；
+        // 差分基线带 processKey（启动身份），换进程/PID 复用时作废重建，绝不拿旧累计 CPU 做差。
+        const cur = resolveAgentReading(pid, tree);
         if (!cur) continue; // 进程已退 / 本枪失败：缺席而非 0
+        const sample = samples.find((s) => s.instanceId === row.id);
+        if (sample) sample.memRssBytes = cur.memRssBytes;
         const last = prev.get(pid);
-        if (last && now > last.at) {
-          const sample = samples.find((s) => s.instanceId === row.id);
-          if (sample) {
-            sample.cpuPercent = round1(((cur.cpuSeconds - last.reading.cpuSeconds) / ((now - last.at) / 1000)) * 100);
-            sample.memRssBytes = cur.memRssBytes;
-          }
+        if (last && last.processKey === cur.processKey && now > last.at && sample) {
+          const cpuDelta = cur.cpuSeconds - last.reading.cpuSeconds;
+          if (cpuDelta >= 0) sample.cpuPercent = round1((cpuDelta / ((now - last.at) / 1000)) * 100);
         }
-        prev.set(pid, { reading: cur, at: now });
+        prev.set(pid, { reading: cur, processKey: cur.processKey, at: now });
       }
     }
 
@@ -225,42 +238,72 @@ export class MetricsSampler {
     this.emit();
   }
 
-  /** 批量读 pid 的 CPU 累计秒与 RSS（Windows = 一枪 PowerShell；POSIX = /proc 零开销）。 */
-  private async readPids(pids: number[]): Promise<Map<number, PidReading>> {
-    const out = new Map<number, PidReading>();
+  /** 全进程树读数（Windows = 一枪 PowerShell CIM；Linux = /proc 零开销）。 */
+  private async readProcessTree(): Promise<Map<number, ProcessTreeReading>> {
+    if (this.deps.processTree) return this.deps.processTree();
+    const out = new Map<number, ProcessTreeReading>();
     if (this.platform === 'win32') {
       const text = await new Promise<string>((resolve, reject) => {
         execFile(
           this.powershell,
-          ['-NoProfile', '-Command', `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id) $($_.CPU) $($_.WorkingSet64)" }`],
+          [
+            '-NoProfile', '-Command',
+            'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.UserModeTime + $_.KernelModeTime) $($_.WorkingSetSize) $($_.CreationDate.ToFileTime()) $([int]($_.Name -ieq \'cmd.exe\' -and $_.CommandLine -match \'(?i)\\s/c\\s\'))" }',
+          ],
           { timeout: 15_000, windowsHide: true },
           (err, stdout) => (err ? reject(err) : resolve(String(stdout))),
         );
       });
       for (const line of text.split(/\r?\n/)) {
-        const [pid, cpu, rss] = line.trim().split(/\s+/);
+        const [pid, ppid, cpu100ns, rss, created, wrapper] = line.trim().split(/\s+/);
         const n = Number(pid);
-        if (Number.isInteger(n) && n > 0 && cpu !== undefined) {
-          out.set(n, { cpuSeconds: Number(cpu) || 0, memRssBytes: Number(rss) || 0 });
+        if (Number.isInteger(n) && n > 0) {
+          out.set(n, {
+            pid: n,
+            parentPid: Number(ppid) || 0,
+            processKey: created ?? String(n),
+            wrapper: wrapper === '1',
+            // Win32_Process 的 *ModeTime 单位是 100ns
+            cpuSeconds: (Number(cpu100ns) || 0) / 1e7,
+            memRssBytes: Number(rss) || 0,
+          });
         }
       }
       return out;
     }
-    for (const pid of pids) {
+    for (const pid of await readdir('/proc')) {
+      if (!/^\d+$/.test(pid)) continue;
       try {
         const stat = await readFile(`/proc/${pid}/stat`, 'utf8');
         const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-        // 字段从 state 起：utime=第 11、stime=第 12（clk_tck 恒 100，Linux ABI）
-        const cpuSeconds = (Number(fields[10] ?? 0) + Number(fields[11] ?? 0)) / 100;
-        const status = await readFile(`/proc/${pid}/status`, 'utf8');
-        const rssKb = Number(/VmRSS:\s+(\d+)/.exec(status)?.[1] ?? 0);
-        out.set(pid, { cpuSeconds, memRssBytes: rssKb * 1024 });
+        // 字段从 state 起：ppid=第 2、utime=第 11、stime=第 12（clk_tck 恒 100，Linux ABI）
+        out.set(Number(pid), {
+          pid: Number(pid),
+          parentPid: Number(fields[1] ?? 0) || 0,
+          processKey: `${pid}:${fields[18] ?? ''}`,
+          cpuSeconds: (Number(fields[10] ?? 0) + Number(fields[11] ?? 0)) / 100,
+          memRssBytes: Number(/VmRSS:\s+(\d+)/.exec(await readFile(`/proc/${pid}/status`, 'utf8'))?.[1] ?? 0) * 1024,
+        });
       } catch {
         /* 进程没了：缺席 */
       }
     }
     return out;
   }
+}
+
+function resolveAgentReading(rootPid: number, tree: Map<number, ProcessTreeReading>): ProcessTreeReading | undefined {
+  let current = tree.get(rootPid);
+  const seen = new Set<number>();
+  while (current?.wrapper) {
+    if (seen.has(current.pid)) return undefined;
+    seen.add(current.pid);
+    const parent = current.pid;
+    const children = [...tree.values()].filter((p) => p.parentPid === parent);
+    if (children.length !== 1) return undefined;
+    current = children[0];
+  }
+  return current;
 }
 
 function round1(n: number): number {
