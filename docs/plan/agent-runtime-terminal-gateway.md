@@ -82,10 +82,15 @@ packages/weave-server/web/src/features/
   WmiPrvSE，不继承调用方 env。
 - 依 `CLAUDE.local.md`：daemon 由用户手动起，会话只起 Runtime Host 子进程（不占 6420）。
 
-### B2 WSL2 tmux Adapter
-- [ ] tmux session 命名规则（`weave-agent-<instanceId 短码>`）、send-keys、
-  capture-pane -e 原始字节、attach/detach、断电重连对账。
-- 验收：WSL2 里 headless 起会话、Dashboard 可见、tmux 可接、多客户端可看。
+### B2 WSL2 tmux Adapter ✅ 2026-11-20（ab780c99）
+- [x] tmux session 命名规则（`weave-agent-<短码>`）、send-keys、capture-pane -e、
+  resize、清单对账（`adapters/tmux.ts`）。
+- [x] **实测定案**：`capture-pane -e` 是重绘等价序列（保 ANSI 色、丢 OSC/原始
+  字节，`[39m` 归位而非 `[0m`）——重放语义 = **快照重建**，与 ConPTY 字节流型
+  并列同一协议（TerminalOutputEvent 序列号统一，快照一次一号）。本机 Ubuntu-
+  26.04 + tmux 3.6 六项活体验证全过（spawn/ANSI 快照/send-keys/resize/list/kill）。
+- 验收：WSL2 持久会话全链已通；「Dashboard 可见」待 B4（Web Terminal）点亮后
+  复验；tmux 原生 attach 本机即 tmux attach 命令（多客户端 = tmux 自带能力）。
 
 ### B3 Terminal Gateway
 - [ ] WebSocket 端点（认证走既有本机令牌口径）+ Ring Buffer + sequence 重放 +
