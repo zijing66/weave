@@ -200,6 +200,7 @@ export function CategoryDetail({
         pluginKey: g.pluginKey,
         // 服务端已按 harness 面拆好市场名；前端只透传，不解析键形。
         namespace: g.namespace,
+        ...(g.description ? { description: g.description } : {}),
         enabled,
         // §6-4 卸载门控去硬编码：该 harness 的插件行有安装面（installScopes
         // 非空）→ 可整包卸载，不再写死 runtime === 'claude'。
@@ -213,6 +214,7 @@ export function CategoryDetail({
           source: g.source as GlobalSkillSource,
           pluginKey: g.pluginKey,
           form: k.form,
+          ...(k.description ? { description: k.description } : {}),
           // 全局行也带上 runtime：卡片据此显示 claude/codex 徽标，且「本地」把两个
           // personal 组合并成一个扁平网格时，同名技能仍能有唯一 key。
           // （抽屉只在项目态消费 agent，全局态分支不读它。）

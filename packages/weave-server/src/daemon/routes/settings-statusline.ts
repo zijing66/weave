@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
+import path from 'node:path';
 import type { WeaveServerDeps } from '../server.js';
 import { readBody, sendJson } from '../http.js';
 import {
@@ -17,6 +18,7 @@ import { applyLaunchOnLogin } from '../auto-start.js';
 import { closePetWindow, openPetWindow } from '../pet-window.js';
 import { WEAVE_VERSION } from '../../version.js';
 import { readProjectConfig, writeProjectConfig } from '../../install/project-config.js';
+import { skillDescriptionOf } from '../../install/skill-desc.js';
 import type { ProjectConfig } from '../../install/project-config.js';
 import {
   readStatuslineConfig,
@@ -295,9 +297,28 @@ export async function handleSettingsRoutes(
     }
     // 仓库标记来自包落盘记录（watch 缓存只知道文件在不在，不知道谁铺的）。
     const namespaces = await projectFileNamespaces(projectPath);
-    const assets = deps.watch.getAssets(projectPath).map((a) => {
+    // skill 摘要：每个 skill 目录读一次 SKILL.md frontmatter（小文件、请求数量级
+    // = 技能数），全项目同目录文件共享一份。
+    const rawAssets = deps.watch.getAssets(projectPath);
+    const skillDirs = new Set<string>();
+    for (const a of rawAssets) {
+      const m = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//);
+      if (m) skillDirs.add(m[0].replace(/\/$/, ''));
+    }
+    const skillDescs = new Map<string, string | undefined>(
+      await Promise.all(
+        [...skillDirs].map(async (rel) => [rel, await skillDescriptionOf(path.join(projectPath, rel))] as const),
+      ),
+    );
+    const assets = rawAssets.map((a) => {
       const namespace = namespaces.get(a.relPath);
-      return namespace ? { ...a, namespace } : a;
+      const m = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//);
+      const description = m ? skillDescs.get(m[0].replace(/\/$/, '')) : undefined;
+      return {
+        ...a,
+        ...(namespace ? { namespace } : {}),
+        ...(description ? { description } : {}),
+      };
     });
     // home 随行：web 把 absPath 显示成 `~/…` 形（家目录相对、不露机器绝对路径）。
     sendJson(res, 200, { projectPath, assets, home: homedir() });

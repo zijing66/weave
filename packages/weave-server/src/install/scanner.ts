@@ -6,6 +6,7 @@ import { hasNonEmptyModules } from '../watch/plugin-mods.js';
 import { parseToolkitPack, type ToolkitKind, type ToolkitComponent } from '../hooks/toolkit-scan.js';
 import { marketIdOf } from '../market/identity.js';
 import { pluginSurfaceFor } from '../surfaces.js';
+import { skillDescriptionOf } from './skill-desc.js';
 
 /** CC 落地包（含 mods）且目标含 claude 才有注册键——SPI/表面包不占 CC 键位。 */
 function packKey(pack: { name: string; dir: string; ccPack: boolean; kind: ToolkitKind; targets: Harness[] }): string | undefined {
@@ -26,6 +27,8 @@ export interface SkillAsset {
    * string means the skill sits directly under the library root.
    */
   group: string;
+  /** SKILL.md frontmatter description（缺/坏 → 缺位）。 */
+  description?: string;
 }
 
 /** Minimal MCP server template (matches Claude Code `.mcp.json` entry shape). */
@@ -228,11 +231,13 @@ async function walk(
   }
 
   if (entries.some((e) => e.isFile() && e.name === 'SKILL.md')) {
+    const description = await skillDescriptionOf(dir);
     out.push({
       name: basename(dir),
       dirPath: dir,
       relPath: relative(root, dir).replace(/\\/g, '/'),
       group: relative(root, dirname(dir)).replace(/\\/g, '/'),
+      ...(description ? { description } : {}),
     });
     return; // do not descend into a skill's own subtree
   }

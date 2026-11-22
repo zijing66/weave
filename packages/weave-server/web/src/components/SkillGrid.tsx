@@ -48,6 +48,8 @@ export interface SkillRow {
   agent?: AssetAgent;
   /** 装面形态（服务端 lstat 判定，仅陈述事实）。 */
   form?: 'link' | 'copy';
+  /** SKILL.md frontmatter description（缺/坏 → 缺位，不摆摘要行）。 */
+  description?: string;
 }
 
 /** Open a skill's detail drawer. Global rows carry source/pluginKey so the
@@ -71,6 +73,8 @@ export interface SkillGroup {
   /** 所属市场 = 仓库 namespace（服务端拆键得来）；个人组 undefined → 归「本地」。
    *  L1 分组与 Plugins 页同源（`lib/repo-groups.ts`）。 */
   namespace?: string;
+  /** 插件包描述（包清单；个人组无）——折叠条名称下方摘要行。 */
+  description?: string;
   /** Enable state for plugin groups (undefined → not applicable). */
   enabled?: boolean;
   /** 该组 harness 的插件行有安装面（installScopes 非空）→ 可整包卸载；
@@ -234,6 +238,13 @@ function SkillCard({
           </Tooltip>
         )}
       </CardHeader>
+      {row.description && (
+        <Tooltip label={row.description} side="top" className="w-full min-w-0">
+          <p className="block w-full truncate px-4 pb-2 text-11 text-neutral-500 -mt-1">
+            {row.description}
+          </p>
+        </Tooltip>
+      )}
       {row.scope === 'user' && (
         <ConfirmDialog
           open={confirming}
@@ -531,6 +542,13 @@ function PackBlock({
           </button>
         )}
       </div>
+      {group.description && (
+        <Tooltip label={group.description} side="top" className="w-full min-w-0">
+          <p className="block w-full truncate px-3 pb-2 text-11 text-neutral-500">
+            {group.description}
+          </p>
+        </Tooltip>
+      )}
       {!collapsed && (
         <div className="px-3 pb-3 pt-1">
           {group.skills.length === 0 ? (
@@ -766,22 +784,23 @@ function GroupedSkills({
  * `AssetEntry.agent` (never guessed from the path). Rows are keyed by
  * agent + name so two harnesses' same-named skills stay distinct. */
 export function groupSkillRows(assets: AssetEntry[]): SkillRow[] {
-  const m = new Map<string, { name: string; agent?: AssetAgent; files: AssetEntry[] }>();
+  const m = new Map<string, { name: string; agent?: AssetAgent; files: AssetEntry[]; description?: string }>();
   for (const a of assets) {
     const match = a.relPath.match(/^[^/]+\/skills\/([^/]+)\//);
     if (!match) continue;
     const name = match[1];
     const key = `${a.agent ?? ''}\u0000${name}`;
-    const entry = m.get(key) ?? { name, agent: a.agent, files: [] as AssetEntry[] };
+    const entry = m.get(key) ?? { name, agent: a.agent, files: [] as AssetEntry[], description: a.description };
     entry.files.push(a);
     m.set(key, entry);
   }
   return [...m.values()]
-    .map(({ name, agent, files }) => ({
+    .map(({ name, agent, files, description }) => ({
       name,
       scope: 'project' as AssetScope,
       agent,
       files,
+      ...(description ? { description } : {}),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

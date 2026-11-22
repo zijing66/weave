@@ -72,6 +72,8 @@ export interface SkillAsset {
   relPath: string;
   /** Parent directory (typically a `skills/` folder) relative to the library root. */
   group: string;
+  /** SKILL.md frontmatter description（缺/坏 → 缺位）。 */
+  description?: string;
 }
 
 export interface McpTemplate {

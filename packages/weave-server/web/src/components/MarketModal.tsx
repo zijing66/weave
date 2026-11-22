@@ -1274,6 +1274,17 @@ function MarketRowView({
           </Tooltip>
         )}
       </div>
+      {(row.skill?.description ?? row.plugin?.description) && (
+        <Tooltip
+          label={row.skill?.description ?? row.plugin?.description ?? ''}
+          side="top"
+          className="w-full min-w-0"
+        >
+          <p className="block w-full truncate px-2 pb-1.5 pt-0.5 text-11 text-neutral-500">
+            {row.skill?.description ?? row.plugin?.description}
+          </p>
+        </Tooltip>
+      )}
 
       {/* 位置弹层：每行可点 → 跳该项目/全局的资源管理 */}
       {locations !== null && (

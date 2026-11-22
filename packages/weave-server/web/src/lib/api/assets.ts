@@ -16,6 +16,8 @@ export interface AssetEntry {
   /** 所属仓库 namespace（该文件是哪个仓库铺下来的）：用户自己写的文件不属于任何
    *  仓库，故缺省。服务端判定，web 只渲染。 */
   namespace?: string;
+  /** 所属 skill 的 SKILL.md frontmatter description（skills/ 下文件随 /assets 下发）。 */
+  description?: string;
 }
 
 export interface AssetChangeEvent {

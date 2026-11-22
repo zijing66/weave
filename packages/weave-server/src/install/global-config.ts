@@ -9,6 +9,7 @@ import { FileTooLargeError, MAX_BYTES, type ProjectFile } from './reader.js';
 import type { AssetEntry } from '../watch/types.js';
 import { assetSurfaceFor, assetSurfaces, pluginStateFor, pluginSurfaceFor } from '../surfaces.js';
 import { installForm, linkOrCopy, removeInstalled, type InstallLinkMode } from '../market/install-link.js';
+import { skillDescriptionOf } from './skill-desc.js';
 
 /**
  * Global (user-scope) Claude Code configuration.
@@ -46,6 +47,8 @@ export interface GlobalSkillEntry {
   /** 装面形态：`link` = 链接（全局位置无副本）、`copy` = 链接不可用时的回退复制。
    * 读侧 lstat 判定，不落状态——用户手动改过、包升级后重铺过，状态都会失真。 */
   form: InstallLinkMode;
+  /** SKILL.md frontmatter description（缺/坏 → 缺位）。 */
+  description?: string;
 }
 
 /** A labelled group of skills sharing a source. Plugin groups carry enable
@@ -61,6 +64,8 @@ export interface GlobalSkillGroup {
   namespace?: string;
   /** Enable state for plugin groups (undefined → not applicable). */
   enabled?: boolean;
+  /** 插件包描述（包清单 plugin.json / weave-plugin.json；个人组无）。 */
+  description?: string;
 }
 
 function claudeJsonPath(): string {
@@ -236,7 +241,8 @@ async function listSkillSubdirs(dir: string): Promise<GlobalSkillEntry[]> {
     if (!(await isDirectoryFollow(full))) continue;
     const form = await installForm(full);
     if (form === 'absent') continue; // 竞态：刚还在、这会儿没了 → 不列出来
-    out.push({ name: e.name, dir: full, form });
+    const description = await skillDescriptionOf(full);
+    out.push({ name: e.name, dir: full, form, ...(description ? { description } : {}) });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -244,6 +250,20 @@ async function listSkillSubdirs(dir: string): Promise<GlobalSkillEntry[]> {
 interface ClaudePluginRecord {
   installPath?: string;
   version?: string;
+}
+
+/** 插件包清单描述（plugin.json / weave-plugin.json 的 description；缺/坏 → undefined）。 */
+async function packDescriptionOf(installPath: string): Promise<string | undefined> {
+  for (const f of [path.join(installPath, '.claude-plugin', 'plugin.json'), path.join(installPath, 'weave-plugin.json')]) {
+    try {
+      const parsed = JSON.parse(await readFile(f, 'utf-8')) as unknown;
+      const d = (parsed as Record<string, unknown>)['description'];
+      if (typeof d === 'string' && d.trim()) return d.trim();
+    } catch {
+      // 缺文件/坏 JSON → 试下一个
+    }
+  }
+  return undefined;
 }
 
 /** 已装 Claude 插件的安装目录 → 所属市场 namespace（全局文件树给每个文件打仓库
@@ -286,12 +306,14 @@ async function readClaudePluginSkills(): Promise<GlobalSkillGroup[]> {
     const skills = await listSkillSubdirs(path.join(rec.installPath, 'skills'));
     // 键形拆解经 harness 面（与 pluginKey 拼装点成对），不在 server 里裸 split('@')
     const { name, market } = pluginSurfaceFor('claude').parsePluginKey(key);
+    const description = await packDescriptionOf(rec.installPath);
     groups.push({
       source: 'claude-plugin',
       label: name,
       namespace: market,
       skills,
       pluginKey: key,
+      ...(description ? { description } : {}),
     });
   }
   return groups.sort((a, b) => a.label.localeCompare(b.label));
@@ -350,6 +372,7 @@ async function readCodexPluginSkills(): Promise<GlobalSkillGroup[]> {
       const newest = versionDirs.map((v) => v.name).sort().pop()!;
       const skills = await listSkillSubdirs(path.join(plDir, newest, 'skills'));
       const pluginKey = `${pl.name}@${mp.name}`;
+      const description = await packDescriptionOf(path.join(plDir, newest));
       groups.push({
         source: 'codex-plugin',
         label: pl.name,
@@ -358,6 +381,7 @@ async function readCodexPluginSkills(): Promise<GlobalSkillGroup[]> {
         namespace: mp.name,
         skills,
         pluginKey,
+        ...(description ? { description } : {}),
       });
     }
   }
@@ -373,7 +397,8 @@ async function readClaudePersonalSkills(): Promise<GlobalSkillGroup> {
     const full = path.join(dir, name);
     const form = await installForm(full);
     if (form === 'absent') continue; // 竞态：枚举与 lstat 之间被删 → 不列出来
-    skills.push({ name, dir: full, form });
+    const description = await skillDescriptionOf(full);
+    skills.push({ name, dir: full, form, ...(description ? { description } : {}) });
   }
   return { source: 'claude-personal', label: 'Claude Code · 个人', skills };
 }

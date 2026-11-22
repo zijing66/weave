@@ -107,6 +107,8 @@ export interface GlobalSkillEntry {
   /** 装面形态（服务端 lstat 判定）：链接 = 全局位置无副本、副本 = 回退复制。
    *  仅陈述事实——CC 自有的 plugins/cache 副本非 weave 可控，别拿它提示用户改设置。 */
   form: 'link' | 'copy';
+  /** SKILL.md frontmatter description（缺/坏 → 缺位）。 */
+  description?: string;
 }
 
 /** A labelled group of global skills sharing a source. Plugin groups carry
@@ -120,6 +122,8 @@ export interface GlobalSkillGroup {
    *  折叠块，**不得自己 split `@`**；个人组无此字段（归「本地」）。 */
   namespace?: string;
   enabled?: boolean;
+  /** 插件包描述（包清单；个人组无）。 */
+  description?: string;
 }
 
 /** 插件工具行：模型协议 ToolStateRow（install/enable 逐档，effective 服务端解析）。 */

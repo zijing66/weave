@@ -47,6 +47,9 @@ export interface AssetEntry {
    *  反查得到；用户自己写的、init 铺的文件不属于任何仓库，故缺省无此字段。
    *  只有服务端能判（装在哪由 harness 记录决定），web 只渲染不推导。 */
   namespace?: string;
+  /** 所属 skill 的 SKILL.md frontmatter description（仅 skills/ 目录下的文件带；
+   *  /assets 端点 enrich，watch 缓存本身不存）。 */
+  description?: string;
 }
 
 /** Kind of change observed for a file. */
