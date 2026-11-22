@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EChartsType } from 'echarts/core';
 import { api, type SessionRow } from '@/lib/api';
 import { subscribeHook } from '@/lib/sse';
-import { useMetrics } from '@/hooks/use-metrics';
+import { useMetrics, type MetricsSnapshot } from '@/hooks/use-metrics';
 import { useT } from '@/i18n/I18nProvider';
 import { Activity, Database, FolderKanban, HelpCircle, MessagesSquare } from 'lucide-react';
 import type { SessionStatus } from '@/components/tasks/session-status';
@@ -99,6 +99,8 @@ export function DashboardOverview({
   const lastWrite = useRef(0);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [rate, setRate] = useState<number | null>(null);
+  // 系统时序采集范围（1h–24h，标题旁选择器；只改显示窗口，服务端恒采 24h）
+  const [systemRangeMs, setSystemRangeMs] = useState(3_600_000);
   const metrics = useMetrics();
 
   const running = [...statuses.values()].filter((s) => s === 'running' || s === 'compacting').length;
@@ -357,10 +359,171 @@ export function DashboardOverview({
             {metrics.agents.length === 0 && (
               <div className="mt-2 text-11 text-neutral-600">{t('dashboard.resNoAgents')}</div>
             )}
+            {/* 全局系统卡：整机 CPU/内存/磁盘时序（10s 一格，范围 1h–24h 可选）+ 磁盘明细 */}
+            <SystemResourceCard
+              system={metrics.system}
+              systemHistory={metrics.systemHistory}
+              rangeMs={systemRangeMs}
+              onRangeChange={setSystemRangeMs}
+              t={t}
+            />
           </>
         )}
       </div>
     </section>
+  );
+}
+
+/** 采集范围档（标题旁选择器）：窗口越大图越稀（服务端 10s 一格，24h=8640 点前端抽稀）。 */
+const SYSTEM_RANGES: Array<{ label: string; ms: number }> = [
+  { label: '1h', ms: 3_600_000 },
+  { label: '6h', ms: 6 * 3_600_000 },
+  { label: '12h', ms: 12 * 3_600_000 },
+  { label: '24h', ms: 24 * 3_600_000 },
+];
+
+/** 全局系统资源卡：整机 CPU %/内存/磁盘三条时序 + 磁盘分区明细。system null = 平台采不到（如实缺席）。 */
+function SystemResourceCard({
+  system,
+  systemHistory,
+  rangeMs,
+  onRangeChange,
+  t,
+}: {
+  system: MetricsSnapshot['system'];
+  systemHistory: MetricsSnapshot['systemHistory'];
+  rangeMs: number;
+  onRangeChange: (ms: number) => void;
+  t: ReturnType<typeof useT>;
+}) {
+  const cutoff = Date.now() - rangeMs;
+  const points = systemHistory.filter((p) => Date.parse(`${p.at}Z`) >= cutoff);
+  // 抽稀：点数 > 360 时按步长取样（轴不至于糊成一片）
+  const step = Math.max(1, Math.ceil(points.length / 360));
+  const sampled = points.filter((_, i) => i % step === 0 || i === points.length - 1);
+  // at 存的是 UTC（无毫秒 ISO）；展示转本地时区
+  const times = sampled.map((p) => new Date(`${p.at}Z`).toTimeString().slice(0, 5));
+  const cpuData = sampled.map((p) => p.cpuPercent);
+  const memData = sampled.map((p) => (p.memTotalBytes > 0 ? Math.round((p.memUsedBytes / p.memTotalBytes) * 1000) / 10 : 0));
+  const diskData = sampled.map((p) => (p.diskTotalBytes > 0 ? Math.round((p.diskUsedBytes / p.diskTotalBytes) * 1000) / 10 : 0));
+  const el = useRef<HTMLDivElement | null>(null);
+  const chart = useRef<EChartsType | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let ro: ResizeObserver | null = null;
+    void (async () => {
+      const [core, charts, components, renderers] = await Promise.all([
+        import('echarts/core'),
+        import('echarts/charts'),
+        import('echarts/components'),
+        import('echarts/renderers'),
+      ]);
+      if (disposed || !el.current) return;
+      core.use([charts.LineChart, components.GridComponent, components.TooltipComponent, components.LegendComponent, renderers.CanvasRenderer]);
+      const textColor = getComputedStyle(el.current).color;
+      const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const c = core.init(el.current, undefined, {
+        renderer: 'canvas',
+        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      });
+      c.setOption({
+        animation: false,
+        grid: { left: 4, right: 8, top: 24, bottom: 0, containLabel: true },
+        legend: { top: 0, right: 0, icon: 'roundRect', itemWidth: 10, itemHeight: 3, textStyle: { color: textColor, fontSize: 0.625 * remPx } },
+        tooltip: {
+          trigger: 'axis',
+          confine: true,
+          backgroundColor: 'rgba(17, 24, 39, 0.92)',
+          borderWidth: 0,
+          valueFormatter: (v: unknown) => (typeof v === 'number' ? `${v}%` : '—'),
+          textStyle: { color: '#e5e7eb', fontSize: 0.6875 * remPx },
+        },
+        xAxis: {
+          type: 'category',
+          boundaryGap: false,
+          data: [] as string[],
+          axisLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.25)' } },
+          axisTick: { show: false },
+          axisLabel: { color: textColor, fontSize: 0.625 * remPx },
+        },
+        yAxis: {
+          type: 'value',
+          max: 100,
+          axisLabel: { color: textColor, fontSize: 0.625 * remPx, formatter: '{value}%' },
+          splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.14)' } },
+        },
+        series: [
+          { name: t('dashboard.sysCpu'), type: 'line', data: [] as number[], smooth: 0.25, showSymbol: false, lineStyle: { width: 1.5, color: '#60a5fa' } },
+          { name: t('dashboard.sysMem'), type: 'line', data: [] as number[], smooth: 0.25, showSymbol: false, lineStyle: { width: 1.5, color: '#34d399' } },
+          { name: t('dashboard.sysDisk'), type: 'line', data: [] as number[], smooth: 0.25, showSymbol: false, lineStyle: { width: 1.5, color: '#a78bfa' } },
+        ],
+      });
+      chart.current = c;
+      ro = new ResizeObserver(() => c.resize());
+      ro.observe(el.current);
+    })();
+    return () => {
+      disposed = true;
+      ro?.disconnect();
+      chart.current?.dispose();
+      chart.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只建一次；数据更新走 setOption
+  }, []);
+
+  useEffect(() => {
+    chart.current?.setOption({ xAxis: { data: times }, series: [{ data: cpuData }, { data: memData }, { data: diskData }] });
+  });
+
+  return (
+    <div className="mt-2 rounded-lg border border-edge/[0.06] bg-neutral-900/60 p-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-11 text-neutral-500">{t('dashboard.sysTitle')}</span>
+        {system === null && <span className="text-10 text-neutral-600">{t('dashboard.sysUnavailable')}</span>}
+        <span className="ml-auto inline-flex overflow-hidden rounded border border-edge/[0.08]">
+          {SYSTEM_RANGES.map((r) => (
+            <button
+              key={r.label}
+              type="button"
+              onClick={() => onRangeChange(r.ms)}
+              className={
+                'px-1.5 py-0.5 text-10 tabular-nums transition-colors ' +
+                (r.ms === rangeMs ? 'bg-blue-500/20 text-blue-300' : 'text-neutral-500 hover:bg-edge/[0.06] hover:text-neutral-300')
+              }
+            >
+              {r.label}
+            </button>
+          ))}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-stretch gap-x-4 gap-y-1.5">
+        {/* 左：三线折线（窄屏折行到下方占满宽）；右：磁盘空间占用进度条表 */}
+        <div ref={el} className="h-[140px] min-w-0 flex-[3] basis-64 text-neutral-400" />
+        {system !== null && system.disks.length > 0 && (
+          <div className="flex min-w-0 flex-[2] basis-56 flex-col justify-center gap-1.5">
+            {system.disks.map((d) => {
+              const pct = d.totalBytes > 0 ? Math.round((d.usedBytes / d.totalBytes) * 100) : 0;
+              // 阈值变色：<80 正常蓝灰、80–94 琥珀、≥95 红
+              const barColor = pct >= 95 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-400' : 'bg-blue-400/70';
+              const pctColor = pct >= 95 ? 'text-red-400' : pct >= 80 ? 'text-amber-300' : 'text-neutral-400';
+              return (
+                <div key={d.mount} className="flex items-center gap-2">
+                  <span className="w-8 shrink-0 text-10 tabular-nums text-neutral-500">{d.mount}</span>
+                  <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-800">
+                    <span className={`block h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                  </span>
+                  <span className={`w-9 shrink-0 text-right text-10 tabular-nums ${pctColor}`}>{pct}%</span>
+                  <span className="w-40 shrink-0 text-right text-10 tabular-nums text-neutral-500">
+                    {fmtBytes(d.usedBytes)} / {fmtBytes(d.totalBytes)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

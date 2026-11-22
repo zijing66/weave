@@ -66,6 +66,8 @@ export interface HookPipelineDeps {
   terminalTopologyKick?: () => void;
   /** headless 实例绑定（B4）：ingest 见 Runtime 实例身份时回写会话 ↔ 实例。 */
   agentInstances?: { bindSession(id: string, harnessSessionId: string): void };
+  /** 会话退出连带杀实例（会话关了 TUI 不该再挂）；缺省不杀。 */
+  killInstancesOfSession?: (harnessSessionId: string) => void;
 }
 
 /** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox + promptbox）。 */
@@ -198,6 +200,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         uploads: deps.uploads,
         terminalTopologyKick: deps.terminalTopologyKick,
         agentInstances: deps.agentInstances,
+        killInstancesOfSession: deps.killInstancesOfSession,
         onVisualization: (projectId) => mirror.syncProject(projectId),
         paneEnvSource: (h) => messagingSurfaceFor(h).paneEnvSource,
       },

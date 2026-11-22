@@ -1,7 +1,29 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MetricsSampler, type MetricsSnapshot, type ProcessTreeReading } from '../metrics-sampler.js';
+import { MetricsSampler, type MetricsSnapshot, type ProcessTreeReading, type SystemReading } from '../metrics-sampler.js';
 import type { ResourceReportPayload } from '../../runtime/protocol.js';
 import type { HookBusMessage } from '../../hooks/bus.js';
+
+/** 系统历史落盘的隔离目录（每个 sampler 一份；测试不碰真 cache，也不互相吃种子）。 */
+function newSystemCache(): string {
+  return mkdtempSync(join(tmpdir(), 'weave-metrics-test-'));
+}
+
+/** 系统读数桩（零进程开销；测试按需改字段）。 */
+function stubSystemReading(over: Partial<SystemReading> = {}): SystemReading {
+  return {
+    cpuPercent: 12.5,
+    cpuIdle: 700,
+    cpuTotal: 1000,
+    memTotalBytes: 16 * 1024 ** 3,
+    memUsedBytes: 8 * 1024 ** 3,
+    disks: [{ mount: 'C:', totalBytes: 512 * 1024 ** 3, usedBytes: 256 * 1024 ** 3 }],
+    diskActivePercent: 7.5,
+    ...over,
+  };
+}
 
 /** supervisor 桩：记录订阅者，测试里手动喂 Host 帧。 */
 function stubSupervisor() {
@@ -39,6 +61,8 @@ describe('MetricsSampler', () => {
       bus: { emit: (m) => frames.push(m) },
       supervisor: sup,
       instances: { listHeadless: () => [] },
+    systemReader: () => Promise.resolve(stubSystemReading()),
+    systemCacheDir: newSystemCache(),
     });
     sampler.start();
     const snap = frames.find((f) => f.kind === 'metrics.snapshot') as {
@@ -58,6 +82,8 @@ describe('MetricsSampler', () => {
       bus: { emit: () => {} },
       supervisor: sup,
       instances: { listHeadless: () => [] },
+    systemReader: () => Promise.resolve(stubSystemReading()),
+    systemCacheDir: newSystemCache(),
     });
     sampler.start();
     sup.emit({ type: 'resource.updated', payload: report() });
@@ -143,6 +169,8 @@ describe('MetricsSampler', () => {
       supervisor: sup,
       instances: { listHeadless: () => rows },
       processTree: tree,
+      systemReader: () => Promise.resolve(stubSystemReading()),
+    systemCacheDir: newSystemCache(),
     });
     sampler.start();
     await vi.advanceTimersByTimeAsync(60_000);
@@ -190,6 +218,8 @@ describe('MetricsSampler', () => {
       supervisor: sup,
       instances: { listHeadless: () => rows },
       processTree: tree,
+      systemReader: () => Promise.resolve(stubSystemReading()),
+    systemCacheDir: newSystemCache(),
     });
     sampler.start();
     await vi.advanceTimersByTimeAsync(60_000); // 首拍落基线（cpuSeconds=50）
@@ -220,6 +250,8 @@ describe('MetricsSampler', () => {
       bus: { emit: (m) => frames.push(m) },
       supervisor: sup,
       instances: { listHeadless: () => [] },
+    systemReader: () => Promise.resolve(stubSystemReading()),
+    systemCacheDir: newSystemCache(),
     });
     sampler.start();
     frames.length = 0;
@@ -231,6 +263,60 @@ describe('MetricsSampler', () => {
     const last = frames[frames.length - 1] as { snapshot: MetricsSnapshot };
     expect(last.snapshot.history.length).toBe(60);
     expect(last.snapshot.history[0].daemonCpuPercent).toBeGreaterThanOrEqual(0);
+    sampler.stop();
+  });
+
+  it('系统采样进快照（system 即时值 + systemHistory 差分时序），失败枪缺席而非中断', async () => {
+    const sup = stubSupervisor();
+    const reading = stubSystemReading({ cpuPercent: 0, cpuIdle: 700, cpuTotal: 1000 });
+    const sampler = new MetricsSampler({
+      bus: { emit: () => {} },
+      supervisor: sup,
+      instances: { listHeadless: () => [] },
+      systemReader: () => Promise.resolve(reading),
+      systemCacheDir: newSystemCache(),
+    });
+    const snap0 = sampler.snapshot();
+    expect(snap0.system).toBeNull();
+    expect(snap0.systemHistory).toEqual([]);
+    sampler.start();
+    await vi.advanceTimersByTimeAsync(10_000); // 首拍：基线落定，CPU 0（无差分）
+    let snap = sampler.snapshot();
+    expect(snap.system).toMatchObject({ cpuPercent: 0, memTotalBytes: 16 * 1024 ** 3, diskActivePercent: 7.5 });
+    expect(snap.system!.disks).toHaveLength(1);
+    expect(snap.systemHistory).toHaveLength(1);
+    expect(snap.systemHistory[0]!.diskTotalBytes).toBe(512 * 1024 ** 3);
+    reading.cpuIdle = 900; // 累计单调涨：total +300 内 idle +200 → busy 100/300 ≈ 33.3%
+    reading.cpuTotal = 1300;
+    await vi.advanceTimersByTimeAsync(10_000);
+    snap = sampler.snapshot();
+    expect(snap.system!.cpuPercent).toBeCloseTo(33.3, 1);
+    expect(snap.systemHistory).toHaveLength(2);
+    sampler.stop();
+  });
+
+  it('系统历史环形上限 8640（24h×10s）；读数枪失败缺席不中断', async () => {
+    const sup = stubSupervisor();
+    let fail = false;
+    const sampler = new MetricsSampler({
+      bus: { emit: () => {} },
+      supervisor: sup,
+      instances: { listHeadless: () => [] },
+      systemReader: () => {
+        if (fail) return Promise.reject(new Error('gun failed'));
+        return Promise.resolve(stubSystemReading());
+      },
+      systemCacheDir: newSystemCache(),
+    });
+    sampler.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sampler.snapshot().systemHistory).toHaveLength(1);
+    fail = true;
+    await vi.advanceTimersByTimeAsync(20_000); // 两枪全失败：不进账
+    expect(sampler.snapshot().systemHistory).toHaveLength(1);
+    fail = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sampler.snapshot().systemHistory).toHaveLength(2);
     sampler.stop();
   });
 });

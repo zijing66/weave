@@ -811,6 +811,11 @@ export function startDaemon(): void {
     dashboardRate,
     terminalTopologyKick: () => void terminalRefresher.refreshNow(),
     agentInstances,
+    killInstancesOfSession: (harnessSessionId) => {
+      for (const inst of agentInstances.liveBySession(harnessSessionId)) {
+        void runtimeSup.killInstance(inst.id).catch(() => {});
+      }
+    },
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();

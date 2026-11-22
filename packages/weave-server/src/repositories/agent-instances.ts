@@ -111,6 +111,19 @@ export class AgentInstanceRepository {
       .run(harnessSessionId, id);
   }
 
+  /** 绑定某会话且仍活的 headless 实例（会话退出连带杀进程的查询面）。 */
+  liveBySession(harnessSessionId: string): AgentInstanceRecord[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM agent_instances
+           WHERE harness_session_id = ? AND execution_mode = 'headless'
+             AND status IN ('running', 'starting')`,
+        )
+        .all(harnessSessionId) as Array<Record<string, unknown>>
+    ).map(fromRow);
+  }
+
   /** osPid 随 Host 对账刷新；harnessSessionId 不传时保原值（对账路径不冲掉 ingest 绑上的会话）。 */
   updatePid(id: string, osPid?: number, harnessSessionId?: string): void {
     this.db

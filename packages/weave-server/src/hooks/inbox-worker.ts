@@ -465,6 +465,8 @@ export interface IngestedHandlerDeps {
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
   /** headless 实例绑定（B4）：terminal 旁路带 Runtime 实例身份时回写会话 ↔ 实例。 */
   agentInstances?: { bindSession(id: string, harnessSessionId: string): void };
+  /** 会话退出连带：杀掉绑定该会话的活 headless 实例（会话关了 TUI 不该再挂）。 */
+  killInstancesOfSession?: (harnessSessionId: string) => void;
   /** 仪表盘速率快照：每条入库事件往当前 10 秒桶 +1（读侧不再扫时间窗口）。 */
   dashboardRate?: { record(): void };
 }
@@ -621,6 +623,13 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
         : null;
       if (exitEvent !== null && record.input.eventType === exitEvent) {
         deps.messagePipe?.sessionExited?.(record.input.sessionId);
+        // 会话关了，绑定它的 headless 实例（Runtime Host 里的 TUI）一并退出——
+        // 宿主进程没了，壳里跑着的 agent 不该继续占资源。
+        try {
+          deps.killInstancesOfSession?.(record.input.sessionId);
+        } catch {
+          /* 杀失败不拦 ingest（对账周期会兜底） */
+        }
         // 退出即对账终端拓扑：撤销的定位要趁热报出去（显式 null 摘出分组），
         // 等 30s 周期的话会话行会一直挂在已关的终端块下。
         deps.terminalTopologyKick?.();

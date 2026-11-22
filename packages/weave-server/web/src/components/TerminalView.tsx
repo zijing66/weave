@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { ChevronDown } from 'lucide-react';
 import { TerminalClient, type TerminalFrame } from '@/lib/terminal';
 
 /**
@@ -19,10 +20,10 @@ interface TerminalViewProps {
 /** 输出合帧窗：ConPTY/WS 把一个 TUI 重绘帧拆成多个 chunk 分批到达（实测簇均
  *  ~6 chunk、簇间隔 33–500ms），逐 chunk 渲染会把「上移重画状态条→下移归位」
  *  的中间态画出来——光标随状态条刷新乱跳（实测 54% 渲染态光标不在帧末位置）。
- *  到达间隔 32ms 内的 chunk 并成一次 write（帧间自然边界即冲刷），120ms 上限
- *  防连续快流饿死；合帧后实测 0 闪烁。 */
-const COALESCE_MS = 32;
-const COALESCE_MAX_MS = 120;
+ *  合帧窗须 ≥ 实测帧内 chunk 间隔（32ms 窗 < 33ms 簇间隔，帧中截断仍会闪），
+ *  取 64ms；上限防连续快流饿死。交互回显多在 64ms 内成帧，体感无延迟。 */
+const COALESCE_MS = 64;
+const COALESCE_MAX_MS = 250;
 
 // xterm 6 缺少上游 #5759：组词期间 TUI 输出会移动光标，但 textarea/组词层
 // 不跟着重定位 ⇒ IME 候选框停在旧位置、把整屏顶偏。修法 = 组词期间每次
@@ -56,6 +57,8 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
   const initialSentRef = useRef(false);
   const [status, setStatus] = useState<'connecting' | 'live' | 'disconnected' | 'exited'>('connecting');
   const [lease, setLease] = useState<'pending' | 'granted' | 'denied'>('pending');
+  // 视口是否离开底部（上翻看历史）：悬浮「滚到底」按钮的显隐。
+  const [scrolledUp, setScrolledUp] = useState(false);
 
   useEffect(() => {
     setStatus('connecting');
@@ -79,7 +82,12 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
 
     /** 重放有过缺口（旧 Host / ring 截断）⇒ 屏上是残片，拿到写权后清屏重绘。 */
     let replayGap = false;
-    let lastWheelAt = 0;
+    // 视口滚动偏移跟踪（xterm 6 IBuffer 不暴露 ydisp）：钉底判据的数据面。
+    let trackedYdisp = 0;
+    term.onScroll((ydisp) => {
+      trackedYdisp = ydisp;
+      setScrolledUp(ydisp + term.rows < term.buffer.active.length);
+    });
     // 合帧写：全部写入走同一队列（gap 横幅/退出提示也一样），顺序不乱。
     let pendingOut = '';
     let outSince = 0;
@@ -94,9 +102,13 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       pendingOut = '';
       outSince = 0;
       // write 是异步解析：滚动必须挂在完成回调，否则这一拍仍按旧 buffer 钉底，
-      // 大块 TUI 重绘解析完后又把光标推到视口外。
+      // 大块 TUI 重绘解析完后又把光标推到视口外。钉底判据 = 写前就在底部
+      //（ydisp 触底）——上翻看历史时新输出不再把视口拽回底，滚回底部才恢复跟随。
+      // xterm 6 的 IBuffer 不暴露滚动偏移（ydisp 是私有态）；经 onScroll 跟踪
+      //（程序滚动与用户滚动都会触发，write 回调里用写前快照判「在底部」）。
+      const atBottom = trackedYdisp + term.rows >= term.buffer.active.length;
       term.write(data, () => {
-        if (Date.now() - lastWheelAt > 1500) term.scrollToBottom();
+        if (atBottom) term.scrollToBottom();
         clearStaleCursor();
       });
     };
@@ -200,15 +212,6 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       // TUI 的键序原样进 stdin；写权在 WebSocket open 后申请。
       term.onData((data) => client.stdin(data));
     }
-    // 只把真实滚动手势记为「用户在滚动」——scrollToBottom 的程序滚动同样触发
-    // onScroll，用它当判据会把钉底自己关掉（TUI 刷新一停，光标行就滚出视野，
-    // 即「光标乱跑」），故改记 wheel/touchmove。
-    const holderEl = holder.current;
-    const markUserScroll = () => {
-      lastWheelAt = Date.now();
-    };
-    holderEl?.addEventListener('wheel', markUserScroll, { passive: true });
-    holderEl?.addEventListener('touchmove', markUserScroll, { passive: true });
 
     const onResize = () => {
       fit.fit();
@@ -218,8 +221,6 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
-      holderEl?.removeEventListener('wheel', markUserScroll);
-      holderEl?.removeEventListener('touchmove', markUserScroll);
       if (outTimer !== null) window.clearTimeout(outTimer);
       client.close();
       term.dispose();
@@ -252,7 +253,22 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
           </span>
         )}
       </div>
-      <div ref={holder} className="min-h-0 flex-1 overflow-hidden bg-black/90 p-1" />
+      <div className="relative min-h-0 flex-1">
+        <div ref={holder} className="h-full overflow-hidden bg-black/90 p-1" />
+        {scrolledUp && (
+          <button
+            type="button"
+            onClick={() => {
+              termRef.current?.scrollToBottom();
+              setScrolledUp(false);
+            }}
+            aria-label="滚动到底部"
+            className="absolute right-3 bottom-3 flex size-7 items-center justify-center rounded-full border border-edge/[0.16] bg-neutral-900/90 text-neutral-300 shadow-mac transition-colors hover:border-edge/[0.3] hover:text-neutral-100"
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

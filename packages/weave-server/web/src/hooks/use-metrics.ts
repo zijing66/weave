@@ -15,6 +15,26 @@ export interface MetricsAgentSample {
   cpuPercent?: number;
   memRssBytes?: number;
   outputBytesPerSec?: number;
+  /** 该进程的磁盘 IO 速率（读+写字节/秒，与 CPU 同拍差分）；缺席 = 本拍没采到。 */
+  diskBytesPerSec?: number;
+}
+
+export interface SystemSample {
+  cpuPercent: number;
+  memTotalBytes: number;
+  memUsedBytes: number;
+  disks: Array<{ mount: string; totalBytes: number; usedBytes: number }>;
+  /** 机器整体磁盘繁忙度 %（性能占用，非空间）；采不到缺席。 */
+  diskActivePercent?: number;
+}
+
+export interface SystemHistoryPoint {
+  at: string;
+  cpuPercent: number;
+  memUsedBytes: number;
+  memTotalBytes: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
 }
 
 export interface MetricsSnapshot {
@@ -22,6 +42,10 @@ export interface MetricsSnapshot {
   host: { cpuPercent: number; memRssBytes: number } | null;
   agents: MetricsAgentSample[];
   history: Array<{ at: string; daemonCpuPercent: number; hostCpuPercent?: number }>;
+  /** 全局系统读数（整机 CPU/内存/磁盘）；采不到 = null。 */
+  system: SystemSample | null;
+  /** 系统时序环形（10s 一格，最长 24h）。 */
+  systemHistory: SystemHistoryPoint[];
 }
 
 let latest: MetricsSnapshot | null = null;

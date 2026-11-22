@@ -8,7 +8,7 @@ import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Archive, Bell, BellRing, Check, ChevronDown, Copy, Cpu, Eye, EyeOff, FileWarning, HelpCircle, Loader2, MemoryStick, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
+import { Archive, Bell, BellRing, Check, ChevronDown, Copy, Cpu, Eye, EyeOff, FileWarning, HardDrive, HelpCircle, Loader2, MemoryStick, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { api } from '@/lib/api';
@@ -848,14 +848,14 @@ export function SessionList({
                 </Badge>
               )}
             </div>
-            {/* 第 3 行：事件数 + 最后更新时刻（头）与资源 CPU·MEM（尾）一头一尾 */}
-            <div className="flex basis-full items-center justify-between gap-x-2">
-              <span className="flex min-w-0 shrink items-center gap-2 overflow-hidden">
-                <span className="min-w-0 truncate text-10 text-neutral-500">
+            {/* 第 3 行：事件数 + 最后更新时刻（头）与资源 CPU·MEM·IO（尾）一头一尾；挤了换行不溢出 */}
+            <div className="flex flex-wrap basis-full items-center justify-between gap-x-2 gap-y-1">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-10 text-neutral-500">
                   {t('tasks.events', { n: s.eventCount ?? 0 })}
                 </span>
                 {/* 最后更新时刻（lastSeenAt = 最后一条 hook 事件），口径同全局总览会话行 */}
-                <span className="min-w-0 truncate text-10 text-neutral-500">
+                <span className="truncate text-10 text-neutral-500">
                   {lastSeenLabel(t, s.lastSeenAt, now)}
                 </span>
               </span>
@@ -1011,13 +1011,14 @@ export function SessionList({
   );
 }
 
-/** 会话卡资源芯片：该会话 Agent 实例的 CPU/RSS（同一份 metrics 帧切出，60s 粒度；
- *  Web 终端实例才带进程口径——没采到不摆空壳）。 */
+/** 会话卡资源芯片：该会话 Agent 进程的 CPU / 内存 / 磁盘 IO 速率（同一份 metrics
+ *  帧切出，60s 粒度；Web 终端实例才带进程口径——没采到不摆空壳）。 */
 function SessionResourceChip({ sessionId }: { sessionId: string }) {
   const t = useT();
   const metrics = useMetrics();
   const agent = metrics?.agents.find((a) => a.harnessSessionId === sessionId);
   if (!agent || (agent.cpuPercent === undefined && agent.memRssBytes === undefined)) return null;
+  const io = agent.diskBytesPerSec;
   const mem = agent.memRssBytes ?? 0;
   return (
     <Tooltip label={t('tasks.resTip')}>
@@ -1032,7 +1033,19 @@ function SessionResourceChip({ sessionId }: { sessionId: string }) {
             {mem < 1024 * 1024 ? `${(mem / 1024).toFixed(1)} KB` : mem < 1024 * 1024 * 1024 ? `${(mem / 1024 / 1024).toFixed(0)} MB` : `${(mem / 1024 / 1024 / 1024).toFixed(1)} GB`}
           </span>
         )}
+        {io !== undefined && (
+          <span className="inline-flex items-center gap-1 text-violet-300">
+            <HardDrive className="h-3 w-3" aria-hidden="true" />
+            {fmtIo(io)}
+          </span>
+        )}
       </span>
     </Tooltip>
   );
+}
+
+function fmtIo(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) return `${bytesPerSec} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`;
 }
