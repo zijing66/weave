@@ -31,6 +31,65 @@ const prompt = (text: string, ts: string, promptIndex: number) => ({
 
 const at = (h: number) => `2026-11-04T0${h}:00:00.000Z`;
 
+/** 新格式（2.1.319+）：每行真 uuid、promptIndex 恒递增，回退的痕迹是 parentUuid 链回指。 */
+let seq = 0;
+const uuid = () => `00000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`;
+const turnAt = (h: number) => `2026-11-05T0${h}:00:00.000Z`;
+
+/** 按链序造行：helper 持有链尾，newPrompt 让 parentUuid = 链尾（正常接尾）。 */
+const chainy = () => {
+  let tail: string | null = null;
+  const rows: Array<Record<string, unknown>> = [];
+  const newPrompt = (text: string, ts: string, p: number, origin = 'human') => {
+    const u = uuid();
+    rows.push({
+      type: 'user', isSidechain: false, parentUuid: tail, uuid: u,
+      turnPosition: { promptIndex: p, turnIndex: p }, turnOrigin: origin,
+      promptSource: 'typed', origin: { kind: origin },
+      message: { role: 'user', content: text }, timestamp: ts,
+    });
+    tail = u;
+    return u;
+  };
+  const newTurn = (ts: string) => {
+    const u = uuid();
+    rows.push({
+      type: 'system', subtype: 'turn_duration', parentUuid: tail, uuid: u,
+      durationMs: 1000, messageCount: 1, timestamp: ts,
+    });
+    tail = u;
+    return u;
+  };
+  /** 回退后的重发：parentUuid 指回 fork 目标（而不是链尾）。 */
+  const forkPrompt = (forkTo: string, text: string, ts: string, p: number) => {
+    const u = uuid();
+    rows.push({
+      type: 'user', isSidechain: false, parentUuid: forkTo, uuid: u,
+      turnPosition: { promptIndex: p, turnIndex: p }, turnOrigin: 'human',
+      promptSource: 'typed', origin: { kind: 'human' },
+      message: { role: 'user', content: text }, timestamp: ts,
+    });
+    tail = u;
+    return u;
+  };
+  /** 手工行入列（链尾跟着行自身的 uuid 走）。 */
+  const push = (row: Record<string, unknown>): void => {
+    rows.push(row);
+    if (typeof row.uuid === 'string') tail = row.uuid;
+  };
+  /** 中间的工具结果行（无 turnPosition 的链行，走正则记账入口）。 */
+  const newTool = (ts: string) => {
+    const u = uuid();
+    rows.push({
+      type: 'user', isSidechain: false, parentUuid: tail, uuid: u,
+      message: { role: 'user', content: [{ type: 'tool_result', content: 'x' }] }, timestamp: ts,
+    });
+    tail = u;
+    return u;
+  };
+  return { rows, newPrompt, newTurn, newTool, forkPrompt, push, tailOf: () => tail };
+};
+
 /** 一轮收尾笔（宿主正常收尾；被打断时是中断行）。 */
 const turnDone = (ts: string) => ({ type: 'system', subtype: 'turn_duration', timestamp: ts });
 
@@ -48,6 +107,9 @@ describe('stepRewind', () => {
     messages: [],
     prevP: null,
     turnEnded: false,
+    chain: [],
+    tailUuid: null,
+    forkRewound: false,
     marks: [],
   });
 
@@ -131,6 +193,127 @@ describe('stepRewind', () => {
     stepRewind(s, JSON.stringify({ type: 'user', message: { content: '[Request interrupted by user]' }, timestamp: at(2) }));
     stepRewind(s, JSON.stringify({ type: 'user', isSidechain: true, turnPosition: { promptIndex: 1 }, timestamp: at(3) }));
     expect(s.marks).toEqual([]);
+  });
+});
+
+describe('stepRewind · 链 fork 判据（2.1.319+）', () => {
+  const fresh = (): RewindState => ({
+    turns: [],
+    messages: [],
+    prevP: null,
+    turnEnded: false,
+    chain: [],
+    tailUuid: null,
+    forkRewound: false,
+    marks: [],
+  });
+  const run = (rows: Array<Record<string, unknown>>) => {
+    const s = fresh();
+    for (const r of rows) stepRewind(s, JSON.stringify(r));
+    return s;
+  };
+
+  it('human prompt 的 parentUuid 回指已知链行（计数照常递增）→ 回退', () => {
+    const c = chainy();
+    c.newPrompt('a', turnAt(1), 1);
+    c.newTurn(turnAt(1));
+    c.newPrompt('b', turnAt(2), 2);
+    c.newTurn(turnAt(2));
+    const forkTarget = c.rows[1]!.uuid; // 退回 a 之前？不——退回 b 之前 = 指向 a 轮的收尾行
+    c.forkPrompt(forkTarget as string, 'b2', turnAt(5), 3);
+    const s = run(c.rows);
+    // 被退掉的段 = fork 点之后：b（用户消息）→ boundaryAt = b 的时刻
+    expect(s.marks).toEqual([{ at: turnAt(5), boundaryAt: turnAt(2) }]);
+    // 轮次表/消息表按链截断：只剩 a 与新 b2
+    expect(s.messages.map((m) => m.text)).toEqual(['a', 'b2']);
+    expect(s.turns).toHaveLength(2);
+  });
+
+  it('fork 指回用户消息行本身：boundaryAt = 被退掉的第一条消息（a 之后的 b）', () => {
+    const c = chainy();
+    c.newPrompt('a', turnAt(1), 1);
+    c.newTurn(turnAt(1));
+    c.newPrompt('b', turnAt(2), 2);
+    c.newTurn(turnAt(2));
+    c.forkPrompt(c.rows[0]!.uuid as string, 'a2', turnAt(6), 3);
+    const s = run(c.rows);
+    // fork 点 = a 行 ⇒ 被退段 = a 之后的一切，第一条被退消息 = b
+    expect(s.marks).toEqual([{ at: turnAt(6), boundaryAt: turnAt(2) }]);
+    expect(s.messages.map((m) => m.text)).toEqual(['a', 'a2']);
+  });
+
+  it('只退掉跑着的工具段（空段，没退用户消息）：区间为空，不灰任何气泡', () => {
+    const c = chainy();
+    c.newPrompt('a', turnAt(1), 1);
+    c.newTool(turnAt(2));
+    c.forkPrompt(c.rows[0]!.uuid as string, 'a2', turnAt(4), 2);
+    const s = run(c.rows);
+    expect(s.marks).toEqual([{ at: turnAt(4), boundaryAt: turnAt(4) }]);
+    expect(s.messages.map((m) => m.text)).toEqual(['a', 'a2']);
+  });
+
+  it('注入消息（peer）链回指不算回退', () => {
+    const c = chainy();
+    c.newPrompt('a', turnAt(1), 1);
+    const mid = c.rows[0]!.uuid;
+    // peer 注入：parent 指回更早的链行、turnOrigin 不是 human
+    c.push({
+      type: 'user', isSidechain: false, parentUuid: mid, uuid: uuid(),
+      turnPosition: { promptIndex: 1, turnIndex: 1 }, turnOrigin: 'peer',
+      message: { role: 'user', content: 'Another Claude session sent a message: hi' }, timestamp: turnAt(2),
+    });
+    c.newPrompt('b', turnAt(3), 2);
+    const s = run(c.rows);
+    expect(s.marks).toEqual([]);
+  });
+
+  it('史前 parent（resume / 换文件开头）：不认作 fork', () => {
+    const c = chainy();
+    c.newPrompt('a', turnAt(1), 1);
+    // 首行指向文件之前的 uuid（链上查无）
+    c.rows[0]!.parentUuid = '99999999-9999-4999-8999-999999999999';
+    const s = run(c.rows);
+    expect(s.marks).toEqual([]);
+  });
+
+  it('fork 之后轮次表按链序维护（不再按 promptIndex 对位、不补空档）', () => {
+    const c = chainy();
+    c.newPrompt('a', turnAt(1), 1);
+    c.newTurn(turnAt(1));
+    c.newPrompt('b', turnAt(2), 2);
+    c.newTurn(turnAt(2));
+    const forkTarget = c.rows[1]!.uuid;
+    c.forkPrompt(forkTarget as string, 'b2', turnAt(5), 3);
+    c.newPrompt('c', turnAt(6), 4);
+    const s = run(c.rows);
+    expect(s.marks).toEqual([{ at: turnAt(5), boundaryAt: turnAt(2) }]);
+    expect(s.messages.map((m) => m.text)).toEqual(['a', 'b2', 'c']);
+    expect(s.turns.every((t) => t !== null)).toBe(true);
+  });
+
+  it('sessionRewindPoints：fork 后列表 = 当前分支（不落读屏降级）', async () => {
+    const c = chainy();
+    c.newPrompt('a', turnAt(1), 1);
+    c.newTurn(turnAt(1));
+    c.newPrompt('b', turnAt(2), 2);
+    c.newTurn(turnAt(2));
+    const forkTarget = c.rows[1]!.uuid;
+    c.forkPrompt(forkTarget as string, 'b2', turnAt(5), 3);
+    const path = write(c.rows);
+    expect(await CLAUDE_REWIND.sessionRewindPoints!({ sessionId: 's', transcriptPath: path })).toEqual([
+      { index: 0, text: 'a', at: turnAt(1) },
+      { index: 1, text: 'b2', at: turnAt(5) },
+    ]);
+  });
+
+  it('无 uuid 的行不进链账（正则入口自洽闸：parentUuid 缺席不入账）', () => {
+    const s = fresh();
+    // 旧格式行：无 uuid，链账恒空 → 旧判据照常工作
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(s, JSON.stringify(prompt('a2', at(5), 1)));
+    expect(s.marks).toEqual([{ at: at(5), boundaryAt: at(1) }]);
+    expect(s.chain).toEqual([]);
   });
 });
 
