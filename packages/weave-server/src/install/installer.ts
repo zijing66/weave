@@ -76,6 +76,7 @@ export async function installSkill(
   sourceDir: string,
   name: string,
   agent: InstallAgent = 'claude',
+  libraryId?: number,
 ): Promise<string> {
   assertSafeName(name);
   const roots = skillsRootsFor(agent);
@@ -89,7 +90,7 @@ export async function installSkill(
   }
   const target = path.join(projectPath, roots[0], name);
   await cp(sourceDir, target, { recursive: true });
-  await recordInstalled(projectPath, { category: 'skill', name, agent });
+  await recordInstalled(projectPath, { category: 'skill', name, agent, libraryId });
   return target;
 }
 

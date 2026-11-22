@@ -1,6 +1,7 @@
 import { rm, cp, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import type { Harness, ToolScope } from '@weavecode/core';
 import { applyStatuslineConfig } from '../statusline/manager.js';
 import { readStatuslineConfig } from '../statusline/manager.js';
@@ -11,7 +12,8 @@ import {
   findFileAssetSource,
   type LibraryIndex,
 } from './library-index.js';
-import { detectUpdates } from './updates.js';
+import { detectUpdates, type UpdateReport } from './updates.js';
+import { forgetInstalled, readInstalledLedger } from './install-ledger.js';
 import { materializePluginTemplate } from './plugin-templates.js';
 import { applyInitFile } from './init-files.js';
 import { FingerprintCache } from './fingerprint.js';
@@ -103,7 +105,7 @@ export async function syncAll(
   libraries: LibraryRow[],
   cache: FingerprintCache,
   index?: LibraryIndex,
-): Promise<{ updated: ApplyUpdateInput[]; skipped: number }> {
+): Promise<{ updated: ApplyUpdateInput[]; skipped: number; removed: string[] }> {
   const idx = index ?? (await buildLibraryIndex(libraries));
   const report = await detectUpdates(projectPath, libraries, cache, idx);
   const updated: ApplyUpdateInput[] = [];
@@ -142,7 +144,38 @@ export async function syncAll(
     if (!(await applyInitFile(f))) continue;
     updated.push({ category: 'init', name: f.relPath, scope: 'project' });
   }
-  return { updated, skipped: 0 };
+  const removed = await sweepOrphanSkills(projectPath, report, libraries);
+  return { updated, skipped: 0, removed };
+}
+
+/**
+ * 孤儿清扫：库装过的 skill、库还在却不再提供它（包方下线）→ 删掉盘上副本并
+ * 出账。只动账本上记了来源库的（RPG/手装的不记 libraryId，天然不动）；库本身
+ * 被删的跳过——删市场副本 ≠ 卸载。
+ */
+async function sweepOrphanSkills(
+  projectPath: string,
+  report: UpdateReport,
+  libraries: LibraryRow[],
+): Promise<string[]> {
+  const ledger = await readInstalledLedger(projectPath);
+  if (!ledger.some((r) => r.category === 'skill' && r.libraryId !== undefined)) return [];
+  const removed: string[] = [];
+  for (const s of report.skills) {
+    if (s.scope !== 'project' || !s.custom) continue;
+    const record = ledger.find(
+      (r) => r.category === 'skill' && r.name === s.name && r.agent === s.agent && r.libraryId !== undefined,
+    );
+    if (!record) continue;
+    // 来源库已不在注册表 → 库被删，不是 skill 被下线，不动（删市场副本 ≠ 卸载）。
+    if (!libraries.some((l) => l.id === record.libraryId)) continue;
+    const target = path.join(projectPath, ...assetSurfaceFor(s.agent).projectSkillsRoots()[0].split('/'), s.name);
+    if (!existsSync(target)) continue;
+    await rm(target, { recursive: true, force: true });
+    await forgetInstalled(projectPath, { category: 'skill', name: s.name, agent: s.agent });
+    removed.push(`${s.name} (${s.agent})`);
+  }
+  return removed;
 }
 
 /**

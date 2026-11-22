@@ -2,6 +2,11 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-11-19
+
+- **内置通用 skill 范围定案**（bbd50fb2）：通用 skill 判据 = 用户原话「全行业通用，整个社会运行与行业运行通用的抽象类操作」——绑定具体工具/语言/个人工作流的不算（增量提交纪律、面向抽象编程原始形态被裁出，后者经用户澄清「本质是相似任务抽象共性」后以 extract-commonality 之名收编）。候选清单从本机 weave.db 8024 条用户 prompt 全量提炼（子 agent 只读分析），终版 8 条：plan-then-execute / done-means-verified（verify-then-finish 与结果对账两候选合并——用户裁决「可以考虑合并」）/ diagnose-before-fix / residue-sweep / extract-commonality / scope-discipline / state-accuracy / escalate-on-ambiguity。weave 域 4 个既有内置 skill（orchestration/user-guide/plugin-creator/pet-hatcher）用户裁决**全保留**；个性化 skill 归 note-zijing.yao 仓的 zj-skills（本就有 symlink 随用随装面板，无需 weave 侧机制）。
+- **skill 孤儿清扫落地**（33efdee9）：起因 = 用户要求「移除的内置 skill 在重装后也要能从存量机器上移除」——原 syncAll 只覆盖「有库源且过期」，无源残留既不更新也不删。方案：安装账本（`.weave/installed.json`）skill 记录新增 `libraryId`（market 安装路由按 sourceDir 路径前缀认领来源库）；`syncAll` 末尾扫孤儿 = 账上有来源库、库还在注册表却不再提供该 skill（包方下线）⇒ 删盘上副本+出账。安全边界：库本身被删的跳过（守「删市场副本 ≠ 卸载」裁决，库删 ≠ skill 下线）；无 `libraryId` 的记录（RPG 装的、手装的、user 档）一律不动。旧账（无 libraryId）不清、靠未来下线的 skill 装一次即入账覆盖。
+
 ## 2026-11-16
 
 - **pet 的 SSE 消费收敛进 lib/sse 单例总线（豁免收窄；用户裁决「要做」）**：起因 = 用户问「后端能否统一接入事件总线、pet 分发也实时、多处状态同步而不是各走各的」。核实结论：后端早统一（HookEventBus + DataBus → SseHub → 唯一 `/events`；dashboard 全部走 push/行级补丁），「各走各的」只在 pet 消费端——裸 `new EventSource`（D-1 豁免）把大部分帧扔掉、靠「帧只当重拉信号 + 15s 全量三连拉」，与 dashboard 的行级补丁两套对账节拍。收敛（04d0a02f）：pet 改走 `lib/sse.ts`（心跳判活/断线补发/`?since=`/resync 全继承；boot 先跑 `refreshAuth`——sse 建连闸读 `authState`，dashboard 由 App 探、pet 自跑）；`sessionLiveness`/`sessionInterrupt` push 帧行级补丁直写聚合输入（`applyRowPatch`），hook 帧按域只拉受影响那份（dispatch.→dispatches、question.pending→questions、event.ingested 等→sessions），15s 兜底节拍与前台 visibilitychange 对账保留。**豁免条款收窄**：D-1 的「pet 自建 EventSource」不再成立，但「WebView2 后台节流 → 15s 对账兜底」那一半理由仍成立、保留。

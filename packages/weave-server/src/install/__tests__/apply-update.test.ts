@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, cpSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { buildLibraryIndex } from '../library-index.js';
@@ -89,6 +89,65 @@ describe('syncAll — batches all outdated', () => {
     expect(result.updated.map((u) => u.name)).toEqual(['a']);
     expect(readFileSync(join(project, '.claude/skills/a/SKILL.md'), 'utf-8')).toBe('# a v2');
     expect(readFileSync(join(project, '.claude/skills/b/SKILL.md'), 'utf-8')).toBe('# b v1');
+  });
+});
+
+describe('syncAll — orphan sweep', () => {
+  let project: string;
+  let libDir: string;
+  beforeEach(() => {
+    project = mkdtempSync(join(tmpdir(), 'weave-au-orphan-'));
+    libDir = mkdtempSync(join(tmpdir(), 'weave-au-orphanlib-'));
+    mkdirSync(join(libDir, 'dropped'), { recursive: true });
+    writeFileSync(join(libDir, 'dropped', 'SKILL.md'), '# dropped v1');
+    mkdirSync(join(project, '.claude/skills/dropped'), { recursive: true });
+    writeFileSync(join(project, '.claude/skills/dropped', 'SKILL.md'), '# dropped v1');
+    // 手装 skill：无账本记录，清扫不许碰
+    mkdirSync(join(project, '.claude/skills/handmade'), { recursive: true });
+    writeFileSync(join(project, '.claude/skills/handmade', 'SKILL.md'), '# mine');
+    // .weave/installed.json 由用例各自写
+  });
+  afterEach(() => {
+    rmSync(project, { recursive: true, force: true });
+    rmSync(libDir, { recursive: true, force: true });
+  });
+  const writeLedger = (assets: unknown[]) => {
+    mkdirSync(join(project, '.weave'), { recursive: true });
+    writeFileSync(join(project, '.weave/installed.json'), JSON.stringify({ version: 1, assets }));
+  };
+
+  it('removes a library-installed skill whose library no longer ships it', async () => {
+    const lib = libraries.add({ path: libDir, kind: 'skill' });
+    writeLedger([{ category: 'skill', name: 'dropped', agent: 'claude', libraryId: lib.id }]);
+    // 库目录里删掉该 skill = 包方下线
+    rmSync(join(libDir, 'dropped'), { recursive: true, force: true });
+    const cache = new FingerprintCache();
+    const result = await syncAll(project, [lib], cache);
+    expect(result.removed).toEqual(['dropped (claude)']);
+    expect(existsSync(join(project, '.claude/skills/dropped'))).toBe(false);
+    expect(existsSync(join(project, '.claude/skills/handmade'))).toBe(true);
+    const ledger = JSON.parse(readFileSync(join(project, '.weave/installed.json'), 'utf-8'));
+    expect(ledger.assets).toEqual([]);
+  });
+
+  it('keeps the skill when the source library itself was deleted (删市场副本 ≠ 卸载)', async () => {
+    const lib = libraries.add({ path: libDir, kind: 'skill' });
+    writeLedger([{ category: 'skill', name: 'dropped', agent: 'claude', libraryId: lib.id }]);
+    libraries.remove(lib.id);
+    const cache = new FingerprintCache();
+    const result = await syncAll(project, [], cache);
+    expect(result.removed).toEqual([]);
+    expect(existsSync(join(project, '.claude/skills/dropped'))).toBe(true);
+  });
+
+  it('never touches skills without a library record (RPG / hand-installed)', async () => {
+    const lib = libraries.add({ path: libDir, kind: 'skill' });
+    writeLedger([{ category: 'skill', name: 'dropped', agent: 'claude' }]);
+    rmSync(join(libDir, 'dropped'), { recursive: true, force: true });
+    const cache = new FingerprintCache();
+    const result = await syncAll(project, [lib], cache);
+    expect(result.removed).toEqual([]);
+    expect(existsSync(join(project, '.claude/skills/dropped'))).toBe(true);
   });
 });
 

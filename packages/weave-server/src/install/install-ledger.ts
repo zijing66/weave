@@ -17,6 +17,9 @@ export interface InstalledAssetRecord {
   agent: Harness;
   /** file 资产必填（FILE_ASSET_SPECS 的键）。 */
   assetCategory?: FileAssetCategory;
+  /** 来源库 id：只有从库装的 skill 记（RPG/项目自装的不记）——孤儿清扫只认
+   *  库装的（库还在却不再供该 skill ⇒ 已被包方下线，重装同步时清掉）。 */
+  libraryId?: number;
 }
 
 const LEDGER_REL = path.join('.weave', 'installed.json');
@@ -32,7 +35,8 @@ function isRecord(value: unknown): value is InstalledAssetRecord {
     (r['category'] === 'skill' || r['category'] === 'mcp' || r['category'] === 'file') &&
     typeof r['name'] === 'string' &&
     r['name'] !== '' &&
-    typeof r['agent'] === 'string'
+    typeof r['agent'] === 'string' &&
+    (r['libraryId'] === undefined || typeof r['libraryId'] === 'number')
   );
 }
 

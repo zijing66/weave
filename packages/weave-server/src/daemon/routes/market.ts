@@ -91,6 +91,18 @@ function mcpSurfaceOf(agent: string | undefined) {
   return assetSurfaces().find((s) => s.harness === id);
 }
 
+/** 源目录落在哪个库下面（按路径前缀认领；不属于任何库 → undefined，如 RPG 装的）。 */
+function libraryIdOfSource(
+  libraries: { id: number; path: string }[],
+  sourceDir: string,
+  dataRoot: string,
+): number | undefined {
+  return libraries.find((l) => {
+    const root = path.isAbsolute(l.path) ? l.path : path.join(dataRoot, l.path);
+    return sourceDir === root || sourceDir.startsWith(root + path.sep);
+  })?.id;
+}
+
 /** Map installer errors to HTTP statuses (409 conflict / 404 missing / 400 bad). */
 function sendInstallError(res: ServerResponse, e: unknown): void {
   if (e instanceof InstallConflictError) {
@@ -530,10 +542,14 @@ export async function handleMarketRoutes(
           return true;
         }
         const agent = body.agent ?? 'claude';
+        // 库装的 skill 记来源库 id（孤儿清扫只清库装孤儿）；user 档无项目账本不记。
+        const libraryId = body.scope === 'user' || !deps.libraries
+          ? undefined
+          : libraryIdOfSource(deps.libraries.list(), body.sourceDir, deps.libraries.dataRoot);
         const target =
           body.scope === 'user'
             ? await installGlobalSkill(body.sourceDir, body.name, agent)
-            : await installSkill(projectPath, body.sourceDir, body.name, agent);
+            : await installSkill(projectPath, body.sourceDir, body.name, agent, libraryId);
         sendJson(res, 201, { category: 'skill', name: body.name, scope: body.scope ?? 'project', agent, path: target });
       } else if (body.category && isFileAssetCategory(body.category)) {
         if (!body.name || !body.sourceFile) {
