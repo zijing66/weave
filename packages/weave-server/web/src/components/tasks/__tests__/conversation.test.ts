@@ -1340,6 +1340,11 @@ describe('对话缓存（sessionStorage）', () => {
     vi.stubGlobal('sessionStorage', {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
+      },
     });
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -1368,6 +1373,56 @@ describe('对话缓存（sessionStorage）', () => {
     store.set('weave:conv:s1', '{ 这不是 json');
     expect(readConvCache('s1')).toBeNull();
     expect(readConvCache('从没写过')).toBeNull();
+  });
+
+  it('配额满：按最近写入时间从旧到新逐出别的会话，删到写得进为止（自己的不逐）', () => {
+    store.set('weave:conv:old', JSON.stringify({ at: 100, entries: [conv(1)] }));
+    store.set('weave:conv:mid', JSON.stringify({ at: 200, entries: [conv(2)] }));
+    store.set('weave:conv:new', JSON.stringify({ at: 300, entries: [conv(3)] }));
+    let fail = true;
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      removeItem: (k: string) => void store.delete(k),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
+      },
+      setItem: (k: string, v: string) => {
+        // 配额模型：额度 3 条，满后再写一律抛（逐出一条腾出位置后就能写进）
+        if (fail && store.size >= 3) throw new DOMException('quota', 'QuotaExceededError');
+        store.set(k, v);
+      },
+    });
+    writeConvCache('me', [conv(9)]);
+    expect(store.has('weave:conv:me')).toBe(true);
+    expect(store.has('weave:conv:old')).toBe(false);
+    expect(store.has('weave:conv:mid')).toBe(true);
+    expect(store.has('weave:conv:new')).toBe(true);
+    fail = false;
+    writeConvCache('me', [conv(10)]);
+    expect(readConvCache('me')![0]!.eventId).toBe(10);
+  });
+
+  it('配额满且没有别的会话可逐：删自己后重试一次，再失败就静默放弃', () => {
+    let fail = true;
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      removeItem: (k: string) => void store.delete(k),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
+      },
+      setItem: (k: string, v: string) => {
+        // 配额模型：额度 1 条，满后再写一律抛；逐出唯一那条（自己）腾出位置后就能写进
+        if (fail && store.size >= 1) throw new DOMException('quota', 'QuotaExceededError');
+        store.set(k, v);
+      },
+    });
+    writeConvCache('me', [conv(1)]);
+    expect(readConvCache('me')![0]!.eventId).toBe(1);
+    fail = false;
+    writeConvCache('me', [conv(2)]);
+    expect(readConvCache('me')![0]!.eventId).toBe(2);
   });
 });
 

@@ -7,6 +7,7 @@ import { dashboardCommand } from '../commands/dashboard';
 import { scanCommand } from '../commands/scan';
 import { chpassCommand } from '../commands/chpass';
 import { doctorCommand } from '../commands/doctor';
+import { attachCommand } from '../commands/attach';
 import { zh, en, type MessageKey } from '../i18n/dict';
 import { makeT } from '../i18n/t';
 import type { Command } from '../parser';
@@ -21,6 +22,7 @@ const COMMANDS: Command[] = [
   scanCommand,
   chpassCommand,
   doctorCommand,
+  attachCommand,
 ];
 
 const zhT = makeT(zh, zh);
@@ -48,14 +50,23 @@ describe('command registry contract', () => {
     }
   });
 
-  it('only chpass accepts positionals — stray args are CLI errors everywhere else', () => {
+  it('only chpass and agent attach accept positionals — stray args are CLI errors everywhere else', () => {
     // cli.ts 的叶子命令按 maxPositionals（缺省 0）拒绝多余位置参数；
-    // 唯一例外是 chpass 的新密码位置参数。
+    // 例外是 chpass 的新密码位置参数、agent attach 的可选 sessionId。
+    const leaves: Array<[Command, string]> = [];
     for (const cmd of COMMANDS) {
-      if (cmd === chpassCommand) {
-        expect(cmd.maxPositionals).toBe(1);
+      if (cmd.subcommands?.length) {
+        for (const sub of cmd.subcommands) leaves.push([sub, `${cmd.name} ${sub.name}`]);
       } else {
-        expect(cmd.maxPositionals, cmd.name).toBeUndefined();
+        leaves.push([cmd, cmd.name]);
+      }
+    }
+    const allowed = new Set(['chpass', 'agent attach']);
+    for (const [leaf, label] of leaves) {
+      if (allowed.has(label)) {
+        expect(leaf.maxPositionals, label).toBe(1);
+      } else {
+        expect(leaf.maxPositionals, label).toBeUndefined();
       }
     }
   });

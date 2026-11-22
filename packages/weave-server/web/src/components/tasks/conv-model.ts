@@ -40,21 +40,45 @@ export function readConvCache(sessionId: string): ConvEntry[] | null {
 }
 
 export function writeConvCache(sessionId: string, entries: readonly ConvEntry[]): void {
+  const payload = JSON.stringify({
+    at: Date.now(),
+    // 只留尾巴若干条（够首屏用，别把长会话的翻页历史一直堆在会话存储里）；
+    // 投递行是瞬时状态，不进缓存
+    entries: entries
+      .slice(-CONV_CACHE_MAX)
+      .map(({ pipe: _pipe, ...entry }) => entry),
+  });
   try {
-    sessionStorage.setItem(
-      CONV_KEY(sessionId),
-      JSON.stringify({
-        at: Date.now(),
-        // 只留尾巴若干条（够首屏用，别把长会话的翻页历史一直堆在会话存储里）；
-        // 投递行是瞬时状态，不进缓存
-        entries: entries
-          .slice(-CONV_CACHE_MAX)
-          .map(({ pipe: _pipe, ...entry }) => entry),
-      }),
-    );
+    sessionStorage.setItem(CONV_KEY(sessionId), payload);
+    return;
   } catch {
-    // 配额满 / 隐私模式禁写：静默降级成每次都拉服务端
+    // 配额满：按缓存里的「最近写入时间」从旧到新逐出**别的会话**（自己不动，
+    // 删自己会连本会话刚看的窗口一起丢），删到写得进为止
   }
+  const mine = CONV_KEY(sessionId);
+  const others: { key: string; at: number }[] = [];
+  for (let i = 0; i < sessionStorage.length; i += 1) {
+    const key = sessionStorage.key(i);
+    if (!key?.startsWith('weave:conv:') || key === mine) continue;
+    let at = Number.POSITIVE_INFINITY;
+    try {
+      at = (JSON.parse(sessionStorage.getItem(key) ?? '') as { at?: number }).at ?? at;
+    } catch {
+      // 写坏的视为最旧，优先逐出
+    }
+    others.push({ key, at });
+  }
+  others.sort((a, b) => a.at - b.at);
+  for (const { key } of others) {
+    try {
+      sessionStorage.removeItem(key);
+      sessionStorage.setItem(mine, payload);
+      return;
+    } catch {
+      // 还满：继续逐下一家
+    }
+  }
+  // 只剩自己占着还是写不进（payload 超配额 / 隐私模式）：静默降级成每次都拉服务端
 }
 
 /** 消息状态徽标（在途 = 冷色，终态 = 绿/红）。 */

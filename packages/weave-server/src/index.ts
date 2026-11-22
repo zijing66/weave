@@ -63,6 +63,7 @@ export type {
 export { reconcileInstances, isTerminalStatus } from './runtime/instance-registry.js';
 export { mergedTerminalChannel } from './runtime/terminal-channel.js';
 export { HeadlessTerminal } from './runtime/headless-terminal.js';
+export { writeClientFrame } from './runtime/terminal/ws-frame.js';
 export { createWeaveServer, weaveRequestHandler, DAEMON_VERSION } from './daemon/server.js';
 export type { WeaveServerDeps } from './daemon/server.js';
 export { accessUrls, lanIps, ensureDaemonCert, startTlsServer, daemonCertsDir } from './daemon/tls.js';

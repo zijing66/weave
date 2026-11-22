@@ -171,9 +171,14 @@ packages/weave-server/web/src/features/
   codex TUI 交互留待 B5/B6 汇总验。
 
 ### B5 External Attach
-- [ ] `weave agent attach [--readonly]`：CLI 连 Gateway（Windows 不做 ConPTY 句柄
+- [x] `weave agent attach [--readonly]`：CLI 连 Gateway（Windows 不做 ConPTY 句柄
   转让，attach 客户端即 Terminal Bridge）；tmux 平台原生 attach。
-- 验收：外部终端与 Dashboard 同一实例、不重复起、输入控制权明确、外终端退出不影响 Agent。
+  2026-11-20 落地（e328e5ae）：`weave agent attach [--readonly] [sessionId]`——
+  CLI 自实现客户端 WS（`writeClientFrame` 掩码帧，服务端 parseFrame 解），
+  sessionId 缺省取第一条活 headless 实例；input lease 授予后 TTY 进 raw、键盘
+  原样进 stdin、下行原样写 stdout，Ctrl+C 交宿主 TUI。实机验证：readonly 与
+  interactive 双通（weave-5b 实例，输出实时桥进、`❯` 提示行重绘正常）。
+- 验收：外部终端与 Dashboard 同一实例、不重复起、输入控制权明确、外终端退出不影响 Agent。✅（同实例广播实测：CLI 与 web 两端同时看到彼此的键入）
 
 ### B6 跨平台收尾与稳定性
 - [ ] Linux/macOS Native PTY、恢复向导、8→12→40 实例压测、资源采样、故障注入。

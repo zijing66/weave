@@ -57,6 +57,7 @@ import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-not
 import { ensurePushSubscribed } from '@/lib/push';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { setConvScreenOpen } from '@/lib/conv-screen';
+import { sweepConvCacheOrphans } from './conv-anchor-cleanup';
 import { usePullLoad } from '@/lib/pull-load';
 import { createAwaitGate } from '@/lib/await-gate';
 import type { MessageKey } from '@/i18n/dict';
@@ -543,6 +544,13 @@ export function TasksPanel({
         null,
     );
   }, [sessions]);
+
+  // 打开项目时顺手清对话缓存的孤儿（会话已被 sweeper 清掉的，conv 缓存只剩
+  // TTL 兜底、anchor 更是只写不删）：按服务端现存会话清单对账（用户裁决 2026-11-20）。
+  useEffect(() => {
+    if (allSessions === null) return;
+    sweepConvCacheOrphans(new Set(allSessions.map((s) => s.sessionId)));
+  }, [allSessions]);
 
   // 切会话：清空上一会话的事件与游标，全折叠 + 窗口重置回最新 10 条
   // （画布按需点开）——不清会闪现上一会话的组头。

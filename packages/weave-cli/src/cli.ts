@@ -7,6 +7,7 @@ import { scanCommand } from './commands/scan.js';
 import { chpassCommand } from './commands/chpass.js';
 import { doctorCommand } from './commands/doctor.js';
 import { uninstallCommand } from './commands/uninstall.js';
+import { attachCommand } from './commands/attach.js';
 import type { Command, CommandContext } from './parser.js';
 import { initCliLocale, t } from './i18n/index.js';
 import type { MessageKey } from './i18n/dict/index.js';
@@ -80,6 +81,7 @@ export class CLI {
     this.parser.registerCommand(scanCommand);
     this.parser.registerCommand(chpassCommand);
     this.parser.registerCommand(doctorCommand);
+    this.parser.registerCommand(attachCommand);
   }
 
   async run(argv: string[] = process.argv.slice(2)): Promise<void> {

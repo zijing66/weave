@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 
 /**
@@ -141,4 +141,29 @@ function parseFrame(buf: Buffer): ParsedFrame | null {
     payload = out;
   }
   return { frame: { opcode, payload }, consumed: off + maskLen + len };
+}
+
+/** 客户端→服务端的单帧写（RFC6455 客户端必须掩码）：CLI attach 客户端消费。 */
+export function writeClientFrame(socket: Duplex, opcode: number, payload: string | Buffer): void {
+  const data = typeof payload === 'string' ? Buffer.from(payload, 'utf8') : payload;
+  const len = data.length;
+  const mask = randomBytes(4);
+  let header: Buffer;
+  if (len < 126) {
+    header = Buffer.allocUnsafe(6);
+    header[1] = 0x80 | len;
+  } else if (len < 65536) {
+    header = Buffer.allocUnsafe(8);
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.allocUnsafe(14);
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  header[0] = 0x80 | opcode;
+  mask.copy(header, header.length - 4);
+  const masked = Buffer.allocUnsafe(len);
+  for (let i = 0; i < len; i++) masked[i] = data[i]! ^ mask[i % 4]!;
+  socket.write(Buffer.concat([header, masked]));
 }
