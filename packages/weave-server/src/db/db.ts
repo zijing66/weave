@@ -511,6 +511,30 @@ CREATE TABLE IF NOT EXISTS rpg_profile_versions (
 );
 CREATE INDEX IF NOT EXISTS idx_rpg_profile_versions_current ON rpg_profile_versions(is_current, id);
 
+-- Agent Runtime 域（B0，docs/plan/agent-runtime-terminal-gateway.md §2/§5）：一个
+-- headless Agent 实例一行（instance id 是本域主键——OS pid 会复用、harness 会话 id
+-- 归宿主，都不作键）。只存生命周期事实；ptyId / terminalSessionId 等实时句柄归
+-- Runtime Host 内存。status / execution_mode 词表与转场见 runtime/protocol.ts。
+CREATE TABLE IF NOT EXISTS agent_instances (
+  id                TEXT PRIMARY KEY,
+  project_id        INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  harness           TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  execution_mode    TEXT NOT NULL DEFAULT 'headless',
+  working_directory TEXT NOT NULL,
+  command           TEXT NOT NULL,
+  os_pid            INTEGER,
+  harness_session_id TEXT,
+  runtime_host_id   TEXT,
+  error_message     TEXT,
+  created_at        TEXT NOT NULL,
+  started_at        TEXT,
+  exited_at         TEXT,
+  exit_code         INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_agent_instances_project ON agent_instances(project_id, id);
+CREATE INDEX IF NOT EXISTS idx_agent_instances_status ON agent_instances(status);
+
 -- 联邦 peer 注册表（E3，RPG 稿 §六 + D8 预留）：手动 host:port 是基础、mDNS 自动
 -- 发现是增强。per-peer token 不落本表——落 <local>/peer-tokens/（0600，同 localToken
 -- 纪律）；last_seen_at 是心跳事实，online/offline 由 peerLiveness 派生不存列。

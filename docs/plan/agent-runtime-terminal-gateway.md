@@ -1,0 +1,131 @@
+# Agent Runtime 与 Web Terminal 改造（评估 + 分阶段计划）
+
+> 状态：**计划**——依据 = 用户 2026-11-20 上传的《Weave Agent Runtime & Web Terminal 设计方案》
+> （原件留档：`docs/plan/agent-runtime-terminal-design.md`）。先计划落档，再对照实现；
+> 每阶段完成即回本文打勾并把带日期的裁决记入 `docs/DECISIONS.md`。
+
+## 1. 现状评估（方案 vs 本仓实测）
+
+| 方案要求 | 本仓现状 | 差距 |
+| --- | --- | --- |
+| Agent 生命周期独立于终端 | **没有**。会话唯一的起法 = `openSessionTerminal`（`daemon/session-open.ts:129`）spawn 外部终端跑 harness 交互式 resume | 全缺：Runtime Host / PTY / headless 均不存在 |
+| Terminal Gateway（多客户端、重放、Lease） | **没有**。终端交互全是「对已开 pane 单点打键」（`TerminalBackend.sendKeys` / `sendPromptText`），读屏 = `getPaneText` 可视屏快照，无字节流、无序号、无广播 | 全缺 |
+| Dashboard Web Terminal（xterm.js） | **没有**。web 里零终端组件（grep 无 xterm 命中） | 全缺 |
+| 现有 TerminalBackend 保留为 Presentation | 已有且成熟：wezterm / wt / konsole / iterm / terminal 五实现 + auto 装配，读屏、注键、隐藏、关 pane 通道齐全 | 方向一致，零改动保留 |
+| 结构化事件、Question、Messaging 复用 | 已有（hook_events / QuestionTracker / MessageDeliverer 全套） | 方案明确「不替代」，直接复用 |
+| Daemon 重启后 Agent 存活 | 现状 = daemon 重启不杀终端里的会话（宿主本就不归 daemon 管），但**原因是它管不了**；Runtime Host 模式下这是必须新设计的一环 | 新增设计 |
+| 多实例并行 20–40 | 现状每个会话一个外部 pane，GUI 开销已实测（wezterm 软渲染 = 本机 CPU 唯一大户，见 `weave-cpu-baseline` 记忆） | headless 是解法，正中痛点 |
+
+**结论**：方案与仓库现状不冲突、是净新增一层。三条既有铁律需要显式对齐：
+
+1. **SSE 单通道（§9「不得再 new EventSource」）**：终端字节流是双向高频通道，SSE 不合适。
+   B3 落地时在 CLAUDE.md §9 加一条例外（terminal WebSocket 唯一客户端 = `web/src/lib/terminal.ts`）。
+2. **自包含发布约束**（`weave-umbrella-tgz-install`：npm -g 不解析 dependencies、
+   MAX_PATH ≈ prefix+169）：**node-pty 是原生模块**——预编译二进制装不进自包含 tgz 的
+   假设必须先 PoC（见 §6 开放问题 1），不通过则 Windows 侧 ConPTY 走自有 addon 或
+   node:child_process + Windows API 后备路线。
+3. **能力面纪律**：Harness 差异（resume、非交互启动参数）不新造 `HarnessCapabilities`
+   接口——既有 `ResumeCommandSpec` / `MessagingSurface` / `QuestionsSurface` 已经是
+   能力声明，Runtime 侧按槽取用，不写第二套能力面。
+
+## 2. 落点（对齐既有目录约定）
+
+```
+packages/weave-server/src/
+  runtime/
+    protocol.ts            # RuntimeHostRequest/Response/Event、Terminal Stream Protocol（B0）
+    instance-registry.ts   # agent_instances 内存登记 + SQLite 对账（B0/B1）
+    supervisor.ts          # Runtime Host 子进程监督（spawn/heartbeat/reconnect）（B1）
+    runtime-host-client.ts # daemon 侧 IPC 客户端（B1）
+    adapters/
+      windows-pty.ts       # ConPTY（B1 PoC）
+      tmux.ts              # WSL2/Linux 持久会话（B2）
+  terminal/
+    session-gateway.ts    # 广播/Sequence/重放/背压（B3）
+    output-buffer.ts       # Ring Buffer（B3）
+    output-journal.ts      # 落盘 journal（B3）
+    input-lease.ts         # 多客户端输入仲裁（B3/B5）
+  agent/                   # /agents 路由 + 实例生命周期（B0 起逐步）
+packages/weave-server/web/src/features/
+  terminal/                # xterm.js 视图（B4）
+```
+
+数据模型：`agent_instances` 表进 `db/db.ts` 的 schema（本仓无独立 migrations 目录，
+建表语句集中在 `SCHEMA`；新表按既有模式追加 + 对账幂等）。
+`terminal_clients` 内存为主；`runtime_hosts` 视 B1 实测再决定是否落库。
+
+## 3. 阶段计划（对方案 §15，验收逐条可测）
+
+### B0 Runtime 基础协议（纯类型 + schema，零行为变化）✅ 2026-11-20（14f05579）
+- [x] `runtime/protocol.ts`：AgentInstance 状态机（created→starting→running→
+  waiting_input/approval→…→exited/failed/recovering）、RuntimeHost IPC 消息、
+  Terminal Stream Protocol（`encoding:"base64"` 字节流、单调 sequence）。
+- [x] `agent_instances` 表 + registry 对账纯函数（含测试）。
+- [ ] 标识纪律进协议注释：instanceId / harnessSessionId / osPid / ptyId 互不混用。
+- 验收：两个 tsc + 既有测试全绿；不触碰 sessions 表、daemon 装配、TerminalBackend。
+
+### B1 Windows Runtime Host（本机主战场，先行）
+- [ ] node-pty PoC：Node 22 + pnpm + win32 x64 下预编译加载、装进自包含 tgz 后
+  全新目录 `npm -g` 安装可用（**这条不过，B1 换路线，不硬上**）。
+- [ ] Runtime Host 子进程（Named Pipe IPC）+ daemon 重连对账。
+- [ ] 生命周期：spawn / stdin / stdout / 退出码 / heartbeat / graceful shutdown。
+- [ ] Job Object 验证：Host 崩溃后 Agent 子进程存活策略实测（不假设可恢复）。
+- 验收：不开 WezTerm 也能起 claude/codex；浏览器没开过也照跑；daemon 优雅重启后
+  Host 重连、实例清单对账；进程退出正确落 `exited`。
+- 依 `CLAUDE.local.md`：daemon 由用户手动起，会话只起 Runtime Host 子进程（不占 6420）。
+
+### B2 WSL2 tmux Adapter
+- [ ] tmux session 命名规则（`weave-agent-<instanceId 短码>`）、send-keys、
+  capture-pane -e 原始字节、attach/detach、断电重连对账。
+- 验收：WSL2 里 headless 起会话、Dashboard 可见、tmux 可接、多客户端可看。
+
+### B3 Terminal Gateway
+- [ ] WebSocket 端点（认证走既有本机令牌口径）+ Ring Buffer + sequence 重放 +
+  gap 标记 + Input Lease + resize 归 Write Client + 背压。
+- [ ] CLAUDE.md §9 例外条款同步。
+- 验收：断开重连恢复输出、缺口显式标记、多客户端写不乱序、输出写失败不阻塞 PTY。
+
+### B4 Dashboard Web Terminal
+- [ ] xterm.js（依赖装进 web，非 server）；只渲染选中实例，scrollback 上限。
+- [ ] Workbench 布局（终端 + 事件/问答/资源面板，结构化信息走既有事件面，不解析终端文本）。
+- 验收：claude/codex TUI 在 Dashboard 内完整交互；关浏览器 Agent 不退；重进恢复。
+
+### B5 External Attach
+- [ ] `weave agent attach [--readonly]`：CLI 连 Gateway（Windows 不做 ConPTY 句柄
+  转让，attach 客户端即 Terminal Bridge）；tmux 平台原生 attach。
+- 验收：外部终端与 Dashboard 同一实例、不重复起、输入控制权明确、外终端退出不影响 Agent。
+
+### B6 跨平台收尾与稳定性
+- [ ] Linux/macOS Native PTY、恢复向导、8→12→40 实例压测、资源采样、故障注入。
+- 验收：20–40 实例管理稳定；不可恢复状态如实标注。
+
+## 4. 与既有面的边界（防越权）
+
+- TerminalBackend 一行不改：外部终端仍是 Presentation，与 Runtime 并列（方案 §12.1）。
+- Inbox Socket / 层② 投递优先级不动：headless 实例的 prompt 投递在 B1 先走
+  `MessageDeliverer` 既有层序，层② = Host stdin（等同 sendText），不自造第三通道。
+- 中断：headless 下 `interrupt` 的键梯子（ESC_KITTY→ESC→Ctrl+B，§7）原样打进
+  Host stdin——读屏判据改读 Gateway 输出流，键序本身复用。
+- QuestionTracker 不与 PTY 耦合：问答键序经 Lease 持有者注入，裁决仍归 Tracker。
+
+## 5. 风险与顺序原则
+
+- **先生命周期、再数据通道、最后体验**（方案 §20）；禁止先做漂亮 Web Terminal。
+- 最大技术风险 = node-pty × 自包含发布（B1 第一件事，卡住即调整路线，成本最低点）。
+- 次风险 = Windows Host 崩溃后 PTY 句柄不可恢复（方案已承认，落 `recovering/failed`
+  如实标注 + 用户确认，不盲目重启）。
+- 40 实例目标是管理规模不是并发承诺；等待审批不占执行槽。
+
+## 6. 实施前必须 PoC 的清单（2026-11-20 实机验证完毕，探针 = `%TEMP%\weave-pty-poc`）
+
+| # | 验证项 | 结果 |
+| --- | --- | --- |
+| 1 | node-pty 预编译 × 自包含 tgz × 深路径 | ✅ **通过**。prebuild.js 下载全部平台 `.node`（无本地编译）；带 prebuilds 打 tgz → 深路径（前缀 125 字符）`npm install --ignore-scripts` → require + ConPTY spawn 全通。注意：本机 npm allowScripts 策略会拦 install 脚本——发布链必须**离线可用**（--ignore-scripts 也通），不能依赖用户机跑 install 脚本 |
+| 2 | Host 崩溃 → Agent 子进程存活 | ❌ **Host 退出 = 子进程立即死**（ConPTY 管道随句柄关闭断裂，Job Object 救不了）。定案：崩溃恢复只走 harness resume，状态机如实落 `failed`，不承诺进程级存活（与方案 §11.3 一致） |
+| 3 | claude TUI 进 ConPTY + 字节流捕获 | ✅ 完整渲染；原始流含 Kitty 握手（`ESC[<u` / `ESC[>5u`）、OSC、bracketed paste、sync output——字节流协议路线成立；中断键序复用 §7 梯子 |
+| 4 | resize / stdin 写入 | ✅ |
+| 5 | tmux capture-pane 保真度 | 未验（B2 阶段在 WSL2 实机做，无 WSL 环境时如实标注） |
+| — | **平台包不混装**（2026-11-20 用户裁决） | ✅ `pack-weave.mjs` 暂存阶段按目标平台裁 `prebuilds/`（实测裁到只剩 win32-x64 后照常可用）；跨平台发布 = 每平台一枚 tgz。不采用 optionalDependencies + os/cpu（伞包 tgz 离线安装链上取不到可选依赖）。单枚通吃全平台则混入 +15MB 压缩体积，按平台出包为准 |
+| — | 附带发现 | ① `pty.spawn('claude')` 直调 error 2：npm shim 不能被 CreateProcess 解析，Host 适配层须 `cmd /c` 或解析真实 bin；② node 进程被 pty 句柄拖住不退——Host 须显式管理句柄生命周期 |
+
+**总裁决（2026-11-20）**：Windows 主战场全项可行，B1 无阻塞，按 §3 顺序实施。

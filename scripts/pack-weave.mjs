@@ -25,6 +25,7 @@
  */
 import { execSync } from 'node:child_process';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -78,6 +79,27 @@ async function pruneStaged(dir) {
   };
   await walk(dir);
   return removed;
+}
+
+/** node-pty prebuilds 平台裁剪：目标平台目录名 = `<platform>-<arch>`。
+ *  'all' 保留全部；'auto' = 发布机当前平台；其余按 `win32-x64` 形解析。 */
+export function resolvePackTargetPlatform(env = process.env.WEAVE_PACK_TARGET, platform = process.platform, arch = os.arch()) {
+  const value = (env ?? 'auto').trim();
+  if (value === 'all') return 'all';
+  if (value === 'auto' || value === '') return `${platform}-${arch}`;
+  if (!/^[a-z]+-[a-z0-9]+$/.test(value)) {
+    throw new Error(`WEAVE_PACK_TARGET 形如 win32-x64 / darwin-arm64 / linux-x64 / all，收到「${value}」`);
+  }
+  return value;
+}
+
+/** 返回 prebuilds 下要删的平台目录（keep 之外按前缀匹配；keep='all' 不删）。 */
+export function prebuildDirsToPrune(dirNames, keep) {
+  if (keep === 'all') return [];
+  return dirNames.filter((name) => {
+    const dash = name.indexOf('-');
+    return dash > 0 && name.slice(0, dash) !== keep.slice(0, keep.indexOf('-'));
+  });
 }
 
 /**
@@ -168,6 +190,26 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
       await cp(path.join(extStage, 'node_modules', name), path.join(stage, 'node_modules', name), {
         recursive: true,
       });
+    }
+
+    // 平台包不混装（docs/plan/agent-runtime-terminal-gateway.md §6）：node-pty 的
+    // prebuilds 全平台 .node 各 ~15MB，裁到目标平台、跨平台发布按平台各出一枚 tgz。
+    if (extNames.includes('node-pty')) {
+      const prebuilds = path.join(stage, 'node_modules', 'node-pty', 'prebuilds');
+      const keep = resolvePackTargetPlatform();
+      if (keep !== 'all') {
+        const entries = await readdir(prebuilds, { withFileTypes: true }).catch(() => []);
+        const prune = prebuildDirsToPrune(
+          entries.filter((e) => e.isDirectory()).map((e) => e.name),
+          keep,
+        );
+        for (const name of prune) {
+          await rm(path.join(prebuilds, name), { recursive: true, force: true });
+        }
+        console.log(`prebuilds pruned to ${keep}: kept [${entries.map((e) => e.name).filter((n) => !prune.includes(n))}] removed [${prune}]`);
+      } else {
+        console.log('prebuilds kept for all platforms (WEAVE_PACK_TARGET=all)');
+      }
     }
   }
 
