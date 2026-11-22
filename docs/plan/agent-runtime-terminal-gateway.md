@@ -61,17 +61,25 @@ packages/weave-server/web/src/features/
   waiting_input/approval→…→exited/failed/recovering）、RuntimeHost IPC 消息、
   Terminal Stream Protocol（`encoding:"base64"` 字节流、单调 sequence）。
 - [x] `agent_instances` 表 + registry 对账纯函数（含测试）。
-- [ ] 标识纪律进协议注释：instanceId / harnessSessionId / osPid / ptyId 互不混用。
+- [x] 标识纪律进协议注释：instanceId / harnessSessionId / osPid / ptyId 互不混用。
 - 验收：两个 tsc + 既有测试全绿；不触碰 sessions 表、daemon 装配、TerminalBackend。
 
-### B1 Windows Runtime Host（本机主战场，先行）
-- [ ] node-pty PoC：Node 22 + pnpm + win32 x64 下预编译加载、装进自包含 tgz 后
+### B1 Windows Runtime Host（本机主战场，先行）✅ 2026-11-20（04d5185e）
+- [x] node-pty PoC：Node 22 + pnpm + win32 x64 下预编译加载、装进自包含 tgz 后
   全新目录 `npm -g` 安装可用（**这条不过，B1 换路线，不硬上**）。
-- [ ] Runtime Host 子进程（Named Pipe IPC）+ daemon 重连对账。
-- [ ] 生命周期：spawn / stdin / stdout / 退出码 / heartbeat / graceful shutdown。
-- [ ] Job Object 验证：Host 崩溃后 Agent 子进程存活策略实测（不假设可恢复）。
-- 验收：不开 WezTerm 也能起 claude/codex；浏览器没开过也照跑；daemon 优雅重启后
-  Host 重连、实例清单对账；进程退出正确落 `exited`。
+- [x] Runtime Host 子进程（Named Pipe IPC）+ daemon 重连对账。
+- [x] 生命周期：spawn / stdin / stdout / 退出码 / heartbeat / graceful shutdown。
+- [x] Job Object 验证：Host 崩溃后 Agent 子进程存活策略实测（不假设可恢复）。
+- 验收（2026-11-20 实测，`%TEMP%\weave-pty-poc\probe-e2e.mjs` / `probe-claude.mjs`）：
+  **全过**——E2E 七项（握手/坏 token 拒/spawn/输出捕获/退出码/单调 sequence/
+  Host 死后对账判 failed）+ 真 claude TUI 冒烟（bin 解析链 + Kitty/OSC/bracketed
+  paste 全捕获）。**B1 收尾亦全过**（77e38c23 + 11a15d6c）：supervisor/合并通道
+  挂入 start.ts 与 dev-entry.ts 两处装配（30s 自愈重试）、headless 层② =
+  `HeadlessTerminal` 实现 `PromptTerminal`（instanceId 形 pane id 直投 stdin）、
+  WMI 真拓扑终验六项全过（断链 spawn/连接/实例/父子链/**daemon 死后 Host 与
+  实例存活**）。两条实测新定案：① Host spawn 后须等 8s（tsx 冷加载 + 原生模块
+  >1.5s 才监听）；② **dataDir 必须走 argv**——WMI Create 的进程环境来自
+  WmiPrvSE，不继承调用方 env。
 - 依 `CLAUDE.local.md`：daemon 由用户手动起，会话只起 Runtime Host 子进程（不占 6420）。
 
 ### B2 WSL2 tmux Adapter

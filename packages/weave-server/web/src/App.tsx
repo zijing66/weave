@@ -515,19 +515,19 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       return;
     }
     setRpgMode(false);
+    if (route.kind === 'market') {
+      setGlobalMode(false);
+      setMarketOpen(true);
+      return;
+    }
+    // 非 /market 路由 = 市场页退场（rpg/global/project 三分支共用这一拍）
+    setMarketOpen(false);
     if (route.kind === 'global') {
       if (!globalMode) selectGlobal();
       setMainCategory(route.category);
       setInitialSessionId(null);
       return;
     }
-    if (route.kind === 'market') {
-      setRpgMode(false);
-      setGlobalMode(false);
-      setMarketOpen(true);
-      return;
-    }
-    setMarketOpen(false);
     const target = projects.find((p: ProjectRow) => p.id === route.projectId);
     if (!target) {
       // 项目没了（归档/删除）的旧链接：落到全局，别留一个指不到项目的地址

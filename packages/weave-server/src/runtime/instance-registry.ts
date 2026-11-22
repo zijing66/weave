@@ -4,14 +4,9 @@
  * docs/plan/agent-runtime-terminal-gateway.md（PoC 定案：Host 死 = 子进程死，
  * 故「Host 不再报告的活行」判 failed 而不是 recovering——不盲目重启）。
  */
-import type { AgentInstanceRecord, AgentInstanceStatus } from './protocol.js';
+import type { AgentInstanceRecord, AgentInstanceStatus, HostInstanceSummary } from './protocol.js';
 
-/** Host 自报的单个活实例摘要（daemon 侧只关心这三样刷新事实）。 */
-export interface HostInstanceSummary {
-  id: string;
-  osPid?: number;
-  harnessSessionId?: string;
-}
+export type { HostInstanceSummary };
 
 export interface ReconcilePlan {
   /** Host 还在报的行：刷新 pid / harness 会话 id（任一变化才进清单）。 */

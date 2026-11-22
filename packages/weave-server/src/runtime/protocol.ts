@@ -8,6 +8,8 @@
  * 只有 instanceId 是本域主键。
  */
 
+import { createHash } from 'node:crypto';
+
 /** 实例状态词表（封闭枚举；转场校验见 instance-registry.ts）。 */
 export const AGENT_INSTANCE_STATUSES = [
   'created',
@@ -120,4 +122,78 @@ export interface InputLease {
   clientId: string;
   leaseId: string;
   expiresAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// IPC 消息词表（B1，docs/plan/agent-runtime-host-design.md §2）
+// ---------------------------------------------------------------------------
+
+/** Host 协议版本（不匹配 = 受控重启，见设计稿 §2.3）。 */
+export const RUNTIME_PROTOCOL_VERSION = 1;
+
+/** 请求类型词表（`type` 字段的封闭枚举）。 */
+export const RUNTIME_REQUEST_TYPES = [
+  'hello',
+  'ping',
+  'instance.spawn',
+  'instance.stdin',
+  'instance.resize',
+  'instance.kill',
+  'instances.list',
+  'shutdown.graceful',
+] as const;
+export type RuntimeRequestType = (typeof RUNTIME_REQUEST_TYPES)[number];
+
+/** instance.spawn 的载荷（argv 已由 daemon 按能力面拼好，Host 不写 harness 硬编码）。 */
+export interface InstanceSpawnPayload {
+  instanceId: string;
+  command: string;
+  args: string[];
+  cwd: string;
+  cols: number;
+  rows: number;
+  env: Record<string, string>;
+}
+
+/** instance.stdin 的载荷（字节原文；层② sendText / 中断键序 / 作答键序同通道）。 */
+export interface InstanceStdinPayload {
+  data: string;
+}
+
+export interface InstanceResizePayload {
+  cols: number;
+  rows: number;
+}
+
+export interface HelloPayload {
+  protocolVersion: number;
+  weaveVersion: string;
+  localToken: string;
+}
+
+/** 握手应答：hostId + 协议版本 + 全量实例清单（对账的起点，见设计稿 §2.3/§4）。 */
+export interface HostAckPayload {
+  hostId: string;
+  protocolVersion: number;
+  weaveVersion: string;
+  instances: HostInstanceSummary[];
+}
+
+/** Host 自报的单个实例摘要。 */
+export interface HostInstanceSummary {
+  id: string;
+  status: 'running' | 'exited';
+  osPid?: number;
+  harnessSessionId?: string;
+  lastSequence: number;
+}
+
+/** pipe 名 = 裸名 + dataDir 哈希短码（多数据目录并存不冲突）。 */
+export function runtimePipeName(dataDir: string): string {
+  const hash = createHash('sha256').update(dataDir).digest('hex').slice(0, 8);
+  return `weave-runtime-host-${hash}`;
+}
+
+export function runtimePipePath(dataDir: string): string {
+  return `\\\\.\\pipe\\${runtimePipeName(dataDir)}`;
 }

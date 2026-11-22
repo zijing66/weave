@@ -89,6 +89,9 @@ import { detectProjectUpdateCounts } from '../install/updates.js';
 import { pidAliveOf } from './claude-liveness.js';
 import { combinedLivenessOf } from './liveness.js';
 import { promptTerminalChannel, readTerminalWorld } from './opener.js';
+import { AgentInstanceRepository } from '../repositories/agent-instances.js';
+import { RuntimeSupervisor } from '../runtime/supervisor.js';
+import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
 import { writeDaemonState } from './state.js';
@@ -250,13 +253,31 @@ async function main(): Promise<void> {
   });
   // 消息域（消息域重塑，与 start.ts 同装配）：纯递送管道 + 隐藏冲洗器 +
   // prompt 层② 终端兜底（随 settings 取后端）。
+  // Agent Runtime（B1，与 start.ts 同装配）：supervisor 懒连 + 对账异步。
+  const agentInstances = new AgentInstanceRepository(db);
+  const runtimeSup = new RuntimeSupervisor(agentInstances);
+  void runtimeSup
+    .reconcile()
+    .then((r) => {
+      if (r.failed.length > 0) {
+        console.log(`[weave] runtime reconcile: ${r.failed.length} instance(s) failed (host was down)`);
+      }
+    })
+    .catch((err) => {
+      console.error('[weave] runtime host unavailable:', err instanceof Error ? err.message : err);
+      runtimeSup.scheduleRetry(); // 30s 周期自愈，连上即停
+    });
   const messageDeliverer = new MessageDeliverer({
     sessions: hookSessions,
     projects,
     hookEvents,
     bus: hookBus,
     headless: headlessRunner,
-    terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+    terminal: mergedTerminalChannel(
+      promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+      agentInstances,
+      runtimeSup,
+    ),
     // 模态框在场时层② 不盲注（tracker 在下面构造，闭包惰性取）。
     blockedByQuestion: (sessionId) => questionTracker.get(sessionId) != null,
     // 判活图（claude 注册表 + codex 锁探针缓存）：判死落定/诊断全消费它。
@@ -773,7 +794,11 @@ async function main(): Promise<void> {
     messageDeliverer,
     ensureOpen,
     mergeViaLadder: worktreeMergeViaLadder,
-    terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+    terminal: mergedTerminalChannel(
+      promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+      agentInstances,
+      runtimeSup,
+    ),
     uploads,
     questionTracker,
     activityTracker,

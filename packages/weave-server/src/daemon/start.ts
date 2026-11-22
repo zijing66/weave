@@ -4,6 +4,9 @@ import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { openDatabase } from '../db/db.js';
+import { AgentInstanceRepository } from '../repositories/agent-instances.js';
+import { RuntimeSupervisor } from '../runtime/supervisor.js';
+import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { BackupEngine, applyPendingRestore } from './backup.js';
 import { startBackupScheduler } from './backup-scheduler.js';
 import { ProjectRepository } from '../repositories/projects.js';
@@ -248,6 +251,21 @@ export function startDaemon(): void {
   // session-orchestration 批 1：dispatch 域（ResumeRunner）与 message 域
   // （MessageDeliverer）共享同一无头执行核 = 同会话并发闸跨域生效。
   const headlessRunner = new HeadlessRunner();
+  // Agent Runtime（B1）：supervisor 懒连——Host 起不来/不在不拦 daemon（层②
+  // headless 通道只是缺席，外部终端通道照常）。对账 fire-and-forget（异步）。
+  const agentInstances = new AgentInstanceRepository(db);
+  const runtimeSup = new RuntimeSupervisor(agentInstances);
+  void runtimeSup
+    .reconcile()
+    .then((r) => {
+      if (r.failed.length > 0) {
+        console.log(`[weave] runtime reconcile: ${r.failed.length} instance(s) failed (host was down)`);
+      }
+    })
+    .catch((err) => {
+      console.error('[weave] runtime host unavailable:', err instanceof Error ? err.message : err);
+      runtimeSup.scheduleRetry(); // 30s 周期自愈，连上即停
+    });
   const hookRunner = new ResumeRunner({
     dispatches: hookDispatches,
     sessions: hookSessions,
@@ -266,7 +284,12 @@ export function startDaemon(): void {
     hookEvents,
     bus: hookBus,
     headless: headlessRunner,
-    terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+    // 层② 合并通道（B1）：headless 实例优先（stdin 直投），回落外部终端。
+    terminal: mergedTerminalChannel(
+      promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+      agentInstances,
+      runtimeSup,
+    ),
     // 模态框在场时层② 不盲注（tracker 在下面构造，闭包惰性取）。
     blockedByQuestion: (sessionId) => questionTracker.get(sessionId) != null,
     // 判活图（claude 注册表 + codex 锁探针缓存）：判死落定/诊断全消费它。
@@ -825,7 +848,11 @@ export function startDaemon(): void {
     messageDeliverer,
     ensureOpen,
     mergeViaLadder: worktreeMergeViaLadder,
-    terminal: promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+    terminal: mergedTerminalChannel(
+      promptTerminalChannel(() => readDaemonSettingsSync().terminal),
+      agentInstances,
+      runtimeSup,
+    ),
     uploads,
     questionTracker,
     activityTracker,

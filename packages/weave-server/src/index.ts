@@ -37,6 +37,32 @@ export { DEFAULT_PORT, DAEMON_HOST, isPortFree, findFreePort } from './daemon/po
 export { readDaemonState, writeDaemonState, clearDaemonState } from './daemon/state.js';
 export type { DaemonState } from './daemon/state.js';
 export { generateToken } from './daemon/auth.js';
+export { spawnOutsideJob } from './daemon/spawn-outside-job.js';
+
+// Agent Runtime 域（B0/B1，docs/plan/agent-runtime-terminal-gateway.md）
+export { RuntimeSupervisor } from './runtime/supervisor.js';
+export { RuntimeHostClient } from './runtime/runtime-host-client.js';
+export type { HostEventFrame } from './runtime/runtime-host-client.js';
+export { AgentInstanceRepository } from './repositories/agent-instances.js';
+export {
+  RUNTIME_PROTOCOL_VERSION,
+  runtimePipeName,
+  runtimePipePath,
+  AGENT_INSTANCE_STATUSES,
+} from './runtime/protocol.js';
+export type {
+  AgentInstanceRecord,
+  AgentInstanceStatus,
+  ExecutionMode,
+  HostInstanceSummary,
+  InstanceSpawnPayload,
+  TerminalOutputEvent,
+  TerminalAttachRequest,
+  InputLease,
+} from './runtime/protocol.js';
+export { reconcileInstances, isTerminalStatus } from './runtime/instance-registry.js';
+export { mergedTerminalChannel } from './runtime/terminal-channel.js';
+export { HeadlessTerminal } from './runtime/headless-terminal.js';
 export { createWeaveServer, weaveRequestHandler, DAEMON_VERSION } from './daemon/server.js';
 export type { WeaveServerDeps } from './daemon/server.js';
 export { accessUrls, lanIps, ensureDaemonCert, startTlsServer, daemonCertsDir } from './daemon/tls.js';

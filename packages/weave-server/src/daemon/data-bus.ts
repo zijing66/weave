@@ -30,7 +30,8 @@ export type DataKey =
   | 'libraries'
   | 'updates'
   | 'capture'
-  | 'federation';
+  | 'federation'
+  | 'installations';
 
 /** 一帧数据变更通知。 */
 export interface DataFrame {
