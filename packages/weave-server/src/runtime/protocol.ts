@@ -192,8 +192,18 @@ export interface HostInstanceSummary {
   lastSequence: number;
 }
 
-/** pipe 名 = 裸名 + dataDir 哈希短码（多数据目录并存不冲突）。 */
-export function runtimePipeName(dataDir: string): string {
+/** resource.updated 载荷：Host 自报资源（进程内 process API，零开销）。 */
+export interface ResourceReportPayload {
+  hostId: string;
+  /** Host 进程 CPU 占单核百分比（cpuUsage 差分自算，>100 = 多核）。 */
+  hostCpuPercent: number;
+  hostMemRssBytes: number;
+  /** 活实例吞吐快照（outputBytes = 自 spawn 起累计 PTY 输出字节）。 */
+  instances: Array<{ instanceId: string; osPid?: number; outputBytes: number }>;
+  at: number;
+}
+
+/** pipe 名 = 裸名 + dataDir 哈希短码（多数据目录并存不冲突）。 */export function runtimePipeName(dataDir: string): string {
   const hash = createHash('sha256').update(dataDir).digest('hex').slice(0, 8);
   return `weave-runtime-host-${hash}`;
 }

@@ -131,6 +131,12 @@ export type HookBusMessage =
       series: Array<{ at: string; n: number }>;
       totals: { projects: number; sessions: number; events: number; today: number };
     }
+  // ---- 资源监控域（§13.3）：daemon/Host/Agent 进程指标快照（metrics-sampler）----
+  | {
+      kind: 'metrics.snapshot';
+      at: string;
+      snapshot: import('../daemon/metrics-sampler.js').MetricsSnapshot;
+    }
   // ---- 编排域：run 状态与单次投递（画布实时动效的唯一数据源，不做轮询） ----
   // 两条都带全量轻量态（deliveries / 每会话待回计数），web 就地更新、不重拉。
   | {

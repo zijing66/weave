@@ -45,6 +45,7 @@ import { SideQuestionRepository } from '../repositories/side-questions.js';
 import { claimSideAnswer, type SideQuestionDeps } from '../hooks/side-questions.js';
 import { DashboardRateCache } from '../hooks/dashboard-rate.js';
 import { startDashboardPusher } from './dashboard-pusher.js';
+import { MetricsSampler } from './metrics-sampler.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
@@ -484,6 +485,15 @@ export function startDaemon(): void {
   );
   terminalRefresher.start();
   runtimeSup.onStatusChange = () => void terminalRefresher.refreshNow();
+  // 资源监控（§13.3）：daemon/Host 零开销常采（10s），Agent 进程 60s 一枪、
+  // 只在有人看时才起 PowerShell（没人看不起子进程）；帧走 hookBus metrics.snapshot。
+  const metricsSampler = new MetricsSampler({
+    bus: hookBus,
+    supervisor: runtimeSup,
+    instances: agentInstances,
+    shouldSampleAgents: () => dataBus.hasSubscribers(),
+  });
+  metricsSampler.start();
   // 会话存活（终端按钮图标）同理：claude 进程被杀无 hook 事件，GET 的 pidAlive
   // 会卡旧值——判活零 spawn（注册表 + kill 0；codex 走锁探针缓存），15s 一拍、
   // 只推判得动的快照。
@@ -905,8 +915,14 @@ export function startDaemon(): void {
     rpgXp,
     rpgInvitations,
     rpgCastKernel,
-    onAttach: dashboardPusher.attach,
-    dashboardRefresh: dashboardPusher.attach,
+    onAttach: () => {
+      dashboardPusher.attach();
+      metricsSampler.attach();
+    },
+    dashboardRefresh: () => {
+      dashboardPusher.attach();
+      metricsSampler.attach();
+    },
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
@@ -971,6 +987,7 @@ export function startDaemon(): void {
     clearInterval(goalTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
+    metricsSampler.stop();
     mdnsAdvertiser?.stop();
     federationHeartbeat?.stop();
     // MCP 客户端韧性：先立排空闸（新请求 503+Retry-After）再收连接——keep-alive

@@ -762,7 +762,7 @@ interface HarnessCapabilities {
 8. WebSocket 断开不影响 Agent。
 9. 输出写入失败不能阻塞 PTY 主循环。
 ### 13.3 资源管理
-> **现状（2026-11-21 标注）**：本节的 CPU/内存/吞吐/延迟指标与 §6.5 的 Durable Output Journal / Terminal Checkpoint **均未实现**（无任何采样点）；§13.2 已落地的部分 = 双层 ring（Host 512KB + Gateway 256 条）、背压/gap 帧、非阻塞写、Input Lease、Dashboard 只渲染选中实例。压测仅做过一次性采样，无持续监控面。
+> **现状（2026-11-21 标注）**：资源监控 v1 已落地（`daemon/metrics-sampler.ts`）——daemon 与 Runtime Host 零开销自采（10s，Host 走 `resource.updated` IPC 事件自报）、Agent 进程 60s 一枪批量查 pid（Windows = PowerShell、POSIX = /proc，仅有人看时才打；2026-11-21 用户裁决 60s 粒度）、每实例 PTY 吞吐、1 小时历史环形；帧 = 既有 SSE 通道 `metrics.snapshot`，Dashboard 头部资源卡渲染。WS 延迟 / Dashboard 渲染耗时与 §6.5 的 Durable Output Journal / Terminal Checkpoint 仍未实现；§13.2 已落地 = 双层 ring（Host 512KB + Gateway 256 条）、背压/gap 帧、非阻塞写、Input Lease、Dashboard 只渲染选中实例（分段压缩 / 批量发送 / 非活跃降刷新未做）。
 建议先从 8～12 个活跃 Agent 开始测试，再逐步提高并行数。
 这是初始压测策略，不是固定的系统上限。
 需要统计：

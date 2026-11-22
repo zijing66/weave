@@ -51,6 +51,15 @@ export const appZh = {
   'dashboard.chartTitle': '事件速率',
   'dashboard.chartHint': '最近 1 小时 · 每 10 秒事件数',
   'dashboard.live': '实时',
+  'dashboard.resourcesTitle': '资源监控',
+  'dashboard.resourcesHint': 'daemon 与 Runtime Host 每 10 秒自采；Agent 进程每 60 秒（仅有人看时）',
+  'dashboard.resourcesWaiting': '资源数据待首拍（10 秒内到达）…',
+  'dashboard.resDaemon': 'weave daemon',
+  'dashboard.resHost': 'Runtime Host',
+  'dashboard.resAgentsTotal': 'Agent 进程合计',
+  'dashboard.resAgents': 'Agent 进程（活 headless 实例）',
+  'dashboard.resNoAgents': '当前没有活的 headless 实例',
+  'dashboard.resCpu': 'CPU（占单核）',
 
   // —— 左侧项目列表 ——
   'project.globalConfig': '全局配置',
@@ -235,6 +244,15 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'dashboard.chartTitle': 'Event rate',
   'dashboard.chartHint': 'Last hour · events per 10 seconds',
   'dashboard.live': 'Live',
+  'dashboard.resourcesTitle': 'Resources',
+  'dashboard.resourcesHint': 'daemon & Runtime Host self-report every 10s; agent processes every 60s (only while watched)',
+  'dashboard.resourcesWaiting': 'Waiting for first sample (arrives within 10s)…',
+  'dashboard.resDaemon': 'weave daemon',
+  'dashboard.resHost': 'Runtime Host',
+  'dashboard.resAgentsTotal': 'Agent processes (total)',
+  'dashboard.resAgents': 'Agent processes (live headless instances)',
+  'dashboard.resNoAgents': 'No live headless instances',
+  'dashboard.resCpu': 'CPU (single-core %)',
 
   // —— Project sidebar ——
   'project.globalConfig': 'Global config',

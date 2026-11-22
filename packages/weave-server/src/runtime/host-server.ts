@@ -29,6 +29,9 @@ const WRITE_LIMIT_BYTES = 4 * 1024 * 1024;
 /** pipe 无连接且 0 活实例持续此时长 → 自退（僵尸 Host 兜底）。 */
 const IDLE_EXIT_MS = 10 * 60 * 1000;
 
+/** 资源自报周期（§13.3）：daemon 侧 10s 一拍聚合，Host 同拍。 */
+const RESOURCE_REPORT_MS = 10_000;
+
 export class RuntimeHostServer {
   private readonly manager: InstanceManager;
   private readonly localToken: string;
@@ -87,6 +90,29 @@ export class RuntimeHostServer {
       this.server = server;
     });
     this.scheduleIdleExit();
+    this.startResourceReports();
+  }
+
+  /** 资源自报（§13.3）：进程内 process API 零开销，daemon 侧聚合进 metrics 帧。 */
+  private startResourceReports(): void {
+    let lastCpu = process.cpuUsage();
+    let lastAt = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const usage = process.cpuUsage(lastCpu);
+      lastCpu = process.cpuUsage();
+      const elapsed = (now - lastAt) / 1000;
+      lastAt = now;
+      const payload: import('./protocol.js').ResourceReportPayload = {
+        hostId: this.hostId,
+        hostCpuPercent: elapsed > 0 ? (usage.user + usage.system) / 1e6 / elapsed * 100 : 0,
+        hostMemRssBytes: process.memoryUsage().rss,
+        instances: this.manager.resourceSummaries(),
+        at: now,
+      };
+      this.writeLine(JSON.stringify({ eventId: randomBytes(8).toString('hex'), type: 'resource.updated', payload, timestamp: now }), false);
+    }, RESOURCE_REPORT_MS);
+    timer.unref();
   }
 
   /** POSIX：socket 文件落在 cache/；stale 文件（无 Host 应答）unlink 后再 listen，活 Host 则如实拒绝。 */

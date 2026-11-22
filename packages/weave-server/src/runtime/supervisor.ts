@@ -41,7 +41,7 @@ export interface ReconcileResult {
 export class RuntimeSupervisor {
   private client: RuntimeHostClient | null = null;
   private hostId: string | null = null;
-  private eventHandler: ((frame: HostEventFrame) => void) | null = null;
+  private readonly eventHandlers: Array<(frame: HostEventFrame) => void> = [];
   private statusHandler: ((reachable: boolean) => void) | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
   private reconcileTimer: NodeJS.Timeout | null = null;
@@ -53,10 +53,14 @@ export class RuntimeSupervisor {
     private readonly log: (msg: string) => void = (m) => console.log(`[weave-runtime-sup] ${m}`),
   ) {}
 
-  /** 额外的事件消费者（终端网关）。落库那一路在 connect 时恒挂，不可被挤占。 */
-  onEvent(cb: (frame: HostEventFrame) => void): void {
-    this.eventHandler = cb;
+  /** 额外的事件消费者（终端网关、资源采样等多路）。落库那一路在 connect 时恒挂，不可被挤占。 */
+  onEvent(cb: (frame: HostEventFrame) => void): () => void {
+    this.eventHandlers.push(cb);
     this.client?.onEvent(cb);
+    return () => {
+      const i = this.eventHandlers.indexOf(cb);
+      if (i >= 0) this.eventHandlers.splice(i, 1);
+    };
   }
 
   onStatus(cb: (reachable: boolean) => void): void {
@@ -93,9 +97,9 @@ export class RuntimeSupervisor {
         const ack = await client.connect(attempt === 0 ? 1_500 : 15_000);
         this.client = client;
         this.hostId = ack.hostId;
-        // 生命周期帧**恒**落库（daemon 唯一 writer），与终端网关的消费互不覆盖。
+        // 生命周期帧**恒**落库（daemon 唯一 writer），与终端网关等消费互不覆盖。
         client.onEvent((frame) => void this.handleEvent(frame));
-        if (this.eventHandler) client.onEvent(this.eventHandler);
+        for (const h of this.eventHandlers) client.onEvent(h);
         this.statusHandler?.(true);
         this.log(`connected (hostId ${ack.hostId}, ${ack.instances.length} instances)`);
         return;

@@ -2,6 +2,10 @@
 
 CLAUDE.md 只保留当前站立规则；带日期的定案、实测记录、用户原话裁决与被推翻的旧结论一律记录在这里。append-only，新的在上。
 
+## 2026-11-21
+
+- **资源监控 v1 立项落地（§13.3，用户裁决）**：Agent（TUI 宿主）进程 CPU/Mem 采集在 Windows 需周期起 PowerShell 子进程，用户裁决「采，60s 粒度」（推荐档：开销砍半 ~1% 单核、趋势监控够用）。落地形状：daemon 与 Runtime Host 零开销自采（10s，Host 走 `resource.updated` IPC 事件自报 CPU%/RSS + 每实例 PTY 吞吐累计字节）；Agent 进程 60s 一枪批量查活实例 pid（Windows = PowerShell `Get-Process` 一枪全查、POSIX = /proc 零开销），**仅 `dataBus.hasSubscribers()` 有人看时才打**；1 小时历史环形（60s 一格）进程内存不落库；帧 = 既有 SSE hookBus 域 `metrics.snapshot`（与 dashboard.* 同通道，不轮询不扩 DataKey），首连 onAttach 推全量；前端 Dashboard 资源卡如实缺席（WS 延迟 / 渲染耗时 / Journal 写入延迟未实现不摆）。supervisor `onEvent` 由单槽改多播（终端网关与资源采样同一份 Host 帧流）。
+
 ## 2026-11-20
 
 - **Runtime 域是单机域，联邦面不代理终端流（定案，用户裁决落档）**：跨机场景下 Runtime 管理的会话**不支持跨机**——Host IPC 是本机 pipe、Gateway ring / Input Lease / 层② 击键 / 读屏全是 daemon 本机内存态，`FEDERATION_SERVICES` 不含任何 terminal/runtime 服务（现状查实：只有 sessions.list/events、inject、sessions.create、search、projects.files、orchestration.trigger）。**短期不做跨机 attach 终端**：inject + 会话列表 + 远程投递已覆盖核心协作需求；跨机 attach 的背压/lease 语义/ring 位置/断连重放每项都要重裁决，收益成本比差（要看远程终端 = SSH 到那台机开 dashboard）。**转录是唯一的全量保真记录系统**：hook_events 存事件流水 + 截断副本（`raw.prompt` / `raw.last_assistant_message` 经 capFields 裁 4KB，供对话面板直查与搜索，带保留期清理）+ transcript_path 指针；全量保真只在转录。消息域 = 纯递送管道零 DB 行，对话面板直查 hook_events 不复制存储——没有独立于 hook_events / 转录之外的第三份消息存储，也不该有（拆出来 = 双份真相，倒退）。转录路径读取已集中：SessionProbe 内存态 + `transcriptPathOf` 唯一取用面。转录路径读取已集中：SessionProbe 内存态 + `transcriptPathOf` 唯一取用面。

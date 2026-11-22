@@ -29,6 +29,8 @@ export interface ManagedInstance {
   sequence: number;
   ring: RingEntry[];
   ringBytes: number;
+  /** 自 spawn 起累计输出字节（ring 会被裁，这个只增——资源监控的吞吐面）。 */
+  outputBytes: number;
 }
 
 export type InstanceEvent =
@@ -68,6 +70,7 @@ export class InstanceManager {
       sequence: 0,
       ring: [],
       ringBytes: 0,
+      outputBytes: 0,
     };
     this.instances.set(inst.id, inst);
     const pty = await this.spawnPty(payload.command, payload.args, {
@@ -93,6 +96,7 @@ export class InstanceManager {
   }
 
   private pushOutput(inst: ManagedInstance, data: string): void {
+    inst.outputBytes += Buffer.byteLength(data);
     inst.sequence += 1;
     const entry: RingEntry = { sequence: inst.sequence, timestamp: Date.now(), kind: 'output', data };
     this.pushRing(inst, entry, Buffer.byteLength(data));
@@ -132,6 +136,13 @@ export class InstanceManager {
   /** 温和终止：先 kill，等 onExit（调用方再兜底硬清）。 */
   kill(instanceId: string): void {
     this.instance(instanceId, 'kill').pty?.kill();
+  }
+
+  /** 资源自报的吞吐快照（活实例的累计输出字节）。 */
+  resourceSummaries(): Array<{ instanceId: string; osPid?: number; outputBytes: number }> {
+    return [...this.instances.values()]
+      .filter((i) => i.status !== 'exited')
+      .map((i) => ({ instanceId: i.id, osPid: i.osPid, outputBytes: i.outputBytes }));
   }
 
   summaries(): HostInstanceSummary[] {

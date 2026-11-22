@@ -39,6 +39,7 @@ import { SideQuestionRepository } from '../repositories/side-questions.js';
 import { claimSideAnswer, type SideQuestionDeps } from '../hooks/side-questions.js';
 import { DashboardRateCache } from '../hooks/dashboard-rate.js';
 import { startDashboardPusher } from './dashboard-pusher.js';
+import { MetricsSampler } from './metrics-sampler.js';
 import { startPromptFlusher } from '../hooks/prompt-flusher.js';
 import { SessionWatchRepository } from '../repositories/session-watches.js';
 import { PushSubscriptionRepository } from '../repositories/push-subscriptions.js';
@@ -449,6 +450,14 @@ async function main(): Promise<void> {
   );
   terminalRefresher.start();
   runtimeSup.onStatusChange = () => void terminalRefresher.refreshNow();
+  // 资源监控（§13.3）：与生产入口同一装配（见 start.ts 的说明）。
+  const metricsSampler = new MetricsSampler({
+    bus: hookBus,
+    supervisor: runtimeSup,
+    instances: agentInstances,
+    shouldSampleAgents: () => dataBus.hasSubscribers(),
+  });
+  metricsSampler.start();
   // 会话存活（终端按钮图标）：与生产入口同一装配——被杀进程无 hook 事件，
   // GET 的 pidAlive 卡旧值；15s 一拍、值变才推判得动的绝对值快照。
   const livenessRefresher = new SnapshotRefresher(
@@ -849,8 +858,14 @@ async function main(): Promise<void> {
     rpgXp,
     rpgInvitations,
     rpgCastKernel,
-    onAttach: dashboardPusher.attach,
-    dashboardRefresh: dashboardPusher.attach,
+    onAttach: () => {
+      dashboardPusher.attach();
+      metricsSampler.attach();
+    },
+    dashboardRefresh: () => {
+      dashboardPusher.attach();
+      metricsSampler.attach();
+    },
     hookPlugins: pluginManager,
     hookMirror: hookPipeline.mirror,
     pluginStates: new PluginStateRepository(db),
@@ -908,6 +923,7 @@ async function main(): Promise<void> {
     clearInterval(goalTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
+    metricsSampler.stop();
     mdnsAdvertiser?.stop();
     federationHeartbeat?.stop();
     // MCP 客户端韧性：先立排空闸（新请求 503+Retry-After）再收连接——keep-alive

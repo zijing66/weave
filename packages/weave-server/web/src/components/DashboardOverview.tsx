@@ -27,6 +27,24 @@ type DashboardFrame =
   | { kind: 'dashboard.series'; series: Array<{ at: string; n: number }> }
   | { kind: 'dashboard.delta'; series: Array<{ at: string; n: number }>; totals: Totals };
 
+/** 资源监控帧（§13.3，metrics-sampler 10s 一拍；agents 为 60s 粒度）。 */
+interface MetricsFrame {
+  kind: 'metrics.snapshot';
+  snapshot: {
+    daemon: { cpuPercent: number; memRssBytes: number };
+    host: { cpuPercent: number; memRssBytes: number } | null;
+    agents: Array<{
+      instanceId: string;
+      harnessSessionId?: string;
+      harness: string;
+      cpuPercent?: number;
+      memRssBytes?: number;
+      outputBytesPerSec?: number;
+    }>;
+    history: Array<{ at: string; daemonCpuPercent: number; hostCpuPercent?: number }>;
+  };
+}
+
 const align = (ms: number): number => Math.floor(ms / BUCKET_MS) * BUCKET_MS;
 const keyOf = (ms: number): string => new Date(ms).toISOString().slice(0, 19);
 const msOf = (key: string): number => Date.parse(`${key}Z`);
@@ -93,6 +111,7 @@ export function DashboardOverview({
   const lastWrite = useRef(0);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [rate, setRate] = useState<number | null>(null);
+  const [metrics, setMetrics] = useState<MetricsFrame['snapshot'] | null>(null);
 
   const running = [...statuses.values()].filter((s) => s === 'running' || s === 'compacting').length;
 
@@ -234,6 +253,10 @@ export function DashboardOverview({
     void api.refreshDashboard().catch(() => {});
 
     return subscribeHook((frame) => {
+      if (frame.kind === 'metrics.snapshot') {
+        setMetrics((frame as unknown as MetricsFrame).snapshot);
+        return;
+      }
       if (!frame.kind?.startsWith('dashboard.')) return;
       const f = frame as unknown as DashboardFrame;
       if (f.kind === 'dashboard.totals') {
@@ -308,6 +331,119 @@ export function DashboardOverview({
         </div>
         <div ref={el} className="mt-1 h-[150px] text-neutral-400 lg:h-[190px]" />
       </div>
+
+      <div className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-xs font-semibold text-neutral-300">{t('dashboard.resourcesTitle')}</span>
+          <span className="text-10 text-neutral-500">{t('dashboard.resourcesHint')}</span>
+        </div>
+        {metrics === null ? (
+          <div className="mt-2 text-11 text-neutral-600">{t('dashboard.resourcesWaiting')}</div>
+        ) : (
+          <>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <ResourceCard
+                label={t('dashboard.resDaemon')}
+                cpuPercent={metrics.daemon.cpuPercent}
+                memRssBytes={metrics.daemon.memRssBytes}
+                series={metrics.history.map((h) => h.daemonCpuPercent)}
+                t={t}
+              />
+              <ResourceCard
+                label={t('dashboard.resHost')}
+                cpuPercent={metrics.host?.cpuPercent}
+                memRssBytes={metrics.host?.memRssBytes}
+                series={metrics.history.map((h) => h.hostCpuPercent).filter((v): v is number => v !== undefined)}
+                t={t}
+              />
+              <ResourceCard
+                label={t('dashboard.resAgentsTotal')}
+                cpuPercent={undefined}
+                memRssBytes={metrics.agents.reduce((s, a) => s + (a.memRssBytes ?? 0), 0)}
+                series={[]}
+                t={t}
+              />
+            </div>
+            <div className="mt-2">
+              <div className="text-11 text-neutral-500">{t('dashboard.resAgents')}</div>
+              {metrics.agents.length === 0 ? (
+                <div className="mt-1 text-11 text-neutral-600">{t('dashboard.resNoAgents')}</div>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  {metrics.agents.map((a) => (
+                    <div
+                      key={a.instanceId}
+                      className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-11 tabular-nums text-neutral-400"
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="text-neutral-300">{a.harnessSessionId ?? a.instanceId}</span>
+                        <span className="ml-1 text-neutral-600">{a.harness}</span>
+                      </span>
+                      <span>{a.cpuPercent === undefined ? 'CPU —' : `CPU ${a.cpuPercent}%`}</span>
+                      <span>{a.memRssBytes === undefined ? '' : fmtBytes(a.memRssBytes)}</span>
+                      <span className="text-blue-400/90">
+                        {a.outputBytesPerSec === undefined ? '' : `${fmtBytes(a.outputBytesPerSec)}/s`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </section>
+  );
+}
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(0)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+/** 一张资源卡：CPU%（含 12 点 mini 趋势）+ RSS。cpu undefined = 该项缺席（如实显示 —）。 */
+function ResourceCard({
+  label,
+  cpuPercent,
+  memRssBytes,
+  series,
+  t,
+}: {
+  label: string;
+  cpuPercent: number | undefined;
+  memRssBytes: number | undefined;
+  series: number[];
+  t: ReturnType<typeof useT>;
+}) {
+  const tail = series.slice(-12);
+  const max = Math.max(10, ...tail);
+  return (
+    <div className="rounded-lg border border-edge/[0.06] bg-neutral-900/60 p-2.5">
+      <div className="text-11 text-neutral-500">{label}</div>
+      <div className="mt-0.5 flex items-baseline gap-3">
+        <span className="text-lg font-semibold tabular-nums text-neutral-200">
+          {cpuPercent === undefined ? '—' : `${cpuPercent}%`}
+        </span>
+        <span className="text-11 tabular-nums text-neutral-500">
+          {cpuPercent === undefined ? '' : t('dashboard.resCpu')}
+        </span>
+      </div>
+      <div className="mt-0.5 text-11 tabular-nums text-neutral-500">
+        {memRssBytes === undefined ? '—' : fmtBytes(memRssBytes)}
+      </div>
+      {tail.length > 0 && (
+        <div className="mt-1.5 flex h-6 items-end gap-0.5" aria-hidden="true">
+          {tail.map((v, i) => (
+            <div
+              key={i}
+              className="w-1.5 rounded-sm bg-blue-400/40"
+              style={{ height: `${Math.max(4, Math.min(100, (v / max) * 100))}%` }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
