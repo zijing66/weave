@@ -94,8 +94,12 @@ export class TerminalGateway {
     const client: Client = { id: req.clientId, send, instanceId: req.instanceId, mode: req.mode };
     s.clients.set(client.id, client);
 
-    // 重放：lastSequence 之后；Host ring 里的更早增量由 supervisor 补拉
-    if (req.lastSequence !== undefined) {
+    // 重放：lastSequence 之后；Host ring 里的更早增量由 supervisor 补拉。
+    // 首次接入（无 lastSequence）从 0 整段重放 Host ring——TUI 是重绘型字节流，
+    // 没有历史只有黑屏（实例停着等输入时永远等不来新输出）。
+    if (req.lastSequence === undefined) {
+      void this.replayFromHost(send, req.instanceId, 0);
+    } else {
       const from = req.lastSequence;
       const kept = s.ring.filter((e) => e.sequence > from);
       let expect = from + 1;

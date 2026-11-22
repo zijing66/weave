@@ -221,7 +221,7 @@ export type {
   NotifyChannelInput,
   NotifySendResult,
 } from './notify';
-export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';
+export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, AgentInstanceRow, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';
 export type {
   ExtensionEndpointKind,
   ExtensionPoint,

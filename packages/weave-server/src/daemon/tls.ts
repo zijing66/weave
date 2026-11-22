@@ -125,6 +125,8 @@ export async function startTlsServer(opts: {
   port: number;
   bindHost: string;
   handler: (req: IncomingMessage, res: ServerResponse) => void;
+  /** upgrade 监听（与 HTTP 监听同一份；WS 端点双监听都要挂）。 */
+  upgrade?: (req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => void;
   /** 证书目录（测试注入临时目录）；缺省 `<dataDir>/certs`。 */
   certDir?: string;
 }): Promise<TlsListener | null> {
@@ -132,6 +134,7 @@ export async function startTlsServer(opts: {
   try {
     const { key, cert } = await ensureDaemonCert(opts.certDir);
     const server = https.createServer({ key, cert }, opts.handler);
+    if (opts.upgrade) server.on('upgrade', opts.upgrade);
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.listen(opts.port, opts.bindHost, () => {

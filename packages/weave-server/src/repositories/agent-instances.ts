@@ -69,9 +69,17 @@ export class AgentInstanceRepository {
       .run(errorMessage, new Date().toISOString(), id);
   }
 
+  /** headless 实例 ↔ 会话绑定（hook 旁路上报的 instanceId 归因）：首绑即定，不覆盖。 */
+  bindSession(id: string, harnessSessionId: string): void {
+    this.db
+      .prepare(`UPDATE agent_instances SET harness_session_id = ? WHERE id = ? AND harness_session_id IS NULL`)
+      .run(harnessSessionId, id);
+  }
+
+  /** osPid 随 Host 对账刷新；harnessSessionId 不传时保原值（对账路径不冲掉 ingest 绑上的会话）。 */
   updatePid(id: string, osPid?: number, harnessSessionId?: string): void {
     this.db
-      .prepare(`UPDATE agent_instances SET os_pid = ?, harness_session_id = ? WHERE id = ?`)
+      .prepare(`UPDATE agent_instances SET os_pid = ?, harness_session_id = COALESCE(?, harness_session_id) WHERE id = ?`)
       .run(osPid ?? null, harnessSessionId ?? null, id);
   }
 }

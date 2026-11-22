@@ -109,9 +109,35 @@ packages/weave-server/web/src/features/
   多客户端写不乱序 ✅（Lease 唯一写者）、输出写失败不阻塞 PTY ✅（背压断开）。
 
 ### B4 Dashboard Web Terminal
-- [ ] xterm.js（依赖装进 web，非 server）；只渲染选中实例，scrollback 上限。
-- [ ] Workbench 布局（终端 + 事件/问答/资源面板，结构化信息走既有事件面，不解析终端文本）。
-- 验收：claude/codex TUI 在 Dashboard 内完整交互；关浏览器 Agent 不退；重进恢复。
+- [x] xterm.js（依赖装进 web，非 server）；只渲染选中实例，scrollback 上限。
+- [x] Workbench 最小闭环：HarnessPicker 加 headless 开关 → `startHeadlessSession` →
+  TasksPanel 全屏弹层挂 `TerminalView`（xterm）+ 「打开 Web 终端」重开入口
+  （`listAgentInstances` 活实例重进即恢复）。**实测定案**：① TLS 监听是独立
+  server 实例，`/terminals/ws` 的 upgrade 必须两处同挂（不挂会把 WS 当普通请求
+  回落 SPA 200）；② stdin 协议是字节原文（base64 只在输出向），前端 xterm
+  `onData` 原样直传即可。
+- 2026-11-20 真实浏览器验收发现四处断链（此前手写 WS 探针直连 daemon ≠ 浏览器
+  链路，原「B4 完成」判断过早撤回）并当日修复：
+  1. **dev server 黑屏断流** = Vite 只代理 `/api`，`/terminals/ws` 未配 `ws:true`。
+  2. **连上仍黑屏** = Gateway 首次 attach（无 `lastSequence`）不重放 Host ring——
+     TUI 停在提示页时永远等不来新输出；改为首次接入从 0 整段重放（单测锁定）。
+  3. **「只读（输入权被占用）」误报** = `requestControl()` 在 WS open 前发出被静默
+     丢弃 + lease 心跳先设 leaseId 再 stop 被自己清空；修后文案三分（申请中/被
+     占用/已解锁）。
+  4. **会话列表打不开 headless 会话** = `WEAVE_INSTANCE_ID` 注入了 env 但全链无
+     消费者、`agent_instances.harness_session_id` 恒 NULL：core 加
+     `RUNTIME_INSTANCE_ENV`（claude capture 采集键随 terminal 旁路上报）→
+     ingest 首事件回写 `bindSession`（首绑即定；`updatePid` 改 COALESCE 防对账
+     刷掉）→ API/`AgentInstanceRow` 带 `harnessSessionId` → 会话行「打开终端」
+     命中活实例即转 Web 终端（外部 resume 会另起进程，不走）；顶栏入口改为
+     选中会话对号 → 单实例直开 → 多实例弹选单（不猜「最后一个」）。附带：
+     `HeadlessTerminal.locatePane` 的层② 定位信源由此接通。**注意：hook-handler
+     生成物不随包升级——存量项目须重跑 `weave init` 才带新采集键**。
+- 验收：真 claude headless 实例 WS attach + lease 授予 + stdin 逐字符回显全通
+  （探针 = `.weave/previews/ws-attach-test.mjs`）；实例长跑与 WS 客户端连接/断开
+  解耦（关浏览器不退）✅；重进恢复 = 重开入口重连 attach + ring 重放 ✅。
+  真实浏览器全链（Vite 代理 + 首屏恢复 + 会话行入口）待用户 dev server 复验。
+  codex TUI 交互留待 B5/B6 汇总验。
 
 ### B5 External Attach
 - [ ] `weave agent attach [--readonly]`：CLI 连 Gateway（Windows 不做 ConPTY 句柄

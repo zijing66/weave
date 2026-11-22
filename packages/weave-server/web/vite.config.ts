@@ -35,6 +35,10 @@ export default defineConfig(() => ({
       clientFiles: ['./index.html'],
     },
     proxy: {
+      '/terminals/ws': {
+        target: 'http://127.0.0.1:6420',
+        ws: true,
+      },
       '/api': {
         target: 'http://127.0.0.1:6420',
         changeOrigin: true,

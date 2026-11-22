@@ -47,3 +47,11 @@ export const TERMINAL_LOCATOR_ENV = {
 export const TERMINAL_LOCATOR_ENV_KEYS: readonly string[] = [
   ...new Set(Object.values(TERMINAL_LOCATOR_ENV).flat()),
 ];
+
+/**
+ * Runtime 实例身份 env（B4）：headless spawn 注入宿主进程，hook 子进程继承得
+ * 到；随 inbox 行的 terminal 旁路上报，daemon 据此把 hook 事件归到实例并回写
+ * `agent_instances.harness_session_id`（会话行 ↔ Runtime 实例的唯一绑定链）。
+ * 不是 pane 定位键，不进 TERMINAL_LOCATOR_ENV 的 preset 组。
+ */
+export const RUNTIME_INSTANCE_ENV = 'WEAVE_INSTANCE_ID';

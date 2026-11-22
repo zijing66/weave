@@ -56,7 +56,7 @@ export {
   type HarnessCompaction,
   isHarness,
 } from './harness.js';
-export { TERMINAL_LOCATOR_ENV, TERMINAL_LOCATOR_ENV_KEYS } from './terminal.js';
+export { TERMINAL_LOCATOR_ENV, TERMINAL_LOCATOR_ENV_KEYS, RUNTIME_INSTANCE_ENV } from './terminal.js';
 export {
   type ToolScope,
   type ToolCategory,

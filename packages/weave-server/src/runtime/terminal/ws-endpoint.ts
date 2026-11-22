@@ -20,7 +20,16 @@ export function attachTerminalWebSocket(
   deps: { auth?: AuthService; runtimeSupervisor?: RuntimeSupervisor },
   gateway: TerminalGateway,
 ): void {
-  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+  server.on('upgrade', terminalUpgradeHandler(deps, gateway));
+}
+
+/** upgrade 监听本体：HTTP 与 TLS 两个监听各挂同一份（TLS 是独立 server 实例，
+ *  没挂的会把 WS upgrade 当普通请求回落 SPA——2026-11-20 B4 实测）。 */
+export function terminalUpgradeHandler(
+  deps: { auth?: AuthService; runtimeSupervisor?: RuntimeSupervisor },
+  gateway: TerminalGateway,
+): (req: IncomingMessage, socket: Duplex, head: Buffer) => void {
+  return (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = (() => {
       try {
         return new URL(req.url ?? '/', 'http://localhost');
@@ -123,5 +132,5 @@ export function attachTerminalWebSocket(
       },
       () => gateway.detach(clientId),
     );
-  });
+  };
 }

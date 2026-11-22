@@ -68,6 +68,22 @@ export interface TerminalPane {
   cwd: string | null;
 }
 
+/** headless Agent 实例行（B4 终端视图入口；mirror of server 的 agent_instances）。 */
+export interface AgentInstanceRow {
+  id: string;
+  harness: string;
+  status: string;
+  /** 绑定的会话 id（hook 事件归因首绑即定）；null = 尚未产生会话。 */
+  harnessSessionId: string | null;
+  workingDirectory: string;
+  command: string;
+  createdAt: string;
+  startedAt: string | null;
+  exitedAt: string | null;
+  exitCode: number | null;
+  errorMessage: string | null;
+}
+
 /** 会话所在的**可见屏幕**（终端里的一块屏 = wezterm 一个 tab）：会话列表按它分块。
  *  id 不透明（只作分组键），窗口/Tab 号供块头文案。mirror of server 的 SessionTerminal。 */
 export interface SessionTerminal {
@@ -196,6 +212,16 @@ export const projectApi = {
       method: 'POST',
       body: JSON.stringify({ ...(harness ? { harness } : {}), ...(worktree ? { worktree: true } : {}) }),
     }),
+  /** headless 会话（B4 Agent Runtime）：Runtime Host 持 PTY 不开外部终端窗；
+   *  返回 instanceId = 终端视图的锚点（/terminals/ws attach）。 */
+  startHeadlessSession: (projectId: number, harness?: Harness): Promise<{ ok: boolean; command: string; instanceId: string }> =>
+    apiFetch<{ ok: boolean; command: string; instanceId: string }>(`/projects/${projectId}/new-session`, {
+      method: 'POST',
+      body: JSON.stringify({ ...(harness ? { harness } : {}), executionMode: 'headless' }),
+    }),
+  /** headless 实例清单（B4 终端视图入口）。 */
+  listAgentInstances: (projectId: number): Promise<AgentInstanceRow[]> =>
+    apiFetch<{ instances: AgentInstanceRow[] }>(`/projects/${projectId}/agent-instances`).then((r) => r.instances),
   /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。
    *  `all` = 别的项目的 tab 也进候选（跨项目分屏落点用；缺省 = 现状只列本项目）。 */
   listProjectTerminals: (projectId: number, all = false): Promise<TerminalTarget[]> =>

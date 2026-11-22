@@ -109,6 +109,8 @@ export interface WeaveServerDeps {
   runtimeSupervisor?: import('../runtime/supervisor.js').RuntimeSupervisor;
   /** Terminal Gateway（B3）：实例终端流的广播/重放/Lease；缺省 /terminals/ws 503。 */
   terminalGateway?: import('../runtime/terminal/session-gateway.js').TerminalGateway;
+  /** agent_instances 仓储（B4）：headless 实例清单端点；缺省恒空表。 */
+  agentInstances?: import('../repositories/agent-instances.js').AgentInstanceRepository;
   /** 开机自启注册器；默认落系统自启动项（PUT /settings 即时生效），测试注入 spy。 */
   autoStart?: (enabled: boolean) => void;
   // ---- D3 hooks subsystem (all optional so existing tests can omit them) ----

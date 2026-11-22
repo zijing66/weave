@@ -92,7 +92,7 @@ import { promptTerminalChannel, readTerminalWorld } from './opener.js';
 import { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import { RuntimeSupervisor } from '../runtime/supervisor.js';
 import { TerminalGateway } from '../runtime/terminal/session-gateway.js';
-import { attachTerminalWebSocket } from '../runtime/terminal/ws-endpoint.js';
+import { attachTerminalWebSocket, terminalUpgradeHandler } from '../runtime/terminal/ws-endpoint.js';
 import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { wireHookFilePipeline } from './hook-pipeline.js';
 import { DEFAULT_PORT, DAEMON_HOST, DEFAULT_BIND_HOST, findFreePort, isPortFree } from './port.js';
@@ -747,6 +747,7 @@ async function main(): Promise<void> {
     uploads,
     dashboardRate,
     terminalTopologyKick: () => void terminalRefresher.refreshNow(),
+    agentInstances,
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
@@ -808,6 +809,7 @@ async function main(): Promise<void> {
     questionTracker,
     activityTracker,
     runtimeSupervisor: runtimeSup,
+    agentInstances,
     terminalGateway,
     sideQuestions: sideQuestionDeps,
     sessionWatches,
@@ -853,7 +855,12 @@ async function main(): Promise<void> {
 
   // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；失败降级仅警告）。
   let tls: TlsListener | null = null;
-  void startTlsServer({ port: tlsPort, bindHost, handler: requestHandler }).then((r) => {
+  void startTlsServer({
+    port: tlsPort,
+    bindHost,
+    handler: requestHandler,
+    upgrade: terminalUpgradeHandler({ auth, runtimeSupervisor: runtimeSup }, terminalGateway),
+  }).then((r) => {
     tls = r;
     if (r) console.log(`[dev] weave daemon tls listening on https://${bindHost}:${r.port}`);
     // mTCP 发现（E3，与 start.ts 同装配）：联邦/广播开关开着才播；只广播不接收

@@ -6,6 +6,7 @@ import {
   HARNESS_EVENTS,
   INJECTABLE_EVENTS,
   TERMINAL_LOCATOR_ENV_KEYS,
+  RUNTIME_INSTANCE_ENV,
   TITLE_EFFECTIVE_EVENTS,
   VISUALIZATION_PROTOCOL,
   type Harness,
@@ -64,8 +65,10 @@ const INJECTABLE_EVENTS = ${JSON.stringify(INJECTABLE_EVENTS[harness])};
 const TITLE_EVENTS = ${JSON.stringify(TITLE_EFFECTIVE_EVENTS[harness])};
 // Terminal pane locator env (mirrors TERMINAL_LOCATOR_ENV_KEYS in @weavecode/core):
 // captured in the pane's own child process and reported on the inbox line's side
-// channel, so the daemon can address THIS session's pane exactly.
-const TERMINAL_ENV_KEYS = ${JSON.stringify(TERMINAL_LOCATOR_ENV_KEYS)};
+// channel, so the daemon can address THIS session's pane exactly. Plus the runtime
+// instance identity (headless spawn) — same side channel, lets the daemon bind the
+// hook event's session to its agent_instances row.
+const TERMINAL_ENV_KEYS = ${JSON.stringify([...TERMINAL_LOCATOR_ENV_KEYS, RUNTIME_INSTANCE_ENV])};
 const INBOX_MAX_BYTES = 4 * 1024 * 1024;
 const INBOX_MAX_LINES = 1000;
 // Rendered-block fodder cap: the same limit the fragment endpoint enforces.

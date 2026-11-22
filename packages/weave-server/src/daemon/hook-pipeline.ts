@@ -64,6 +64,8 @@ export interface HookPipelineDeps {
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
   /** 终端拓扑即时对账（会话退出后立刻摘出终端分组，不等 30s 周期）。 */
   terminalTopologyKick?: () => void;
+  /** headless 实例绑定（B4）：ingest 见 Runtime 实例身份时回写会话 ↔ 实例。 */
+  agentInstances?: { bindSession(id: string, harnessSessionId: string): void };
 }
 
 /** 一个 shard 的全部管道文件（inbox 三种形态 + mirror + outbox + promptbox）。 */
@@ -195,6 +197,7 @@ export function wireHookFilePipeline(deps: HookPipelineDeps): HookPipeline {
         sessionProbe: deps.sessionProbe,
         uploads: deps.uploads,
         terminalTopologyKick: deps.terminalTopologyKick,
+        agentInstances: deps.agentInstances,
         onVisualization: (projectId) => mirror.syncProject(projectId),
         paneEnvSource: (h) => messagingSurfaceFor(h).paneEnvSource,
       },

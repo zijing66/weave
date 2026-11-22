@@ -13,8 +13,8 @@ import { HarnessIcon } from './HarnessIcon';
  * 终端弹层那套——锚在按钮上、点外面/滚动/Esc 收）。**项目选中的 harness 全列**，
  * 起不了的（无 resume 裸 bin / 宿主版本低于闸）置灰并在行内说明原因——只有一个
  * 也照样展开，选哪个恒由用户点。
- * 底部一枚「worktree 隔离」开关（B5 最小切片）：开着的会话起在独立 git worktree，
- * SessionEnd 后并回主干；开关态由父层持有（面板收起再开不丢）。
+ * 底部两枚开关（态都由父层持有，面板收起再开不丢）：「worktree 隔离」（B5 最小切片，
+ * 独立 git worktree）与「headless」（B4 Agent Runtime，起在 Runtime Host、Web 终端交互）。
  */
 export function HarnessPicker({
   harnesses,
@@ -23,6 +23,8 @@ export function HarnessPicker({
   anchor,
   worktree,
   onWorktreeChange,
+  headless,
+  onHeadlessChange,
   onPick,
   onClose,
 }: {
@@ -34,6 +36,9 @@ export function HarnessPicker({
   /** worktree 隔离开关的当前态（父层持有）。 */
   worktree: boolean;
   onWorktreeChange: (v: boolean) => void;
+  /** headless 开关的当前态（父层持有）。 */
+  headless: boolean;
+  onHeadlessChange: (v: boolean) => void;
   onPick: (harness: ProjectHarness['id']) => void;
   onClose: () => void;
 }) {
@@ -117,6 +122,13 @@ export function HarnessPicker({
           {t('tasks.worktreeToggle')}
         </span>
         <Switch checked={worktree} onChange={onWorktreeChange} title={t('tasks.worktreeToggleTip')} />
+      </div>
+      {/* headless（B4）：起在 Runtime Host，不开外部终端窗，Web 终端交互 */}
+      <div className="flex items-center justify-between gap-2 px-2 pb-1.5 pt-0.5">
+        <span className="min-w-0 truncate text-10 text-neutral-500">
+          {t('tasks.headlessToggle')}
+        </span>
+        <Switch checked={headless} onChange={onHeadlessChange} title={t('tasks.headlessToggleTip')} />
       </div>
     </div>,
     document.body,

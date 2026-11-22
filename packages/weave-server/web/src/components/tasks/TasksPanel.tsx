@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Harness } from '@weavecode/core/harness';
 import {
   api,
+  type AgentInstanceRow,
   type AnswerPick,
   type HookDispatch,
   type HookEventRow,
@@ -25,6 +26,7 @@ import { SessionList, byActivity } from './SessionList';
 import { SessionMessages } from './SessionMessages';
 import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
+import { TerminalView } from '@/components/TerminalView';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
@@ -39,7 +41,7 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 import { SkeletonRows } from '@/components/ui/skeleton';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search, Square, X } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search, Square, Terminal, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -642,6 +644,18 @@ export function TasksPanel({
       void fb.run(
         `openTerm:${sessionId}`,
         async () => {
+          // headless 会话：活实例在 Runtime Host 里，打开 = Web 终端 attach；
+          // 外部终端 resume 会另起一个进程抢同一会话，不走。
+          const pid = sessionsRef.current?.find((s) => s.sessionId === sessionId)?.projectId;
+          if (pid != null) {
+            const inst = (await api.listAgentInstances(pid)).find(
+              (i) => i.harnessSessionId === sessionId && (i.status === 'running' || i.status === 'starting'),
+            );
+            if (inst) {
+              setWebTerminal({ instanceId: inst.id, label: harnessUiOf(inst.harness as Harness).label });
+              return;
+            }
+          }
           await api.openSessionTerminal(sessionId, target);
           await refreshStatus();
           await waitTerminalAlive(sessionId);
@@ -654,6 +668,12 @@ export function TasksPanel({
 
   /** worktree 隔离（B5 最小切片）：弹层里的开关态，面板重开不丢；下一次起会话生效。 */
   const [worktreeNewSession, setWorktreeNewSession] = useState(false);
+  /** headless（B4 Agent Runtime）：起在 Runtime Host、不开外部终端窗，Web 终端交互。 */
+  const [headlessNewSession, setHeadlessNewSession] = useState(false);
+  /** 打开中的 Web 终端实例（headless 起会话成功即弹）。 */
+  const [webTerminal, setWebTerminal] = useState<{ instanceId: string; label: string } | null>(null);
+  /** 多活实例且无会话可对号时的选单（顶栏入口弹，选一枚打开）。 */
+  const [webTerminalPicker, setWebTerminalPicker] = useState<AgentInstanceRow[] | null>(null);
 
   /** 新建会话：在项目**已打开的终端**里起一个新会话（服务端把 harness 裸 bin
       打进该项目既有 pane 的分屏；没有已开终端时 409——按钮也据此置灰）。
@@ -666,6 +686,13 @@ export function TasksPanel({
       void fb.run(
         `newSession:${projectId}`,
         async () => {
+          if (headlessNewSession) {
+            // headless（B4）：Runtime Host 持 PTY，POST 回 instanceId 即已起——
+            // 不等会话行（不落会话行的 harness 没有行可等），直接弹 Web 终端。
+            const { instanceId } = await api.startHeadlessSession(projectId, harness);
+            setWebTerminal({ instanceId, label: harnessUiOf(harness ?? 'claude').label });
+            return;
+          }
           const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
           await api.startProjectSession(projectId, harness, worktreeNewSession);
           if (harness && HARNESS_LIFECYCLE[harness].sessionMarkers.length === 0) return;
@@ -674,7 +701,7 @@ export function TasksPanel({
         { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
       );
     },
-    [fb, projectId, t, waitNewSession, worktreeNewSession],
+    [fb, projectId, t, waitNewSession, worktreeNewSession, headlessNewSession],
   );
 
   /** 起会话的 harness 弹层（锚在按钮下方，同项目列表的终端弹层口径）：项目选中的
@@ -1431,6 +1458,41 @@ export function TasksPanel({
               <span className="new-session-label min-w-0">{t('tasks.newSession')}</span>
             </button>
           </Tooltip>
+          {/* 重开 Web 终端（B4）：本项目还活着的 headless 实例，点了接着看/接着敲——
+              实例在 Runtime Host 里跑着，弹层关掉只是 detach，重进即恢复。
+              选中会话先对号（harnessSessionId 绑定）；对不上时单实例直开、
+              多实例弹选单——不猜「最后一个」。 */}
+          <Tooltip label={t('tasks.webTerminalReopen')} side="top">
+            <button
+              type="button"
+              onClick={() => {
+                void fb.run(
+                  `reopenWebTerm:${projectId}`,
+                  async () => {
+                    const instances = await api.listAgentInstances(projectId);
+                    const live = instances.filter((i) => i.status === 'running' || i.status === 'starting');
+                    if (live.length === 0) throw new Error(t('tasks.webTerminalNone'));
+                    const picked =
+                      live.find((i) => i.harnessSessionId === selectedId) ??
+                      (live.length === 1 ? live[0] : null);
+                    if (!picked) {
+                      setWebTerminalPicker(live);
+                      return;
+                    }
+                    setWebTerminal({ instanceId: picked.id, label: harnessUiOf(picked.harness as Harness).label });
+                  },
+                  { fail: (e) => errorText(e) },
+                );
+              }}
+              className="inline-flex items-center rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 text-neutral-200 transition-colors hover:bg-neutral-800"
+            >
+              <FeedbackIcon
+                state={fb.stateOf(`reopenWebTerm:${projectId}`)}
+                className="h-3 w-3 shrink-0"
+                icon={<Terminal className="h-3 w-3" />}
+              />
+            </button>
+          </Tooltip>
           {/* harness 筛选：只过滤列表行与计数；选中态与右栏不受影响。
               窄时收缩截断（文字不隐藏，用户裁决）；trigger 内部已 truncate。 */}
           <Combobox
@@ -1603,12 +1665,97 @@ export function TasksPanel({
           anchor={harnessPicker.anchor}
           worktree={worktreeNewSession}
           onWorktreeChange={setWorktreeNewSession}
+          headless={headlessNewSession}
+          onHeadlessChange={setHeadlessNewSession}
           onPick={(harness) => {
             setHarnessPicker(null);
             runNewSession(harness);
           }}
           onClose={() => setHarnessPicker(null)}
         />
+      )}
+
+      {/* Web 终端（B4 headless 实例）：全屏弹层挂 xterm，关掉只是 detach（实例还在跑） */}
+      {webTerminal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setWebTerminal(null)}
+        >
+          <div
+            className="flex h-[86%] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 shadow-mac"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-edge/[0.06] px-3 py-2">
+              <span className="truncate text-xs text-neutral-300">
+                {t('tasks.webTerminalTitle')} · {webTerminal.label}
+              </span>
+              <Tooltip label={t('app.mobileDrawerClose')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('app.mobileDrawerClose')}
+                  onClick={() => setWebTerminal(null)}
+                  className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+                >
+                  <X className="size-4" />
+                </button>
+              </Tooltip>
+            </div>
+            <TerminalView instanceId={webTerminal.instanceId} />
+          </div>
+        </div>
+      )}
+
+      {/* Web 终端实例选单：多活实例且没有会话对号时（顶栏入口），选一枚打开 */}
+      {webTerminalPicker && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setWebTerminalPicker(null)}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 shadow-mac"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-edge/[0.06] px-3 py-2">
+              <span className="truncate text-xs text-neutral-300">{t('tasks.webTerminalPick')}</span>
+              <Tooltip label={t('app.mobileDrawerClose')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('app.mobileDrawerClose')}
+                  onClick={() => setWebTerminalPicker(null)}
+                  className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+                >
+                  <X className="size-4" />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="max-h-72 overflow-y-auto p-1">
+              {webTerminalPicker.map((inst) => (
+                <button
+                  key={inst.id}
+                  type="button"
+                  onClick={() => {
+                    setWebTerminalPicker(null);
+                    setWebTerminal({ instanceId: inst.id, label: harnessUiOf(inst.harness as Harness).label });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-edge/[0.06]"
+                >
+                  <span
+                    className={
+                      'inline-block size-2 shrink-0 rounded-full ' +
+                      (inst.status === 'running' ? 'animate-pulse bg-blue-500' : 'bg-amber-500')
+                    }
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    {harnessUiOf(inst.harness as Harness).label} · {inst.harnessSessionId ?? inst.id}
+                  </span>
+                  <span className="shrink-0 text-10 text-neutral-600">
+                    {new Date(inst.startedAt ?? inst.createdAt).toLocaleTimeString()}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 事件链弹窗：右栏被对话占着时从这里看（右栏没有对话面时事件链仍在原位）。

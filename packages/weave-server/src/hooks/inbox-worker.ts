@@ -12,7 +12,7 @@ import {
   type LogRecord,
   type LogSource,
 } from '@weavecode/harness';
-import { HARNESS_LIFECYCLE, isHarness, type Harness } from '@weavecode/core';
+import { HARNESS_LIFECYCLE, RUNTIME_INSTANCE_ENV, isHarness, type Harness } from '@weavecode/core';
 import type { PaneEnvSource } from '@weavecode/harness';
 import { getLogsDir } from '../db/paths.js';
 import { projectHarnessIds } from '../daemon/project-harnesses.js';
@@ -463,6 +463,8 @@ export interface IngestedHandlerDeps {
   };
   /** 上传件落库面：回执命中时把该消息的随附图挂到开轮事件上（气泡缩略图）。 */
   uploads?: { linkToEvent(eventId: number, uploadIds: readonly string[]): void };
+  /** headless 实例绑定（B4）：terminal 旁路带 Runtime 实例身份时回写会话 ↔ 实例。 */
+  agentInstances?: { bindSession(id: string, harnessSessionId: string): void };
   /** 仪表盘速率快照：每条入库事件往当前 10 秒桶 +1（读侧不再扫时间窗口）。 */
   dashboardRate?: { record(): void };
 }
@@ -582,6 +584,10 @@ export function handleIngestedRecords(deps: IngestedHandlerDeps, records: InboxR
       // pane 定位 env：信源闸（能力面声明）。'hook'（缺省）= 旁路上报可信，照采；
       // 'launch'（codex：hook 由共享 daemon 代跑、env 冻结在 daemon 启动地）=
       // 上报不可信，改认领 weave 起会话的起点候选（没有候选 = 手动开的会话，不分组）。
+      // headless 实例身份（spawn 注入、hook 旁路上报）同乘这班车：首个事件到达
+      // 即把该会话绑到 agent_instances 行——会话行 → Web 终端 的入口全靠这条链。
+      const runtimeInstance = record.terminalEnv?.[RUNTIME_INSTANCE_ENV];
+      if (runtimeInstance) deps.agentInstances?.bindSession(runtimeInstance, record.input.sessionId);
       if (record.terminalEnv || isHarness(record.input.source)) {
         const src = record.input.source;
         if (isHarness(src) && deps.paneEnvSource?.(src) === 'launch') {

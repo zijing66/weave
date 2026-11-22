@@ -135,8 +135,10 @@ export async function startSessionInProject(
     title?: string;
     /** MCP/联邦链建的会话强制隐藏（调用方不在终端跟前）。 */
     viaMcp?: boolean;
+    /** headless（B4）：Runtime Host 持 PTY 不开外部终端窗（Agent Runtime 域）。 */
+    executionMode?: 'headless';
   },
-): Promise<{ ok: true; command: string; cwd: string; worktree?: string } | { ok: false; status: number; error: string }> {
+): Promise<{ ok: true; command: string; cwd: string; worktree?: string; instanceId?: string } | { ok: false; status: number; error: string }> {
   const integrated = await projectHarnesses(project.path, deps.harnesses);
   if (opts.harness !== undefined && !integrated.some((h) => h.id === opts.harness)) {
     return { ok: false, status: 409, error: `Harness "${opts.harness}" is not integrated in this project` };
@@ -180,6 +182,36 @@ export async function startSessionInProject(
     }
     const settings = await readDaemonSettings();
     const argv = [spec.bin, ...(spec.launchArgs ?? [])];
+    // headless 分叉（B4）：Runtime Host 持 PTY，不开外部终端窗——argv 同一份
+    // （能力面取的 resume 规格），后续投递走 supervisor 的 stdin 通道。会话行
+    // 照常由 hook 事件建档（env 带 WEAVE_INSTANCE_ID，宿主侧 hook 采集归因）。
+    if (opts.executionMode === 'headless') {
+      if (!deps.runtimeSupervisor) {
+        return { ok: false, status: 501, error: 'Runtime host is not available (daemon too old or disabled)' };
+      }
+      const instanceId = `wvi-${crypto.randomUUID().slice(0, 12)}`;
+      try {
+        await deps.runtimeSupervisor.spawnInstance(
+          {
+            instanceId,
+            command: spec.bin,
+            args: spec.launchArgs ?? [],
+            cwd,
+            cols: 100,
+            rows: 30,
+            env: {
+              ...process.env,
+              WEAVE_INSTANCE_ID: instanceId,
+              WEAVE_RUNTIME_HEADLESS: '1',
+            },
+          },
+          { projectId: project.id, harness: picked!.id },
+        );
+        return { ok: true, command: argv.join(' '), cwd, instanceId };
+      } catch (e) {
+        return { ok: false, status: 503, error: `Runtime host spawn failed: ${e instanceof Error ? e.message : e}` };
+      }
+    }
     // 定点落子（可选 target = list_terminals 的 targetId）：能力归后端——enumerable
     // preset 才有定点通道，其余明确报因；目标没了 / 长满了 throw 转前端报因，
     // 绝不静默换落点（换了就是「点了 A 进了 B」）。
@@ -417,9 +449,9 @@ export async function handleProjectRoutes(
       sendJson(res, 404, { error: 'Project not found' });
       return true;
     }
-    let body: { harness?: unknown; worktree?: unknown; target?: unknown; title?: unknown; __viaMcp?: unknown };
+    let body: { harness?: unknown; worktree?: unknown; target?: unknown; title?: unknown; __viaMcp?: unknown; executionMode?: unknown };
     try {
-      body = JSON.parse((await readBody(req)) || '{}') as { harness?: unknown };
+      body = JSON.parse((await readBody(req)) || '{}') as { harness?: unknown; executionMode?: unknown };
     } catch {
       sendJson(res, 400, { error: 'Invalid JSON body' });
       return true;
@@ -430,6 +462,10 @@ export async function handleProjectRoutes(
     }
     if (body.worktree !== undefined && typeof body.worktree !== 'boolean') {
       sendJson(res, 400, { error: 'Invalid "worktree" (boolean)' });
+      return true;
+    }
+    if (body.executionMode !== undefined && body.executionMode !== 'headless') {
+      sendJson(res, 400, { error: 'Invalid "executionMode" (headless)' });
       return true;
     }
     if (body.target !== undefined && (typeof body.target !== 'string' || !body.target)) {
@@ -449,6 +485,7 @@ export async function handleProjectRoutes(
       target: body.target as string | undefined,
       title: typeof body.title === 'string' ? body.title : undefined,
       viaMcp: body.__viaMcp === true,
+      executionMode: body.executionMode === 'headless' ? 'headless' : undefined,
     });
     if (!result.ok) {
       sendJson(res, result.status, { error: result.error });
@@ -461,6 +498,32 @@ export async function handleProjectRoutes(
   if (pathname === '/projects' && req.method === 'GET') {
     sendJson(res, 200, {
       projects: await withProjectHarnesses(deps.projects.list(), deps.harnesses),
+    });
+    return true;
+  }
+
+  // GET /projects/:id/agent-instances — headless 实例清单（B4 终端视图的入口）。
+  const instancesMatch = pathname.match(/^\/projects\/(\d+)\/agent-instances$/);
+  if (instancesMatch && req.method === 'GET') {
+    if (!deps.agentInstances) {
+      sendJson(res, 200, { instances: [] });
+      return true;
+    }
+    const rows = deps.agentInstances.listByProject(Number(instancesMatch[1]));
+    sendJson(res, 200, {
+      instances: rows.map((r) => ({
+        id: r.id,
+        harness: r.harness,
+        status: r.status,
+        harnessSessionId: r.harnessSessionId ?? null,
+        workingDirectory: r.workingDirectory,
+        command: r.command,
+        createdAt: r.createdAt,
+        startedAt: r.startedAt ?? null,
+        exitedAt: r.exitedAt ?? null,
+        exitCode: r.exitCode ?? null,
+        errorMessage: r.errorMessage ?? null,
+      })),
     });
     return true;
   }

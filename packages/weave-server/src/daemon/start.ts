@@ -7,7 +7,7 @@ import { openDatabase } from '../db/db.js';
 import { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import { RuntimeSupervisor } from '../runtime/supervisor.js';
 import { TerminalGateway } from '../runtime/terminal/session-gateway.js';
-import { attachTerminalWebSocket } from '../runtime/terminal/ws-endpoint.js';
+import { attachTerminalWebSocket, terminalUpgradeHandler } from '../runtime/terminal/ws-endpoint.js';
 import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { BackupEngine, applyPendingRestore } from './backup.js';
 import { startBackupScheduler } from './backup-scheduler.js';
@@ -788,6 +788,7 @@ export function startDaemon(): void {
     uploads,
     dashboardRate,
     terminalTopologyKick: () => void terminalRefresher.refreshNow(),
+    agentInstances,
   });
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
@@ -862,6 +863,7 @@ export function startDaemon(): void {
     questionTracker,
     activityTracker,
     runtimeSupervisor: runtimeSup,
+    agentInstances,
     terminalGateway,
     sideQuestions: sideQuestionDeps,
     sessionWatches,
@@ -901,16 +903,24 @@ export function startDaemon(): void {
   });
   beginDrain = requestHandler.beginDrain;
   const server = http.createServer(requestHandler);
-  // B3：终端流 WS（只在两个 runtime deps 都在时挂 upgrade；TLS 监听共用 HTTP
-  // handler、upgrade 不走它——HTTPS 上 WS 由浏览器 wss 直接打 TLS 端口的场景
-  // 本机单用户 v1 不开，http:// 足够）。
+  // B3：终端流 WS（只在两个 runtime deps 都在时挂 upgrade；TLS 监听是独立 server
+  // 实例、upgrade 也要挂同一份——2026-11-20 B4 实测：不挂会把 WS upgrade 当普通
+  // 请求回落 SPA）。
   if (terminalGateway && runtimeSup) {
     attachTerminalWebSocket(server, { auth, runtimeSupervisor: runtimeSup }, terminalGateway);
   }
 
   // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；端口被占等失败仅警告降级）。
   let tls: TlsListener | null = null;
-  void startTlsServer({ port: tlsPort, bindHost, handler: requestHandler }).then((r) => {
+  void startTlsServer({
+    port: tlsPort,
+    bindHost,
+    handler: requestHandler,
+    upgrade:
+      terminalGateway && runtimeSup
+        ? terminalUpgradeHandler({ auth, runtimeSupervisor: runtimeSup }, terminalGateway)
+        : undefined,
+  }).then((r) => {
     tls = r;
     // mTCP 发现（E3）：联邦/广播开关（settings federation）开着才播；只广播不
     // 接收执行，安全面不变（对端仍要令牌）。tlsPort 未开 = 无 HTTPS，不播。
