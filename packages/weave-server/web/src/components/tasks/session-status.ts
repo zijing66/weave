@@ -1,10 +1,11 @@
 /**
- * 会话状态机（纯函数，可单测）。七态：运行中 / 压缩中 / 失败 / 打开 / 关闭 /
- * 已终止 / 已中断。
+ * 会话状态机（纯函数，可单测）。八态：运行中 / 压缩中 / 失败 / 打开 / 关闭 /
+ * 已终止 / 已中断 / 已丢弃。
  *
  * 优先级：SSE overlay（帧已到、refetch 未回的即时覆盖）→ 运行中（派发执行中 /
  * 后台子 agent 进行中 / 回合开着且有近期活动）→ 失败（最新派发 failed/timeout）
- * → 关闭（最新事件 SessionEnd，正常退出）→ 已终止（claude 注册表判死，
+ * → 已丢弃（转录没了，--resume 接不回来——与终端按钮 gone 同一判据）→
+ * 关闭（最新事件 SessionEnd，正常退出）→ 已终止（claude 注册表判死，
  * 异常被杀）→ 压缩中（最新事件是压缩开始事件且未静默超窗）→ 已中断（转录里
  * 最后一条中断标记晚于最后一条事件）→ 打开。
  *
@@ -22,6 +23,8 @@
  * 干活——等输入或已静默；无 SessionEnd 的旧会话一律「打开」（不按静默时长
  * 兜底）。「关闭」只由 SessionEnd 判定；「已终止」只在 claude 注册表明确
  * 判死（pidAlive === false）时成立——查不到登记（codex/旧会话）不猜。
+ * 「已丢弃」只由 transcriptPresent === false 判定（转录被宿主清掉，会话行
+ * 还在但没有可接的对话）；null（判不动/没跑过）不猜。
  */
 
 import type { Harness } from '@weavecode/core/harness';
@@ -35,7 +38,8 @@ export type SessionStatus =
   | 'open'
   | 'closed'
   | 'terminated'
-  | 'interrupted';
+  | 'interrupted'
+  | 'gone';
 
 export interface StatusInput {
   /** sessions.last_seen_at（ingest touch，可信）。 */
@@ -63,6 +67,9 @@ export interface StatusInput {
   interruptedAt?: number | null;
   /** 会话归属 harness（查压缩信号表；未知/缺失 = 无压缩态）。 */
   harness?: HarnessKey | null;
+  /** 转录没了（服务端 transcriptPresent === false）：--resume 接不回来。
+   *  null/undefined（判不动/没跑过）不猜。 */
+  transcriptGone?: boolean;
   /** 注入时间（默认 Date.now()，测试可注入）。 */
   now?: number;
 }
@@ -80,6 +87,7 @@ export function deriveSessionStatus(input: StatusInput): SessionStatus {
   if (input.hasRunningDispatch) return 'running';
   if (input.hasRunningSubagent) return 'running';
   if (input.latestDispatchFailed) return 'failed';
+  if (input.transcriptGone) return 'gone';
   if (input.latestEventType === 'SessionEnd') return 'closed';
   // 无 SessionEnd 而 claude 注册表判死 → 异常终止（被杀 terminal/进程）；
   // 只认明确 false——pid 复用残差与查不到登记都不猜
@@ -147,7 +155,8 @@ export function canInterrupt(
     status === 'closed' ||
     status === 'terminated' ||
     status === 'failed' ||
-    status === 'interrupted'
+    status === 'interrupted' ||
+    status === 'gone'
   ) {
     return false;
   }
@@ -166,6 +175,7 @@ export const STATUS_KEY: Record<
   | 'tasks.statusClosed'
   | 'tasks.statusTerminated'
   | 'tasks.statusInterrupted'
+  | 'tasks.statusGone'
 > = {
   running: 'tasks.statusRunning',
   compacting: 'tasks.statusCompacting',
@@ -174,9 +184,11 @@ export const STATUS_KEY: Record<
   closed: 'tasks.statusClosed',
   terminated: 'tasks.statusTerminated',
   interrupted: 'tasks.statusInterrupted',
+  gone: 'tasks.statusGone',
 };
 
-/** 状态 → 圆点颜色（运行中/压缩中由渲染层用 HarnessIcon 动效，打开用其静态形）。 */
+/** 状态 → 圆点颜色（运行中/压缩中由渲染层用 HarnessIcon 动效，打开用其静态形）。
+ *  已丢弃比关闭更收敛一档：连转录都没了，只剩一行记录。 */
 export const STATUS_DOT: Record<SessionStatus, string> = {
   running: 'bg-orange-400',
   compacting: 'bg-amber-400',
@@ -185,6 +197,7 @@ export const STATUS_DOT: Record<SessionStatus, string> = {
   closed: 'bg-neutral-700',
   terminated: 'bg-rose-800',
   interrupted: 'bg-slate-400',
+  gone: 'bg-neutral-800',
 };
 
 /** 状态 → 文字徽标配色（运行中/压缩中/失败彩色醒目，打开/关闭收敛；终止取暗红示「被杀」）。
@@ -197,6 +210,7 @@ export const STATUS_BADGE: Record<SessionStatus, string> = {
   closed: 'bg-neutral-900 text-neutral-500',
   terminated: 'bg-rose-950/60 text-rose-400',
   interrupted: 'bg-slate-800 text-slate-300',
+  gone: 'bg-neutral-900 text-neutral-600',
 };
 
 /** 会话归属 harness——直接引 core 名表（类型层，无运行时依赖）。 */
@@ -216,7 +230,8 @@ export interface HarnessSessionCounts {
 
 /**
  * 项目维度会话计数（项目行徽标用）：按 harness 分桶，只计「运行中」与「打开」
- * 两类（失败/关闭 不在项目行提示——失败由任务视图承载，关闭无需提醒）；
+ * 两类（失败/关闭/已丢弃 不在项目行提示——失败由任务视图承载，关闭无需提醒，
+ * 已丢弃连转录都没了，提示只会误导成「有会话可用」）；
  * 压缩中也算运行中——会话正忙，不该在项目行掉成「打开」；已中断算「打开」
  * ——它同样是在等输入，只是这一轮被 ESC 收的场。
  * 桶序 = 名表序（claude → codex）→ 未知，同项目徽标顺序稳定。
@@ -228,7 +243,12 @@ export function countSessionsByHarness(
   const buckets = new Map<HarnessKey | null, HarnessSessionCounts>();
   for (const s of sessions) {
     const status = statuses.get(s.sessionId) ?? 'open';
-    if (status !== 'running' && status !== 'compacting' && status !== 'open' && status !== 'interrupted') {
+    if (
+      status !== 'running' &&
+      status !== 'compacting' &&
+      status !== 'open' &&
+      status !== 'interrupted'
+    ) {
       continue;
     }
     const key: HarnessKey | null =

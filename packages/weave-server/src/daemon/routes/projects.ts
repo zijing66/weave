@@ -290,6 +290,58 @@ export async function handleProjectRoutes(
         await opener.openExplorer(project.path);
       } else {
         const settings = await readDaemonSettings();
+        // Web 终端预设：「在终端中打开」= 在 Runtime Host 里起一个 headless
+        // shell 实例（PTY 落在项目路径），回 instanceId 给前端 attach——不开外部
+        // 终端窗。host 缺席（旧 daemon/未启用）如实 501——**明确失败**，不静默
+        // 回落外部终端（预设口径就是 headless，回落会把窗开到用户没选的地方）。
+        // 已有活的 shell（收起后重进/连点）：接回同一个实例，不每次开无主 shell。
+        if (settings.terminal.preset === 'web') {
+          if (!deps.runtimeSupervisor) {
+            sendJson(res, 501, { error: 'Runtime host is not available (daemon too old or disabled)' });
+            return true;
+          }
+          const live = deps.agentInstances?.liveShellOf(project.id) ?? null;
+          if (live) {
+            sendJson(res, 200, {
+              ok: true,
+              target: body.target,
+              path: project.path,
+              instanceId: live.id,
+              reused: true,
+            });
+            return true;
+          }
+          const instanceId = `wvt-${crypto.randomUUID().slice(0, 12)}`;
+          const shell =
+            process.platform === 'win32'
+              ? { command: 'powershell.exe', args: ['-NoLogo'] }
+              : { command: process.env['SHELL'] ?? 'bash', args: [] };
+          try {
+            await deps.runtimeSupervisor.spawnInstance(
+              {
+                instanceId,
+                command: shell.command,
+                args: shell.args,
+                cwd: project.path,
+                cols: 100,
+                rows: 30,
+                env: { ...process.env, WEAVE_INSTANCE_ID: instanceId },
+              },
+              { projectId: project.id, harness: 'shell' },
+            );
+            sendJson(res, 200, {
+              ok: true,
+              target: body.target,
+              path: project.path,
+              instanceId,
+            });
+          } catch (e) {
+            sendJson(res, 503, {
+              error: `Runtime host spawn failed: ${e instanceof Error ? e.message : e}`,
+            });
+          }
+          return true;
+        }
         await opener.openTerminal(project.path, settings.terminal);
         // 项目配置 hideWindow：开完顺手系统级隐藏（延迟一拍——窗要起来才藏得着）。
         scheduleHideWindow(deps, project.id, project.path);
@@ -685,6 +737,9 @@ export async function handleProjectRoutes(
   // ~200ms），不该让响应等它；增量经 push 帧到达，正常消费方（SSE 客户端）
   // 不需要再打这枪。未接刷新器（测试注入缝）才现探。
   if (pathname === '/terminals/counts' && req.method === 'GET') {
+    // headless 实例的计数判据单点 = 仓库（liveHeadlessCounts），且**在快照层**
+    // 并入（start.ts / dev-entry.ts 同一份）——GET 只读快照，与 30s 角标天然
+    // 同账；不在这里再叠一次（会双计）。
     if (deps.terminalRefresher) {
       sendJson(res, 200, {
         counts: deps.terminalRefresher.lastSnapshot?.counts ?? {},
@@ -693,7 +748,13 @@ export async function handleProjectRoutes(
       void deps.terminalRefresher.tick(true);
     } else {
       const world = await readTerminalWorld(deps.projects.list());
-      sendJson(res, 200, { counts: world.counts, hidden: world.hidden });
+      const liveCounts = deps.agentInstances?.liveHeadlessCounts() ?? {};
+      const counts: Record<number, number> = {};
+      for (const p of deps.projects.list()) {
+        const n = (world.counts[p.id] ?? 0) + (liveCounts[p.id] ?? 0);
+        if (n > 0) counts[p.id] = n;
+      }
+      sendJson(res, 200, { counts, hidden: world.hidden });
     }
     return true;
   }

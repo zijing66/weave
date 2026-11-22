@@ -465,8 +465,15 @@ export function startDaemon(): void {
   const terminalRefresher = new TerminalTopologyRefresher(
     async () => {
       const world = await readTerminalWorld(projects.list());
+      // 角标口径：Web 终端的会话也算一个终端（用户口径）——Runtime Host 里
+      // 活 headless 实例按项目并入 counts，与外部终端窗口求和。判据单点在
+      // 仓库（liveHeadlessCounts），GET /terminals/counts 兜底路径同一份。
+      const counts = { ...world.counts };
+      for (const [pid, n] of Object.entries(agentInstances.liveHeadlessCounts())) {
+        counts[Number(pid)] = (counts[Number(pid)] ?? 0) + n;
+      }
       return {
-        counts: world.counts,
+        counts,
         hidden: world.hidden,
         visibilities: Object.fromEntries(world.byTarget),
         terminals: await messageDeliverer.sessionTerminals(),
@@ -476,6 +483,7 @@ export function startDaemon(): void {
     { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );
   terminalRefresher.start();
+  runtimeSup.onStatusChange = () => void terminalRefresher.refreshNow();
   // 会话存活（终端按钮图标）同理：claude 进程被杀无 hook 事件，GET 的 pidAlive
   // 会卡旧值——判活零 spawn（注册表 + kill 0；codex 走锁探针缓存），15s 一拍、
   // 只推判得动的快照。

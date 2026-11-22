@@ -14,6 +14,31 @@ interface TerminalViewProps {
   interactive?: boolean;
 }
 
+// xterm 6 缺少上游 #5759：组词期间 TUI 输出会移动光标，但 textarea/组词层
+// 不跟着重定位 ⇒ IME 候选框停在旧位置、把整屏顶偏。修法 = 组词期间每次
+// 渲染都重同步两个元素的坐标（7.0.0 上游修复的等价物）。
+function patchImeAnchor(term: Terminal): void {
+  const { _core: core } = term as unknown as {
+    _core?: {
+      _syncTextArea?: () => void;
+      _compositionHelper?: { updateCompositionElements(): void };
+    };
+  };
+  let composing = false;
+  const textarea = term.textarea;
+  if (!textarea || !core?._syncTextArea || !core?._compositionHelper) return;
+  const sync = () => {
+    core._syncTextArea!();
+    core._compositionHelper!.updateCompositionElements();
+  };
+  textarea.addEventListener('compositionstart', sync, true);
+  textarea.addEventListener('compositionstart', () => (composing = true));
+  textarea.addEventListener('compositionend', () => (composing = false));
+  term.onRender(() => {
+    if (composing) sync();
+  });
+}
+
 export function TerminalView({ instanceId, interactive = true }: TerminalViewProps) {
   const holder = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -36,6 +61,7 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
     term.loadAddon(fit);
     if (holder.current) {
       term.open(holder.current);
+      patchImeAnchor(term);
       fit.fit();
     }
 
@@ -49,11 +75,11 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
             setStatus('live');
             break;
           case 'terminal.output':
-            term.write(frame.data);
-            // TUI 是整屏重绘型（无 alt screen），重绘往 scrollback 堆旧帧；视口
-            // 一旦离开底部，光标行就滚出视野（「光标不在输入框」）。输出到达
-            // 即钉回底部，刚被用户滚上去的短窗内除外（留出读历史的间隙）。
-            if (Date.now() - lastWheelAt > 1500) term.scrollToBottom();
+            // write 是异步解析：滚动必须挂在完成回调，否则这一拍仍按旧 buffer 钉底，
+            // 大块 TUI 重绘解析完后又把光标推到视口外。
+            term.write(frame.data, () => {
+              if (Date.now() - lastWheelAt > 1500) term.scrollToBottom();
+            });
             break;
           case 'terminal.gap':
             replayGap = true;
@@ -107,12 +133,16 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
     if (interactive) {
       // TUI 的键序原样进 stdin；写权在 WebSocket open 后申请。
       term.onData((data) => client.stdin(data));
-      // 记下用户主动滚动的时刻，1.5s 内不钉底（否则根本读不了历史）。
-      term.onScroll((newPos: number) => {
-        void newPos;
-        lastWheelAt = Date.now();
-      });
     }
+    // 只把真实滚动手势记为「用户在滚动」——scrollToBottom 的程序滚动同样触发
+    // onScroll，用它当判据会把钉底自己关掉（TUI 刷新一停，光标行就滚出视野，
+    // 即「光标乱跑」），故改记 wheel/touchmove。
+    const holderEl = holder.current;
+    const markUserScroll = () => {
+      lastWheelAt = Date.now();
+    };
+    holderEl?.addEventListener('wheel', markUserScroll, { passive: true });
+    holderEl?.addEventListener('touchmove', markUserScroll, { passive: true });
 
     const onResize = () => {
       fit.fit();
@@ -121,6 +151,8 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
+      holderEl?.removeEventListener('wheel', markUserScroll);
+      holderEl?.removeEventListener('touchmove', markUserScroll);
       client.close();
       term.dispose();
     };

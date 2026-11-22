@@ -669,53 +669,6 @@ export function TasksPanel({
   }, []);
   const webMode = terminalPreset === 'web';
 
-  /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
-      独立进程不随 daemon 退出。fb 键按会话隔离——loading 在途吞连点（防重复
-      spawn），成功无 toast（窗口弹出即反馈），失败 toast。
-      `target` = 多终端弹窗选定的附加目标（缺省由服务端自动选落点）。
-      **loading 一直挂到图标转绿**：开完先补一次会话行刷新（绿尽早到），再到
-      pidAlive 为止（liveness push 补丁、超时兜底）——绿即已开（按钮同时被
-      pidAlive 禁用），中间那段空窗里按钮还在转圈、点不动，不会多起一个 claude
-      抢同一会话。 */
-  const runOpenTerminal = useCallback(
-    (sessionId: string, target?: string): void => {
-      void fb.run(
-        `openTerm:${sessionId}`,
-        async () => {
-          const row = sessionsRef.current?.find((s) => s.sessionId === sessionId);
-          const label = harnessUiOf((row?.harness ?? 'claude') as Harness).label;
-          // 有活实例（Web 终端 preset 下的会话就在 Runtime Host 里）→ 直接进 TUI。
-          if (row?.webInstanceId) {
-            setWebTerminal({ instanceId: row.webInstanceId, label });
-            return;
-          }
-          // 其他 preset 下也可能有 headless 实例（弹层里勾过）：先接上，别另起进程抢会话。
-          const pid = row?.projectId;
-          if (pid != null) {
-            const inst = (await api.listAgentInstances(pid)).find(
-              (i) => i.harnessSessionId === sessionId && (i.status === 'running' || i.status === 'starting'),
-            );
-            if (inst) {
-              setWebTerminal({ instanceId: inst.id, label: harnessUiOf(inst.harness as Harness).label });
-              return;
-            }
-          }
-          // 没实例：走唯一入口开会话（宿主形态归终端后端）。headless 起来后停在
-          // 对话面——按钮转绿，再点一下才进 TUI（用户口径）。
-          const opened = await api.openSessionTerminal(sessionId, target);
-          await refreshStatus();
-          if (opened.instanceId) {
-            await waitWebInstance(sessionId);
-            return;
-          }
-          await waitTerminalAlive(sessionId);
-        },
-        { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
-      );
-    },
-    [fb, t, refreshStatus, waitTerminalAlive, waitWebInstance],
-  );
-
   /** worktree 隔离（B5 最小切片）：弹层里的开关态，面板重开不丢；下一次起会话生效。 */
   const [worktreeNewSession, setWorktreeNewSession] = useState(false);
   /** headless（B4 Agent Runtime）：起在 Runtime Host、不开外部终端窗，Web 终端交互。 */
@@ -761,6 +714,7 @@ export function TasksPanel({
             if (created) {
               setSelectedId(created.sessionId);
               setWebTerminal(null);
+              if (!isDesktop) setPaneOpen(true);
             }
             return;
           }
@@ -772,7 +726,7 @@ export function TasksPanel({
         { fail: (e) => t('tasks.newSessionFailed', { error: errorText(e) }) },
       );
     },
-    [fb, projectId, t, waitNewSession, worktreeNewSession, headlessNewSession, webMode],
+    [fb, projectId, t, waitNewSession, worktreeNewSession, headlessNewSession, webMode, isDesktop],
   );
 
   /** 起会话的 harness 弹层（锚在按钮下方，同项目列表的终端弹层口径）：项目选中的
@@ -797,43 +751,6 @@ export function TasksPanel({
     targets: TerminalTarget[];
   } | null>(null);
 
-  /** 点终端按钮：现拉可附加目标（实时枚举，不复用角标轮询数据）——
-   *  多个**放得下**的 → 弹窗选（满的照列但置灰，看得见原因）；0/1 个 → 直接开
-   *  （自动落点自己挑放得下的 tab，全满就新开终端；拉不到列表也不阻塞打开）。 */
-  const onOpenTerminal = useCallback(
-    (sessionId: string): void => {
-      // Web 终端没有「项目终端窗口」可选：直接走实例 attach（无实例由
-      // runOpenTerminal 如实报因，按钮本身也已置灰）。
-      if (webMode) {
-        runOpenTerminal(sessionId);
-        return;
-      }
-      const projectId = sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null;
-      if (projectId == null) {
-        runOpenTerminal(sessionId);
-        return;
-      }
-      // 快路：会话已有屏幕定位（全局总线 terminalTopology 帧的会话→可见屏幕）
-      // = 该项目必然有开着的终端，直接开（自动落点后端自己挑放得下的 tab）——
-      // 省掉点击路径上的实时枚举（spawn wezterm cli ~1s）。无定位才现拉候选判断。
-      const row = sessions?.find((s) => s.sessionId === sessionId);
-      if (row?.terminal) {
-        runOpenTerminal(sessionId);
-        return;
-      }
-      api
-        .listProjectTerminals(projectId)
-        .then((targets) => {
-          if (targets.filter((target) => !target.full).length > 1) {
-            setTerminalPicker({ sessionId, targets });
-          } else {
-            runOpenTerminal(sessionId);
-          }
-        })
-        .catch(() => runOpenTerminal(sessionId));
-    },
-    [sessions, runOpenTerminal, webMode],
-  );
   const openTerminalStateOf = useCallback(
     (sessionId: string) =>
       openTerminalButtonState(fb.stateOf(`openTerm:${sessionId}`), openingIds.has(sessionId)),
@@ -915,6 +832,117 @@ export function TasksPanel({
       if (!isDesktop) setPaneOpen(true);
     },
     [openConv, isDesktop, onSelectSession, projectId],
+  );
+
+  /** <lg 时右栏只在选中会话且 paneOpen 时渲染——从列表卡片触发的任何跳转
+      （进终端 / headless 落对话）必须同时选中该会话并展开滑出层，否则状态设了、
+      屏上没东西（点了没反应）。 */
+  const focusOnMobile = useCallback(
+    (sessionId: string): void => {
+      if (isDesktop) return;
+      setSelectedId(sessionId);
+      appliedSel.current = { project: projectId, sessionId };
+      onSelectSession?.(sessionId);
+      openConv(sessionId);
+      setPaneOpen(true);
+    },
+    [isDesktop, projectId, onSelectSession, openConv],
+  );
+
+  /** 进 Web 终端视图：<lg 时同上——选中会话并展开滑出层，终端才看得见。 */
+  const showWebTerminal = useCallback(
+    (sessionId: string, instanceId: string, label: string): void => {
+      setWebTerminal({ instanceId, label });
+      focusOnMobile(sessionId);
+    },
+    [focusOnMobile],
+  );
+
+  /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
+      独立进程不随 daemon 退出。fb 键按会话隔离——loading 在途吞连点（防重复
+      spawn），成功无 toast（窗口弹出即反馈），失败 toast。
+      `target` = 多终端弹窗选定的附加目标（缺省由服务端自动选落点）。
+      **loading 一直挂到图标转绿**：开完先补一次会话行刷新（绿尽早到），再到
+      pidAlive 为止（liveness push 补丁、超时兜底）——绿即已开（按钮同时被
+      pidAlive 禁用），中间那段空窗里按钮还在转圈、点不动，不会多起一个 claude
+      抢同一会话。 */
+  const runOpenTerminal = useCallback(
+    (sessionId: string, target?: string): void => {
+      void fb.run(
+        `openTerm:${sessionId}`,
+        async () => {
+          const row = sessionsRef.current?.find((s) => s.sessionId === sessionId);
+          const label = harnessUiOf((row?.harness ?? 'claude') as Harness).label;
+          // 有活实例（Web 终端 preset 下的会话就在 Runtime Host 里）→ 直接进 TUI。
+          if (row?.webInstanceId) {
+            showWebTerminal(sessionId, row.webInstanceId, label);
+            return;
+          }
+          // 其他 preset 下也可能有 headless 实例（弹层里勾过）：先接上，别另起进程抢会话。
+          const pid = row?.projectId;
+          if (pid != null) {
+            const inst = (await api.listAgentInstances(pid)).find(
+              (i) => i.harnessSessionId === sessionId && (i.status === 'running' || i.status === 'starting'),
+            );
+            if (inst) {
+              showWebTerminal(sessionId, inst.id, harnessUiOf(inst.harness as Harness).label);
+              return;
+            }
+          }
+          // 没实例：走唯一入口开会话（宿主形态归终端后端）。headless 起来后停在
+          // 对话面——按钮转绿，再点一下才进 TUI（用户口径）。<lg 时对话面在滑出
+          // 层里，得选中并展开才看得见（同 showWebTerminal 的移动端口径）。
+          const opened = await api.openSessionTerminal(sessionId, target);
+          await refreshStatus();
+          if (opened.instanceId) {
+            await waitWebInstance(sessionId);
+            focusOnMobile(sessionId);
+            return;
+          }
+          await waitTerminalAlive(sessionId);
+        },
+        { fail: (e) => t('errors.openFailed', { error: errorText(e) }) },
+      );
+    },
+    [fb, t, refreshStatus, waitTerminalAlive, waitWebInstance, showWebTerminal, focusOnMobile],
+  );
+
+  /** 点终端按钮：现拉可附加目标（实时枚举，不复用角标轮询数据）——
+   *  多个**放得下**的 → 弹窗选（满的照列但置灰，看得见原因）；0/1 个 → 直接开
+   *  （自动落点自己挑放得下的 tab，全满就新开终端；拉不到列表也不阻塞打开）。 */
+  const onOpenTerminal = useCallback(
+    (sessionId: string): void => {
+      // Web 终端没有「项目终端窗口」可选：直接走实例 attach（无实例由
+      // runOpenTerminal 如实报因，按钮本身也已置灰）。
+      if (webMode) {
+        runOpenTerminal(sessionId);
+        return;
+      }
+      const projectId = sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null;
+      if (projectId == null) {
+        runOpenTerminal(sessionId);
+        return;
+      }
+      // 快路：会话已有屏幕定位（全局总线 terminalTopology 帧的会话→可见屏幕）
+      // = 该项目必然有开着的终端，直接开（自动落点后端自己挑放得下的 tab）——
+      // 省掉点击路径上的实时枚举（spawn wezterm cli ~1s）。无定位才现拉候选判断。
+      const row = sessions?.find((s) => s.sessionId === sessionId);
+      if (row?.terminal) {
+        runOpenTerminal(sessionId);
+        return;
+      }
+      api
+        .listProjectTerminals(projectId)
+        .then((targets) => {
+          if (targets.filter((target) => !target.full).length > 1) {
+            setTerminalPicker({ sessionId, targets });
+          } else {
+            runOpenTerminal(sessionId);
+          }
+        })
+        .catch(() => runOpenTerminal(sessionId));
+    },
+    [sessions, runOpenTerminal, webMode],
   );
   /** 右栏主体是对话还是事件链：选中会话解不出对话面（无闭轮事件的 harness）→ 事件链。 */
   const hasConv = selectedId !== null && convs.has(selectedId);

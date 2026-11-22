@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../db/db.js';
 import { ProjectRepository } from '../repositories/projects.js';
+import { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import { createWeaveServer } from '../daemon/server.js';
 import { setDaemonSettingsDb, type TerminalSettings } from '../daemon/settings.js';
 import type { ProjectOpener } from '../daemon/opener.js';
@@ -22,6 +23,8 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     terminalCalls: Array<{ dir: string; terminal: TerminalSettings }>;
     runCalls: Array<{ dir: string; argv: string[]; terminal: TerminalSettings }>;
   };
+  // runtimeSupervisor spy：Web 预设下「在终端中打开」走 headless shell 实例。
+  let spawnCalls: Array<{ cwd: string; command: string }>;
   // spy：否则 PUT /settings 会真的去注册系统自启动项（默认实现打 reg/launchctl）
   const autoStartCalls: boolean[] = [];
   const autoStart = (enabled: boolean): void => {
@@ -50,6 +53,9 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     setDaemonSettingsDb(db);
     // aiKeyPath / decisionKeyPath 同样隔离：否则 apiKeySet 读机器真实 <dataDir> 下的
     // ai.json / decision.json，断言看环境。
+    // runtimeSupervisor spy：Web 预设下「在终端中打开」走 headless shell 实例
+    // （外部终端路径的测试不受影响——非 web 预设不碰它）。
+    spawnCalls = [];
     server = createWeaveServer({
       projects,
       port: 0,
@@ -57,6 +63,14 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       autoStart,
       aiKeyPath: path.join(projectPath, 'ai.json'),
       decisionKeyPath: path.join(projectPath, 'decision.json'),
+      agentInstances: new AgentInstanceRepository(db),
+      runtimeSupervisor: {
+        spawnInstance: async (payload: { cwd: string; command: string }) => {
+          spawnCalls.push({ cwd: payload.cwd, command: payload.command });
+        },
+      } as unknown as NonNullable<
+        Parameters<typeof createWeaveServer>[0]['runtimeSupervisor']
+      >,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
@@ -82,7 +96,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       platform: string;
       urls: Array<{ url: string; protocol: string; scope: string }>;
     };
-    expect(data.settings.terminal.preset).toBe('auto');
+    expect(data.settings.terminal.preset).toBe('web');
     expect(data.presets.some((p) => p.id === 'auto')).toBe(true);
     expect(data.presets.some((p) => p.id === 'custom')).toBe(true);
     expect(typeof data.platform).toBe('string');
@@ -104,7 +118,7 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       locale: 'zh-CN',
       hooks: { enabled: true },
       events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
-      sessions: { idleDays: 90 }, // 无操作会话闲置移除窗（归一化补默认）
+      sessions: { idleDays: 90, archiveDays: 5 }, // 无操作会话闲置移除窗 + 归档延迟（归一化补默认）
       startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
       server: { bindHost: '0.0.0.0', tlsPort: 6443 }, // 监听绑定 + 局域网 HTTPS 端口（归一化补默认）
       ai: { baseUrl: '', model: '', apiKey: null, apiKeySet: false }, // AI 助手（归一化补默认，默认未配置；key 回显 null）
@@ -230,6 +244,88 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     expect(opener.terminalCalls).toEqual([
       { dir: projectPath, terminal: { preset: 'custom', customCommand: 'myterm {path}' } },
     ]);
+  });
+
+  it('POST /projects/:id/open with target=terminal under web preset spawns a headless shell', async () => {
+    setDaemonSettingsDb(openDatabase(':memory:'));
+    await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { preset: 'web' } }),
+    });
+    const terminalsBefore = opener.terminalCalls.length;
+    const res = await fetch(`http://127.0.0.1:${port}/projects/1/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ target: 'terminal' }),
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { ok: boolean; instanceId?: string };
+    expect(data.ok).toBe(true);
+    expect(data.instanceId).toMatch(/^wvt-/);
+    // shell 实例落在项目路径；外部终端不该再被调（web 预设的打开方式就是
+    // Runtime Host PTY；数组是跨测试累计的，断言本轮零新增）
+    expect(spawnCalls).toEqual([{ cwd: projectPath, command: expect.any(String) }]);
+    expect(opener.terminalCalls.length).toBe(terminalsBefore);
+  });
+
+  it('POST /projects/:id/open under web preset with a live shell reuses it (no new spawn)', async () => {
+    setDaemonSettingsDb(openDatabase(':memory:'));
+    await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { preset: 'web' } }),
+    });
+    const instances = new AgentInstanceRepository(db);
+    instances.create({ id: 'wvt-live-1', projectId: 1, harness: 'shell', executionMode: 'headless', workingDirectory: projectPath, command: 'powershell' });
+    instances.markStatus('wvt-live-1', 'running');
+    spawnCalls = [];
+    const res = await fetch(`http://127.0.0.1:${port}/projects/1/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ target: 'terminal' }),
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { ok: boolean; instanceId?: string; reused?: boolean };
+    expect(data).toMatchObject({ ok: true, instanceId: 'wvt-live-1', reused: true });
+    expect(spawnCalls).toEqual([]); // 接回，不再起第二个 shell
+  });
+
+  it('POST /projects/:id/open under web preset without a runtime host fails explicitly (501)', async () => {
+    setDaemonSettingsDb(openDatabase(':memory:'));
+    await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { preset: 'web' } }),
+    });
+    // 用一个没有 runtimeSupervisor 的 server 实例模拟旧 daemon：临时关掉
+    // ——createWeaveServer 的 deps 是装配期定死的，这里另起一个最小 server。
+    const alt = createWeaveServer({
+      projects: new ProjectRepository(db),
+      port: 0,
+      opener,
+      autoStart,
+      aiKeyPath: path.join(projectPath, 'ai.json'),
+      decisionKeyPath: path.join(projectPath, 'decision.json'),
+      agentInstances: new AgentInstanceRepository(db),
+    });
+    await new Promise<void>((resolve) => alt.listen(0, '127.0.0.1', resolve));
+    const altPort = (alt.address() as { port: number }).port;
+    const terminalsBefore = opener.terminalCalls.length;
+    try {
+      const res = await fetch(`http://127.0.0.1:${altPort}/projects/1/open`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: 'terminal' }),
+      });
+      expect(res.status).toBe(501);
+      const data = (await res.json()) as { error?: string };
+      expect(data.error).toMatch(/Runtime host/);
+      // 明确失败：外部终端不该被静默调起（web 预设的口径就是 headless）。
+      expect(opener.terminalCalls.length).toBe(terminalsBefore);
+    } finally {
+      alt.close();
+    }
   });
 
   it('POST /open rejects an invalid target', async () => {

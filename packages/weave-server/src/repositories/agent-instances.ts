@@ -38,6 +38,34 @@ export class AgentInstanceRepository {
     ).map(fromRow);
   }
 
+  /** 活 headless 实例按项目计数（projectId → 条数；0 不进表）。
+   *  「哪些状态算一个开着终端」的判据单点在此——角标快照与 GET 共用这一份。 */
+  liveHeadlessCounts(): Record<number, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT project_id, COUNT(*) AS n FROM agent_instances
+         WHERE execution_mode = 'headless' AND status IN ('running', 'starting')
+         GROUP BY project_id`,
+      )
+      .all() as Array<{ project_id: number; n: number }>;
+    const out: Record<number, number> = {};
+    for (const r of rows) out[Number(r.project_id)] = Number(r.n);
+    return out;
+  }
+
+  /** 某项目当前活的 headless shell 实例（项目级 Web 终端重进接回用；无 → null）。 */
+  liveShellOf(projectId: number): AgentInstanceRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM agent_instances
+         WHERE project_id = ? AND execution_mode = 'headless' AND harness = 'shell'
+           AND status IN ('running', 'starting')
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(projectId) as Record<string, unknown> | undefined;
+    return row ? fromRow(row) : null;
+  }
+
   /** headless 全量（对账入参：Host 报的清单与它们三向比对）。 */
   listHeadless(): AgentInstanceRecord[] {
     return (

@@ -431,8 +431,14 @@ async function main(): Promise<void> {
   const terminalRefresher = new TerminalTopologyRefresher(
     async () => {
       const world = await readTerminalWorld(projects.list());
+      // 角标口径：Web 终端的会话也算一个终端——headless 实例按项目并入（同 start.ts），
+      // 判据单点 = 仓库 liveHeadlessCounts。
+      const counts = { ...world.counts };
+      for (const [pid, n] of Object.entries(agentInstances.liveHeadlessCounts())) {
+        counts[Number(pid)] = (counts[Number(pid)] ?? 0) + n;
+      }
       return {
-        counts: world.counts,
+        counts,
         hidden: world.hidden,
         visibilities: Object.fromEntries(world.byTarget),
         terminals: await messageDeliverer.sessionTerminals(),
@@ -442,6 +448,7 @@ async function main(): Promise<void> {
     { shouldRun: () => dataBus.hasSubscribers(), graceMs: 10_000 },
   );
   terminalRefresher.start();
+  runtimeSup.onStatusChange = () => void terminalRefresher.refreshNow();
   // 会话存活（终端按钮图标）：与生产入口同一装配——被杀进程无 hook 事件，
   // GET 的 pidAlive 卡旧值；15s 一拍、值变才推判得动的绝对值快照。
   const livenessRefresher = new SnapshotRefresher(

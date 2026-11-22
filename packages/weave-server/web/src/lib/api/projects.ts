@@ -173,12 +173,14 @@ export const projectApi = {
   /** Structured harness health checks (read-only; 批 8). */
   getHarnessChecks: (projectId: number): Promise<{ checks: HarnessCheck[] }> =>
     apiFetch<{ checks: HarnessCheck[] }>(`/projects/${projectId}/harness-checks`),
-  /** Open a project directory in the OS file manager or a terminal. */
+  /** Open a project directory in the OS file manager or a terminal.
+   *  Web 终端预设下 target=terminal 改在 Runtime Host 起 headless shell 实例，
+   *  回 instanceId 供 Web 终端 attach（外部终端路径没有该字段）。 */
   openProject: (
     projectId: number,
     target: 'explorer' | 'terminal',
-  ): Promise<{ ok: boolean; target: string; path: string }> =>
-    apiFetch<{ ok: boolean; target: string; path: string }>(
+  ): Promise<{ ok: boolean; target: string; path: string; instanceId?: string }> =>
+    apiFetch<{ ok: boolean; target: string; path: string; instanceId?: string }>(
       `/projects/${projectId}/open`,
       {
         method: 'POST',

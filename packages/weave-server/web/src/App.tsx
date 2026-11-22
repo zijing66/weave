@@ -40,6 +40,7 @@ import { FileViewer } from '@/components/FileViewer';
 import { FileBrowserModal } from '@/components/FileBrowserModal';
 import { Resizer } from '@/components/Resizer';
 import { Tooltip } from '@/components/ui/tooltip';
+import { TerminalView } from '@/components/TerminalView';
 import { SettingsModal } from '@/components/SettingsModal';
 import { CommandPalette } from '@/components/CommandPalette';
 import { cn } from '@/lib/utils';
@@ -734,10 +735,18 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     [refreshMcp, refreshUpdates, refreshGlobalSkills],
   );
 
+  /** 项目级 Web 终端（Web 预设下「在终端中打开」= Runtime Host 的 headless shell
+   *  实例）：全屏弹层承载 TerminalView，X 只收起（detach），shell 进程照跑。 */
+  const [projectTerminal, setProjectTerminal] = useState<{ instanceId: string; label: string } | null>(
+    null,
+  );
+
   /** 开目录/终端条按钮：explorer/terminal 各一把 fb 键（行内三态 + 吞连点），
       失败 toast；成功无 toast——窗口弹出本身就是反馈。
       **终端那把 loading 挂到角标上涨为止**（同「打开会话」「新建会话」口径：窗口
-      真起来才收圈）；explorer 没有可观测的落点，仍以请求返回为准。 */
+      真起来才收圈）；explorer 没有可观测的落点，仍以请求返回为准。
+      Web 预设下服务端回 instanceId（headless shell 已计入角标）→ 直接弹 Web 终端，
+      不等外部窗口。 */
   const openProjectWithFeedback = useCallback(
     (p: ProjectRow, target: 'explorer' | 'terminal') =>
       void fb.run(
@@ -746,8 +755,12 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           // 开终端后的角标对账在服务端做（新窗 cwd 上报有一拍延迟，600ms 后探
           // 一次、差量走 push 帧）——前端不再拉 /terminals/counts。
           const before = countsRef.current[p.id] ?? 0;
-          await api.openProject(p.id, target);
+          const opened = await api.openProject(p.id, target);
           if (target !== 'terminal') return;
+          if (opened.instanceId) {
+            setProjectTerminal({ instanceId: opened.instanceId, label: p.name });
+            return;
+          }
           await terminalGate.current.wait(
             `count:${p.id}`,
             () => (countsRef.current[p.id] ?? 0) > before,
@@ -1515,6 +1528,30 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           projects={projects.filter((p) => !p.archivedAt)}
           onClose={() => setBrowserPickerOpen(false)}
         />
+      )}
+      {/* 项目级 Web 终端（Web 预设的「在终端中打开」）：全屏弹层，X 只收起
+          （detach），Runtime Host 里的 shell 进程照跑。 */}
+      {projectTerminal && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950/95 p-2 sm:p-4">
+          <div className="flex items-center justify-between gap-2 pb-2">
+            <p className="truncate text-xs font-medium text-neutral-200">
+              {t('project.webTerminalTitle')} · {projectTerminal.label}
+            </p>
+            <Tooltip label={t('tasks.webTerminalClose')} side="top">
+              <button
+                type="button"
+                aria-label={t('tasks.webTerminalClose')}
+                onClick={() => setProjectTerminal(null)}
+                className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+              >
+                <X className="size-4" />
+              </button>
+            </Tooltip>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-edge/[0.08] bg-black/90">
+            <TerminalView instanceId={projectTerminal.instanceId} />
+          </div>
+        </div>
       )}
       {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
       <AiAssistant />

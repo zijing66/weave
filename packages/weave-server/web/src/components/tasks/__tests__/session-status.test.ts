@@ -58,6 +58,20 @@ describe('deriveSessionStatus', () => {
     ).toBe('failed');
   });
 
+  it('转录没了（transcriptGone）→ gone，压过 closed/turnOpen，判不动不猜', () => {
+    expect(deriveSessionStatus({ ...base, transcriptGone: true })).toBe('gone');
+    // 压过 SessionEnd：接不回来比「正常退出」更具体
+    expect(
+      deriveSessionStatus({ ...base, transcriptGone: true, latestEventType: 'SessionEnd' }),
+    ).toBe('gone');
+    expect(
+      deriveSessionStatus({ ...base, transcriptGone: true, turnOpen: false }),
+    ).toBe('gone');
+    // 判不动（null/未跑过）不改判
+    expect(deriveSessionStatus({ ...base, transcriptGone: false })).toBe('open');
+    expect(deriveSessionStatus({ ...base })).toBe('open');
+  });
+
   it('回合开着且未静默超 5min → running（长工具/长思考不丢状态）', () => {
     expect(deriveSessionStatus({ ...base, lastSeenAt: ago(120_000), turnOpen: true })).toBe('running');
     // 临界内侧：4min59s 仍是 running
@@ -309,6 +323,16 @@ describe('countSessionsByHarness', () => {
     expect(countSessionsByHarness(rows, interrupted)).toEqual([
       { harness: 'claude', running: 0, open: 2 },
     ]);
+  });
+
+  it('已丢弃（转录没了）不入桶——提示它只会误导成「有会话可用」', () => {
+    const statuses = new Map<string, SessionStatus>([
+      ['a', 'gone'],
+      ['b', 'gone'],
+      ['c', 'gone'],
+      ['d', 'gone'],
+    ]);
+    expect(countSessionsByHarness(rows, statuses)).toEqual([]);
   });
 
   it('状态缺失按打开计；无会话则无桶', () => {

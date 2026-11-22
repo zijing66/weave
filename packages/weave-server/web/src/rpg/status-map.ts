@@ -1,6 +1,6 @@
 /**
  * 会话状态 → 游戏状态机（纯函数映射，D1 裁定：不引 XState）。
- * 观察态全派生——`deriveSessionStatus` 的七态收进四个游戏态：
+ * 观察态全派生——`deriveSessionStatus` 的八态收进四个游戏态：
  * 战斗（running/compacting，动画帧快）、待命（open/interrupted，呼吸帧）、
  * 败退（failed）、退场（closed/terminated——在场景里只剩一座空位标记）。
  */
@@ -18,6 +18,7 @@ export function gameStatusOf(status: SessionStatus): GameStatus {
       return 'defeated';
     case 'closed':
     case 'terminated':
+    case 'gone':
       return 'gone';
     default:
       return 'idle';

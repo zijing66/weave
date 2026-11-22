@@ -189,6 +189,10 @@ export class RuntimeSupervisor {
     this.reconcileTimer.unref();
   }
 
+  /** 实例状态变更通知（项目卡终端角标把 headless 实例也计入，起/停要立刻对账；
+   *  可选——daemon 装配时注入，测试缺省不通知）。 */
+  onStatusChange?: () => void;
+
   /** headless 起会话：先落 created 行 → spawn → started 事件把行推到 running。 */
   async spawnInstance(payload: InstanceSpawnPayload, meta: { projectId: number; harness: string }): Promise<void> {
     await this.ensureHost();
@@ -202,6 +206,7 @@ export class RuntimeSupervisor {
     });
     const { osPid } = await this.client!.spawnInstance(payload);
     this.repo.markStarting(payload.instanceId, this.hostId ?? '', osPid);
+    this.onStatusChange?.();
   }
 
   /** 事件泵 → 落库（daemon 唯一 writer；terminal.output 不落库）。 */
@@ -212,12 +217,15 @@ export class RuntimeSupervisor {
       case 'instance.started':
         // spawn 流程里 markStarting 已落，这里把它推到 running（对账之外的正常路径）
         this.repo.markRunning(instanceId);
+        this.onStatusChange?.();
         break;
       case 'instance.exited':
         this.repo.markExited(instanceId, Number(frame.exitCode ?? 0));
+        this.onStatusChange?.();
         break;
       case 'instance.error':
         this.repo.markFailed(instanceId, String(frame.error ?? 'instance error'));
+        this.onStatusChange?.();
         break;
       default:
         break; // terminal.*：ring 在 Host，B3 Gateway 接管

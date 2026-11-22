@@ -439,6 +439,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
           turnOpen: s.turnOpen,
           interruptedAt: s.interruptedAt ?? undefined,
           harness: s.harness,
+          transcriptGone: s.transcriptPresent === false,
           now,
         }),
       );
