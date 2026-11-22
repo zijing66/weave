@@ -61,7 +61,18 @@ export class TerminalGateway {
 
   private onHostEvent(frame: HostEventFrame): void {
     const instanceId = String(frame.instanceId ?? '');
-    if (!instanceId || (frame.type !== 'terminal.output' && frame.type !== 'terminal.resize')) return;
+    if (!instanceId) return;
+    // 实例退出（宿主 TUI 正常退出 / Host 崩溃连带）：广播给终端客户端，前端转
+    // 终态停重连——attach 校验之外的另一条「实例没了」通路（退出时刻不重连）。
+    if (frame.type === 'instance.exited') {
+      this.broadcast(instanceId, JSON.stringify({
+        type: 'instance.exited',
+        instanceId,
+        exitCode: frame.exitCode,
+      }));
+      return;
+    }
+    if (frame.type !== 'terminal.output' && frame.type !== 'terminal.resize') return;
     const s = this.stateOf(instanceId);
     s.lastSequence = Math.max(s.lastSequence, Number(frame.sequence ?? 0));
     const text = JSON.stringify({
@@ -104,6 +115,20 @@ export class TerminalGateway {
     s: InstanceState,
     req: TerminalAttachRequest & { clientId: string },
   ): Promise<void> {
+    // 存活校验：Host 已不报这个实例（崩溃连带死了）就别装「已连接」——回致命
+    // error 让前端转终态（恢复入口在会话卡那边，终端按钮已回 resume 态）。
+    // Host 不可达时不拦（网络抖动照常走重连路径，gap 兜底）。
+    try {
+      const live = await this.supervisor.listInstances();
+      if (!live.some((sum) => sum.id === req.instanceId)) {
+        if (s.clients.get(client.id) !== client) return;
+        client.send(JSON.stringify({ type: 'error', error: 'instance not found', fatal: true }));
+        this.detach(client.id);
+        return;
+      }
+    } catch {
+      /* Host 暂不可达：照常重放 */
+    }
     const from = req.lastSequence ?? 0;
     const { instanceId } = req;
     const kept = s.ring.filter((e) => e.sequence > from);

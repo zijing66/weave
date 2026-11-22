@@ -18,7 +18,7 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
   const holder = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const clientRef = useRef<TerminalClient | null>(null);
-  const [status, setStatus] = useState<'connecting' | 'live' | 'disconnected'>('connecting');
+  const [status, setStatus] = useState<'connecting' | 'live' | 'disconnected' | 'exited'>('connecting');
   const [lease, setLease] = useState<'pending' | 'granted' | 'denied'>('pending');
 
   useEffect(() => {
@@ -80,6 +80,20 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
           case 'lease.released':
             setLease('denied');
             break;
+          case 'instance.exited':
+            // 终态：实例退出（宿主 TUI 正常退出 / Host 崩溃连带）——重连无意义
+            //（TerminalClient 已停摆），给恢复引导。
+            setStatus('exited');
+            setLease('pending');
+            term.write('\r\n\x1b[90m── 实例已退出 ──\x1b[0m\r\n');
+            break;
+          case 'error':
+            if (frame.fatal) {
+              setStatus('exited');
+              setLease('pending');
+              term.write('\r\n\x1b[90m── 实例已不存在（Runtime Host 崩溃或实例已退出）──\x1b[0m\r\n');
+            }
+            break;
           default:
             break;
         }
@@ -118,10 +132,20 @@ export function TerminalView({ instanceId, interactive = true }: TerminalViewPro
         <span
           className={
             'inline-block size-2 rounded-full ' +
-            (status === 'live' ? 'animate-pulse bg-blue-500' : status === 'connecting' ? 'bg-amber-500' : 'bg-red-500')
+            (status === 'live'
+              ? 'animate-pulse bg-blue-500'
+              : status === 'connecting'
+                ? 'bg-amber-500'
+                : 'bg-red-500')
           }
         />
-        {status === 'live' ? '已连接' : status === 'connecting' ? '连接中…' : '已断开，重连中…'}
+        {status === 'live'
+          ? '已连接'
+          : status === 'connecting'
+            ? '连接中…'
+            : status === 'exited'
+              ? '实例已退出——关掉此面板后用会话的终端按钮可恢复（resume）'
+              : '已断开，重连中…'}
         {interactive && status === 'live' && (
           <span>
             {lease === 'granted' ? '· 输入已解锁' : lease === 'pending' ? '· 申请输入权…' : '· 只读（输入权被占用）'}

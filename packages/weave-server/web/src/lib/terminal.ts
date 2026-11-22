@@ -12,7 +12,8 @@ export type TerminalFrame =
   | { type: 'lease.granted'; instanceId: string; leaseId: string; expiresAt: number }
   | { type: 'lease.denied'; instanceId: string }
   | { type: 'lease.released'; instanceId: string }
-  | { type: 'error'; error: string };
+  | { type: 'instance.exited'; instanceId: string; exitCode?: number }
+  | { type: 'error'; error: string; fatal?: boolean };
 
 export interface TerminalClientCallbacks {
   onFrame: (frame: TerminalFrame) => void;
@@ -64,6 +65,12 @@ export class TerminalClient {
       }
       if (frame.type === 'terminal.output' && typeof frame.sequence === 'number') {
         this.lastSequence = frame.sequence;
+      }
+      // 终态：实例退出 / Host 不再报它——重连无意义，先回调再停摆关流。
+      if (frame.type === 'instance.exited' || (frame.type === 'error' && frame.fatal)) {
+        this.cb.onFrame(frame);
+        this.gone();
+        return;
       }
       this.cb.onFrame(frame);
     });
@@ -121,6 +128,15 @@ export class TerminalClient {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.stopLeaseHeartbeat();
     this.send({ type: 'detach', instanceId: this.instanceId });
+    this.ws?.close();
+    this.ws = null;
+  }
+
+  /** 终态停摆：实例已退出/不存在，重连不会有用——停心跳与重连，关流。 */
+  private gone(): void {
+    this.closedByUser = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.stopLeaseHeartbeat();
     this.ws?.close();
     this.ws = null;
   }

@@ -3,16 +3,18 @@ import { TerminalGateway } from '../session-gateway.js';
 import type { RuntimeSupervisor } from '../../supervisor.js';
 import type { TerminalAttachRequest } from '../../protocol.js';
 
-/** 最小假 supervisor：只回答 replayAfter（Gateway 其余面不参与本测）。 */
+/** 最小假 supervisor：只回答 replayAfter / listInstances（Gateway 其余面不参与本测）。 */
 function fakeSupervisor(
   entries: Array<{ kind: 'output' | 'resize'; sequence: number; data?: string; cols?: number; rows?: number }>,
   replayError?: Error,
+  liveIds: string[] = ['wvi-test'],
 ) {
   const calls: number[] = [];
   let onEvent: ((frame: { type: string; instanceId: string; sequence: number; data: string }) => void) | null = null;
   const sup = {
     onEvent: (cb: typeof onEvent) => { onEvent = cb; },
     emit: (frame: { type: string; instanceId: string; sequence: number; data: string }) => onEvent?.(frame),
+    listInstances: async () => liveIds.map((id) => ({ id, status: 'running' as const, lastSequence: 0 })),
     replayAfter: async (_id: string, after: number) => {
       calls.push(after);
       if (replayError) throw replayError;
@@ -90,5 +92,27 @@ describe('TerminalGateway attach 重放', () => {
     await new Promise((r) => setTimeout(r, 10));
     const output = frames.filter((f) => f.includes('"type":"terminal.output"'));
     expect(output.map((f) => JSON.parse(f).sequence)).toEqual([1, 2]);
+  });
+});
+
+describe('TerminalGateway 实例终态（恢复向导的判据面）', () => {
+  it('attach 时 Host 已不报该实例 → 回致命 error，不装「已连接」', async () => {
+    const { sup } = fakeSupervisor([], undefined, []);
+    const frames = attachOnce(new TerminalGateway(sup), { clientId: 'late' });
+    await new Promise((r) => setTimeout(r, 10));
+    const fatal = frames.map((f) => JSON.parse(f) as { type: string; fatal?: boolean; error?: string }).find((f) => f.type === 'error');
+    expect(fatal?.fatal).toBe(true);
+    expect(fatal?.error).toBe('instance not found');
+    expect(frames.some((f) => f.includes('"type":"attached"'))).toBe(false);
+  });
+
+  it('instance.exited 广播到客户端（前端转终态停重连）', async () => {
+    const { sup, emit } = fakeSupervisor([]);
+    const gateway = new TerminalGateway(sup);
+    gateway.start();
+    const frames = attachOnce(gateway, { clientId: 'c9' });
+    await new Promise((r) => setTimeout(r, 10));
+    emit({ type: 'instance.exited', instanceId: 'wvi-test', sequence: 0, data: '' } as never);
+    expect(frames.some((f) => f.includes('"type":"instance.exited"'))).toBe(true);
   });
 });

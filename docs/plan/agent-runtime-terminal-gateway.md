@@ -200,8 +200,31 @@ packages/weave-server/web/src/features/
   Windows 下 Node 的 SIGTERM 是硬杀、信号处理器不触发，优雅通道恒走 IPC 请求）=
   Host exit 0、实例受管全部终止；② 硬杀 Host = 实例随之死（ConPTY 断链，与
   PoC #2 定案一致）——新 Host 重启接管 pipe、实例清单如实归零。
-- [ ] 恢复向导（Host 崩溃后会话侧 resume 引导）。
-- [ ] tmux 平台原生 attach、Linux/macOS 实机验（无 POSIX 环境时如实标注）。
+- [x] 恢复向导（6582f389）：判据面 = 终端终态如实到达——① Gateway attach 前校验
+  Host 活实例清单，死实例回致命 `error{fatal:true}` 不装「已连接」（Host 暂不可达
+  不拦，网络抖动照常重连）；② `instance.exited` 广播到终端客户端；③ TerminalClient
+  收 fatal/exited 即 `gone()` 停心跳停重连；④ TerminalView 转终态「已退出」并引导
+  走会话终端按钮 resume（实例 failed 后 `webInstanceId` 消失、按钮自动回 resume 态，
+  既有链路）。实机验证：活 daemon 上 attach 不存在实例 → `instance not found`
+  fatal 帧真实到达。
+- [x] tmux 平台原生 attach、WSL2 实机验（2026-11-20，Ubuntu-24.04 / tmux 3.4，
+  探针 `%TEMP%\weave-b6-probe\tmux-probe.mts`）：① spawn detached 会话（pane id
+  `%N` 形）；② capture-pane 保 ANSI 快照两次内容推进（重绘等价序列成立）；
+  ③ resize；④ `list-sessions -F` 对账（pid/paneId）；⑤ send-keys 字面量 + 裸键
+  Enter 注入、回显在屏；⑥ kill-session 零残留。tmux 原生 attach 面 = 会话名恒
+  `weave-agent-*` 可辨识，用户在 WSL 里 `tmux attach -t <名>` 即直接进同一实例
+  （capture/keys 双通道并存）。Linux/macOS 裸机（非 WSL）仍无环境，如实标注。
+- **WSL Agent 事件回流不可用（2026-11-20 实测 + 用户裁决「tmux 是一整套方案」）**：
+  B2 验证的 tmux adapter 只是**传输面**（weave 驱动 WSL 里的会话）；「会话的事件
+  回流」（hook → inbox → daemon）在 Windows daemon 下对 WSL 内 Agent **三重不可见**：
+  ① hooks 声明在 Windows 侧 `~/.claude/settings.json`，WSL 的 claude 读
+  `/home/<user>/.claude/settings.json`（不存在）；② hook-handler 按运行时平台
+  自算落点（`process.platform !== 'win32'` → `~/.config/weave/cache/hooks/inbox`），
+  Linux 进程写进 WSL 文件系统，Windows daemon 的 `%APPDATA%` inbox 永远取不到；
+  ③ 转录在 WSL home（`/home/.../*.jsonl`），Windows fs 打不开。**定案：不做跨
+  边界桥**——weave daemon 跑在 WSL = 完整 Linux 方案（默认 PTY、tmux 可选），
+  跑在 Windows = 仅 Windows 方案；想在 WSL 用 weave = 在 WSL 里跑一套独立
+  daemon（两套库互不相见是接受面，不是缺陷）。
 - 验收：20–40 实例管理稳定；不可恢复状态如实标注。（40 实例管理稳定 ✅ 2026-11-20）
 
 ## 4. 与既有面的边界（防越权）

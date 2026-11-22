@@ -229,6 +229,12 @@ export class RuntimeSupervisor {
     return this.client.sendStdin(instanceId, data);
   }
 
+  /** Host 活实例清单（Gateway attach 前的存活校验）。 */
+  listInstances(): Promise<HostInstanceSummary[]> {
+    if (!this.client?.connected) return Promise.reject(new Error('runtime host not connected'));
+    return this.client.listInstances();
+  }
+
   killInstance(instanceId: string): Promise<unknown> {
     if (!this.client?.connected) return Promise.reject(new Error('runtime host not connected'));
     return this.client.killInstance(instanceId);
