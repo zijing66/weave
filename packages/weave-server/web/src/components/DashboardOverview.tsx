@@ -4,8 +4,9 @@ import { api, type SessionRow } from '@/lib/api';
 import { subscribeHook } from '@/lib/sse';
 import { useMetrics } from '@/hooks/use-metrics';
 import { useT } from '@/i18n/I18nProvider';
-import { Activity, Database, FolderKanban, MessagesSquare } from 'lucide-react';
+import { Activity, Database, FolderKanban, HelpCircle, MessagesSquare } from 'lucide-react';
 import type { SessionStatus } from '@/components/tasks/session-status';
+import { Tooltip } from '@/components/ui/tooltip';
 
 /** 图窗：1 小时 × 10 秒一格。 */
 const WINDOW_MS = 3_600_000;
@@ -318,7 +319,9 @@ export function DashboardOverview({
       <div className="rounded-xl border border-edge/[0.06] bg-neutral-900/40 p-3">
         <div className="flex flex-wrap items-baseline gap-x-2">
           <span className="text-xs font-semibold text-neutral-300">{t('dashboard.resourcesTitle')}</span>
-          <span className="text-10 text-neutral-500">{t('dashboard.resourcesHint')}</span>
+          <Tooltip label={t('dashboard.resourcesHint')} side="top">
+            <HelpCircle className="h-3 w-3 cursor-help text-neutral-500 hover:text-neutral-300" />
+          </Tooltip>
         </div>
         {metrics === null ? (
           <div className="mt-2 text-11 text-neutral-600">{t('dashboard.resourcesWaiting')}</div>

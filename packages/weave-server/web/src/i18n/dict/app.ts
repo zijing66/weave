@@ -9,7 +9,7 @@ export const appZh = {
   'app.resizePreview': '拖拽调整预览宽度',
   'app.resizeTaskHeight': '拖拽调整任务区高度',
   'app.resizeDialog': '拖拽调整窗口大小',
-  'app.globalTitle': '全局配置',
+  'app.globalTitle': '全局管理',
   'app.globalSubtitle': '机器级 harness 默认模板 · 作用于所有项目',
   'app.updateCountOne': '1 个更新',
   'app.updateCount': '{n} 个更新',
@@ -95,7 +95,7 @@ export const appZh = {
   'tasks.resTip': '该会话 Agent 进程占用（CPU / 内存，60 秒粒度）',
 
   // —— 左侧项目列表 ——
-  'project.globalConfig': '全局配置',
+  'project.globalConfig': '全局管理',
   'project.globalSubtitle': '机器级 harness 默认模板',
   'project.sectionHeader': '项目',
   'project.noneRegistered': '尚未注册任何项目',
