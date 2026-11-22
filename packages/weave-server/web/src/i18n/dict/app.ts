@@ -87,15 +87,20 @@ export const appZh = {
   'dashboard.resDaemon': 'weave daemon',
   'dashboard.resHost': 'Runtime Host',
   'dashboard.resAgentsTotal': 'Agent 进程合计',
-  'dashboard.resAgents': 'Agent 进程（活 headless 实例）',
   'dashboard.resNoAgents': '当前没有活的 headless 实例',
   'dashboard.resCpu': 'CPU（占单核）',
+
+  // —— 资源徽标（项目卡 / 会话卡；数据同源 = 全局仪表盘同一帧 metrics）——
+  'project.resTip': '本项目 Agent 进程占用（CPU 合计 / 内存，60 秒粒度，活实例 {n} 个）',
+  'tasks.resTip': '该会话 Agent 进程占用（CPU / 内存，60 秒粒度）',
 
   // —— 左侧项目列表 ——
   'project.globalConfig': '全局配置',
   'project.globalSubtitle': '机器级 harness 默认模板',
   'project.sectionHeader': '项目',
   'project.noneRegistered': '尚未注册任何项目',
+  'project.addProject': '添加项目',
+  'project.addedToast': '已添加 {n} 个项目',
   'project.openInExplorer': '在资源管理器中打开',
   'project.runInit': '重跑 weave init（修复 init 版本落后 / 生成物漂移）',
   'project.refreshFactoryTip': '超级代理仓出厂内容待更新（weave 已升级）：点击重写出厂文件，你的自建内容不覆盖',
@@ -309,15 +314,18 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'dashboard.resDaemon': 'weave daemon',
   'dashboard.resHost': 'Runtime Host',
   'dashboard.resAgentsTotal': 'Agent processes (total)',
-  'dashboard.resAgents': 'Agent processes (live headless instances)',
   'dashboard.resNoAgents': 'No live headless instances',
   'dashboard.resCpu': 'CPU (single-core %)',
+  'project.resTip': 'Agent processes of this project (total CPU / memory, 60s granularity, {n} live)',
+  'tasks.resTip': 'Agent process of this session (CPU / memory, 60s granularity)',
 
   // —— Project sidebar ——
   'project.globalConfig': 'Global config',
   'project.globalSubtitle': 'Machine-level harness default template',
   'project.sectionHeader': 'Projects',
   'project.noneRegistered': 'No projects registered',
+  'project.addProject': 'Add project',
+  'project.addedToast': 'Added {n} project(s)',
   'project.openInExplorer': 'Open in Explorer',
   'project.runInit': 'Re-run weave init (fixes outdated init version / drifted files)',
   'project.refreshFactoryTip': 'Superagent factory content is outdated (weave upgraded): click to rewrite factory files — your own files are preserved',

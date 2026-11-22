@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EChartsType } from 'echarts/core';
 import { api, type SessionRow } from '@/lib/api';
 import { subscribeHook } from '@/lib/sse';
+import { useMetrics } from '@/hooks/use-metrics';
 import { useT } from '@/i18n/I18nProvider';
 import { Activity, Database, FolderKanban, MessagesSquare } from 'lucide-react';
 import type { SessionStatus } from '@/components/tasks/session-status';
@@ -27,23 +28,9 @@ type DashboardFrame =
   | { kind: 'dashboard.series'; series: Array<{ at: string; n: number }> }
   | { kind: 'dashboard.delta'; series: Array<{ at: string; n: number }>; totals: Totals };
 
-/** 资源监控帧（§13.3，metrics-sampler 10s 一拍；agents 为 60s 粒度）。 */
-interface MetricsFrame {
-  kind: 'metrics.snapshot';
-  snapshot: {
-    daemon: { cpuPercent: number; memRssBytes: number };
-    host: { cpuPercent: number; memRssBytes: number } | null;
-    agents: Array<{
-      instanceId: string;
-      harnessSessionId?: string;
-      harness: string;
-      cpuPercent?: number;
-      memRssBytes?: number;
-      outputBytesPerSec?: number;
-    }>;
-    history: Array<{ at: string; daemonCpuPercent: number; hostCpuPercent?: number }>;
-  };
-}
+/** 资源监控（§13.3）：全局仪表盘只看全局（daemon / Host / Agent 合计）；
+ * 逐项目、逐会话的占用在项目卡与会话卡上，数据同源 = 同一条 metrics 帧。 */
+
 
 const align = (ms: number): number => Math.floor(ms / BUCKET_MS) * BUCKET_MS;
 const keyOf = (ms: number): string => new Date(ms).toISOString().slice(0, 19);
@@ -111,7 +98,7 @@ export function DashboardOverview({
   const lastWrite = useRef(0);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [rate, setRate] = useState<number | null>(null);
-  const [metrics, setMetrics] = useState<MetricsFrame['snapshot'] | null>(null);
+  const metrics = useMetrics();
 
   const running = [...statuses.values()].filter((s) => s === 'running' || s === 'compacting').length;
 
@@ -253,10 +240,6 @@ export function DashboardOverview({
     void api.refreshDashboard().catch(() => {});
 
     return subscribeHook((frame) => {
-      if (frame.kind === 'metrics.snapshot') {
-        setMetrics((frame as unknown as MetricsFrame).snapshot);
-        return;
-      }
       if (!frame.kind?.startsWith('dashboard.')) return;
       const f = frame as unknown as DashboardFrame;
       if (f.kind === 'dashboard.totals') {
@@ -269,7 +252,7 @@ export function DashboardOverview({
         totalsRef.current = f.totals;
       }
       render();
-    }, ['dashboard.']);
+    }, ['dashboard.', 'metrics.']);
   }, [render]);
 
   const cards = [
@@ -344,7 +327,7 @@ export function DashboardOverview({
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <ResourceCard
                 label={t('dashboard.resDaemon')}
-                cpuPercent={metrics.daemon.cpuPercent}
+                cpuPercent={Math.round(metrics.daemon.cpuPercent * 10) / 10}
                 memRssBytes={metrics.daemon.memRssBytes}
                 series={metrics.history.map((h) => h.daemonCpuPercent)}
                 t={t}
@@ -358,37 +341,19 @@ export function DashboardOverview({
               />
               <ResourceCard
                 label={t('dashboard.resAgentsTotal')}
-                cpuPercent={undefined}
+                cpuPercent={
+                  metrics.agents.some((a) => a.cpuPercent !== undefined)
+                    ? metrics.agents.reduce((s, a) => s + (a.cpuPercent ?? 0), 0)
+                    : undefined
+                }
                 memRssBytes={metrics.agents.reduce((s, a) => s + (a.memRssBytes ?? 0), 0)}
                 series={[]}
                 t={t}
               />
             </div>
-            <div className="mt-2">
-              <div className="text-11 text-neutral-500">{t('dashboard.resAgents')}</div>
-              {metrics.agents.length === 0 ? (
-                <div className="mt-1 text-11 text-neutral-600">{t('dashboard.resNoAgents')}</div>
-              ) : (
-                <div className="mt-1 space-y-1">
-                  {metrics.agents.map((a) => (
-                    <div
-                      key={a.instanceId}
-                      className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-11 tabular-nums text-neutral-400"
-                    >
-                      <span className="min-w-0 flex-1 truncate">
-                        <span className="text-neutral-300">{a.harnessSessionId ?? a.instanceId}</span>
-                        <span className="ml-1 text-neutral-600">{a.harness}</span>
-                      </span>
-                      <span>{a.cpuPercent === undefined ? 'CPU —' : `CPU ${a.cpuPercent}%`}</span>
-                      <span>{a.memRssBytes === undefined ? '' : fmtBytes(a.memRssBytes)}</span>
-                      <span className="text-blue-400/90">
-                        {a.outputBytesPerSec === undefined ? '' : `${fmtBytes(a.outputBytesPerSec)}/s`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            {metrics.agents.length === 0 && (
+              <div className="mt-2 text-11 text-neutral-600">{t('dashboard.resNoAgents')}</div>
+            )}
           </>
         )}
       </div>

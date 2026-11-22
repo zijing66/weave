@@ -26,6 +26,7 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { HarnessIcon } from '@/components/tasks/HarnessIcon';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
+import { useMetrics } from '@/hooks/use-metrics';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -108,6 +109,8 @@ interface ProjectListProps {
   onRefreshFactory?: (p: ProjectRow) => void;
   /** 更新出厂内容按钮三态（键 = 项目 id）。 */
   factoryStateOf?: (projectId: number) => ActionState;
+  /** 「项目」标题旁的添加按钮：弹目录选择器注册新项目（App 执行）。 */
+  onAddProject?: () => void;
 }
 
 /** One open context-menu instance: screen position + target project. */
@@ -232,6 +235,7 @@ export function ProjectList({
   factoryOutdated,
   onRefreshFactory,
   factoryStateOf,
+  onAddProject,
 }: ProjectListProps) {
   const t = useT();
   const { show } = useToast();
@@ -613,6 +617,19 @@ export function ProjectList({
             </button>
           </Tooltip>
         )}
+        {/* 添加项目：弹目录选择器注册（与资源市场选库路径同一个选择器） */}
+        {onAddProject && (
+          <Tooltip label={t('project.addProject')} side="top">
+            <button
+              type="button"
+              aria-label={t('project.addProject')}
+              onClick={onAddProject}
+              className="inline-flex items-center rounded px-1.5 py-0.5 text-11 text-neutral-500 transition-colors hover:text-neutral-200 hover:bg-neutral-800/50"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        )}
       </div>
       {visibleProjects.length === 0 && (
         <p className="p-3 text-xs text-neutral-500">{t('project.noneRegistered')}</p>
@@ -869,6 +886,7 @@ export function ProjectList({
                 >
                   <Settings className="h-3.5 w-3.5" />
                 </QuickButton>
+                <ProjectResourceBadge projectId={p.id} />
                 {/* G6 角色可见桥：有房才摆（badge = 出征中的成员数；点击开折叠区）。 */}
                 {bridgeRows != null && (
                   <QuickButton
@@ -1455,4 +1473,29 @@ function HealthBadge({ projectId }: { projectId: number }) {
       </span>
     </Tooltip>
   );
+}
+
+/** 项目卡资源徽标：本项目 Agent 实例的 CPU/RSS 合计（同一份 metrics 帧切出，
+ *  60s 粒度；没有活实例不摆空壳）。 */
+function ProjectResourceBadge({ projectId }: { projectId: number }) {
+  const t = useT();
+  const metrics = useMetrics();
+  const agents = metrics?.agents.filter((a) => a.projectId === projectId) ?? [];
+  if (agents.length === 0) return null;
+  const cpu = agents.some((a) => a.cpuPercent !== undefined)
+    ? Math.round(agents.reduce((s, a) => s + (a.cpuPercent ?? 0), 0) * 10) / 10
+    : null;
+  const mem = agents.reduce((s, a) => s + (a.memRssBytes ?? 0), 0);
+  return (
+    <Tooltip label={t('project.resTip', { n: agents.length })}>
+      <span className="ml-auto shrink-0 rounded-full bg-edge/[0.06] px-1.5 text-10 leading-4 tabular-nums text-neutral-400">
+        {cpu === null ? 'CPU —' : `CPU ${cpu}%`} · {fmtMem(mem)}
+      </span>
+    </Tooltip>
+  );
+}
+
+function fmtMem(n: number): string {
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} MB`;
+  return `${(n / 1024 / 1024).toFixed(1)} GB`;
 }

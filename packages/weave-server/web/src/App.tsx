@@ -38,6 +38,7 @@ import { SkillDetailDrawer } from '@/components/SkillDetailDrawer';
 import { MarketModal } from '@/components/MarketModal';
 import { FileViewer } from '@/components/FileViewer';
 import { FileBrowserModal } from '@/components/FileBrowserModal';
+import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { Resizer } from '@/components/Resizer';
 import { Tooltip } from '@/components/ui/tooltip';
 import { TerminalView } from '@/components/TerminalView';
@@ -287,6 +288,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   );
   /** 项目文件浏览器（只读 modal）：全局搜索的文件结果与全项目浏览器共用。 */
   const [fileBrowser, setFileBrowser] = useState<{ projectId: number; path?: string } | null>(null);
+  /** 添加项目（左栏「+」）：目录选择器 → POST /projects 注册（与引导卡同一链路）。 */
+  const [addProjectPickerOpen, setAddProjectPickerOpen] = useState(false);
   /** 全项目文件浏览器（Ctrl+B / 顶栏按钮）：FileBrowserModal 的全项目模式。 */
   const [browserPickerOpen, setBrowserPickerOpen] = useState(false);
   const themePref = useThemePreference();
@@ -1031,6 +1034,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       factoryOutdated={factoryOutdated}
       onRefreshFactory={(p) => void refreshFactoryWithFeedback(p)}
       factoryStateOf={factoryStateOf}
+      onAddProject={() => setAddProjectPickerOpen(true)}
     />
   ) : (
     <SkeletonRows rows={7} />
@@ -1587,6 +1591,47 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       )}
       {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
       <AiAssistant />
+
+      {/* 添加项目：目录选择器（与资源市场选库路径同一个）→ 直接在 web 终端跑
+          `weave init`——不走 POST /projects 接口注册（用户裁决 2026-11-21）：
+          CLI init 成功才注册（source='init'），harness 选择/安装确认在终端里
+          作答，与引导卡同一链路。多选时只对最后落点起跑。 */}
+      <DirectoryPickerModal
+        open={addProjectPickerOpen}
+        existingPaths={projects.map((p) => p.path)}
+        onClose={() => setAddProjectPickerOpen(false)}
+        onConfirm={(paths) => {
+          setAddProjectPickerOpen(false);
+          const dir = paths[paths.length - 1];
+          if (!dir) return;
+          void (async () => {
+            const known = projects.find((p) => p.path === dir);
+            if (known) {
+              // 已注册（含 init 过）：只开终端，init 语义交给用户（重跑是覆盖式刷新）
+              const opened = await api.openProject(known.id, 'terminal').catch(() => null);
+              if (opened?.instanceId) {
+                setProjectTerminal({ instanceId: opened.instanceId, label: known.name, autoCommand: 'weave init\r' });
+              }
+              return;
+            }
+            // 未注册：项目行还没有，开不了 /projects/:id/open——先注册占位再开终端。
+            // 注册只建行 + 落 token，init 成功会把 source 落成 'init'。
+            const row = (await api.registerProject(dir).catch(() => null))?.project;
+            refreshProjects();
+            if (!row) {
+              show('error', t('onboard.registerFailed', { error: dir }));
+              return;
+            }
+            navigate({ kind: 'project', projectId: row.id, category: 'tasks', sessionId: null });
+            const opened = await api.openProject(row.id, 'terminal').catch(() => null);
+            if (opened?.instanceId) {
+              setProjectTerminal({ instanceId: opened.instanceId, label: row.name, autoCommand: 'weave init\r' });
+            } else {
+              show('info', t('onboard.runInitManually'));
+            }
+          })();
+        }}
+      />
     </>
   );
 }

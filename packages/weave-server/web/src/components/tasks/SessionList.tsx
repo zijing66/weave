@@ -22,6 +22,7 @@ import { WatchPicker } from './WatchPicker';
 import { QuestionAnswer } from './QuestionAnswer';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { draftSessionIds, subscribeDraftChanges } from './draft-editor';
+import { useMetrics } from '@/hooks/use-metrics';
 
 /** 行内动作按钮（常显示、20×20 正方形描边——与项目卡按钮同款视觉）。 */
 const ACTION_BTN =
@@ -623,6 +624,7 @@ export function SessionList({
                   </span>
                 </Tooltip>
               )}
+              <SessionResourceChip sessionId={s.sessionId} />
               {/* 能力位由服务端派生（canOpenTerminal = harness 的 resume 槽有
                   openArgs），这里只渲染它——不自带 harness 白名单；路由侧仍做
                   同样的 501 校验。该会话的宿主进程活着（pidAlive）→ 终端图标
@@ -1001,5 +1003,23 @@ export function SessionList({
         />
       )}
     </ul>
+  );
+}
+
+/** 会话卡资源芯片：该会话 Agent 实例的 CPU/RSS（同一份 metrics 帧切出，60s 粒度；
+ *  Web 终端实例才带进程口径——没采到不摆空壳）。 */
+function SessionResourceChip({ sessionId }: { sessionId: string }) {
+  const t = useT();
+  const metrics = useMetrics();
+  const agent = metrics?.agents.find((a) => a.harnessSessionId === sessionId);
+  if (!agent || (agent.cpuPercent === undefined && agent.memRssBytes === undefined)) return null;
+  const mem = agent.memRssBytes ?? 0;
+  return (
+    <Tooltip label={t('tasks.resTip')}>
+      <span className="inline-flex shrink-0 items-center rounded border border-edge/[0.06] bg-edge/[0.04] px-1 py-0.5 text-10 leading-none tabular-nums text-neutral-400">
+        {agent.cpuPercent === undefined ? '—' : `${agent.cpuPercent}%`}
+        {mem > 0 && ` · ${mem < 1024 * 1024 ? `${Math.max(1, Math.round(mem / 1024))}M` : `${(mem / 1024 / 1024).toFixed(1)}G`}`}
+      </span>
+    </Tooltip>
   );
 }
