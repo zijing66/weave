@@ -426,13 +426,14 @@ export function SessionList({
     return [...unseen, ...ordered];
   }, [sessions, appliedIds]);
 
-  // ---- 收纳分区：超龄且无豁免的旧会话沉到列表底部「已收纳」区（默认展开状态
-  // 记忆在 sessionStorage）；收起时不渲染行 DOM（懒挂载——数据在内存，展开才渲染）。
+  // ---- 收纳分区：超龄且无豁免的旧会话沉到列表底部「已收纳」区（默认收起，
+  // 展开状态记忆在 sessionStorage）；收起时不渲染行 DOM（懒挂载——数据在内存，
+  // 展开才渲染）。
   const [archivedOpen, setArchivedOpen] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem('weave:sessions-archived-open') !== '0';
+      return sessionStorage.getItem('weave:sessions-archived-open') === '1';
     } catch {
-      return true;
+      return false;
     }
   });
   useEffect(() => {
