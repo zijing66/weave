@@ -139,6 +139,7 @@ export const RUNTIME_REQUEST_TYPES = [
   'instance.stdin',
   'instance.resize',
   'instance.kill',
+  'instance.replay',
   'instances.list',
   'shutdown.graceful',
 ] as const;

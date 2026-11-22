@@ -203,4 +203,18 @@ export class RuntimeSupervisor {
     if (!this.client?.connected) return Promise.reject(new Error('runtime host not connected'));
     return this.client.killInstance(instanceId);
   }
+
+  /** Host ring 重放（Gateway 断连缺口的补拉通道）。 */
+  async replayAfter(instanceId: string, afterSequence: number): Promise<import('./instance-manager.js').RingEntry[]> {
+    if (!this.client?.connected) throw new Error('runtime host not connected');
+    const raw = (await this.client.request('instance.replay', { after: afterSequence }, instanceId)) as {
+      entries?: import('./instance-manager.js').RingEntry[];
+    };
+    return raw.entries ?? [];
+  }
+
+  resize(instanceId: string, cols: number, rows: number): Promise<unknown> {
+    if (!this.client?.connected) return Promise.reject(new Error('runtime host not connected'));
+    return this.client.resize(instanceId, cols, rows);
+  }
 }

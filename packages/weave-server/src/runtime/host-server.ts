@@ -187,6 +187,10 @@ export class RuntimeHostServer {
       case 'instance.kill':
         this.manager.kill(msg.instanceId!);
         return {};
+      case 'instance.replay': {
+        const { after } = msg.payload as { after: number };
+        return { entries: this.manager.replayAfter(msg.instanceId!, after) };
+      }
       case 'instances.list':
         return { instances: this.manager.summaries() };
       case 'shutdown.graceful':

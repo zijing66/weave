@@ -52,6 +52,10 @@ function resolveBeside(shimPath: string, entry: string): string {
 
 /** bin + argv → 可交给 node-pty 的 spawn 形。 */
 export function resolveWindowsCommand(bin: string, args: string[]): ResolvedCommand {
+  // 绝对路径直接用（where 不吃绝对路径；存在性由 spawn 报错如实上抛）
+  if (/^[a-z]:[\\/]/i.test(bin) || bin.startsWith('\\\\') || bin.startsWith('/')) {
+    return { kind: 'direct', command: bin, args };
+  }
   const hit = whereHit(bin);
   if (!hit) return { kind: 'shell', args: ['/c', bin, ...args] };
   if (hit.toLowerCase().endsWith('.exe')) return { kind: 'direct', command: hit, args };

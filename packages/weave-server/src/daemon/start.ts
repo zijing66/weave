@@ -6,6 +6,8 @@ import { readdir } from 'node:fs/promises';
 import { openDatabase } from '../db/db.js';
 import { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import { RuntimeSupervisor } from '../runtime/supervisor.js';
+import { TerminalGateway } from '../runtime/terminal/session-gateway.js';
+import { attachTerminalWebSocket } from '../runtime/terminal/ws-endpoint.js';
 import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { BackupEngine, applyPendingRestore } from './backup.js';
 import { startBackupScheduler } from './backup-scheduler.js';
@@ -255,6 +257,9 @@ export function startDaemon(): void {
   // headless 通道只是缺席，外部终端通道照常）。对账 fire-and-forget（异步）。
   const agentInstances = new AgentInstanceRepository(db);
   const runtimeSup = new RuntimeSupervisor(agentInstances);
+  // B3：终端流 Gateway——订阅 Host 事件流，/terminals/ws 的广播/重放/Lease 面。
+  const terminalGateway = new TerminalGateway(runtimeSup);
+  terminalGateway.start();
   void runtimeSup
     .reconcile()
     .then((r) => {
@@ -856,6 +861,8 @@ export function startDaemon(): void {
     uploads,
     questionTracker,
     activityTracker,
+    runtimeSupervisor: runtimeSup,
+    terminalGateway,
     sideQuestions: sideQuestionDeps,
     sessionWatches,
     requestShutdown: () => shutdownRef.fn?.(),
@@ -894,6 +901,12 @@ export function startDaemon(): void {
   });
   beginDrain = requestHandler.beginDrain;
   const server = http.createServer(requestHandler);
+  // B3：终端流 WS（只在两个 runtime deps 都在时挂 upgrade；TLS 监听共用 HTTP
+  // handler、upgrade 不走它——HTTPS 上 WS 由浏览器 wss 直接打 TLS 端口的场景
+  // 本机单用户 v1 不开，http:// 足够）。
+  if (terminalGateway && runtimeSup) {
+    attachTerminalWebSocket(server, { auth, runtimeSupervisor: runtimeSup }, terminalGateway);
+  }
 
   // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；端口被占等失败仅警告降级）。
   let tls: TlsListener | null = null;

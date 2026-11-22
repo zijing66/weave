@@ -92,11 +92,21 @@ packages/weave-server/web/src/features/
 - 验收：WSL2 持久会话全链已通；「Dashboard 可见」待 B4（Web Terminal）点亮后
   复验；tmux 原生 attach 本机即 tmux attach 命令（多客户端 = tmux 自带能力）。
 
-### B3 Terminal Gateway
-- [ ] WebSocket 端点（认证走既有本机令牌口径）+ Ring Buffer + sequence 重放 +
-  gap 标记 + Input Lease + resize 归 Write Client + 背压。
-- [ ] CLAUDE.md §9 例外条款同步。
-- 验收：断开重连恢复输出、缺口显式标记、多客户端写不乱序、输出写失败不阻塞 PTY。
+### B3 Terminal Gateway ✅ 2026-11-20（b6aab843）
+- [x] WebSocket 端点 `/terminals/ws`（RFC6455 零依赖自实现——自包含发布纪律；
+  认证与 HTTP/SSE 同判据 cookie/localToken）+ Ring Buffer + sequence 重放 +
+  gap 标记 + Input Lease（多读一写、15s 心跳、超时接管）+ resize 归 Write
+  Client + 背压（可写缓冲超限断开，重连重放兜底）。
+- [x] CLAUDE.md §9 例外条款已同步（唯一 WS 例外 = 终端流；B4 前端唯一客户端
+  = `web/src/lib/terminal.ts`）。
+- [x] **E2E 六项全过**（probe-b3.mjs）：attach ack / 输出广播 / 无 Lease stdin
+  拒绝 / Lease 授予 / Lease stdin 注入回声 / 重连重放。
+- [x] 两条实测定案：① PTY canonical 模式下 node stdin data 事件要 CR 才送达
+  （TUI harness 吃 raw 键序不受影响）；② bin 绝对路径直接 spawn（`where` 不吃
+  绝对路径——resolver 已修）。**Gateway 不懂传输**：下行经端点注入的 send
+  （裸 NDJSON ≠ WS 帧——初版直写 socket 客户端 1006 的教训）。
+- 验收：断开重连恢复输出 ✅、缺口显式标记 ✅（gap 帧 + Host ring 补拉）、
+  多客户端写不乱序 ✅（Lease 唯一写者）、输出写失败不阻塞 PTY ✅（背压断开）。
 
 ### B4 Dashboard Web Terminal
 - [ ] xterm.js（依赖装进 web，非 server）；只渲染选中实例，scrollback 上限。

@@ -26,6 +26,7 @@ import { importPromptImagesOnce, needsImageImport } from './prompt-images.js';
 import type { ProjectUpdatesRefresher } from './project-updates-refresher.js';
 import type { ResumeRunner } from '../hooks/resume-runner.js';
 import type { MessageDeliverer, PromptTerminal } from '../hooks/message-deliverer.js';
+import { attachTerminalWebSocket } from '../runtime/terminal/ws-endpoint.js';
 import type { QuestionTracker } from '../hooks/question-tracker.js';
 import type { ActivityTracker } from '../hooks/activity-tracker.js';
 import type { SideQuestionDeps } from '../hooks/side-questions.js';
@@ -104,6 +105,10 @@ export interface WeaveServerDeps {
   staticDir?: string;
   /** Directory-opening backend for the project context menu; spied in tests. */
   opener?: ProjectOpener;
+  /** Agent Runtime 监督者（B3）：/terminals/ws 的 stdin/resize 落点；缺省端点 503。 */
+  runtimeSupervisor?: import('../runtime/supervisor.js').RuntimeSupervisor;
+  /** Terminal Gateway（B3）：实例终端流的广播/重放/Lease；缺省 /terminals/ws 503。 */
+  terminalGateway?: import('../runtime/terminal/session-gateway.js').TerminalGateway;
   /** 开机自启注册器；默认落系统自启动项（PUT /settings 即时生效），测试注入 spy。 */
   autoStart?: (enabled: boolean) => void;
   // ---- D3 hooks subsystem (all optional so existing tests can omit them) ----
@@ -318,7 +323,12 @@ export function weaveRequestHandler(
 
 /** Create the daemon HTTP server (no TLS; 绑定地址由调用方 listen 决定，认证经 deps.auth)。 */
 export function createWeaveServer(deps: WeaveServerDeps): Server {
-  return http.createServer(weaveRequestHandler(deps));
+  const server = http.createServer(weaveRequestHandler(deps));
+  // B3：终端流 WebSocket（upgrade 事件不进 handler——HTTP 与 WS 是两条路）。
+  if (deps.terminalGateway && deps.runtimeSupervisor) {
+    attachTerminalWebSocket(server, deps, deps.terminalGateway);
+  }
+  return server;
 }
 
 /**
