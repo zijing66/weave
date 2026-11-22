@@ -178,11 +178,31 @@ packages/weave-server/web/src/features/
   sessionId 缺省取第一条活 headless 实例；input lease 授予后 TTY 进 raw、键盘
   原样进 stdin、下行原样写 stdout，Ctrl+C 交宿主 TUI。实机验证：readonly 与
   interactive 双通（weave-5b 实例，输出实时桥进、`❯` 提示行重绘正常）。
+  2026-11-20 补齐（b23908ba）：Ctrl+Q（0x11）本地拦截 detach；readonly 零 stdin
+  转发、不申请 lease；lease.released/denied 转只读；teardown 幂等 + 全量句柄清理
+  （heartbeat/stdin/resize/raw mode），action 正常 resolve 不再 process.exit；
+  握手 key 与掩码改 randomBytes、ping 回 pong。实测：readonly attach 活实例 +
+  Ctrl+Q 干净退出（exit 0）。
 - 验收：外部终端与 Dashboard 同一实例、不重复起、输入控制权明确、外终端退出不影响 Agent。✅（同实例广播实测：CLI 与 web 两端同时看到彼此的键入）
 
 ### B6 跨平台收尾与稳定性
-- [ ] Linux/macOS Native PTY、恢复向导、8→12→40 实例压测、资源采样、故障注入。
-- 验收：20–40 实例管理稳定；不可恢复状态如实标注。
+- [x] 跨平台 IPC 与命令解析（588d75ae）：`runtimePipePath` 分形——Windows Named
+  Pipe 不变；POSIX = data 根 `cache/` 下 `.sock` 文件（stale socket 启动前探活清理：
+  活 Host 如实拒绝、死文件 unlink；shutdown 时 unlink）。`posix-bin-resolver`：
+  `which` 命中 direct（shebang 可直接 execvp）、未命中回落 `/bin/sh -c`；Windows
+  resolver 不动。**POSIX 分支本机（Windows）不可实机验，仅单测覆盖，如实标注**。
+- [x] 8→12→40 实例压测 + 资源采样（2026-11-20 探针 `%TEMP%\weave-b6-probe\load.mts`，
+  实例 = ping 轻进程、独立临时数据目录、不碰活 daemon）：三档全 running
+  （8/8、12/12、40/40），spawn 均摊 ~780ms/个（ConPTY 冷启动），Host RSS
+  231MB@8 → 322MB@12 → 671MB@40，事件流 1088 帧、replay 正常、收尾零残留
+  （kill 时 node-pty 内部 console-list 子代理打 `AttachConsole failed` 噪声，不影响结果）。
+- [x] 故障注入（同探针 `fault.mts`）：① 优雅停机（`shutdown.graceful` IPC——
+  Windows 下 Node 的 SIGTERM 是硬杀、信号处理器不触发，优雅通道恒走 IPC 请求）=
+  Host exit 0、实例受管全部终止；② 硬杀 Host = 实例随之死（ConPTY 断链，与
+  PoC #2 定案一致）——新 Host 重启接管 pipe、实例清单如实归零。
+- [ ] 恢复向导（Host 崩溃后会话侧 resume 引导）。
+- [ ] tmux 平台原生 attach、Linux/macOS 实机验（无 POSIX 环境时如实标注）。
+- 验收：20–40 实例管理稳定；不可恢复状态如实标注。（40 实例管理稳定 ✅ 2026-11-20）
 
 ## 4. 与既有面的边界（防越权）
 

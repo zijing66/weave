@@ -855,6 +855,21 @@ export function withNarration(
     if (idx < 0) out.push(entry);
     else out.splice(idx, 0, entry);
   }
+  // 无 Stop 收尾的轮（被打断 / 连续追问顶掉）：转录里这串旁白的最后一段就是
+  // 事实上的收尾回复——后面紧跟下一条用户提问、中间没有闭轮事件。升格为普通
+  // 气泡，别折进过程输出叠层把「回答」藏掉；有 Stop 的轮被闭轮气泡挡住不升。
+  for (let i = 0; i < out.length; i += 1) {
+    if (out[i]!.role !== 'assistant' || out[i]!.narration !== true) continue;
+    let j = i;
+    while (j + 1 < out.length && out[j + 1]!.role === 'assistant' && out[j + 1]!.narration === true)
+      j += 1;
+    const next = out[j + 1];
+    if (next && (next.role === 'user' || next.role === 'compaction')) {
+      const { narration: _drop, ...promoted } = out[j]!;
+      out[j] = promoted;
+    }
+    i = j;
+  }
   return out;
 }
 

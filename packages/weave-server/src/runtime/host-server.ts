@@ -1,11 +1,11 @@
-import { createServer, type Socket } from 'node:net';
-import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { timingSafeEqual } from 'node:crypto';
+import { connect, createServer, type Socket } from 'node:net';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { dataRoots, getAuthPath } from '../db/paths.js';
 import {
   RUNTIME_PROTOCOL_VERSION,
-  runtimePipeName,
+  runtimePipePath,
   type HostAckPayload,
   type HostInstanceSummary,
   type InstanceSpawnPayload,
@@ -14,6 +14,7 @@ import {
 } from './protocol.js';
 import { InstanceManager, type InstanceEvent } from './instance-manager.js';
 import { ptySpawnOf, resolveWindowsCommand } from './windows-bin-resolver.js';
+import { resolvePosixCommand } from './posix-bin-resolver.js';
 import { spawnPty } from './adapters/windows-pty.js';
 
 /**
@@ -30,7 +31,6 @@ const IDLE_EXIT_MS = 10 * 60 * 1000;
 
 export class RuntimeHostServer {
   private readonly manager: InstanceManager;
-  private readonly pipeName: string;
   private readonly localToken: string;
   private readonly hostId: string;
   private connections = 0;
@@ -50,7 +50,6 @@ export class RuntimeHostServer {
     if (!auth?.localToken) throw new Error(`auth.json missing localToken (${authPath}) — start the daemon once first`);
     this.localToken = auth.localToken;
     this.dataRootPath = dataRoots(dataDir).data;
-    this.pipeName = runtimePipeName(this.dataRootPath);
     this.hostId = this.loadOrCreateHostId();
     this.manager = new InstanceManager(spawnPty, (event) => this.onInstanceEvent(event));
   }
@@ -75,17 +74,39 @@ export class RuntimeHostServer {
   }
 
   async start(): Promise<void> {
+    const listenPath = runtimePipePath(this.dataRootPath);
+    if (process.platform !== 'win32') await this.prepareUnixSocket(listenPath);
     await new Promise<void>((resolve, reject) => {
       const server = createServer((socket) => this.onConnection(socket));
       server.on('error', reject);
-      // listen 吃完整路径（`\\.\pipe\...`）——裸名会被当 unix socket 处理而 EACCES
-      server.listen(`\\\\.\\pipe\\${this.pipeName}`, () => {
-        this.log(`listening on ${this.pipeName} (hostId ${this.hostId})`);
+      // listen 吃完整路径（Win `\\.\pipe\...`；POSIX = socket 文件路径）
+      server.listen(listenPath, () => {
+        this.log(`listening on ${listenPath} (hostId ${this.hostId})`);
         resolve();
       });
       this.server = server;
     });
     this.scheduleIdleExit();
+  }
+
+  /** POSIX：socket 文件落在 cache/；stale 文件（无 Host 应答）unlink 后再 listen，活 Host 则如实拒绝。 */
+  private async prepareUnixSocket(sockPath: string): Promise<void> {
+    mkdirSync(path.dirname(sockPath), { recursive: true });
+    if (!existsSync(sockPath)) return;
+    const alive = await new Promise<boolean>((resolve) => {
+      const probe = connect(sockPath);
+      probe.once('connect', () => {
+        probe.destroy();
+        resolve(true);
+      });
+      probe.once('error', () => resolve(false));
+    });
+    if (alive) throw new Error(`runtime host already listening at ${sockPath}`);
+    try {
+      rmSync(sockPath);
+    } catch {
+      /* unlink 失败交给 listen 的 EADDRINUSE 如实报 */
+    }
   }
 
   private server: import('node:net').Server | null = null;
@@ -172,8 +193,12 @@ export class RuntimeHostServer {
         return { pong: true };
       case 'instance.spawn': {
         const raw = msg.payload as InstanceSpawnPayload;
-        // npm shim 不能被 CreateProcess 解析（PoC 定案）——Host 侧统一走解析链
-        const { file, args } = ptySpawnOf(resolveWindowsCommand(raw.command, raw.args));
+        // npm shim 不能被 CreateProcess 解析（Windows PoC 定案）——Host 侧统一走平台解析链
+        const resolved =
+          process.platform === 'win32'
+            ? resolveWindowsCommand(raw.command, raw.args)
+            : resolvePosixCommand(raw.command, raw.args);
+        const { file, args } = ptySpawnOf(resolved);
         return this.manager.spawn({ ...raw, command: file, args });
       }
       case 'instance.stdin':
@@ -264,6 +289,13 @@ export class RuntimeHostServer {
     await this.manager.killAll();
     for (const s of this.sockets) s.destroy();
     this.server?.close();
+    if (process.platform !== 'win32') {
+      try {
+        rmSync(runtimePipePath(this.dataRootPath));
+      } catch {
+        /* socket 文件不在了就不管 */
+      }
+    }
     exit(0);
   }
 }

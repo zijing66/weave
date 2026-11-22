@@ -9,6 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 
 /** 实例状态词表（封闭枚举；转场校验见 instance-registry.ts）。 */
 export const AGENT_INSTANCE_STATUSES = [
@@ -198,5 +199,15 @@ export function runtimePipeName(dataDir: string): string {
 }
 
 export function runtimePipePath(dataDir: string): string {
-  return `\\\\.\\pipe\\${runtimePipeName(dataDir)}`;
+  return ipcPathFor(dataDir, process.platform);
+}
+
+/**
+ * daemon ↔ Host IPC 监听路径：Windows = Named Pipe（完整路径，listen 才不吃
+ * EACCES）；POSIX = `<data>/cache/` 下的 Unix domain socket 文件（可弃目录，
+ * stale socket 由 Host 启动时清理）。
+ */
+export function ipcPathFor(dataDir: string, platform: NodeJS.Platform): string {
+  if (platform === 'win32') return `\\\\.\\pipe\\${runtimePipeName(dataDir)}`;
+  return path.join(dataDir, 'cache', `${runtimePipeName(dataDir)}.sock`);
 }

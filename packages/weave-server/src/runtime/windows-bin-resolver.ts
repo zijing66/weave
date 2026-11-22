@@ -74,6 +74,7 @@ export function ptySpawnOf(resolved: ResolvedCommand): { file: string; args: str
     case 'node':
       return { file: process.execPath, args: [resolved.entry, ...resolved.args] };
     case 'shell':
-      return { file: 'cmd.exe', args: resolved.args };
+      // shell 形的 args 由各平台 resolver 拼好（Win `/c …`；POSIX `-c '…'`）
+      return { file: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh', args: resolved.args };
   }
 }

@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ptySpawnOf, shimEntryOf } from '../windows-bin-resolver.js';
+import { resolvePosixCommand } from '../posix-bin-resolver.js';
 import { InstanceManager } from '../instance-manager.js';
-import { runtimePipeName, runtimePipePath } from '../protocol.js';
+import { ipcPathFor, runtimePipeName, runtimePipePath } from '../protocol.js';
 import type { PtyProcess } from '../adapters/windows-pty.js';
 
 describe('shimEntryOf', () => {
@@ -54,6 +55,35 @@ describe('runtimePipeName/Path', () => {
   it('pipe 名含 dataDir 哈希短码且形如 \\\\.\\pipe\\', () => {
     expect(runtimePipePath('D:/weave')).toMatch(/^\\\\\.\\pipe\\weave-runtime-host-[0-9a-f]{8}$/);
     expect(runtimePipeName('a')).not.toBe(runtimePipeName('b'));
+  });
+
+  it('POSIX 下 IPC 路径 = data 根下 cache/ 里的 unix socket 文件', () => {
+    expect(ipcPathFor('D:/weave', 'linux')).toMatch(
+      /^D:[\\/]weave[\\/]cache[\\/]weave-runtime-host-[0-9a-f]{8}\.sock$/,
+    );
+  });
+});
+
+describe('resolvePosixCommand', () => {
+  it('带路径分隔符的 bin 直接 direct；which 命中即 direct', () => {
+    expect(resolvePosixCommand('/usr/local/bin/claude', ['-x'], () => null)).toEqual({
+      kind: 'direct',
+      command: '/usr/local/bin/claude',
+      args: ['-x'],
+    });
+    expect(resolvePosixCommand('claude', ['-x'], () => '/usr/bin/claude')).toEqual({
+      kind: 'direct',
+      command: '/usr/bin/claude',
+      args: ['-x'],
+    });
+  });
+
+  it('which 未命中回落 shell 形（args 已按 POSIX 拼好）', () => {
+    const resolved = resolvePosixCommand('claude', ['--resume', 'a b'], () => null);
+    expect(resolved).toEqual({ kind: 'shell', args: ['-c', `claude --resume 'a b'`] });
+    const spawn = ptySpawnOf(resolved);
+    expect(spawn.args).toEqual(['-c', `claude --resume 'a b'`]);
+    expect(spawn.file).toBe(process.platform === 'win32' ? 'cmd.exe' : '/bin/sh');
   });
 });
 

@@ -561,6 +561,35 @@ describe('withNarration（转录补采的中间输出当对话气泡）', () => 
     ]);
     expect(out.map((e) => e.text)).toEqual(['问', '第一段', '第二段', '收尾那句']);
   });
+
+  it('⑥ 无 Stop 收尾的轮：旁白串的最后一段升格为普通气泡（后面紧跟下一条提问），前面的仍进叠层', () => {
+    const noStop: ConvEntry[] = [
+      { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '问' },
+      { key: 'e9', eventId: 9, role: 'user', at: at(9), text: '追问' },
+    ];
+    const out = withNarration(noStop, [
+      { at: at(3), text: '过程碎语' },
+      { at: at(5), text: '改完并提交了' },
+    ]);
+    expect(out.map((e) => [e.key, e.narration])).toEqual([
+      ['e1', undefined],
+      ['n' + at(3) + ':0', true],
+      ['n' + at(5) + ':1', undefined],
+      ['e9', undefined],
+    ]);
+  });
+
+  it('⑦ 有 Stop 收尾的轮不升格（闭轮气泡挡在中间）——只有单段旁白也一样', () => {
+    const out = withNarration(thread, [{ at: at(5), text: '过程碎语' }]);
+    expect(out.every((e) => e.narration === undefined || e.key === 'n' + at(5) + ':0')).toBe(true);
+    expect(out.find((e) => e.text === '过程碎语')!.narration).toBe(true);
+  });
+
+  it('⑧ 尾巴上的旁白串（回合还开着 / 会话最后一句）不升格——后面来了提问才升', () => {
+    const open: ConvEntry[] = [{ key: 'e1', eventId: 1, role: 'user', at: at(1), text: '问' }];
+    const out = withNarration(open, [{ at: at(5), text: '还没收尾' }]);
+    expect(out.find((e) => e.text === '还没收尾')!.narration).toBe(true);
+  });
 });
 
 describe('withRewinds（被回退的气泡置灰保留展示）', () => {
