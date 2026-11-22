@@ -851,6 +851,32 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
     [fb, show, t, refreshProjects],
   );
   const restoreActionStateOf = useCallback((id: number) => fb.stateOf(`restore:${id}`), [fb]);
+  const handleDeleteProject = useCallback(
+    (p: ProjectRow) =>
+      void fb.run(
+        `delete:${p.id}`,
+        async () => {
+          await api.deleteProject(p.id);
+          show('success', t('toast.projectDeleted', { name: p.name }));
+          refreshProjects();
+        },
+        { fail: (e) => t('errors.deleteFailed', { error: errorText(e) }) },
+      ),
+    [fb, show, t, refreshProjects],
+  );
+  const handleDeleteProjects = useCallback(
+    (ps: ProjectRow[]) =>
+      void fb.run(
+        'delete-batch',
+        async () => {
+          const r = await api.deleteProjectsBatch(ps.map((p) => p.id));
+          show('success', t('toast.projectDeletedBatch', { n: r.deleted }));
+          refreshProjects();
+        },
+        { fail: (e) => t('errors.deleteFailed', { error: errorText(e) }) },
+      ),
+    [fb, show, t, refreshProjects],
+  );
 
   // 超级代理仓出厂内容（2026-11-13 更新不覆盖）：待更新态只在挂载/版本变化时查一次，
   // 手动更新（force 重物化 + 补 git 提交）成功后随 stamp 回写自然翻 false。
@@ -1031,6 +1057,8 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       archivedProjects={archivedProjects}
       onArchive={handleArchiveProject}
       onRestore={handleRestoreProject}
+      onDelete={handleDeleteProject}
+      onDeleteMany={handleDeleteProjects}
       restoreStateOf={restoreActionStateOf}
       factoryOutdated={factoryOutdated}
       onRefreshFactory={(p) => void refreshFactoryWithFeedback(p)}

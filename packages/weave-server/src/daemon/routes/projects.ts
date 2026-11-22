@@ -737,6 +737,64 @@ export async function handleProjectRoutes(
     return true;
   }
 
+  // DELETE /projects/:id — 永久删除：仅归档项目可删（活跃项目须先归档走既有
+  // 清空链路）。数据在归档时已清空，这里只剩焚毁管道残留 + 删项目行。
+  const deleteMatch = pathname.match(/^\/projects\/(\d+)$/);
+  if (deleteMatch && req.method === 'DELETE') {
+    const project = deps.projects.getById(Number(deleteMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    if (!project.archivedAt) {
+      sendJson(res, 409, { error: 'Project must be archived before deletion' });
+      return true;
+    }
+    purgeProjectPipeline(deps.hooksDir ?? hooksRoot(), project.token);
+    deps.projects.remove(project.id);
+    deps.watch?.reconcile();
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // POST /projects/delete-batch — 批量永久删除：逐条走与单删同一闸（不存在跳过、
+  // 未归档 409）。全部通过才动手（一票未归档即整体拒绝，不删一半）。
+  if (pathname === '/projects/delete-batch' && req.method === 'POST') {
+    let body: { ids?: unknown };
+    try {
+      body = JSON.parse(await readBody(req)) as { ids?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (!Array.isArray(body.ids) || !body.ids.every((id) => Number.isInteger(id))) {
+      sendJson(res, 400, { error: 'Invalid "ids" (integer array expected)' });
+      return true;
+    }
+    const ids = body.ids as number[];
+    const rows = ids.map((id) => deps.projects.getById(id));
+    if (rows.some((r, i) => !r && ids[i] !== undefined)) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    if (rows.some((r) => r && !r.archivedAt)) {
+      sendJson(res, 409, { error: 'Project must be archived before deletion' });
+      return true;
+    }
+    let deleted = 0;
+    for (const row of rows) {
+      if (!row) continue;
+      purgeProjectPipeline(deps.hooksDir ?? hooksRoot(), row.token);
+      deps.projects.remove(row.id);
+      deleted += 1;
+    }
+    deps.watch?.reconcile();
+    deps.dataBus?.emit({ key: 'projects' });
+    sendJson(res, 200, { ok: true, deleted });
+    return true;
+  }
+
   // PUT /projects/order — dashboard 拖动排序持久化：payload = 完整目标顺序
   // （id 全量列表），repo 事务内全清重排，幂等。
   if (pathname === '/projects/order' && req.method === 'PUT') {

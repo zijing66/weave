@@ -176,6 +176,16 @@ export const projectApi = {
   /** 恢复：翻转归档位回活跃（会话历史不回来——归档是删除不是暂停）。 */
   restoreProject: (id: number): Promise<{ project: ProjectRow }> =>
     apiFetch<{ project: ProjectRow }>(`/projects/${id}/restore`, { method: 'POST' }),
+
+  deleteProject: (id: number): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE' }),
+
+  deleteProjectsBatch: (ids: number[]): Promise<{ ok: boolean; deleted: number }> =>
+    apiFetch<{ ok: boolean; deleted: number }>('/projects/delete-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
   /** 项目列表拖动排序持久化：payload = 完整目标顺序（id 全量列表），幂等。 */
   reorderProjects: (ids: number[]): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects/order', {

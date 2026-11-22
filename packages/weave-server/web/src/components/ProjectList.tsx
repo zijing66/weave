@@ -40,9 +40,11 @@ import {
   Archive,
   ArchiveRestore,
   ArrowUpRight,
+  Check,
   Eye,
   EyeOff,
   Cpu,
+  HardDrive,
   MemoryStick,
   FolderOpen,
   Globe,
@@ -54,6 +56,7 @@ import {
   Wrench,
   Settings,
   Terminal,
+  Trash2,
   TriangleAlert,
   Users,
   X,
@@ -105,6 +108,10 @@ interface ProjectListProps {
   onArchive?: (p: ProjectRow) => void;
   /** 归档面「恢复」按钮动作。 */
   onRestore?: (p: ProjectRow) => void;
+  /** 归档面「永久删除」按钮动作（确认在组件内，动作归 App）。 */
+  onDelete?: (p: ProjectRow) => void;
+  /** 归档面批量删除（勾选多张卡后确认）：逐条删除归 App。 */
+  onDeleteMany?: (ps: ProjectRow[]) => void;
   /** 恢复按钮三态（键 = 项目 id）。 */
   restoreStateOf?: (projectId: number) => ActionState;
   /** 超级代理仓出厂内容待更新（stamp ≠ weave 版本）：true 时项目卡出「更新出厂内容」胶囊。 */
@@ -236,6 +243,8 @@ export function ProjectList({
   archivedProjects = [],
   onArchive,
   onRestore,
+  onDelete,
+  onDeleteMany,
   restoreStateOf,
   factoryOutdated,
   onRefreshFactory,
@@ -255,12 +264,29 @@ export function ProjectList({
   const [archivedOpen, setArchivedOpen] = useState(false);
   // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
   const [confirmTarget, setConfirmTarget] = useState<ProjectRow | null>(null);
+  // 待确认永久删除的归档项目（删除确认弹窗复用同一 ConfirmDialog 形）
+  const [deleteTarget, setDeleteTarget] = useState<ProjectRow | null>(null);
+  // 批量删除确认弹窗开合
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  // 归档弹窗勾选集（批量删除）：卡片点击切换勾选；勾选态下点恢复/单删不动勾选
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+  const toggleChecked = (id: number): void =>
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const allChecked = archivedProjects.length > 0 && archivedProjects.every((p) => checkedIds.has(p.id));
   // 存储路径设置弹窗（项目卡设置按钮）：图片/文件落盘目录
   const [storageTarget, setStorageTarget] = useState<ProjectRow | null>(null);
-  // 恢复最后一个归档项目后列表空 → 自动收弹窗（不留死态）
+  // 恢复最后一个归档项目后列表空 → 自动收弹窗（不留死态）；弹窗开合顺手清勾选
   useEffect(() => {
     if (archivedOpen && archivedProjects.length === 0) setArchivedOpen(false);
   }, [archivedOpen, archivedProjects.length]);
+  useEffect(() => {
+    if (!archivedOpen) setCheckedIds(new Set());
+  }, [archivedOpen]);
 
   // G6 角色可见桥：三份 RPG 端点数据（RPG 未启用 → 503 → 徽章与折叠区如实缺席，
   // retry:false 不空转）。折叠区 = house 成员的出征态；徽章 = active 出征数。
@@ -966,6 +992,27 @@ export function ProjectList({
                   {t('project.archivedSection')}
                 </span>
                 <span className="text-xs text-neutral-500">{archivedProjects.length}</span>
+                <label className="ml-4 inline-flex cursor-pointer items-center gap-1.5 text-11 text-neutral-400 select-none">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={() =>
+                      setCheckedIds(allChecked ? new Set() : new Set(archivedProjects.map((p) => p.id)))
+                    }
+                    className="h-3 w-3 accent-blue-500"
+                  />
+                  {t('project.selectAll')}
+                </label>
+                {checkedIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setBatchDeleteOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-11 text-red-400 transition-colors hover:border-red-500/50 hover:bg-red-500/20"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    {t('project.delete')} ({checkedIds.size})
+                  </button>
+                )}
                 <Tooltip label={t('common.close')} className="ml-auto" side="top">
                   <button
                     onClick={() => setArchivedOpen(false)}
@@ -982,10 +1029,25 @@ export function ProjectList({
                   {archivedProjects.map((p) => (
                     <div
                       key={p.id}
-                      className="flex flex-col gap-2 rounded-xl border border-edge/[0.06] bg-neutral-900/50 p-3"
+                      role="checkbox"
+                      aria-checked={checkedIds.has(p.id)}
+                      onClick={() => toggleChecked(p.id)}
+                      className={`flex cursor-pointer flex-col gap-2 rounded-xl border p-3 transition-colors ${
+                        checkedIds.has(p.id)
+                          ? 'border-blue-500/50 bg-blue-500/[0.06]'
+                          : 'border-edge/[0.06] bg-neutral-900/50 hover:border-edge/[0.16]'
+                      }`}
                     >
                       <div className="flex items-center gap-2">
-                        <Archive className="h-4 w-4 shrink-0 text-neutral-600" />
+                        <span
+                          className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                            checkedIds.has(p.id)
+                              ? 'border-blue-500 bg-blue-500 text-white'
+                              : 'border-neutral-600'
+                          }`}
+                        >
+                          {checkedIds.has(p.id) && <Check className="h-2.5 w-2.5" />}
+                        </span>
                         <span className="truncate text-sm text-neutral-200" title={p.name}>
                           {p.name}
                         </span>
@@ -998,20 +1060,38 @@ export function ProjectList({
                           {t('project.archivedOn', { date: new Date(p.archivedAt).toLocaleString() })}
                         </p>
                       )}
-                      <Tooltip label={t('project.restoreTooltip')}>
-                        <button
-                          type="button"
-                          onClick={() => onRestore?.(p)}
-                          className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg border border-edge/[0.08] bg-edge/[0.03] px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-100"
-                        >
-                          <FeedbackIcon
-                            state={restoreStateOf?.(p.id) ?? 'idle'}
-                            className="h-3.5 w-3.5"
-                            icon={<ArchiveRestore className="h-3.5 w-3.5" />}
-                          />
-                          {t('project.restore')}
-                        </button>
-                      </Tooltip>
+                      <div className="mt-auto flex gap-2">
+                        <Tooltip label={t('project.restoreTooltip')} className="flex-1 min-w-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRestore?.(p);
+                            }}
+                            className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-edge/[0.08] bg-edge/[0.03] px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-100"
+                          >
+                            <FeedbackIcon
+                              state={restoreStateOf?.(p.id) ?? 'idle'}
+                              className="h-3.5 w-3.5"
+                              icon={<ArchiveRestore className="h-3.5 w-3.5" />}
+                            />
+                            {t('project.restore')}
+                          </button>
+                        </Tooltip>
+                        <Tooltip label={t('project.delete')}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteTarget(p);
+                            }}
+                            aria-label={t('project.delete')}
+                            className="inline-flex items-center justify-center rounded-lg border border-edge/[0.08] bg-edge/[0.03] px-2.5 py-1.5 text-xs text-neutral-500 transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1031,6 +1111,32 @@ export function ProjectList({
           if (confirmTarget) onArchive?.(confirmTarget);
         }}
         onClose={() => setConfirmTarget(null)}
+      />
+
+      {/* 永久删除确认弹窗：不可逆，文案明示 */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t('project.delete')}
+        message={deleteTarget ? t('project.deleteConfirm', { name: deleteTarget.name }) : ''}
+        confirmLabel={t('project.delete')}
+        onConfirm={() => {
+          if (deleteTarget) onDelete?.(deleteTarget);
+        }}
+        onClose={() => setDeleteTarget(null)}
+      />
+
+      {/* 批量删除确认弹窗 */}
+      <ConfirmDialog
+        open={batchDeleteOpen}
+        title={t('project.delete')}
+        message={t('project.deleteBatchConfirm', { n: checkedIds.size })}
+        confirmLabel={`${t('project.delete')} (${checkedIds.size})`}
+        onConfirm={() => {
+          const targets = archivedProjects.filter((p) => checkedIds.has(p.id));
+          setBatchDeleteOpen(false);
+          if (targets.length > 0) onDeleteMany?.(targets);
+        }}
+        onClose={() => setBatchDeleteOpen(false)}
       />
 
       {/* 存储路径设置弹窗（项目卡设置按钮）：图片/文件落盘目录，空 = 全局默认 */}
@@ -1506,8 +1612,8 @@ function HealthBadge({ projectId }: { projectId: number }) {
   );
 }
 
-/** 项目卡资源徽标：本项目 Agent 实例的 CPU/RSS 合计（同一份 metrics 帧切出，
- *  60s 粒度；没有活实例不摆空壳）。 */
+/** 项目卡资源徽标：本项目 Agent 进程的 CPU / 内存 / 磁盘 IO 合计（同一份 metrics
+ *  帧切出，60s 粒度；没有活实例不摆空壳）。 */
 function ProjectResourceBadge({ projectId }: { projectId: number }) {
   const t = useT();
   const metrics = useMetrics();
@@ -1518,6 +1624,8 @@ function ProjectResourceBadge({ projectId }: { projectId: number }) {
     : null;
   const anyMem = agents.some((a) => a.memRssBytes !== undefined);
   const mem = anyMem ? agents.reduce((s, a) => s + (a.memRssBytes ?? 0), 0) : null;
+  const anyIo = agents.some((a) => a.diskBytesPerSec !== undefined);
+  const io = anyIo ? Math.round(agents.reduce((s, a) => s + (a.diskBytesPerSec ?? 0), 0)) : null;
   return (
     <div className="flex min-w-0 justify-end px-2 pb-1">
       <Tooltip label={t('project.resTip', { n: agents.length })} className="min-w-0 max-w-full">
@@ -1530,6 +1638,12 @@ function ProjectResourceBadge({ projectId }: { projectId: number }) {
             <MemoryStick className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span className="truncate">{mem === null ? '—' : fmtMem(mem)}</span>
           </span>
+          {io !== null && (
+            <span className="inline-flex min-w-0 items-center gap-1 text-violet-300">
+              <HardDrive className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{fmtIo(io)}</span>
+            </span>
+          )}
         </span>
       </Tooltip>
     </div>
@@ -1541,4 +1655,10 @@ function fmtMem(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function fmtIo(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) return `${bytesPerSec} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`;
 }
