@@ -133,6 +133,14 @@ export function PaneFramePage() {
                   projectId={frame.projectId}
                   label={view.label}
                   projectLabel={frame.projectLabel}
+                  onOpenTerminal={(instanceId: string) =>
+                    attachFrameView(frame.frameId, {
+                      kind: 'terminal',
+                      instanceId,
+                      label: view.label,
+                      sessionId: view.sessionId,
+                    })
+                  }
                 />
               )}
             </div>

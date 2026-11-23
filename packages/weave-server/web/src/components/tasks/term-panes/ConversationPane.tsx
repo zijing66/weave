@@ -13,23 +13,31 @@ import { api } from '@/lib/api';
 import type { MessagingCapability, PromptLimits } from '@/lib/api';
 import { useActionFeedback, errorText } from '@/lib/action-feedback';
 import { SessionMessages } from '../SessionMessages';
+import { webTerminalAvailabilityOf } from '../conv-model';
 
 export function ConversationPane({
   sessionId,
   projectId,
   label,
   projectLabel,
+  onOpenTerminal,
 }: {
   sessionId: string;
   projectId: number;
   label: string;
   projectLabel: string;
+  /** 头部终端按钮的落点（框架页 = 贴进本窗布局树）：给了才摆按钮。 */
+  onOpenTerminal?: (instanceId: string) => void;
 }) {
   const t = useT();
   const fb = useActionFeedback();
   const [caps, setCaps] = useState<{ capability: MessagingCapability; promptLimits: PromptLimits | null } | null>(
     null,
   );
+  const [webInstance, setWebInstance] = useState<string | null>(null);
+  const [pidAlive, setPidAlive] = useState<boolean | null>(null);
+  /** 会话行已不存在（被清扫/删除）：弹窗独立挂载，没人替它退场——自己认领空态。 */
+  const [sessionGone, setSessionGone] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -43,10 +51,22 @@ export function ConversationPane({
         if (capability) setCaps({ capability, promptLimits: r.promptLimits });
       })
       .catch(() => {});
+    api
+      .listSessions(projectId)
+      .then((r) => {
+        if (!alive) return;
+        const row = r.sessions.find((s) => s.sessionId === sessionId);
+        if (!row) setSessionGone(true);
+        else {
+          setWebInstance(row.webInstanceId ?? null);
+          setPidAlive(row.pidAlive ?? null);
+        }
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
-  }, []);
+  }, [projectId, sessionId]);
 
   /** 停止会话：与 TasksPanel 同一端点（interrupt 域归 server，帧域知识不重复）。 */
   const onInterrupt = useCallback(
@@ -72,6 +92,30 @@ export function ConversationPane({
     );
   }
 
+  if (sessionGone) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 text-xs text-neutral-600">
+        <p>{t('tasks.paneSessionGone')}</p>
+        <p className="text-10 text-neutral-700">{sessionId.slice(0, 8)}</p>
+      </div>
+    );
+  }
+
+  // 可用性照嵌入态同判据，但框架页只认 live（有活实例才贴得进来）：resume 要经
+  // daemon 就地恢复，那条路在主窗——没活实例时置灰不摆假入口。
+  const avail = webTerminalAvailabilityOf({
+    webInstanceId: webInstance,
+    pidAlive,
+    transcriptPresent: null,
+  });
+  const webTerminal = onOpenTerminal
+    ? {
+        available: avail === 'live',
+        reason: avail === 'busy' ? ('busy' as const) : avail === 'gone' ? ('gone' as const) : undefined,
+        onOpen: () => webInstance && onOpenTerminal(webInstance),
+      }
+    : null;
+
   return (
     <SessionMessages
       embedded
@@ -84,6 +128,7 @@ export function ConversationPane({
       minimized={false}
       onInterrupt={onInterrupt}
       interruptStateOf={interruptStateOf}
+      webTerminal={webTerminal}
       pane
     />
   );

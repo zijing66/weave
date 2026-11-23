@@ -28,7 +28,7 @@ import { SessionMessages } from './SessionMessages';
 import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
 import { TerminalPanes } from './term-panes/TerminalPanes';
-import { openPane, useTermPanes } from './term-panes/term-pane-store';
+import { focusSessionPanes, openPane, useTermPanes } from './term-panes/term-pane-store';
 import { attachFrameView, openPaneFrame, reclaimPaneFrame, usePaneFrames, viewIdOf, windows as paneFrameWindows } from './term-panes/pane-transfer';
 import {
   buildLifecycleGroups,
@@ -876,6 +876,8 @@ export function TasksPanel({
       appliedSel.current = { project: projectId, sessionId };
       onSelectSession?.(sessionId);
       openConv(sessionId);
+      // Web 终端与对话同区、同生命周期：切会话时别家 pane 让位（detach，进程照跑）
+      focusSessionPanes(sessionId);
       if (!isDesktop) setPaneOpen(true);
     },
     [openConv, isDesktop, onSelectSession, projectId],
@@ -908,7 +910,7 @@ export function TasksPanel({
         paneFrameWindows.get(frame.frameId)?.focus();
         return;
       }
-      const res = openPane({ instanceId, label, slot: 'panel' });
+      const res = openPane({ instanceId, label, slot: 'panel', sessionId });
       if (!res.ok && res.reason === 'limit') show('error', t('tasks.paneLimit'));
       if (!res.ok && res.reason === 'other-window') show('error', t('tasks.paneOtherWindow'));
       focusOnMobile(sessionId);

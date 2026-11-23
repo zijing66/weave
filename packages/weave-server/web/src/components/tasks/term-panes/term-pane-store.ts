@@ -26,6 +26,9 @@ export interface PaneRecord {
   instanceId: string;
   label: string;
   slot: PaneSlot;
+  /** 绑定的会话（panel 面的会话终端）：pane 与会话同生命周期，切会话即让位。
+   *  overlay 面（项目级 shell）不带。 */
+  sessionId?: string;
   /** 连上后一次性注入的命令（带 \r；转窗/恢复都不补发）。 */
   initialCommand?: string;
   /** 已弹出到独立窗口：本窗只留占位卡（不挂 xterm/WS），点切回即恢复。 */
@@ -133,6 +136,7 @@ export interface OpenPaneInput {
   label: string;
   slot: PaneSlot;
   initialCommand?: string;
+  sessionId?: string;
 }
 
 export interface OpenPaneResult {
@@ -255,4 +259,20 @@ export function focusPane(paneId: string): void {
   const pane = state.panes[paneId];
   if (!pane || state.active[pane.slot] === paneId) return;
   set({ ...state, active: { ...state.active, [pane.slot]: paneId } });
+}
+
+/** 会话面板（panel）与对话同区：切到别的会话时，不属于它的 pane 让位（detach，
+ *  TUI 进程照跑——回来再点终端按钮即恢复）。恢复这条会话自己的 pane（有 = 聚焦，
+ *  没有 = 调用方照常走 openPane）。 */
+export function focusSessionPanes(sessionId: string): void {
+  const mine: string[] = [];
+  const others: string[] = [];
+  for (const pane of Object.values(state.panes)) {
+    if (pane.slot !== 'panel') continue;
+    (pane.sessionId === sessionId || !pane.sessionId ? mine : others).push(pane.paneId);
+  }
+  // 存量 pane（无 sessionId）不赶：旧账无法归属，仍按窗口级保活
+  if (others.length > 0) for (const paneId of others) closePane(paneId);
+  const focus = mine[0];
+  if (focus && state.active.panel !== focus) focusPane(focus);
 }
