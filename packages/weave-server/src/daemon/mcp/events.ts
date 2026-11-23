@@ -1,43 +1,11 @@
 import type { McpHttpContext, McpToolDef, McpToolRequest } from './registry.js';
+import { api } from './api.js';
 
 /**
  * 事件域内置 MCP 服务 `weave-events`：事件流查询 / 仪表盘总量与速率 / 接口日志 /
  * 会话用量。工具面只转发 daemon 自己的 HTTP API，**不缓存任何状态、不自带业务
  * 逻辑**——保留期、速率快照回填、日志脱敏等一切裁决仍在 daemon。
  */
-
-async function api<T>(
-  ctx: McpHttpContext,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`http://127.0.0.1:${ctx.port}/api${path}`, {
-    method,
-    headers: {
-      'x-weave-origin': 'mcp',
-      ...(ctx.token ? { 'x-weave-local': ctx.token } : {}),
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const text = await res.text();
-  const parsed: unknown = (() => {
-    try {
-      return JSON.parse(text);
-    } catch {
-      return { raw: text };
-    }
-  })();
-  if (!res.ok) {
-    const message =
-      parsed && typeof parsed === 'object' && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `HTTP ${res.status}`;
-    throw new Error(message);
-  }
-  return parsed as T;
-}
 
 const qs = (params: Record<string, string | number | undefined>): string => {
   const search = new URLSearchParams();

@@ -6,7 +6,12 @@ import { openDatabase, ProjectRepository, registerProject } from '@weavecode/ser
 import { doctorCommand } from '../commands/doctor';
 import type { CommandContext } from '../parser';
 
-const hoisted = vi.hoisted(() => ({ dbPath: '', daemonRunning: false }));
+const hoisted = vi.hoisted(() => ({
+  dbPath: '',
+  daemonRunning: false,
+  diagOk: true,
+  diagBody: {} as unknown,
+}));
 
 vi.mock('@weavecode/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@weavecode/server')>();
@@ -21,6 +26,18 @@ vi.mock('@weavecode/server', async (importOriginal) => {
 // probeDaemon 会真发 HTTP——本机 daemon 在跑会让结果随环境漂移，固定成可控值。
 vi.mock('../commands/daemon', () => ({
   probeDaemon: async () => hoisted.daemonRunning,
+}));
+
+// daemon 是自签 HTTPS（node:https 直连），没法像 fetch 那样全局 stub——直接
+// 顶替唯一出口 daemonFetch。
+vi.mock('../commands/daemon-fetch', () => ({
+  daemonFetch: async () => ({
+    ok: hoisted.diagOk,
+    status: hoisted.diagOk ? 200 : 401,
+    text: async () => JSON.stringify(hoisted.diagBody),
+    json: async () => hoisted.diagBody,
+  }),
+  daemonCaPem: () => undefined,
 }));
 
 let projDir: string;
@@ -156,12 +173,10 @@ const diagPayload = (id: number) => ({
 });
 
 describe('weave doctor 投递诊断', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  const stubDaemon = (body: unknown, ok = true) =>
-    vi.stubGlobal('fetch', async () => ({ ok, status: ok ? 200 : 401, json: async () => body }));
+  const stubDaemon = (body: unknown, ok = true): void => {
+    hoisted.diagBody = body;
+    hoisted.diagOk = ok;
+  };
 
   it('daemon 在跑 + 已注册 → 打出通道矩阵与修法码', async () => {
     const { id } = registerProject(projDir, 'init', hoisted.dbPath);

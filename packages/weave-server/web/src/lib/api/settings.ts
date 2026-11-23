@@ -26,6 +26,14 @@ export interface TerminalSettings {
   preset: TerminalPreset;
   /** Template for `custom`; `{path}` is replaced with the quoted directory. */
   customCommand: string;
+  /** Web 终端打开的 shell 命令行；空 = 平台默认。 */
+  webShell?: string;
+}
+
+/** 设置页可选的 Web 终端壳（服务端探测本机实装项，web 只渲染）。 */
+export interface WebShellChoice {
+  command: string;
+  label: string;
 }
 
 /** mirror of packages/weave-server/src/daemon/settings.ts — 保持同步
@@ -101,6 +109,8 @@ export interface AccessUrl {
 export interface DaemonSettingsBundle {
   settings: DaemonSettings;
   presets: TerminalPresetMeta[];
+  /** Web 终端壳候选（旧 daemon 不带 → undefined）。 */
+  webShells?: WebShellChoice[];
   platform: string;
   urls?: AccessUrl[];
   /** daemon 版本（设置页「关于」展示面；旧 daemon 不带 → undefined）。 */

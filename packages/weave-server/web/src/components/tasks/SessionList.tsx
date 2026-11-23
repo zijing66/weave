@@ -1022,7 +1022,7 @@ function SessionResourceChip({ sessionId }: { sessionId: string }) {
   const io = agent.diskBytesPerSec;
   const mem = agent.memRssBytes ?? 0;
   return (
-    <span className="inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border border-edge/[0.06] bg-edge/[0.04] px-2 py-1 text-10 leading-none tabular-nums">
+    <span className="ml-auto inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border border-edge/[0.06] bg-edge/[0.04] px-2 py-1 text-10 leading-none tabular-nums">
       <span className="inline-flex items-center gap-1 text-neutral-500">
         <Cpu className="h-3 w-3" aria-hidden="true" />
         {agent.cpuPercent === undefined ? '—' : `${agent.cpuPercent}%`}

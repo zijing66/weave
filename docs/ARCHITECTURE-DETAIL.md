@@ -136,6 +136,7 @@
 - **codex = `codex/liveness.ts`**：`<CODEX_HOME>/thread-writer-locks/<sessionId>.lock` 独占写锁（先于 rollout 创建、全程持有——实测跨回合与长空闲不释放、正常关闭即删、崩溃后句柄内核释放但文件残留）。HELD = 活；node 的 libuv 恒全共享打开探不到独占锁 ⇒ PowerShell 一枪批量探（`[IO.File]::Open` 以 None 共享开，IOException = HELD，~1s/轮）。非 UUID 命名（`.coordination.lock`）跳过。
 - **宽限窗**（`CODEX_LOCK_GRACE_MS` 90s）：失去 HELD（FREE/文件消失）不当场判死——锁的释放瞬间（正在关闭、queue 命令触碰）不该让在途消息落定 offline。锚点 = 进程内 `lastHeldAt`；daemon 重启后用 FREE 锁的 mtime 兜底（0 字节文件 mtime ≈ 创建时刻 ≤ 死亡时刻，宽限只长不短）。与 claude 豁免窗同构。
 - **装配 = `daemon/liveness.ts` 的 `combinedLivenessOf`**：claude 现算 + codex 15s 一拍后台缓存（探针失败保持旧值），合并成一张同步 map 注入全部消费点（MessageDeliverer / WatchEngine / OrchestrationEngine / SessionSweeper / livenessRefresher / hooks-routes / ensureOpen）。消费点的 `pidAliveOf` 三态合成（map 命中优先 → harness 判据 → 豁免窗）零改动吃到 codex 结论。
+- **同会话多实例（双开）= 槽的可选 `instances(ids?) → Map<string, number[]>`**：claude 注册表里同一 sessionId 可能有多行登记（Web 终端 PTY 与外部终端 `--resume` 各开一个，两个进程写同一份转录）。claude 实现 = `claudeLiveInstances`（只回活 pid）；`claudeLivenessById` 对同名多行取「任一活即活」。装配层 `combinedInstancesOf` 合并各面，`GET /sessions` 行带 `liveInstances` 计数，`resolveResume` 用 `duplicateInstanceError` 挡住「已有活实例还 spawn 第二个」（409）。codex 未声明该探测 = 不判。
 - **非 win32 的 codex 探针**：flock 语义不同，v1 回空集（全不判）——只损失 true，绝不产生错误的「死」。
 
 ### plugins / pluginState 槽（插件安装与启用）
@@ -739,7 +740,7 @@ dashboard ↔ 服务端只有一条事件流 = `GET /events`（`packages/weave-s
 7. **滚动加载一律拉动触发**（唯一实现 = `web/src/lib/pull-load.ts`）：贴边本身不加载、贴边后**继续**滚/拖够 120px 才取一页（预设加载与「刚贴边就取」都让用户没得选），一拉一页、离开边沿才重新上膛；位移用 `transform: translateY` 让位——**不进布局**，否则与翻页的 `scrollHeight` 补偿打架，提示条是绝对定位叠层；`overscroll-contain` 管住滚轮/触屏串动。今天两处：对话面板往顶、事件链往底。
 8. **`<lg` 的整屏对话一开，AI 助手（浮球 + 那扇弹窗）整个退场**——它钉在右下角，正是对话发送区的位置，让位也挤（浮球位置归 `AiAssistant` 一处）；置位方在对话侧（`TasksPanel` 依 `!isDesktop && paneOpen && hasConv` 写 `lib/conv-screen` 的模块级 store，卸载即清），`AiAssistant` 用 `useConvScreenOpen` 订阅后返回 null——只是不渲染，会话历史留在内存、抽屉关掉照旧；桌面不触发（三栏并排，对话是右栏、盖不到右下角）。
 
-## §12 dashboard 认证与 HTTPS 双监听
+## §12 dashboard 认证与单端口 HTTPS
 
 ### 认证
 
@@ -759,14 +760,16 @@ dashboard ↔ 服务端只有一条事件流 = `GET /events`（`packages/weave-s
 - 首启随机初始密码写 `<dataDir>/initial-password`，由 CLI 领取一次即刻删除（daemon detached 启动，打印必丢）。
 - 监听绑定 = settings `server.bindHost`（默认 `0.0.0.0`，可改回 `127.0.0.1`）；**`DAEMON_HOST`（客户端连哪）与 bindHost（服务端听哪）是两个概念**，不得混用。
 
-### HTTPS 双监听
+### 单端口 HTTPS（HTTP 已下线，2026-11-23 裁决）
 
-settings `server.tlsPort`，默认 6443、0 = 关。
+daemon 只有**一个网络面**：`server.bindHost` × 单一端口（默认 6420）上的 HTTPS，XMLHttpRequest/SSE/WS 全走它。旧的双监听（HTTP 6420 + 可选 HTTPS `server.tlsPort` 6443）与 `server.tlsPort` 设置项一并退役。
 
-- daemon 自签证书（`<dataDir>/certs/`，selfsigned 纯 JS 无 openssl 依赖；SAN = 全部非 internal IPv4 + localhost + hostname，换 IP/临期 7 天内自动重签）起第二个 https listener。
-- 与 HTTP **同一 handler**（`weaveRequestHandler` 单点建、fingerprint 缓存两监听共享；两个 daemon 入口接线别各建一份）。
-- 端口被占/证书失败一律降级仅警告，HTTP 不受影响。
-- 访问地址枚举唯一实现 = `daemon/tls.ts` 的 `accessUrls`（`weave daemon status` / `weave dashboard` 与 `GET /settings` 的 `urls` 同源派生，CLI/web 不自拼）。
+- daemon 自签证书（`<dataDir>/local/certs/host.{key,crt}`，selfsigned 纯 JS 无 openssl 依赖；SAN = 127.0.0.1 + 全部非 internal IPv4 + localhost + hostname，换 IP/临期 7 天内自动重签），`ensureDaemonCert` 是唯一签发/复用点，`createDaemonServer` 是唯一建监听点（两个 daemon 入口接线别各建一份）。
+- **CLI → daemon 也走 HTTPS**：唯一实现 = `weave-cli/src/commands/daemon-fetch.ts`（`node:https`，把上述 `host.crt` 当 CA 钉住——等价于本机身份校验；daemon 重签后 CLI 自动跟随）；`attach` 的 WS 手写握手改用 `tls.connect`（同一份 CA）。`dashboardUrl` 恒 `https://`。
+- **dev:web 也只在 9527 出 HTTPS**：vite 只读复用同一份证书（缺失直接报错并提示先起 `dev:server`，绝不自己签发/建目录；`vite build` 不受影响），`/api` 与 `/terminals/ws` 代理到 `https://127.0.0.1:6420` 且 `secure:false`。
+- 证书信任（用户级、无提权，系统授权框只在**首次**出现）：daemon 启动时 `installCertTrust`——先看指纹标记，再按平台探测（win32 `certutil -user -verifystore Root <sha1>` / darwin `security verify-cert -p ssl` / linux `certutil -L -n weave-daemon`），**探测命中就直接跳过安装命令**（安装命令每跑一次都会弹一次系统授权框，「只提示首次」全靠这一步）；未命中才安装（win32 `certutil -user -addstore Root` / darwin `security add-trusted-cert -r trustRoot -p ssl -k login.keychain-db`（用户域，不带 `-d`）/ linux NSS 用户库），成功写指纹标记；失败仅警告不拦启动。平台差异只收在本文件的两张命令表里（`trustProbeFor` / `trustInstallFor`），runner 可注入（测试绝不真跑命令）。**不引跨平台库**：现成库（@stacksjs/tlsx / devcert）都走管理员/root 域（LocalMachine/enterprise Root、系统钥匙串），后台 daemon 每次启动弹 UAC/sudo，且无法导入外部已有证书（2026-11-23 用户裁决走用户级自适配）。pet 窗（WebView2）另有 `ServerCertificateErrorDetected → AlwaysAllow` 兜底。
+- **MCP 自调用也是 HTTPS**：内置 MCP 工具把请求转回 daemon 自己的 REST API，唯一出口 = `daemon/mcp/api.ts`，用本机证书 PEM（`deps.ownCertPem` → `McpHttpContext.ca`）当 CA 钉住；装进用户文件的内置 MCP 配置 URL 也恒 `https://127.0.0.1:<port>/…`（`routes/market.ts`、`rpg/provisioning.ts`）。**Node 系宿主不读 OS 信任库** ⇒ daemon 启动时把 `NODE_EXTRA_CA_CERTS=<certs>/host.crt` 注入本进程 env（用户已设过则不覆盖），weave 拉起的会话继承；codex（rustls）不走这条，属已知盲区。
+- 访问地址枚举唯一实现 = `daemon/tls.ts` 的 `accessUrls(port)`（恒定 https：localhost + 各局域网 IP；`weave daemon status` / `weave dashboard` 与 `GET /settings` 的 `urls` 同源派生，CLI/web 不自拼）。
 - 手机浏览器要系统通知就必须走 https origin——浏览器只在安全上下文（HTTPS/localhost）开放 Notifications API；Android Chromium 还只认 SW 的 `registration.showNotification()`（`web/src/lib/browser-notify.ts` SW 优先、构造器兜底）。
 - 全站**唯一** Service Worker = `web/public/sw.js`，三件事：push 弹通知、通知点击聚焦、**预载壳**。预载壳只缓存构建产物（`/assets/` 内容哈希、`/fonts/`、logo）与 shell HTML 一条；`/api/` 与非 GET 一律不拦。HTML 走「网络优先 + 1.8s 超时回落缓存」，dev（`/@vite/client`）与无 `/assets/` 引用的页面不入缓存，故本地开发零影响。旧产物条目不清（升级瞬间老页面还会懒加载老 hash），整档淘汰靠 `SHELL` 常量改名。
 

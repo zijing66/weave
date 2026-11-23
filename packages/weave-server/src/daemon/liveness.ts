@@ -72,6 +72,23 @@ export function combinedLivenessOf(): Map<string, boolean> {
   return map;
 }
 
+/**
+ * 全 harness 的「同会话活实例清单」合并（只答声明了 instances 探测的面）。
+ * 用途 = 双开检测与 open-terminal 防双开闸——同一会话被 Web 终端 PTY 与外部
+ * 终端 `--resume` 同时打开时，两份进程写同一份转录。
+ */
+export function combinedInstancesOf(): Map<string, number[]> {
+  const map = new Map<string, number[]>();
+  for (const { surface } of livenessSurfaces()) {
+    if (!surface.instances) continue;
+    for (const [id, pids] of surface.instances()) {
+      const prev = map.get(id);
+      map.set(id, prev ? [...prev, ...pids] : pids);
+    }
+  }
+  return map;
+}
+
 /** 测试用：清缓存与刷新循环状态（primed 一并复位，重启后首拍语义复原）。 */
 export function resetCombinedLivenessForTest(): void {
   if (refreshTimer) {

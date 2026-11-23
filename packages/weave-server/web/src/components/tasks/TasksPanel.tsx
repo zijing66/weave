@@ -47,7 +47,7 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 import { SkeletonRows } from '@/components/ui/skeleton';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Loader2, Plus, Search, Square, X } from 'lucide-react';
+import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Loader2, Plus, Search, Square, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -1545,6 +1545,30 @@ export function TasksPanel({
           <TerminalPanes slot="panel" />
         </div>
       )}
+      {/* 双开告警：选中会话有多个活实例（Web 终端 PTY + 外部终端 resume）——
+          两份进程写同一份转录。处置只给「关闭 Web 实例」：外部那个不是 weave
+          起的进程，不碰；关完这里自然消失（下一拍 /sessions 带回新计数）。 */}
+      {(() => {
+        const row = sessions?.find((s) => s.sessionId === selectedId);
+        if (!row || (row.liveInstances ?? 0) <= 1) return null;
+        return (
+          <div className="mb-1 flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-red-400/30 bg-red-500/10 px-2 py-1.5 text-11 text-red-200">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-300" />
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+              {t('tasks.duplicateInstancesHint', { n: row.liveInstances ?? 0 })}
+            </span>
+            {row.webInstanceId && (
+              <button
+                type="button"
+                onClick={() => handleClosePane(row.sessionId)}
+                className="shrink-0 rounded border border-red-400/40 bg-red-500/10 px-2 py-0.5 text-11 text-red-200 transition-colors hover:bg-red-500/20"
+              >
+                {t('tasks.closeWebInstance')}
+              </button>
+            )}
+          </div>
+        );
+      })()}
       {/* 已挂载的对话全在（非选中项只藏不卸，草稿与已选图片都还在） */}
       <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', panelPaneCount > 0 && 'hidden')}>
       {/* 已弹出到独立框架页的对话：占位条 + 切回（对话本体藏不卸，切回零重放） */}

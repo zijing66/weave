@@ -9,6 +9,7 @@ import {
   writeDaemonSettings,
   setDaemonSettingsDb,
   terminalPresetsFor,
+  resolveWebShell,
 } from '../settings.js';
 import {
   quotePath,
@@ -923,5 +924,44 @@ describe('countWindowsByDir（终端角标：按可见屏幕计数）', () => {
     expect(countWindowsByDir([], [{ muxKey: 's', windowId: 0, cwd: 'file:///p/proj' }])).toEqual(
       new Map(),
     );
+  });
+});
+
+describe('web 终端 shell（resolveWebShell）', () => {
+  it('空配置 = 平台默认：win32 是 powershell，其余是登录 shell', () => {
+    expect(resolveWebShell('', 'win32')).toEqual({ command: 'powershell.exe', args: ['-NoLogo'] });
+    const posix = resolveWebShell('   ', 'linux');
+    expect(posix.args).toEqual([]);
+    expect(posix.command.length).toBeGreaterThan(0);
+  });
+
+  it('自定义命令行按空白切分，引号成组（绝对路径带空格不被拆）', () => {
+    expect(resolveWebShell('pwsh -NoLogo', 'win32')).toEqual({
+      command: 'pwsh',
+      args: ['-NoLogo'],
+    });
+    expect(resolveWebShell('"C:\Program Files\Git\bin\bash.exe" -l', 'win32')).toEqual({
+      command: 'C:\Program Files\Git\bin\bash.exe',
+      args: ['-l'],
+    });
+    expect(resolveWebShell("wsl.exe -d 'Ubuntu 22.04'", 'win32')).toEqual({
+      command: 'wsl.exe',
+      args: ['-d', 'Ubuntu 22.04'],
+    });
+  });
+
+  it('webShell 随设置往返落库', async () => {
+    const db = openDatabase(':memory:');
+    setDaemonSettingsDb(db);
+    try {
+      await writeDaemonSettings({
+        terminal: { preset: 'web', customCommand: '', webShell: 'pwsh -NoLogo' },
+        locale: 'zh-CN',
+        hooks: { enabled: true },
+      });
+      expect((await readDaemonSettings()).terminal.webShell).toBe('pwsh -NoLogo');
+    } finally {
+      setDaemonSettingsDb(null);
+    }
   });
 });

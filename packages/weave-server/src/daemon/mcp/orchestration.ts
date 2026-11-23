@@ -1,44 +1,11 @@
 import type { McpHttpContext, McpToolDef, McpToolRequest } from './registry.js';
+import { api } from './api.js';
 
 /**
  * 编排内置 MCP 服务 `weave-orchestration`：工具面只转发 daemon 自己的 HTTP
  * API，**不缓存任何编排状态**——编排的唯一事实源仍是 daemon 的仓储，web 画布、
  * CLI、MCP 三处修改互相立刻可见。
  */
-
-async function api<T>(
-  ctx: McpHttpContext,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`http://127.0.0.1:${ctx.port}/api${path}`, {
-    method,
-    headers: {
-      // 自报来源：api-log 的 origin 列据此区分 MCP 调用与用户操作（RPG 稿§七）。
-      'x-weave-origin': 'mcp',
-      ...(ctx.token ? { 'x-weave-local': ctx.token } : {}),
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const text = await res.text();
-  const parsed: unknown = (() => {
-    try {
-      return JSON.parse(text);
-    } catch {
-      return { raw: text };
-    }
-  })();
-  if (!res.ok) {
-    const message =
-      parsed && typeof parsed === 'object' && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `HTTP ${res.status}`;
-    throw new Error(message);
-  }
-  return parsed as T;
-}
 
 const qs = (params: Record<string, string | number | undefined>): string => {
   const search = new URLSearchParams();

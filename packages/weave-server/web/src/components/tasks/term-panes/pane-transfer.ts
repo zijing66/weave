@@ -54,6 +54,12 @@ const windowRefs = new Map<string, Window>();
 /** 主窗聚焦弹出窗用（只读视图；持有引用由 openPaneFrame 维护）。 */
 export const windows: ReadonlyMap<string, Window> = windowRefs;
 
+/** crypto.randomUUID 只在安全上下文有——HTTP 局域网访问没有。 */
+function uuid(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function frameLayoutOf(frame: PaneTransfer): LayoutNode | null {
   const node = decodeLayout(frame.layout);
   // 布局里引用了缺失视图的叶子剔除（孤儿清扫，同 term-pane-store）
@@ -151,7 +157,7 @@ export function openPaneFrame(pane: PaneInput, features: string): string {
     windowRefs.get(existing.frameId)?.focus();
     return existing.frameId;
   }
-  const frameId = crypto.randomUUID();
+  const frameId = uuid();
   const viewId = viewIdOf(pane.sessionId, 'conversation');
   const descriptor: PaneTransfer = {
     schema: 2,

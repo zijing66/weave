@@ -53,6 +53,9 @@ export interface SessionRow {
   canOpenTerminal?: boolean;
   /** Web 终端锚点：活着的 headless 实例 id（服务端派生）；null = 没有可 attach 的实例。 */
   webInstanceId?: string | null;
+  /** 该会话当前的活实例数（注册表口径，服务端派生）：>1 = 双开（Web PTY + 外部
+   *  终端 resume），两份进程写同一份转录。缺省 = 旧 daemon 不带。 */
+  liveInstances?: number;
   /** 会话 worktree（B5 最小切片；服务端登记派生）：undefined/null = 不隔离。 */
   worktree?:
     | { path: string; branch: string; status: 'active' | 'merged' | 'conflict' | 'error'; message?: string }

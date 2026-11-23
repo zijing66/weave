@@ -227,10 +227,10 @@ describe('provisionRole', () => {
       ]);
       const orch = json.mcpServers['weave-orchestration']!;
       expect(orch.type).toBe('http');
-      expect(orch.url).toBe('http://127.0.0.1:6421/api/mcp');
+      expect(orch.url).toBe('https://127.0.0.1:6421/api/mcp');
       expect(orch.headers).toEqual({ 'x-weave-local': 'tok-1' });
       // 会话/事件等子服务走 /api/mcp/<server>（端口同源）
-      expect(json.mcpServers['weave-sessions']!.url).toBe('http://127.0.0.1:6421/api/mcp/sessions');
+      expect(json.mcpServers['weave-sessions']!.url).toBe('https://127.0.0.1:6421/api/mcp/sessions');
 
       const ignore = readFileSync(path.join(root, 'e4-keeper', '.gitignore'), 'utf-8');
       expect(ignore.split(/\r?\n/)).toContain('.mcp.json');

@@ -66,8 +66,8 @@ export { HeadlessTerminal } from './runtime/headless-terminal.js';
 export { writeClientFrame } from './runtime/terminal/ws-frame.js';
 export { createWeaveServer, weaveRequestHandler, DAEMON_VERSION } from './daemon/server.js';
 export type { WeaveServerDeps } from './daemon/server.js';
-export { accessUrls, lanIps, ensureDaemonCert, startTlsServer, daemonCertsDir } from './daemon/tls.js';
-export type { AccessUrl, DaemonCert, TlsListener } from './daemon/tls.js';
+export { accessUrls, lanIps, ensureDaemonCert, createDaemonServer, daemonCertsDir } from './daemon/tls.js';
+export type { AccessUrl, DaemonCert } from './daemon/tls.js';
 export {
   readDaemonSettings,
   writeDaemonSettings,

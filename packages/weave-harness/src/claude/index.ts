@@ -64,6 +64,7 @@ export { CLAUDE_MEMORY } from './memory.js';
 export {
   CLAUDE_LIVENESS,
   claudeLivenessById,
+  claudeLiveInstances,
   parseClaudeSessionReg,
   pidAlive,
   pidAliveOf,

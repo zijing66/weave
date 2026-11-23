@@ -202,6 +202,7 @@ export type {
   HtmlExportProfile,
   HtmlExportSettings,
   TerminalPresetMeta,
+  WebShellChoice,
   AccessUrl,
   DaemonSettingsBundle,
   CaptureRow,

@@ -4,7 +4,6 @@ import { WEAVE_VERSION as DAEMON_VERSION } from '../version.js';
 import {
   MDNS_SERVICE_DOMAIN,
   MDNS_SERVICE_TYPE,
-  advertisable,
   mdnsInstanceName,
   mdnsTxt,
 } from './federation.js';
@@ -21,19 +20,16 @@ export interface MdnsAdvertiser {
 }
 
 export function startMdnsAdvertiser(opts: {
-  tlsPort: number;
-  httpPort: number;
+  httpsPort: number;
   certPem: string;
   hostname: string;
 }): MdnsAdvertiser | null {
-  // tlsPort 未开不广播：联邦唯一形态是 HTTPS + TOFU（裁决 15⑤）。
-  if (!advertisable(opts.tlsPort)) return null;
   const bonjour = new Bonjour();
   bonjour.publish({
     name: mdnsInstanceName(opts.hostname),
     type: MDNS_SERVICE_TYPE,
     protocol: MDNS_SERVICE_DOMAIN,
-    port: opts.tlsPort,
+    port: opts.httpsPort,
     txt: mdnsTxt({
       version: DAEMON_VERSION,
       hostname: opts.hostname,

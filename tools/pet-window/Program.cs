@@ -171,6 +171,12 @@ public static class Program
                 core.Settings.AreDefaultContextMenusEnabled = false;
                 core.Settings.IsZoomControlEnabled = false;
                 core.Settings.IsStatusBarEnabled = false;
+                // daemon 是自签 HTTPS（单端口裁决后无 HTTP 回落）：本机身份校验
+                // 已由 URL 来源保证（localhost），证书错误（不受信任根）放行。
+                core.ServerCertificateErrorDetected += (_, e) =>
+                {
+                    e.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
+                };
                 // 会话 cookie 种进独立 profile：pet.html 的 fetch/EventSource 与
                 // dashboard 同一条认证路径（同源自动带），daemon 不开 query token 面
                 if (!string.IsNullOrEmpty(cookie))

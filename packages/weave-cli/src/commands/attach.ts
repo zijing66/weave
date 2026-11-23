@@ -1,4 +1,4 @@
-import { connect } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
 import { randomBytes } from 'node:crypto';
 import {
   DEFAULT_PORT,
@@ -9,6 +9,7 @@ import {
 } from '@weavecode/server';
 import { readFileSync } from 'node:fs';
 import { logger } from '@weavecode/core';
+import { daemonCaPem, daemonFetch } from './daemon-fetch.js';
 import { t } from '../i18n/index.js';
 import type { Command, CommandContext } from '../parser.js';
 
@@ -48,7 +49,7 @@ async function resolveInstance(
   const headers: Record<string, string> = {};
   const token = localToken();
   if (token) headers['x-weave-local'] = token;
-  const res = await fetch(`http://${DAEMON_HOST}:${port}/sessions`, { headers });
+  const res = await daemonFetch('/sessions', { port, headers });
   if (!res.ok) return null;
   const data = (await res.json()) as {
     sessions?: Array<{ sessionId: string; title?: string | null; webInstanceId?: string | null }>;
@@ -75,7 +76,7 @@ function connectWs(
   onClose: () => void,
 ): Promise<Conn> {
   return new Promise((resolve, reject) => {
-    const socket = connect(port, DAEMON_HOST, () => {
+    const socket = tlsConnect({ host: DAEMON_HOST, port, ca: daemonCaPem() }, () => {
       const key = randomBytes(16).toString('base64');
       socket.write(
         `GET /terminals/ws HTTP/1.1\r\n` +

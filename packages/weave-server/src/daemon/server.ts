@@ -78,8 +78,6 @@ export const DAEMON_VERSION = WEAVE_VERSION;
 export interface WeaveServerDeps {
   projects: ProjectRepository;
   port: number;
-  /** 局域网 HTTPS 监听端口（settings server.tlsPort；0/缺省 = 未开，/settings 的访问地址据此派生）。 */
-  tlsPort?: number;
   /** File watch service; optional so tests can run without chokidar. */
   watch?: WatchService;
   /** Hook event repository; optional so non-ingestion tests can omit it. */
@@ -414,6 +412,7 @@ async function handleRequest(
     await handleMcpServerRequest(def, req, res, {
       port: deps.port,
       token: deps.auth?.getLocalToken() ?? null,
+      ca: deps.ownCertPem,
     });
     return;
   }

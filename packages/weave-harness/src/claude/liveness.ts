@@ -124,9 +124,43 @@ export function claudeLivenessById(dir: string | null = null): LivenessMap {
     }
     const reg = parseClaudeSessionReg(text);
     if (!reg) continue;
-    map.set(reg.sessionId, pidAlive(reg.pid));
+    // 同一会话可能有多行登记（Web 终端 + 外部终端双开）：任一活即算活。
+    if (pidAlive(reg.pid)) map.set(reg.sessionId, true);
+    else if (!map.has(reg.sessionId)) map.set(reg.sessionId, false);
   }
   return map;
+}
+
+/**
+ * 同一会话的全部活实例 pid（双开检测）：注册表里同一 sessionId 的多行登记各自
+ * kill 0，只回活着的。消费方 = server 的 `/sessions` 行（`liveInstances`）与
+ * open-terminal 的防双开闸。
+ */
+export function claudeLiveInstances(dir: string | null = null): Map<string, number[]> {
+  const target = dir ?? defaultClaudeSessionsDir();
+  const out = new Map<string, number[]>();
+  if (!target) return out;
+  let names: string[];
+  try {
+    names = readdirSync(target);
+  } catch {
+    return out; // 读挂 = 空图（消费方按「查不到」处理，不告警）
+  }
+  for (const name of names) {
+    if (!/^\d+\.json$/.test(name)) continue;
+    let text: string;
+    try {
+      text = readFileSync(join(target, name), 'utf8');
+    } catch {
+      continue;
+    }
+    const reg = parseClaudeSessionReg(text);
+    if (!reg || !pidAlive(reg.pid)) continue;
+    const pids = out.get(reg.sessionId);
+    if (pids) pids.push(reg.pid);
+    else out.set(reg.sessionId, [reg.pid]);
+  }
+  return out;
 }
 
 function defaultClaudeSessionsDir(): string | null {
@@ -146,6 +180,16 @@ export const CLAUDE_LIVENESS: LivenessSurface = {
   },
   aliveSync(ids) {
     return aliveFiltered(claudeLivenessById(), ids);
+  },
+  instances(ids) {
+    const all = claudeLiveInstances();
+    if (!ids) return all;
+    const out = new Map<string, number[]>();
+    for (const id of ids) {
+      const pids = all.get(id);
+      if (pids) out.set(id, pids);
+    }
+    return out;
   },
 };
 

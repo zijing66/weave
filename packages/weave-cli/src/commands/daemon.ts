@@ -13,13 +13,14 @@ import {
 } from '@weavecode/server';
 import { logger } from '@weavecode/core';
 import { localTokenHeader } from './daemon-auth.js';
+import { daemonFetch } from './daemon-fetch.js';
 import { t } from '../i18n/index.js';
 import type { Command } from '../parser.js';
 
 /** True when a weave daemon answers /health on `port`. */
 export async function probeDaemon(port: number): Promise<boolean> {
   try {
-    const res = await fetch(`http://${DAEMON_HOST}:${port}/health`);
+    const res = await daemonFetch('/health', { port });
     if (!res.ok) return false;
     const data = (await res.json()) as { service?: string };
     return data.service === 'weave-daemon';
@@ -106,7 +107,7 @@ async function startAction(): Promise<void> {
 
 /** /health 的活体数据（probe 之后取 pid 等真实值）。 */
 async function fetchHealth(port: number): Promise<{ pid: number; port: number; uptimeMs: number }> {
-  const res = await fetch(`http://${DAEMON_HOST}:${port}/health`);
+  const res = await daemonFetch('/health', { port });
   return (await res.json()) as { pid: number; port: number; uptimeMs: number };
 }
 
@@ -125,7 +126,8 @@ async function requestGracefulStop(port: number): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2_000);
   try {
-    const res = await fetch(`http://${DAEMON_HOST}:${port}/daemon/shutdown`, {
+    const res = await daemonFetch('/daemon/shutdown', {
+      port,
       method: 'POST',
       headers,
       signal: controller.signal,
@@ -206,8 +208,8 @@ async function statusAction(): Promise<void> {
         uptime: Math.round(health.uptimeMs / 1000),
       }),
     );
-    // 全部访问地址（IP × 协议）；与设置页同一事实源（server 的 accessUrls）。
-    const urls = accessUrls(port, state?.tlsPort ?? 0);
+    // 全部访问地址（恒 HTTPS）；与设置页同一事实源（server 的 accessUrls）。
+    const urls = accessUrls(port);
     if (urls.length > 0) {
       logger.dim(t('out.daemon.urlsTitle'));
       logger.dim(urls.map((u) => `  ${u.url}`).join('\n'));

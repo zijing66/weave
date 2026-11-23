@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CLAUDE_REG_GRACE_MS,
   claudeLivenessById,
+  claudeLiveInstances,
   parseClaudeSessionReg,
   pidAlive,
   pidAliveOf,
@@ -74,6 +75,30 @@ describe('claudeLivenessById', () => {
 
   it('目录不存在 → 空图（查不到登记不判死）', () => {
     expect(claudeLivenessById(join(dir, 'nope')).size).toBe(0);
+  });
+
+  it('同会话多行登记（双开）：任一活即算活', async () => {
+    const dead = await deadPid();
+    writeFileSync(join(dir, `${process.pid}.json`), reg(process.pid, 'dup-1'));
+    writeFileSync(join(dir, `${dead}.json`), reg(dead, 'dup-1'));
+    expect(claudeLivenessById(dir).get('dup-1')).toBe(true);
+  });
+
+  it('claudeLiveInstances 只回活 pid（同会话双开 = 两个）', async () => {
+    const dead = await deadPid();
+    const { spawn } = await import('node:child_process');
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    try {
+      writeFileSync(join(dir, `${process.pid}.json`), reg(process.pid, 'dup-2'));
+      writeFileSync(join(dir, `${child.pid!}.json`), reg(child.pid!, 'dup-2'));
+      writeFileSync(join(dir, `${dead}.json`), reg(dead, 'dup-3'));
+      const instances = claudeLiveInstances(dir);
+      expect(instances.get('dup-2')?.sort()).toEqual([process.pid, child.pid!].sort());
+      // 死进程的登记不进清单（双开判据只认活 pid）
+      expect(instances.get('dup-3')).toBeUndefined();
+    } finally {
+      child.kill();
+    }
   });
 
   it('目录读挂（readdir 失败）→ readable:false；ENOENT = 可靠空图', () => {

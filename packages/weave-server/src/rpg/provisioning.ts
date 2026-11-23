@@ -75,7 +75,7 @@ async function ensureBuiltinMcp(dir: string, endpoint?: ProvisionDeps['mcpEndpoi
     if (builtin.name in servers) continue;
     const config: McpServerConfig = {
       type: 'http',
-      url: `http://127.0.0.1:${port}/api${builtin.path}`,
+      url: `https://127.0.0.1:${port}/api${builtin.path}`,
       ...(token ? { headers: { 'x-weave-local': token } } : {}),
     };
     servers[builtin.name] = config;

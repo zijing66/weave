@@ -41,7 +41,7 @@ import { handleSessionInsightRoutes } from './routes/session-insights.js';
 import { handleWatchRoutes } from './routes/watches.js';
 import { openSessionTerminal, transcriptState } from './session-open.js';
 import { pidAliveOf } from './claude-liveness.js';
-import { combinedLivenessOf } from './liveness.js';
+import { combinedInstancesOf, combinedLivenessOf } from './liveness.js';
 import {
   captureSurfaces,
   messagingSurfaces,
@@ -244,6 +244,9 @@ export async function handleHooksRoutes(
     // null=判不动（新鲜会话）不猜
     // （在途消息角标不在这里：走 SSE push 'inflightCounts'，见 InflightCountsRefresher）
     const liveness = combinedLivenessOf();
+    // 同会话活实例清单（claude 注册表）：>1 = Web 终端与外部终端双开，
+    // 两份进程写同一份转录——前端据此亮告警、入口据此拒绝再开一个。
+    const instancesById = combinedInstancesOf();
     // 会话所在可见屏幕（列表分块）：探测要吃子进程，只能回隐藏刷新器的**上次快照**
     // （null = 反查不到，不分组），增量经 push 'terminalTopology' 到达——同角标口径。
     const screens = deps.terminalRefresher?.lastSnapshot?.terminals ?? {};
@@ -276,6 +279,8 @@ export async function handleHooksRoutes(
         return {
           ...s,
           pidAlive: pidAliveOf(s, liveness),
+          /** 该会话当前的活实例数（0/1/2+）：>1 = 双开，写入会交错。 */
+          liveInstances: (instancesById.get(s.sessionId) ?? []).length,
           canOpenTerminal: !!(resume?.supported && resume.openArgs),
           /** Web 终端锚点（活着的 headless 实例 id）；null = 没有可 attach 的实例。 */
           webInstanceId: liveHeadless.get(s.sessionId) ?? null,

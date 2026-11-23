@@ -230,6 +230,16 @@ describe('POST /sessions/:id/open-terminal', () => {
     expect(byId.get('sess-codex')).toBeNull();
   });
 
+  it('GET /sessions 逐行带 liveInstances：无活实例 = 0（双开判据的事实面）', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/sessions`);
+    const { sessions: rows } = (await res.json()) as {
+      sessions: Array<{ sessionId: string; liveInstances: number }>;
+    };
+    expect(rows.length).toBeGreaterThan(0);
+    // 这些会话 id 不可能出现在真机注册表里 → 0；>1 的合成在 liveness 层单测覆盖
+    for (const r of rows) expect(r.liveInstances).toBe(0);
+  });
+
   it('GET /sessions 逐行带 canOpenTerminal：按 harness 的 resume 槽派生', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/sessions`);
     const { sessions: rows } = (await res.json()) as {

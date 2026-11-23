@@ -6,7 +6,7 @@ import type { WeaveServerDeps } from './server.js';
 import { readDaemonSettings, type TerminalSettings } from './settings.js';
 import { defaultProjectOpener, terminalBackendFor } from './opener.js';
 import { hideWindowOf, scheduleHideWindow, type ProjectStorage } from './routes/projects.js';
-import { combinedLivenessOf } from './liveness.js';
+import { combinedInstancesOf, combinedLivenessOf } from './liveness.js';
 import { messagingSurfaceFor } from '../surfaces.js';
 
 /**
@@ -199,6 +199,22 @@ type ResumeGate =
   | { ok: true; target: ResumeTarget }
   | { ok: false; status: 400 | 404 | 409 | 501 | 503; error: string };
 
+/**
+ * 防双开判据（唯一实现）：该会话已有活实例（Web 终端 PTY 或外部终端里跑着）
+ * 就拒绝再 spawn 一个——两个进程写同一份转录，回合会交错。要换宿主先关掉现有
+ * 的（关 pane / 退出外部终端）。空 = 放行。
+ */
+export function duplicateInstanceError(
+  pids: readonly number[],
+): { ok: false; status: 409; error: string } | null {
+  if (pids.length === 0) return null;
+  return {
+    ok: false,
+    status: 409,
+    error: `Session is already running (pid ${pids.join(', ')}) — close that instance before opening another`,
+  };
+}
+
 /** 交互式 resume 的门禁（外部终端开窗与 Web 终端 headless 恢复共用这一份判据）。 */
 async function resolveResume(
   deps: SessionOpenDeps,
@@ -221,6 +237,8 @@ async function resolveResume(
     return { ok: false, status: 501, error: `Harness "${src}" does not support interactive resume` };
   }
   if (!session.projectId) return { ok: false, status: 400, error: 'Session is not bound to a project' };
+  const duplicate = duplicateInstanceError(combinedInstancesOf().get(sessionId) ?? []);
+  if (duplicate) return duplicate;
   const project = deps.projects?.getById(session.projectId);
   if (!project) return { ok: false, status: 404, error: 'Project not found' };
   // 转录没了就别 spawn：--resume 认的是那份文件，开出去只会在 pane 里报

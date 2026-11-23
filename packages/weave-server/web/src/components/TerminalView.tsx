@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Keyboard } from 'lucide-react';
 import { TerminalClient, type TerminalFrame } from '@/lib/terminal';
+import { useIsCoarsePointer } from '@/lib/use-media-query';
 
 /**
  * headless 实例的 Web Terminal（B4）：xterm.js 渲染 + TerminalClient 传输。
@@ -24,6 +26,28 @@ interface TerminalViewProps {
  *  取 64ms；上限防连续快流饿死。交互回显多在 64ms 内成帧，体感无延迟。 */
 const COALESCE_MS = 64;
 const COALESCE_MAX_MS = 250;
+
+/** 移动端快捷键面板（软键盘出不了的键）：字节序列 = 物理键盘经 xterm 按同一键会发出的那一份。 */
+const KEY_PAD: Array<{ label: string; data: string }> = [
+  { label: 'Esc', data: '\x1b' },
+  { label: 'Tab', data: '\t' },
+  { label: '↑', data: '\x1b[A' },
+  { label: '↓', data: '\x1b[B' },
+  { label: '←', data: '\x1b[D' },
+  { label: '→', data: '\x1b[C' },
+  { label: 'Home', data: '\x1b[H' },
+  { label: 'End', data: '\x1b[F' },
+  { label: 'PgUp', data: '\x1b[5~' },
+  { label: 'PgDn', data: '\x1b[6~' },
+  { label: 'Ctrl+C', data: '\x03' },
+  { label: 'Ctrl+D', data: '\x04' },
+  { label: 'Ctrl+U', data: '\x15' },
+  { label: 'Ctrl+L', data: '\x0c' },
+  { label: 'Ctrl+A', data: '\x01' },
+  { label: 'Ctrl+E', data: '\x05' },
+  { label: 'Ctrl+W', data: '\x17' },
+  { label: 'Ctrl+Z', data: '\x1a' },
+];
 
 // xterm 6 缺少上游 #5759：组词期间 TUI 输出会移动光标，但 textarea/组词层
 // 不跟着重定位 ⇒ IME 候选框停在旧位置、把整屏顶偏。修法 = 组词期间每次
@@ -59,6 +83,10 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
   const [lease, setLease] = useState<'pending' | 'granted' | 'denied'>('pending');
   // 视口是否离开底部（上翻看历史）：悬浮「滚到底」按钮的显隐。
   const [scrolledUp, setScrolledUp] = useState(false);
+  // 移动端软键盘没有 Esc/方向键/Ctrl 组合：触屏指针下给一个快捷键面板。
+  const coarse = useIsCoarsePointer();
+  const [showKeys, setShowKeys] = useState(false);
+  const sendKey = (data: string): void => clientRef.current?.stdin(data);
 
   useEffect(() => {
     setStatus('connecting');
@@ -74,11 +102,25 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // emoji 等宽字符计宽（unicode 11 宽度表）：TUI 状态栏的 emoji 实占 2 列，
+    // 缺它按 1 列算 → 状态条错位、字形落成方块。
+    const unicode11 = new Unicode11Addon();
+    term.loadAddon(unicode11);
+    term.unicode.activeVersion = '11';
     if (holder.current) {
       term.open(holder.current);
       patchImeAnchor(term);
       fit.fit();
     }
+    // Weave Mono 是 font-display: swap 的异步 woff2：首拍 fit 用 fallback 字形量
+    // cell，字体到位后 rows/cols 偏小 → 渲染区矮一截（屏下半黑）。字体就绪后重 fit
+    // 并把新几何同步给网关（PTY 跟着对齐，TUI 重绘铺满真视口）。
+    void document.fonts?.ready.then(() => {
+      if (termRef.current !== term || term.element?.isConnected !== true) return;
+      fit.fit();
+      clientRef.current?.setDimensions(term.cols, term.rows);
+      clientRef.current?.resize(term.cols, term.rows);
+    });
 
     /** 重放有过缺口（旧 Host / ring 截断）⇒ 屏上是残片，拿到写权后清屏重绘。 */
     let replayGap = false;
@@ -269,6 +311,33 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       </div>
       <div className="relative min-h-0 flex-1">
         <div ref={holder} className="h-full overflow-hidden bg-black/90 p-1" />
+        {coarse && interactive && status === 'live' && lease === 'granted' && (
+          <>
+            {showKeys && (
+              <div className="absolute inset-x-2 bottom-12 flex flex-wrap gap-1 rounded-lg border border-edge/[0.16] bg-neutral-900/95 p-1.5 shadow-mac">
+                {KEY_PAD.map((k) => (
+                  <button
+                    key={k.label}
+                    type="button"
+                    onClick={() => sendKey(k.data)}
+                    className="min-w-10 rounded px-2 py-1.5 text-xs text-neutral-300 transition-colors hover:bg-edge/[0.12] active:bg-edge/[0.2]"
+                  >
+                    {k.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              aria-label="快捷键"
+              aria-expanded={showKeys}
+              onClick={() => setShowKeys((v) => !v)}
+              className="absolute left-3 bottom-3 flex size-7 items-center justify-center rounded-full border border-edge/[0.16] bg-neutral-900/90 text-neutral-300 shadow-mac transition-colors hover:border-edge/[0.3] hover:text-neutral-100"
+            >
+              <Keyboard className="h-4 w-4" />
+            </button>
+          </>
+        )}
         {scrolledUp && (
           <button
             type="button"

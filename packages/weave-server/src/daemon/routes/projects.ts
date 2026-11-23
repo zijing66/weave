@@ -9,7 +9,7 @@ import { messagingSurfaceFor } from '../../surfaces.js';
 import { readBody, sendJson } from '../http.js';
 import { generateToken } from '../auth.js';
 import { handleProjectInit } from './project-init.js';
-import { readDaemonSettings } from '../settings.js';
+import { readDaemonSettings, resolveWebShell } from '../settings.js';
 import {
   closeTerminalsIn,
   defaultProjectOpener,
@@ -298,10 +298,7 @@ export async function handleProjectRoutes(
             });
             return true;
           }
-          const shell =
-            process.platform === 'win32'
-              ? { command: 'powershell.exe', args: ['-NoLogo'] }
-              : { command: process.env['SHELL'] ?? 'bash', args: [] };
+          const shell = resolveWebShell(settings.terminal.webShell);
           // 裸 shell 实例（非 harness 会话）：同一执行核，id 前缀 wvt、不带
           // WEAVE_RUNTIME_HEADLESS（headless 标记是 harness 会话的归因语义）。
           const spawned = await spawnHeadlessInstance(

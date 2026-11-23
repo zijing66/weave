@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  DAEMON_HOST,
   DEFAULT_PORT,
   getDbPath,
   ensureDataLayout,
@@ -13,6 +12,7 @@ import { formatTable, logger } from '@weavecode/core';
 import { checkHarness } from '../init/harness-checks.js';
 import { probeDaemon } from './daemon.js';
 import { localTokenHeader } from './daemon-auth.js';
+import { daemonFetch } from './daemon-fetch.js';
 import { t } from '../i18n/index.js';
 import type { MessageKey } from '../i18n/dict/index.js';
 import type { Command } from '../parser.js';
@@ -20,7 +20,7 @@ import type { Command } from '../parser.js';
 /** 本机注册表命中项（路径按平台口径归一后比较）。 */
 interface RegistryHit {
   id: number;
-  source: 'init' | 'scan';
+  source: 'init' | 'scan' | 'dashboard';
   archived: boolean;
   token: string;
 }
@@ -139,10 +139,10 @@ function channelText(channel: DiagChannel): string {
 async function printDeliveryDiagnostics(port: number, projectId: number): Promise<void> {
   let data: DiagResponse;
   try {
-    const res = await fetch(
-      `http://${DAEMON_HOST}:${port}/messaging/diagnostics?project=${projectId}`,
-      { headers: localTokenHeader() },
-    );
+    const res = await daemonFetch(`/messaging/diagnostics?project=${projectId}`, {
+      port,
+      headers: localTokenHeader(),
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     // 非 JSON 的 200 = 老 daemon 没这条路由，落到了静态兜底（读成 HTML 也没用）
     try {

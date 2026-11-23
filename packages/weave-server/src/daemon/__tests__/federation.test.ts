@@ -5,7 +5,6 @@ import {
   MDNS_SERVICE_TYPE,
   OFFLINE_AFTER_MS,
   PAIRING_CODE_TTL_MS,
-  advertisable,
   certFingerprint,
   consumeOffer,
   createOffer,
@@ -38,11 +37,6 @@ describe('mDNS 广播载荷', () => {
     expect(mdnsInstanceName('x'.repeat(80))).toHaveLength(63);
   });
 
-  it('advertisable：tlsPort 开着才广播（HTTPS + TOFU 唯一形态）', () => {
-    expect(advertisable(6443)).toBe(true);
-    expect(advertisable(0)).toBe(false);
-    expect(advertisable(undefined)).toBe(false);
-  });
 });
 
 describe('TOFU 指纹对齐（纯函数，F1 消费）', () => {

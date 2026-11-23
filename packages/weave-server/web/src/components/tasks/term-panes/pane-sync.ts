@@ -32,8 +32,14 @@ const CHANNEL = 'weave:term-panes';
 const PRESENCE_MS = 2000;
 const PEER_TTL = 7000;
 
+/** crypto.randomUUID 只在安全上下文（https/localhost）有——HTTP 局域网访问没有。 */
+function uuid(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 class PaneSync {
-  readonly winId = crypto.randomUUID();
+  readonly winId = uuid();
   private channel: BroadcastChannel | null = null;
   private peers = new Map<string, PeerInfo>();
   private dragCb: ((drag: RemoteDrag | null) => void) | null = null;

@@ -13,8 +13,7 @@ describe('mTCP 发现回环可见性', () => {
   it('实例 B 的广播可被发现面看到（端口 + TXT 摘要）', { timeout: 20_000 }, async () => {
     const pems = await generate([{ name: 'commonName', value: 'weave-daemon' }], { keySize: 2048 });
     const advertiser = startMdnsAdvertiser({
-      tlsPort: 46_443,
-      httpPort: 46_420,
+      httpsPort: 46_443,
       certPem: pems.cert,
       hostname: 'loopback-test-b',
     });
@@ -33,9 +32,4 @@ describe('mTCP 发现回环可见性', () => {
     }
   });
 
-  it('tlsPort=0（HTTPS 未开）不广播，返回 null', () => {
-    expect(
-      startMdnsAdvertiser({ tlsPort: 0, httpPort: 46_420, certPem: 'x', hostname: 'h' }),
-    ).toBeNull();
-  });
 });

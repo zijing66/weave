@@ -675,7 +675,7 @@ export async function handleMarketRoutes(
     const token = deps.auth?.getLocalToken() ?? '';
     const config: McpServerConfig = {
       type: 'http',
-      url: `http://127.0.0.1:${deps.port}${builtin.path}`,
+      url: `https://127.0.0.1:${deps.port}${builtin.path}`,
       ...(token ? { headers: { 'x-weave-local': token } } : {}),
     };
     try {

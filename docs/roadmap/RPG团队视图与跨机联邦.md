@@ -468,8 +468,8 @@ v1 不加化身分工表。修剪纪律对齐 `extension_executions`（每角色
     路由，无远程分支——不过早抽象），作为 **C3（RPG-1 适配层）的实现底座**——适配层
     写侧打在服务路由上而非直接打在既有 API 上；F1（联邦批）只加远程路由器与注册
     流程，调用方零改动。
-  - **传输 = TLS，复用既有基建**：daemon 已有 HTTPS 双监听（`selfsigned` 自签 +
-    `server.tlsPort`，dashboard 局域网远程访问在用）——联邦走 HTTPS，零新传输层。
+  - **传输 = TLS，复用既有基建**：daemon 已是单端口 HTTPS（`selfsigned` 自签，
+    dashboard 局域网远程访问在用）——联邦走 HTTPS，零新传输层。
   - **令牌分三层**：本机 `localToken`（本机 dashboard/CLI/MCP 用，**绝不跨机**——
     各机一份是既有实测）；pairing token（配对握手，人工显式确认时交换）；per-peer
     token（联邦会话凭据，每 peer 一份、可吊销）。

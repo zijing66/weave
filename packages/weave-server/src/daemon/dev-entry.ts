@@ -294,7 +294,8 @@ async function main(): Promise<void> {
       }
     })
     .catch((err) => {
-      console.error('[weave] runtime host unavailable:', err instanceof Error ? err.message : err);
+      // 首拍失败多是启动期瞬时争用（如 database is locked）——措辞别咬死 unavailable。
+      console.error(`[weave] runtime reconcile first pass failed (${err instanceof Error ? err.message : err}) — retrying in 30s`);
       runtimeSup.scheduleRetry(); // 30s 周期自愈，连上即停
     });
   runtimeSup.scheduleReconcile(); // 60s 周期对账（事件泵只覆盖在线窗口）
@@ -398,6 +399,11 @@ async function main(): Promise<void> {
     (sessionId) => hookSessions.livenessRowOf(sessionId)?.harness ?? null,
   );
   narrationWatcher.start();
+  // 数据变更帧总线 + 终端世界隐藏刷新（角标 + 会话分块）：前端不再轮询，改由
+  // 后端「有人看时每 30s 探一次、只在值变化时推」。探测要 spawn `wezterm cli`，
+  // 绑 SSE 客户端数。
+  // （提前建：questionTracker 的 onChange 回调在 seedFromDb 那一拍就会 emit。）
+  const dataBus = new DataBus();
   // 阻塞问答跟踪（与生产入口同一装配）：内存状态机 + 重启 seedFromDb 补状态。
   const questionTracker = new QuestionTracker({
     sessions: hookSessions,
@@ -453,10 +459,6 @@ async function main(): Promise<void> {
   };
   const watch = new WatchService(projects);
   watch.start();
-  // 数据变更帧总线 + 终端世界隐藏刷新（角标 + 会话分块）：前端不再轮询，改由
-  // 后端「有人看时每 30s 探一次、只在值变化时推」。探测要 spawn `wezterm cli`，
-  // 绑 SSE 客户端数。
-  const dataBus = new DataBus();
   const terminalRefresher = new TerminalTopologyRefresher(
     async () => {
       const world = await readTerminalWorld(projects.list());

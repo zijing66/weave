@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import https from 'node:https';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { daemonCertsDir, ensureDaemonCert } from '@weavecode/server';
 import { dashboardCommand, dashboardUrl } from '../commands/dashboard';
 import { daemonCommand, waitForDaemon } from '../commands/daemon';
 import { zh, en, type MessageKey } from '../i18n/dict';
@@ -15,8 +20,28 @@ function freePort(server: Server): Promise<number> {
   });
 }
 
+// daemon 是自签 HTTPS（HTTP 已下线）：CLI 把 <data>/local/certs 当 CA 钉住，
+// 故测试把 WEAVE_DATA_DIR 指到临时目录、签一份真证书再起 https fixture。
+let prevDataDir: string | undefined;
+let tmpDataDir: string;
+let cert: { key: Buffer; cert: Buffer };
+
+beforeAll(async () => {
+  prevDataDir = process.env.WEAVE_DATA_DIR;
+  tmpDataDir = mkdtempSync(path.join(os.tmpdir(), 'weave-cli-dash-'));
+  process.env.WEAVE_DATA_DIR = tmpDataDir;
+  const pems = await ensureDaemonCert(daemonCertsDir(), { ips: ['127.0.0.1'] });
+  cert = { key: Buffer.from(pems.key), cert: Buffer.from(pems.cert) };
+});
+
+afterAll(() => {
+  if (prevDataDir === undefined) delete process.env.WEAVE_DATA_DIR;
+  else process.env.WEAVE_DATA_DIR = prevDataDir;
+  rmSync(tmpDataDir, { recursive: true, force: true });
+});
+
 const healthOnly = (): Server =>
-  createServer((_req, res) => {
+  https.createServer(cert, (_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ service: 'weave-daemon' }));
   });
@@ -43,7 +68,7 @@ describe('waitForDaemon', () => {
 
 describe('dashboardUrl', () => {
   it('is the loopback origin on the given port', () => {
-    expect(dashboardUrl(6420)).toBe('http://127.0.0.1:6420/');
+    expect(dashboardUrl(6420)).toBe('https://127.0.0.1:6420/');
   });
 
   it('uses the actual port, not the default', () => {

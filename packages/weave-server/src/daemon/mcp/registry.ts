@@ -24,6 +24,8 @@ export interface McpHttpContext {
   port: number;
   /** 本机令牌；null = 未装认证（测试/开放口），调用不带令牌。 */
   token: string | null;
+  /** 自调用用的 CA（本机证书 PEM）——daemon 是自签 HTTPS；缺省 = 明文 http（测试夹具）。 */
+  ca?: string;
 }
 
 /** 工具的 schema 定义（每个工具都带 outputSchema：宿主据此校验/展示返回）。 */

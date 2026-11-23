@@ -1,6 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { openDatabase } from '../db/db.js';
 import { getDbPath } from '../db/paths.js';
+import { resolveWindowsCommand } from '../runtime/windows-bin-resolver.js';
 import { DEFAULT_BIND_HOST } from './port.js';
 
 /**
@@ -40,6 +43,9 @@ export interface TerminalSettings {
   preset: TerminalPreset;
   /** Template for `custom`; `{path}` is replaced with the quoted directory. */
   customCommand: string;
+  /** Web 终端（preset=web）打开的 shell 命令行（可带参数，支持引号）；
+   *  空 = 平台默认（win32 = `powershell.exe -NoLogo`，其余 = `$SHELL` / bash）。 */
+  webShell?: string;
 }
 
 /**
@@ -114,11 +120,11 @@ export interface StartupSettings {
   launchOnLogin: boolean;
 }
 
-/** 监听面设置：绑定地址（默认放开 0.0.0.0，由 dashboard 密码认证兜底；可改回 127.0.0.1）+ HTTPS 端口。 */
+/** 监听面设置：只有绑定地址（默认放开 0.0.0.0，由 dashboard 密码认证兜底；
+ *  可改回 127.0.0.1）。协议恒 HTTPS、端口恒 daemon 主端口（2026-11-23 裁决：
+ *  HTTP 下线，不再有第二个 TLS 监听）。 */
 export interface ServerSettings {
   bindHost: string;
-  /** 局域网 HTTPS 监听端口（自签证书，手机浏览器通知的前提）；0 = 关闭。 */
-  tlsPort: number;
 }
 
 /** 终端开窗行为：落子后把目标 OS 窗口拉回可见（隐藏窗的自动恢复；默认开——
@@ -165,7 +171,111 @@ export interface HtmlExportSettings {
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   preset: 'web',
   customCommand: '',
+  webShell: '',
 };
+
+/** 设置页的 Web 终端壳候选：本机真装了的常见 shell。 */
+export interface WebShellChoice {
+  /** 绝对路径（直接交给 Runtime Host spawn，路径上的裸名解析由它负责也可以）。 */
+  command: string;
+  label: string;
+}
+
+const WINDOWS_SHELL_CANDIDATES: ReadonlyArray<{ bin: string; label: string }> = [
+  { bin: 'pwsh.exe', label: 'PowerShell 7' },
+  { bin: 'powershell.exe', label: 'Windows PowerShell' },
+  { bin: 'cmd.exe', label: 'cmd.exe' },
+  { bin: 'wsl.exe', label: 'WSL' },
+  { bin: 'bash.exe', label: 'bash (Git Bash / WSL)' },
+];
+
+/** win32：PATH 上找得到才列（`where` 解析链复用 runtime 那份，不另写一套）。 */
+function windowsShellChoices(): WebShellChoice[] {
+  return WINDOWS_SHELL_CANDIDATES.flatMap(({ bin, label }) => {
+    const resolved = resolveWindowsCommand(bin, []);
+    return resolved.kind === 'direct' ? [{ command: resolved.command, label }] : [];
+  });
+}
+
+/** POSIX：/etc/shells 是本机合法登录 shell 的权威清单；没有该文件的发行版按常见路径兜底。 */
+function posixShellChoices(): WebShellChoice[] {
+  const listed = new Set<string>();
+  try {
+    for (const line of readFileSync('/etc/shells', 'utf8').split(/\r?\n/)) {
+      const p = line.trim();
+      if (p && !p.startsWith('#')) listed.add(p);
+    }
+  } catch {
+    // 无 /etc/shells：走兜底清单
+  }
+  const envShell = process.env['SHELL'];
+  if (envShell) listed.add(envShell);
+  if (listed.size === 0) for (const p of ['/bin/sh', '/bin/bash', '/bin/zsh']) listed.add(p);
+  return [...listed]
+    .filter((p) => !/(^|\/)(nologin|false)$/.test(p) && existsSync(p))
+    .map((p) => ({ command: p, label: basename(p) }));
+}
+
+let webShellChoicesCache: { platform: NodeJS.Platform; choices: WebShellChoice[] } | null = null;
+
+/** 设置页候选（进程内缓存：机器的 shell 集合不随请求变）。 */
+export function webShellChoices(platform: NodeJS.Platform = process.platform): WebShellChoice[] {
+  if (webShellChoicesCache?.platform !== platform) {
+    webShellChoicesCache = {
+      platform,
+      choices: platform === 'win32' ? windowsShellChoices() : posixShellChoices(),
+    };
+  }
+  return webShellChoicesCache.choices;
+}
+
+/** 平台默认壳：win32 = Windows PowerShell；其余 = 登录 shell（daemon 环境常无 SHELL，回落 bash）。 */
+export function defaultWebShell(platform: NodeJS.Platform = process.platform): {
+  command: string;
+  args: string[];
+} {
+  return platform === 'win32'
+    ? { command: 'powershell.exe', args: ['-NoLogo'] }
+    : { command: process.env['SHELL'] || 'bash', args: [] };
+}
+
+/** 命令行切分：引号感知（`"…"` / `'…'` 成组），空白分段；不走 shell 解释。 */
+function splitCommandLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  let started = false;
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      started = true;
+    } else if (/\s/.test(ch)) {
+      if (started) {
+        out.push(cur);
+        cur = '';
+        started = false;
+      }
+    } else {
+      cur += ch;
+      started = true;
+    }
+  }
+  if (started) out.push(cur);
+  return out;
+}
+
+/** Web 终端壳的 spawn 形：配置空 = 平台默认，否则按命令行解析出 command + args。 */
+export function resolveWebShell(
+  webShell: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  const tokens = splitCommandLine(webShell ?? '');
+  if (tokens.length === 0) return defaultWebShell(platform);
+  return { command: tokens[0]!, args: tokens.slice(1) };
+}
 
 export const DEFAULT_HOOKS_SETTINGS: HooksSettings = { enabled: true };
 
@@ -195,7 +305,7 @@ export const DEFAULT_EXTENSIONS_SETTINGS: ExtensionsSettings = { staleMs: DEFAUL
 export const DEFAULT_STARTUP_SETTINGS: StartupSettings = { launchOnLogin: false };
 
 /** 默认放开绑定（局域网可达）：dashboard 密码认证是这层的兜底。HTTPS 与 HTTP 并存（见 daemon/tls.ts）。 */
-export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_HOST, tlsPort: 6443 };
+export const DEFAULT_SERVER_SETTINGS: ServerSettings = { bindHost: DEFAULT_BIND_HOST };
 
 /** 缺省未配置（地址/模型皆空）——助手按钮此时不显示。 */
 export const DEFAULT_AI_SETTINGS: AiSettings = { baseUrl: '', model: '' };
@@ -348,13 +458,6 @@ export function terminalPresetsFor(platform: NodeJS.Platform): TerminalPresetMet
   return ids.map((id) => ({ id, label: PRESET_LABELS[id] }));
 }
 
-/** tlsPort 归一：0-65535 的整数（0 = 关闭 HTTPS）；其余（缺省/坏值）回落默认端口。 */
-function normalizeTlsPort(raw: unknown): number {
-  return Number.isInteger(raw) && (raw as number) >= 0 && (raw as number) <= 65535
-    ? (raw as number)
-    : DEFAULT_SERVER_SETTINGS.tlsPort;
-}
-
 /** 头配置条数/单份 head 的上限（这是「用户填的一段 HTML」，不是无界存储）。 */
 const HTML_EXPORT_MAX_PROFILES = 50;
 const HTML_EXPORT_MAX_HEAD = 200_000;
@@ -458,6 +561,7 @@ function mergeDefaults(raw: unknown): DaemonSettings {
         ? (term.preset as TerminalPreset)
         : DEFAULT_TERMINAL_SETTINGS.preset,
       customCommand: typeof term.customCommand === 'string' ? term.customCommand : '',
+      webShell: typeof term.webShell === 'string' ? term.webShell : '',
     },
     locale: resolveLocale(obj.locale),
     hooks: {
@@ -482,7 +586,6 @@ function mergeDefaults(raw: unknown): DaemonSettings {
         typeof server.bindHost === 'string' && server.bindHost.trim() !== ''
           ? server.bindHost.trim()
           : DEFAULT_SERVER_SETTINGS.bindHost,
-      tlsPort: normalizeTlsPort(server.tlsPort),
     },
     ai: {
       baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl.trim() : '',
@@ -542,6 +645,7 @@ function normalizeBackup(raw: unknown): BackupSettings {
 const KEYS = {
   terminalPreset: 'terminal.preset',
   terminalCustomCommand: 'terminal.customCommand',
+  terminalWebShell: 'terminal.webShell',
   locale: 'locale',
   hooksEnabled: 'hooks.enabled',
   eventRetentionDays: 'events.retentionDays',
@@ -550,7 +654,6 @@ const KEYS = {
   extensionStaleMs: 'extensions.staleMs',
   startupLaunchOnLogin: 'startup.launchOnLogin',
   serverBindHost: 'server.bindHost',
-  serverTlsPort: 'server.tlsPort',
   aiBaseUrl: 'ai.baseUrl',
   aiModel: 'ai.model',
   decisionBaseUrl: 'decision.baseUrl',
@@ -607,6 +710,7 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     terminal: {
       preset: map.get(KEYS.terminalPreset),
       customCommand: map.get(KEYS.terminalCustomCommand),
+      webShell: map.get(KEYS.terminalWebShell),
     },
     locale: map.get(KEYS.locale),
     ...(map.has(KEYS.hooksEnabled)
@@ -633,13 +737,8 @@ function fromMap(map: Map<string, string>): DaemonSettings {
     ...(map.has(KEYS.startupLaunchOnLogin)
       ? { startup: { launchOnLogin: map.get(KEYS.startupLaunchOnLogin) === 'true' } }
       : {}),
-    ...(map.has(KEYS.serverBindHost) || map.has(KEYS.serverTlsPort)
-      ? {
-          server: {
-            ...(map.has(KEYS.serverBindHost) ? { bindHost: map.get(KEYS.serverBindHost)! } : {}),
-            ...(map.has(KEYS.serverTlsPort) ? { tlsPort: Number(map.get(KEYS.serverTlsPort)) } : {}),
-          },
-        }
+    ...(map.has(KEYS.serverBindHost)
+      ? { server: { bindHost: map.get(KEYS.serverBindHost)! } }
       : {}),
     ...(map.has(KEYS.aiBaseUrl) || map.has(KEYS.aiModel)
       ? { ai: { baseUrl: map.get(KEYS.aiBaseUrl) ?? '', model: map.get(KEYS.aiModel) ?? '' } }
@@ -687,6 +786,7 @@ function toEntries(settings: DaemonSettings): [string, string][] {
   return [
     [KEYS.terminalPreset, settings.terminal.preset],
     [KEYS.terminalCustomCommand, settings.terminal.customCommand],
+    [KEYS.terminalWebShell, settings.terminal.webShell ?? ''],
     [KEYS.locale, settings.locale],
     [KEYS.hooksEnabled, String(settings.hooks.enabled)],
     [
@@ -707,7 +807,6 @@ function toEntries(settings: DaemonSettings): [string, string][] {
     ],
     [KEYS.startupLaunchOnLogin, String(settings.startup?.launchOnLogin ?? false)],
     [KEYS.serverBindHost, settings.server?.bindHost ?? DEFAULT_BIND_HOST],
-    [KEYS.serverTlsPort, String(settings.server?.tlsPort ?? DEFAULT_SERVER_SETTINGS.tlsPort)],
     [KEYS.aiBaseUrl, settings.ai?.baseUrl ?? ''],
     [KEYS.aiModel, settings.ai?.model ?? ''],
     [KEYS.decisionBaseUrl, settings.decision?.baseUrl ?? ''],

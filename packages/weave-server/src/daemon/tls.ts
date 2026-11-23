@@ -31,17 +31,13 @@ export interface AccessUrl {
 }
 
 /**
- * 守护进程的全部访问地址（`daemon status` 与设置页同一事实源）：
- * 每个局域网 IP × 已开协议，外加 localhost。tlsPort 为 0/未开则只有 http。
+ * 守护进程的全部访问地址（`daemon status` 与设置页同一事实源）：单端口 HTTPS
+ *（2026-11-23 裁决 HTTP 下线）——localhost + 每个局域网 IP 各一条。
  */
-export function accessUrls(port: number, tlsPort: number): AccessUrl[] {
-  const urls: AccessUrl[] = [{ url: `http://localhost:${port}`, protocol: 'http', scope: 'local' }];
-  if (tlsPort > 0) {
-    urls.push({ url: `https://localhost:${tlsPort}`, protocol: 'https', scope: 'local' });
-  }
+export function accessUrls(port: number): AccessUrl[] {
+  const urls: AccessUrl[] = [{ url: `https://localhost:${port}`, protocol: 'https', scope: 'local' }];
   for (const ip of lanIps()) {
-    urls.push({ url: `http://${ip}:${port}`, protocol: 'http', scope: 'lan' });
-    if (tlsPort > 0) urls.push({ url: `https://${ip}:${tlsPort}`, protocol: 'https', scope: 'lan' });
+    urls.push({ url: `https://${ip}:${port}`, protocol: 'https', scope: 'lan' });
   }
   return urls;
 }
@@ -111,42 +107,142 @@ export async function ensureDaemonCert(
   return { key: pems.private, cert: pems.cert };
 }
 
-export interface TlsListener {
-  server: https.Server;
-  /** 实际监听端口（与请求的相同）。 */
-  port: number;
+/**
+ * 建主 HTTPS 监听（daemon 的唯一网络面，2026-11-23 裁决 HTTP 下线）。证书取
+ * 自签盘件（缺失/过期/IP 变了会重签）。返回的 server 由调用方 listen。
+ */
+export async function createDaemonServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  opts: { certDir?: string } = {},
+): Promise<https.Server> {
+  const { key, cert } = await ensureDaemonCert(opts.certDir);
+  return https.createServer({ key, cert }, handler);
+}
+
+// ---- 本机信任安装（用户级、无提权，daemon 启动期跑一次） ----
+
+export interface TrustCmd {
+  cmd: string;
+  args: string[];
+}
+
+const NSS_DB = () => `sql:${path.join(os.homedir(), '.pki', 'nssdb')}`;
+
+/** 已在库/已信任的探测：命中就不再调用安装命令——安装命令每次都会弹系统
+ *  授权框（Windows 安全警告、macOS 钥匙串提示），「只在首次提示」全靠这一步。 */
+function trustProbeFor(platform: NodeJS.Platform, certPath: string, thumbprintSha1: string): TrustCmd | null {
+  switch (platform) {
+    case 'win32':
+      // -verifystore 只查不写，无弹框；当前用户 Root store。
+      return { cmd: 'certutil', args: ['-user', '-verifystore', 'Root', thumbprintSha1] };
+    case 'darwin':
+      // 真正问「这份证书是否被信任」（库里存在 ≠ 信任标了 root）。
+      return { cmd: 'security', args: ['verify-cert', '-c', certPath, '-p', 'ssl'] };
+    case 'linux':
+      return { cmd: 'certutil', args: ['-d', NSS_DB(), '-L', '-n', 'weave-daemon'] };
+    default:
+      return null;
+  }
+}
+
+/** 安装到**用户级**受信任根（免管理员/root；失败只警告不拦启动）。 */
+function trustInstallFor(platform: NodeJS.Platform, certPath: string): TrustCmd | null {
+  switch (platform) {
+    case 'win32':
+      // certutil -user：当前用户 Root store，无 UAC（首次会有一次安全警告框）。
+      return { cmd: 'certutil', args: ['-user', '-addstore', 'Root', certPath] };
+    case 'darwin':
+      // 用户登录钥匙串 + 用户域信任标；不带 -d（-d 是系统域，要 root）。
+      return {
+        cmd: 'security',
+        args: ['add-trusted-cert', '-r', 'trustRoot', '-p', 'ssl', '-k', path.join(os.homedir(), 'Library', 'Keychains', 'login.keychain-db'), certPath],
+      };
+    case 'linux':
+      // NSS 共享库（Chrome/Firefox 用户库）；certutil 来自 libnss3-tools。
+      return { cmd: 'certutil', args: ['-d', NSS_DB(), '-A', '-t', 'C,,', '-n', 'weave-daemon', '-i', certPath] };
+    default:
+      return null;
+  }
+}
+
+/** 记录已安装的证书指纹（兜底探测之外的快路径）。 */
+function trustMarkerPath(dir: string): string {
+  return path.join(dir, 'trust-installed');
+}
+
+export type TrustRunner = (spec: TrustCmd, timeoutMs: number) => Promise<number | null>;
+
+function runTrustCmd(spec: TrustCmd, timeoutMs: number): Promise<number | null> {
+  return new Promise((resolve) => {
+    void (async () => {
+      const { spawn } = await import('node:child_process');
+      const child = spawn(spec.cmd, spec.args, { stdio: 'ignore', windowsHide: true });
+      let settled = false;
+      const done = (code: number | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(code);
+      };
+      const timer = setTimeout(() => {
+        child.kill();
+        done(null);
+      }, timeoutMs);
+      timer.unref();
+      child.on('error', () => done(null)); // 命令不存在（如 linux 未装 libnss3-tools）
+      child.on('close', (code) => done(code));
+    })();
+  });
 }
 
 /**
- * 起局域网 HTTPS 监听（与 6420 的 HTTP 并存，同一认证/路由面）。
- * 端口被占等失败**不致命**：警告后放弃 HTTPS（HTTP 不受影响）。
+ * 把自签证书装进本机**用户级**受信任根（2026-11-23 用户裁决：daemon 启动时自动装，
+ * 本机访问不报「证书不受信任」）。先探测（指纹标记 → 平台探测），只在确实没装过
+ * 时才调用安装命令——系统授权框只在首次出现。平台差异收在本文件两处命令表里；
+ * 任何失败都只警告，不影响 HTTPS 监听本身（浏览器可回落手动信任一次）。
  */
-export async function startTlsServer(opts: {
-  port: number;
-  bindHost: string;
-  handler: (req: IncomingMessage, res: ServerResponse) => void;
-  /** upgrade 监听（与 HTTP 监听同一份；WS 端点双监听都要挂）。 */
-  upgrade?: (req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => void;
-  /** 证书目录（测试注入临时目录）；缺省 `<dataDir>/certs`。 */
-  certDir?: string;
-}): Promise<TlsListener | null> {
-  if (opts.port <= 0) return null;
+export async function installCertTrust(
+  certPath: string,
+  dir: string = daemonCertsDir(),
+  deps: { run?: TrustRunner; platform?: NodeJS.Platform } = {},
+): Promise<void> {
+  const run = deps.run ?? runTrustCmd;
+  const platform = deps.platform ?? process.platform;
+  const install = trustInstallFor(platform, certPath);
+  if (!install) return;
+  let fp = '';
+  let thumbprint = '';
   try {
-    const { key, cert } = await ensureDaemonCert(opts.certDir);
-    const server = https.createServer({ key, cert }, opts.handler);
-    if (opts.upgrade) server.on('upgrade', opts.upgrade);
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(opts.port, opts.bindHost, () => {
-        server.off('error', reject);
-        resolve();
-      });
-    });
-    return { server, port: opts.port };
-  } catch (e) {
-    console.warn(
-      `[weave] https listener disabled (port ${opts.port}): ${e instanceof Error ? e.message : String(e)}`,
-    );
-    return null;
+    const x509 = new X509Certificate(readFileSync(certPath));
+    fp = x509.fingerprint256;
+    thumbprint = x509.fingerprint.replace(/:/g, '');
+  } catch {
+    return; // 证书都读不了：监听侧会重签，信任这拍等下一轮
   }
+
+  const marker = trustMarkerPath(dir);
+  try {
+    if (readFileSync(marker, 'utf8').trim() === fp) return;
+  } catch {
+    /* 首次：往下走 */
+  }
+
+  const markDone = (): void => {
+    try {
+      writeFileSync(marker, fp);
+    } catch {
+      /* 标记写不进无所谓：下次探测兜住 */
+    }
+  };
+
+  const probe = trustProbeFor(platform, certPath, thumbprint);
+  if (probe && (await run(probe, 10_000)) === 0) {
+    markDone();
+    return;
+  }
+
+  // 安装可能等用户点一次系统授权框，给足时间；daemon 启动不等它（调用方 void）。
+  const code = await run(install, 120_000);
+  if (code === 0) markDone();
+  else console.warn(`[weave] cert trust install failed (${install.cmd} exit ${code ?? 'timeout'}) — 浏览器可手动信任一次 ${certPath}`);
 }

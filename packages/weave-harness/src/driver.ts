@@ -1289,6 +1289,12 @@ export interface LivenessSurface {
    * 由装配层缓存（周期刷新）。
    */
   aliveSync?(ids?: readonly string[]): Map<string, boolean>;
+  /**
+   * 同一会话的活实例清单（可选）：Web 终端 PTY 与外部终端 `--resume` 会同时打开
+   * 同一会话，两个进程写同一份转录——消费方据此告警与防双开。只输出**真活着**
+   * 的 pid；未声明 = 本 harness 没有「同会话多实例」这个概念（不判）。
+   */
+  instances?(ids?: readonly string[]): Map<string, number[]>;
 }
 
 /** 一次对话回退（宿主 rewind）：退掉的区间 = `[boundaryAt, at)`。 */

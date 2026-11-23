@@ -101,6 +101,10 @@ export const settingsZh = {
   'settings.fontScaleReset': '重置',
   'settings.defaultTerminal': '默认终端',
   'settings.defaultTerminalHint': '「在终端中打开」使用的终端程序；自动 = 自动选择可用的终端。',
+  'settings.webShell': 'Web 终端 shell',
+  'settings.webShellHint':
+    'Web 终端默认打开的 shell（可带参数，空 = 平台默认：Windows 为 powershell.exe，其余为登录 shell）。',
+  'settings.webShellDefault': '平台默认',
   'settings.customCommand': '自定义命令',
   'settings.pathHint': '会被替换为带引号的项目路径，例如：',
   'settings.hooks': 'Weave 总开关',
@@ -320,6 +324,10 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.defaultTerminal': 'Default terminal',
   'settings.defaultTerminalHint':
     'Terminal used by "Open in terminal"; auto picks an available terminal.',
+  'settings.webShell': 'Web terminal shell',
+  'settings.webShellHint':
+    'Shell the web terminal opens (may include arguments; empty = platform default: powershell.exe on Windows, login shell elsewhere).',
+  'settings.webShellDefault': 'Platform default',
   'settings.customCommand': 'Custom command',
   'settings.pathHint': 'is replaced with the quoted project path, e.g.:',
   'settings.hooks': 'Weave master switch',

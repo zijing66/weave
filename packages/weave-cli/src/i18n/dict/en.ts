@@ -56,7 +56,7 @@ export const en: Record<keyof typeof zh, string> = {
   'flag.dashboard.noOpen': 'Print the dashboard URL without opening a browser',
   // --- daemon command output ---
   'out.daemon.alreadyRunning': 'Daemon already running on port {port}',
-  'out.daemon.started': 'Daemon started on http://{host}:{port}',
+  'out.daemon.started': 'Daemon started on https://{host}:{port}',
   'out.daemon.startUnconfirmed':
     'Daemon not answering on port {port} — it may have crashed at boot (see cache/logs/daemon-boot.log in the data dir)',
   'out.daemon.stopped': 'Daemon stopped (pid {pid}).',
@@ -163,7 +163,7 @@ export const en: Record<keyof typeof zh, string> = {
   'out.dash.stopHint': 'Stop it later with `weave daemon stop`.',
   'out.dash.noBundle': 'The web bundle is not built, so the daemon has nothing to serve.',
   'out.dash.buildHint':
-    '  Build it with `pnpm build:web`, or run the Vite dev server: `pnpm dev:web` (http://localhost:9527).',
+    '  Build it with `pnpm build:web`, or run the Vite dev server: `pnpm dev:web` (https://localhost:9527).',
   'out.dash.url': '\n  Dashboard: {url}\n',
   'out.dash.noOpen': '  (--no-open: not launching a browser)',
   'out.dash.initialPassword':

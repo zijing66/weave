@@ -1,12 +1,12 @@
 import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { X509Certificate } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { generate } from 'selfsigned';
-import { accessUrls, ensureDaemonCert, lanIps, startTlsServer } from '../tls.js';
+import { accessUrls, createDaemonServer, ensureDaemonCert, installCertTrust, lanIps } from '../tls.js';
 import { weaveRequestHandler } from '../server.js';
 
 /**
@@ -89,20 +89,15 @@ describe('ensureDaemonCert', () => {
 });
 
 describe('accessUrls', () => {
-  it('tlsPort 关闭 → 只有 http；开启 → 每 IP 双协议 + localhost 双协议', () => {
+  it('单端口 HTTPS：localhost + 每个局域网 IP 各一条（2026-11-23 HTTP 下线）', () => {
     const ips = lanIps();
-    const httpOnly = accessUrls(6420, 0);
-    expect(httpOnly[0]).toEqual({ url: 'http://localhost:6420', protocol: 'http', scope: 'local' });
-    expect(httpOnly.every((u) => u.protocol === 'http')).toBe(true);
-    expect(httpOnly).toHaveLength(1 + ips.length);
-
-    const dual = accessUrls(6420, 6443);
-    expect(dual.some((u) => u.url === 'https://localhost:6443')).toBe(true);
+    const urls = accessUrls(6420);
+    expect(urls[0]).toEqual({ url: 'https://localhost:6420', protocol: 'https', scope: 'local' });
+    expect(urls.every((u) => u.protocol === 'https')).toBe(true);
     for (const ip of ips) {
-      expect(dual.some((u) => u.url === `http://${ip}:6420`)).toBe(true);
-      expect(dual.some((u) => u.url === `https://${ip}:6443`)).toBe(true);
+      expect(urls.some((u) => u.url === `https://${ip}:6420`)).toBe(true);
     }
-    expect(dual).toHaveLength((1 + ips.length) * 2);
+    expect(urls).toHaveLength(1 + ips.length);
   });
 
   it('lanIps 只含非 internal IPv4', () => {
@@ -115,7 +110,7 @@ describe('accessUrls', () => {
   });
 });
 
-describe('startTlsServer', () => {
+describe('createDaemonServer', () => {
   async function freePort(): Promise<number> {
     return new Promise((resolve, reject) => {
       const probe = net.createServer();
@@ -127,19 +122,14 @@ describe('startTlsServer', () => {
     });
   }
 
-  it('与 HTTP 同 handler：https 请求（忽略自签）打穿 /health', async () => {
+  it('唯一网络面：https 请求（忽略自签）打穿 /health', async () => {
     const port = await freePort();
     const handler = weaveRequestHandler({
       projects: { list: () => [], getById: () => undefined } as never,
       port,
     });
-    const tls = await startTlsServer({
-      port,
-      bindHost: '127.0.0.1',
-      handler,
-      certDir: tmpDir(),
-    });
-    expect(tls).not.toBeNull();
+    const server = await createDaemonServer(handler, { certDir: tmpDir() });
+    await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
     const body = await new Promise<string>((resolve, reject) => {
       https
         .get({ host: '127.0.0.1', port, rejectUnauthorized: false, path: '/health' }, (res) => {
@@ -153,26 +143,55 @@ describe('startTlsServer', () => {
     const parsed = JSON.parse(body) as { service: string; port: number };
     expect(parsed.service).toBe('weave-daemon');
     expect(parsed.port).toBe(port);
-    tls?.server.close();
+    server.close();
+  });
+});
+
+describe('installCertTrust', () => {
+  // 注入 runner：测试绝不真跑 certutil/security（那会弹系统授权框并改本机信任库）。
+  const fakeRunner = (codes: Array<number | null>) => {
+    const calls: string[][] = [];
+    const run = async (spec: { cmd: string; args: string[] }): Promise<number | null> => {
+      calls.push([spec.cmd, ...spec.args]);
+      return codes.shift() ?? 0;
+    };
+    return { calls, run };
+  };
+
+  it('首次：探测未命中 → 安装一次 → 写指纹标记；同证书再调直接跳过', async () => {
+    const dir = tmpDir();
+    const { cert } = await ensureDaemonCert(dir, { ips: ['127.0.0.1'] });
+    const certPath = path.join(dir, 'host.crt');
+    const { calls, run } = fakeRunner([1, 0]); // 探测说未信任，安装成功
+    await installCertTrust(certPath, dir, { run, platform: 'win32' });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.join(' ')).toContain('-verifystore');
+    expect(calls[1]!.join(' ')).toContain('-addstore');
+    const marker = readFileSync(path.join(dir, 'trust-installed'), 'utf8');
+    expect(marker.trim()).toBe(new X509Certificate(cert).fingerprint256);
+
+    const again = fakeRunner([1, 0]);
+    await installCertTrust(certPath, dir, { run: again.run, platform: 'win32' });
+    expect(again.calls).toHaveLength(0); // 标记命中：一个命令都不跑
   });
 
-  it('port 0 = 关闭 → null', async () => {
-    expect(
-      await startTlsServer({ port: 0, bindHost: '127.0.0.1', handler: () => {}, certDir: tmpDir() }),
-    ).toBeNull();
+  it('探测说已信任 → 不装，只补标记（授权框只在首次）', async () => {
+    const dir = tmpDir();
+    await ensureDaemonCert(dir, { ips: ['127.0.0.1'] });
+    const certPath = path.join(dir, 'host.crt');
+    const { calls, run } = fakeRunner([0]);
+    await installCertTrust(certPath, dir, { run, platform: 'darwin' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['security', 'verify-cert', '-c', certPath, '-p', 'ssl']);
+    expect(readFileSync(path.join(dir, 'trust-installed'), 'utf8').trim()).not.toBe('');
   });
 
-  it('端口被占 → 降级 null 而非抛错', async () => {
-    const blocker = net.createServer();
-    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
-    const busyPort = (blocker.address() as net.AddressInfo).port;
-    const result = await startTlsServer({
-      port: busyPort,
-      bindHost: '127.0.0.1',
-      handler: () => {},
-      certDir: tmpDir(),
-    });
-    expect(result).toBeNull();
-    blocker.close();
+  it('安装失败 → 不写标记（下次还会再试一次）', async () => {
+    const dir = tmpDir();
+    await ensureDaemonCert(dir, { ips: ['127.0.0.1'] });
+    const certPath = path.join(dir, 'host.crt');
+    const { run } = fakeRunner([1, 1]);
+    await installCertTrust(certPath, dir, { run, platform: 'linux' });
+    expect(existsSync(path.join(dir, 'trust-installed'))).toBe(false);
   });
 });

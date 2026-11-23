@@ -141,8 +141,11 @@ export class MetricsSampler {
   private lastDaemonAt = Date.now();
   private hostReport: ResourceReportPayload | null = null;
   private hostSeenAt = 0;
-  /** 上拍 Agent 进程读数（CPU% 差分基线）。 */
-  private prevPidReadings = new Map<number, { reading: PidReading; processKey: string; at: number }>();
+  /** 上拍 Agent 进程读数（CPU% 差分基线 + 上拍产出值，整枪失败时沿用）。 */
+  private prevPidReadings = new Map<
+    number,
+    { reading: PidReading; processKey: string; at: number; cpuPercent?: number; diskBytesPerSec?: number }
+  >();
   /** 上拍实例吞吐（累计字节 → 速率）。 */
   private prevOutputBytes = new Map<string, { bytes: number; at: number }>();
   private agentSamples = new Map<string, MetricsAgentSample>();
@@ -347,7 +350,25 @@ export class MetricsSampler {
 
     const pids = [...byPid.keys()];
     if (pids.length > 0 && this.shouldSampleAgents()) {
-      const tree = await this.readProcessTree().catch(() => new Map<number, ProcessTreeReading>());
+      let tree: Map<number, ProcessTreeReading>;
+      try {
+        tree = await this.readProcessTree();
+      } catch {
+        // 整枪失败（PowerShell 超时等）≠ 实例消失：沿用上一拍读数，项目/会话卡
+        // 不闪成「只剩两枚 —」（2026-11-23 实测）。实例行本身仍如实重建。
+        for (const [pid, row] of byPid) {
+          const last = this.prevPidReadings.get(pid);
+          const sample = samples.find((s) => s.instanceId === row.id);
+          if (last && sample) {
+            sample.memRssBytes = last.reading.memRssBytes;
+            sample.cpuPercent = last.cpuPercent;
+            sample.diskBytesPerSec = last.diskBytesPerSec;
+          }
+        }
+        this.agentSamples = new Map(samples.map((s) => [s.instanceId, s]));
+        this.emit();
+        return;
+      }
       const prev = this.prevPidReadings;
       for (const [pid, row] of byPid) {
         // PTY 根（如 cmd.exe /c）只是包装壳——只沿「壳 + 唯一直接子进程」链下钻到真宿主；
@@ -366,7 +387,13 @@ export class MetricsSampler {
             if (ioDelta >= 0) sample.diskBytesPerSec = Math.round(ioDelta / ((now - last.at) / 1000));
           }
         }
-        prev.set(pid, { reading: cur, processKey: cur.processKey, at: now });
+        prev.set(pid, {
+          reading: cur,
+          processKey: cur.processKey,
+          at: now,
+          ...(sample?.cpuPercent !== undefined ? { cpuPercent: sample.cpuPercent } : {}),
+          ...(sample?.diskBytesPerSec !== undefined ? { diskBytesPerSec: sample.diskBytesPerSec } : {}),
+        });
       }
     }
 

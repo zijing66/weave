@@ -40,7 +40,7 @@ init 的写文件纪律：`.weave/` 内 weave 自有文件可刷新、用户文�
 
 **AI 助手**（dashboard 右下角浮层，配置齐才显示）：服务端代理转发到 OpenAI 兼容端点（`POST {baseUrl}/chat/completions`），流式增量转自家 `{delta}/{done}/{error}` 帧；网关不支持流式时自动记 24 小时并降级非流式；api key 只写不回显。
 
-**设置面**：`server.bindHost`（默认 `0.0.0.0`，可改回 `127.0.0.1`）、`server.tlsPort`（HTTPS 双监听，0 = 关）、`ai.baseUrl` / `ai.model` / `ai.apiKey`（只写，GET 只回 `apiKeySet`）、终端后端预设。
+**设置面**：`server.bindHost`（默认 `0.0.0.0`，可改回 `127.0.0.1`；daemon 恒单端口 HTTPS，HTTP 已下线）、`ai.baseUrl` / `ai.model` / `ai.apiKey`（只写，GET 只回 `apiKeySet`）、终端后端预设。
 
 **资源管理三层**（互不越级）：①市场副本层——资源市场侧栏导入 / 移除（`market/<id>/` 副本，移除插件装面副本有破坏性确认；本地目录导入走跨平台目录树选择器，顶部一行完整绝对路径——树里勾选即在其中显示，也可直接粘贴路径加入选择）；②安装/卸载层——装到项目 skills / 文件资产 / MCP / 工具箱包 / 全局个人 skills / harness 插件注册表；③启用/停用层——包开关 / settings 落盘。**工具箱**五形态包：`skill` / `rule` / `mod`（hooks 规则 + 处理器）/ `hook` / `surface`（裸 agents/commands 解包进项目 `.claude/`）。**全局文件资产**：`~/.claude`、`~/.codex` 下受控白名单文件树管理。市场更新检查（`check-updates`）与刷新（`refresh`）。
 
@@ -54,7 +54,7 @@ init 的写文件纪律：`.weave/` 内 weave 自有文件可刷新、用户文�
 
 - 口令材料落 `<dataDir>/auth.json`（0600）：密码（scrypt hash）、30 天无状态签名会话 cookie、本机令牌 `x-weave-local`（CLI 与 hooks 免密——同机同用户即管理员）。
 - 改密只走 CLI（`weave chpass`）；web 侧 401 一律打回登录页、未登录不建 SSE 连接；`/health`、`/auth/*` 与静态资源豁免。
-- 监听：HTTP 按 `server.bindHost`；可选自签 HTTPS 第二监听（`server.tlsPort`，证书自动重签、失败降级仅警告）；访问地址枚举由 `weave daemon status` 与 `GET /settings` 的 `urls` 同源给出。手机浏览器要系统通知必须走 https origin。
+- 监听：**单端口 HTTPS**（HTTP 已下线，2026-11-23 裁决），按 `server.bindHost` 绑定；自签证书落 `<dataDir>/local/certs`（自动重签、启动时尝试装进当前用户级信任库）；dev:web 同样只在 9527 出 HTTPS。访问地址枚举由 `weave daemon status` 与 `GET /settings` 的 `urls` 同源给出。手机浏览器要系统通知必须走 https origin。
 
 ## 四、采集与数据
 

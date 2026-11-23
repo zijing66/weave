@@ -100,9 +100,9 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     expect(data.presets.some((p) => p.id === 'auto')).toBe(true);
     expect(data.presets.some((p) => p.id === 'custom')).toBe(true);
     expect(typeof data.platform).toBe('string');
-    // 访问地址派生面：本机回环 http 在列（deps.port 派生）；未开 tls → 无 https 项
-    expect(data.urls.some((u) => u.url.startsWith('http://localhost:'))).toBe(true);
-    expect(data.urls.every((u) => u.protocol === 'http')).toBe(true);
+    // 访问地址派生面：恒 HTTPS（2026-11-23 HTTP 下线），本机回环在列
+    expect(data.urls.some((u) => u.url.startsWith('https://localhost:'))).toBe(true);
+    expect(data.urls.every((u) => u.protocol === 'https')).toBe(true);
   });
 
   it('PUT /settings persists and returns the normalized settings', async () => {
@@ -114,20 +114,20 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     });
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({
-      terminal: { preset: 'wt', customCommand: '' },
+      terminal: { preset: 'wt', customCommand: '', webShell: '' },
       locale: 'zh-CN',
       hooks: { enabled: true },
       events: { retentionDays: 90 }, // 事件日志保留期（归一化补默认）
       sessions: { idleDays: 90, archiveDays: 5 }, // 无操作会话闲置移除窗 + 归档延迟（归一化补默认）
       startup: { launchOnLogin: false }, // 开机自启（归一化补默认，默认关）
-      server: { bindHost: '0.0.0.0', tlsPort: 6443 }, // 监听绑定 + 局域网 HTTPS 端口（归一化补默认）
+      server: { bindHost: '0.0.0.0' }, // 监听绑定（归一化补默认；单端口 HTTPS，无独立 TLS 端口）
       ai: { baseUrl: '', model: '', apiKey: null, apiKeySet: false }, // AI 助手（归一化补默认，默认未配置；key 回显 null）
       decision: { baseUrl: '', model: '', apiKey: null, apiKeySet: false }, // 决策模型（同上）
       htmlExport: { activeId: null, profiles: [] }, // 导出 HTML 的自定义头（默认没有）
       extensions: { staleMs: 600000 }, // 会话扩展点陈旧窗（归一化补默认 10min）
       pet: { enabled: false, petId: 'weave-spider', notifications: true, size: 'small' }, // 桌面宠物（归一化补默认，默认关+小号）
       federation: { discovery: false, enabled: false, autoAccept: false }, // 联邦与发现（归一化补默认，双关——安全红线；autoAccept 邀请自动接受默认关）
-      backup: { enabled: true, hour: 1, includeHistory: false }, // 每日备份（归一化补默认：开、凌晨 1 点、不含历史）
+      backup: { enabled: true, hour: 1, includeHistory: false, retentionDays: 7 }, // 每日备份（归一化补默认：开、凌晨 1 点、不含历史、留 7 天）
       terminalFocus: { focusOnOpen: true }, // 终端开窗行为（归一化补默认：调起拉回可见）
     });
     // 保存即对账自启动项（spy 记录；缺省 false → 注销）
@@ -242,7 +242,10 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     });
     expect(res.status).toBe(200);
     expect(opener.terminalCalls).toEqual([
-      { dir: projectPath, terminal: { preset: 'custom', customCommand: 'myterm {path}' } },
+      {
+        dir: projectPath,
+        terminal: { preset: 'custom', customCommand: 'myterm {path}', webShell: '' },
+      },
     ]);
   });
 
@@ -267,6 +270,23 @@ describe('daemon /settings and /projects/:id/open routes', () => {
     // Runtime Host PTY；数组是跨测试累计的，断言本轮零新增）
     expect(spawnCalls).toEqual([{ cwd: projectPath, command: expect.any(String) }]);
     expect(opener.terminalCalls.length).toBe(terminalsBefore);
+  });
+
+  it('web 预设的 shell 可配置（terminal.webShell 生效到 PTY command）', async () => {
+    setDaemonSettingsDb(openDatabase(':memory:'));
+    await fetch(`http://127.0.0.1:${port}/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ terminal: { preset: 'web', webShell: 'pwsh -NoLogo' } }),
+    });
+    spawnCalls = [];
+    const res = await fetch(`http://127.0.0.1:${port}/projects/1/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ target: 'terminal' }),
+    });
+    expect(res.status).toBe(200);
+    expect(spawnCalls).toEqual([{ cwd: projectPath, command: 'pwsh' }]);
   });
 
   it('POST /projects/:id/open under web preset with a live shell reuses it (no new spawn)', async () => {
@@ -307,7 +327,8 @@ describe('daemon /settings and /projects/:id/open routes', () => {
       autoStart,
       aiKeyPath: path.join(projectPath, 'ai.json'),
       decisionKeyPath: path.join(projectPath, 'decision.json'),
-      agentInstances: new AgentInstanceRepository(db),
+      // 独立的实例表：共享 db 里上一条用例留了活 shell，接回它会走 200 分支。
+      agentInstances: new AgentInstanceRepository(openDatabase(':memory:')),
     });
     await new Promise<void>((resolve) => alt.listen(0, '127.0.0.1', resolve));
     const altPort = (alt.address() as { port: number }).port;

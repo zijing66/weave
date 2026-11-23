@@ -118,13 +118,18 @@ const ROUTES: Array<[RegExp, Json | ((url: URL, m: RegExpMatchArray) => Json)]> 
     /^\/settings$/,
     {
       settings: {
-        terminal: { preset: 'web', customCommand: '' },
+        terminal: { preset: 'web', customCommand: '', webShell: '' },
         locale: 'zh-CN',
         hooks: { enabled: true },
         sessions: { idleDays: 7, archiveDays: 5 },
         htmlExport: { activeId: null, profiles: [] },
       },
       presets: [],
+      webShells: [
+        { command: 'pwsh.exe', label: 'PowerShell 7' },
+        { command: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', label: 'Windows PowerShell' },
+        { command: 'C:\\Windows\\System32\\cmd.exe', label: 'cmd.exe' },
+      ],
       platform: 'win32',
       urls: [],
     },

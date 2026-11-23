@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { accessUrls, DAEMON_HOST, readDaemonState, resolveStaticDir } from '@weavecode/server';
+import { accessUrls, DAEMON_HOST, resolveStaticDir } from '@weavecode/server';
 import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import { ensureDaemonRunning } from './daemon.js';
@@ -36,7 +36,7 @@ export function openBrowser(url: string): void {
 
 /** The console URL for a daemon port. */
 export function dashboardUrl(port: number): string {
-  return `http://${DAEMON_HOST}:${port}/`;
+  return `https://${DAEMON_HOST}:${port}/`;
 }
 
 async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise<void> {
@@ -60,9 +60,9 @@ async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise
 
   const url = dashboardUrl(handle.port);
   logger.info(t('out.dash.url', { url }));
-  // 全部访问地址（本机 + 局域网 × HTTP/HTTPS）：与 `weave daemon status`、设置页同源
-  // （server 的 accessUrls）。原先只列 HTTP + 非回环 IPv4，把手机要的 https 那条漏了。
-  const urls = accessUrls(handle.port, readDaemonState()?.tlsPort ?? 0);
+  // 全部访问地址（本机 + 局域网，恒 HTTPS）：与 `weave daemon status`、设置页同源
+  // （server 的 accessUrls）。
+  const urls = accessUrls(handle.port);
   if (urls.length > 0) {
     logger.dim(t('out.daemon.urlsTitle'));
     logger.dim(urls.map((u) => `  ${u.url}`).join('\n'));

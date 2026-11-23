@@ -34,7 +34,7 @@ process.on('uncaughtException', (err) => bootCrash('uncaughtException', err));
 process.on('unhandledRejection', (err) => bootCrash('unhandledRejection', err));
 
 try {
-  startDaemon();
+  void startDaemon();
 } catch (err) {
   const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
   try {

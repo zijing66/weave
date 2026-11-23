@@ -35,6 +35,10 @@ export const tasksZh = {
   'tasks.transcriptMissingTip':
     '该会话的转录文件已不在磁盘上（被清理或删除），接不回来了；会话行与已采集的事件照常保留，可以删掉这一行',
   'tasks.closePaneTooltip': '关闭该会话的终端',
+  'tasks.duplicateInstances': '该会话有 {n} 个实例同时在运行',
+  'tasks.duplicateInstancesHint':
+    '检测到该会话有 {n} 个实例同时在运行（常见成因：Web 终端里还开着，外部终端又 resume 了同一会话）。两个进程写同一份转录，对话会交错——关掉其中一个再继续。',
+  'tasks.closeWebInstance': '关闭 Web 实例',
   'tasks.closePaneTitle': '关闭会话',
   'tasks.closePaneConfirm': '关闭会话「{id}」的终端？会话会一起退出；历史保留。',
   'tasks.closePaneFailed': '关闭会话失败：{error}',
@@ -728,6 +732,10 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.transcriptMissingTip':
     'This session’s transcript file is gone from disk (cleaned up or deleted), so it can no longer be resumed; the row and its collected events remain — you can delete the row',
   'tasks.closePaneTooltip': 'Close this session’s terminal',
+  'tasks.duplicateInstances': '{n} instances are running this session',
+  'tasks.duplicateInstancesHint':
+    'This session has {n} live instances (typical cause: it is still open in the web terminal and was also resumed in an external terminal). Both write the same transcript, so turns interleave — close one before continuing.',
+  'tasks.closeWebInstance': 'Close web instance',
   'tasks.closePaneTitle': 'Close session',
   'tasks.closePaneConfirm':
     'Close the terminal running session “{id}”? The session exits too; history is kept.',

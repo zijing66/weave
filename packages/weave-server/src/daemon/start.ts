@@ -273,7 +273,8 @@ export async function startDaemon(): Promise<void> {
       }
     })
     .catch((err) => {
-      console.error('[weave] runtime host unavailable:', err instanceof Error ? err.message : err);
+      // 首拍失败多是启动期瞬时争用（如 database is locked）——措辞别咬死 unavailable。
+      console.error(`[weave] runtime reconcile first pass failed (${err instanceof Error ? err.message : err}) — retrying in 30s`);
       runtimeSup.scheduleRetry(); // 30s 周期自愈，连上即停
     });
   runtimeSup.scheduleReconcile(); // 60s 周期对账（事件泵只覆盖在线窗口）
@@ -450,9 +451,10 @@ export async function startDaemon(): Promise<void> {
   };
   const watch = new WatchService(projects);
   watch.start();
-  const fingerprintCache = new FingerprintCache();
   // 数据变更帧总线：SSE 的载荷推送源（各隐藏刷新器共用一条）。
+  // （提前建：questionTracker 的 onChange 回调在 seedFromDb 那一拍就会 emit。）
   const dataBus = new DataBus();
+  const fingerprintCache = new FingerprintCache();
   // 项目行「有更新待同步」角标：项目插件源（`.weave/plugins` 的模板）变更 →
   // 重算全项目漂移、值变才推绝对值快照（含 0）。
   const updatesRefresher = new ProjectUpdatesRefresher(

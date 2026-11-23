@@ -1,4 +1,5 @@
 import type { McpHttpContext, McpToolDef, McpToolRequest } from './registry.js';
+import { api } from './api.js';
 
 /**
  * 项目域内置 MCP 服务 `weave-projects`：项目发现 / harness 配置（config 槽词表
@@ -10,39 +11,6 @@ import type { McpHttpContext, McpToolDef, McpToolRequest } from './registry.js';
  * 不暴露 profile 切换 / 覆盖类动作（那些走「先弹 diff 交用户确认」的既有裁决，
  * `confirm:true` 的直通口不给 MCP）。
  */
-
-async function api<T>(
-  ctx: McpHttpContext,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const res = await fetch(`http://127.0.0.1:${ctx.port}/api${path}`, {
-    method,
-    headers: {
-      'x-weave-origin': 'mcp',
-      ...(ctx.token ? { 'x-weave-local': ctx.token } : {}),
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const text = await res.text();
-  const parsed: unknown = (() => {
-    try {
-      return JSON.parse(text);
-    } catch {
-      return { raw: text };
-    }
-  })();
-  if (!res.ok) {
-    const message =
-      parsed && typeof parsed === 'object' && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `HTTP ${res.status}`;
-    throw new Error(message);
-  }
-  return parsed as T;
-}
 
 const qs = (params: Record<string, string | number | undefined>): string => {
   const search = new URLSearchParams();

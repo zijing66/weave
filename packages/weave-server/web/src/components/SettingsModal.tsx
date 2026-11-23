@@ -11,6 +11,7 @@ import {
   type SessionRow,
   type SessionUploadsResult,
   type TerminalPreset,
+  type WebShellChoice,
   type UploadsOverview,
   type VisualizationStats,
 } from '@/lib/api';
@@ -240,6 +241,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { locale, t, setLocale } = useI18n();
   const [settings, setSettings] = useState<DaemonSettingsExt | null>(null);
   const [presets, setPresets] = useState<Array<{ id: TerminalPreset; label: string }>>([]);
+  const [webShells, setWebShells] = useState<WebShellChoice[]>([]);
+  const [platform, setPlatform] = useState('');
   /** 对外访问地址（服务端派生，只读展示面）。 */
   const [urls, setUrls] = useState<AccessUrl[]>([]);
   /** 「关于」展示面：daemon 版本与仓库主页（GET /settings 随行下发）。 */
@@ -522,6 +525,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         setApiKeyInput(s.ai?.apiKey ?? '');
         setDecisionKeyInput(s.decision?.apiKey ?? '');
         setPresets(r.presets);
+        setWebShells(r.webShells ?? []);
+        setPlatform(r.platform);
         setUrls(r.urls ?? []);
         setVersion(r.version ?? null);
         setRepoUrl(r.repoUrl ?? null);
@@ -572,6 +577,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const preset = settings?.terminal.preset ?? 'auto';
   const customCommand = settings?.terminal.customCommand ?? '';
+  const webShell = settings?.terminal.webShell ?? '';
+  const setWebShell = (value: string): void =>
+    setSettings((s) => (s ? { ...s, terminal: { ...s.terminal, webShell: value } } : s));
 
   // ---- HTML 导出自定义头（多份保存、一份在用；内容只在导出文件里生效）----
   const htmlExport: HtmlExportSettings = settings?.htmlExport ?? { activeId: null, profiles: [] };
@@ -762,6 +770,47 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               }
             />
           </div>
+
+          {preset === 'web' && (
+            <div className="space-y-1.5">
+              <label className="flex items-center text-xs font-medium text-neutral-300">
+                {t('settings.webShell')}
+                <FieldHint>{t('settings.webShellHint')}</FieldHint>
+              </label>
+              <Input
+                type="text"
+                value={webShell}
+                onChange={(e) => setWebShell(e.target.value)}
+                placeholder={
+                  platform === 'win32' ? 'powershell.exe -NoLogo' : '$SHELL（未设置时 bash）'
+                }
+                className="w-full rounded-lg bg-neutral-800 border border-edge/[0.08] px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              {webShells.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {[{ command: '', label: t('settings.webShellDefault') }, ...webShells].map((s) => {
+                    const active = webShell === s.command;
+                    return (
+                      <Tooltip key={s.command || '__default'} label={s.command || t('settings.webShellHint')}>
+                        <button
+                          type="button"
+                          onClick={() => setWebShell(s.command)}
+                          className={cn(
+                            'rounded-lg px-2 py-1 text-11',
+                            active
+                              ? 'bg-blue-500/20 text-blue-300'
+                              : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700',
+                          )}
+                        >
+                          {s.label}
+                        </button>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {preset === 'custom' && (
             <div className="space-y-1.5">

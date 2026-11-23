@@ -105,7 +105,7 @@ export class RuntimeHostServer {
       lastAt = now;
       const payload: import('./protocol.js').ResourceReportPayload = {
         hostId: this.hostId,
-        hostCpuPercent: elapsed > 0 ? (usage.user + usage.system) / 1e6 / elapsed * 100 : 0,
+        hostCpuPercent: elapsed > 0 ? Math.round((usage.user + usage.system) / 1e6 / elapsed * 10000) / 100 : 0,
         hostMemRssBytes: process.memoryUsage().rss,
         instances: this.manager.resourceSummaries(),
         at: now,
@@ -262,7 +262,9 @@ export class RuntimeHostServer {
     const frame =
       event.type === 'terminal.output'
         ? { type: event.type, instanceId: event.instanceId, sequence: event.sequence, data: event.data }
-        : { type: event.type, instanceId: event.instanceId, ...('exitCode' in event ? { exitCode: event.exitCode } : { osPid: (event as { osPid: number }).osPid }) };
+        : event.type === 'terminal.resize'
+          ? { type: event.type, instanceId: event.instanceId, sequence: event.sequence, cols: event.cols, rows: event.rows }
+          : { type: event.type, instanceId: event.instanceId, ...('exitCode' in event ? { exitCode: event.exitCode } : { osPid: (event as { osPid: number }).osPid }) };
     this.writeLine(JSON.stringify({ eventId: randomBytes(8).toString('hex'), timestamp: Date.now(), ...frame }), event.type === 'terminal.output');
   }
 

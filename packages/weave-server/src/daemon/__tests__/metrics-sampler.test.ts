@@ -320,3 +320,54 @@ describe('MetricsSampler', () => {
     sampler.stop();
   });
 });
+
+describe('整枪失败沿用上一拍', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('processTree 抛错时 mem/CPU/IO 不闪空（沿用上拍），实例行仍如实重建', async () => {
+    const sup = stubSupervisor();
+    const rows = [
+      { id: 'wvt-1', osPid: 300, harnessSessionId: 'sess-1' },
+    ].map((r) => ({
+      projectId: 1,
+      harness: 'claude',
+      status: 'running',
+      executionMode: 'headless',
+      workingDirectory: '/x',
+      command: 'claude',
+      createdAt: new Date().toISOString(),
+      ...r,
+    }));
+    let fail = false;
+    let cpuSeconds = 50;
+    const tree = (): Promise<Map<number, ProcessTreeReading>> => {
+      if (fail) return Promise.reject(new Error('boom'));
+      return Promise.resolve(
+        new Map<number, ProcessTreeReading>([[300, { pid: 300, parentPid: 90, processKey: 'A', cpuSeconds, memRssBytes: 100, diskBytes: 1000 }]]),
+      );
+    };
+    const sampler = new MetricsSampler({
+      bus: { emit: () => {} },
+      supervisor: sup,
+      instances: { listHeadless: () => rows },
+      processTree: tree,
+      systemReader: () => Promise.resolve(stubSystemReading()),
+      systemCacheDir: newSystemCache(),
+    });
+    sampler.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    cpuSeconds = 110;
+    await vi.advanceTimersByTimeAsync(60_000);
+    let agent = sampler.snapshot().agents.find((a) => a.instanceId === 'wvt-1')!;
+    expect(agent.cpuPercent).toBeCloseTo(100, 0);
+    expect(agent.memRssBytes).toBe(100);
+    expect(agent.diskBytesPerSec).toBeDefined();
+    fail = true; // 下一整枪失败
+    await vi.advanceTimersByTimeAsync(60_000);
+    agent = sampler.snapshot().agents.find((a) => a.instanceId === 'wvt-1')!;
+    expect(agent.memRssBytes).toBe(100); // 沿用，不闪空
+    expect(agent.cpuPercent).toBeCloseTo(100, 0);
+    sampler.stop();
+  });
+});

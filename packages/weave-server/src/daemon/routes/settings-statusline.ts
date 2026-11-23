@@ -9,6 +9,7 @@ import {
   readDaemonSettings,
   writeDaemonSettings,
   terminalPresetsFor,
+  webShellChoices,
   type DaemonSettings,
 } from '../settings.js';
 import { readAiKey, writeAiKey } from '../ai-config.js';
@@ -86,9 +87,11 @@ export async function handleSettingsRoutes(
       sendJson(res, 200, {
         settings: withApiKeyStatus(await readDaemonSettings(), deps.aiKeyPath, deps.decisionKeyPath),
         presets: terminalPresetsFor(process.platform),
+        // Web 终端默认 shell 的候选（本机真装了的才有；设置页做快捷选择）。
+        webShells: webShellChoices(),
         platform: process.platform,
-        // 对外访问地址（设置页展示面）：全部局域网 IP × 已开协议。
-        urls: accessUrls(deps.port, deps.tlsPort ?? 0),
+        // 对外访问地址（设置页展示面）：单端口 HTTPS（localhost + 全部局域网 IP）。
+        urls: accessUrls(deps.port),
         // 「关于」展示面：版本与仓库主页（设置页只读，不进保存流程）。
         version: WEAVE_VERSION,
         repoUrl: 'https://github.com/zijing66/weave',
@@ -128,6 +131,8 @@ export async function handleSettingsRoutes(
         ...body,
         ai: body.ai ? stripApiKey(body.ai) : current.ai,
         decision: body.decision ? stripApiKey(body.decision) : current.decision,
+        // terminal 段字段级合并：旧构建的设置页不带 webShell，整段替换会把它打回空。
+        terminal: body.terminal ? { ...current.terminal, ...body.terminal } : current.terminal,
         // pet 段字段级合并：右键菜单只发 {size}（或 {enabled:false}）单字段，
         // 整段替换会把缺席字段打回默认值（enabled 丢 → 窗被误关）。
         pet: body.pet ? { ...current.pet, ...body.pet } : current.pet,
@@ -139,7 +144,7 @@ export async function handleSettingsRoutes(
       (deps.autoStart ?? applyLaunchOnLogin)(saved.startup?.launchOnLogin ?? false);
       // 宠物窗联动：enabled 开 → 拉起（已在跑则不动）；关 → 收窗。
       if (saved.pet?.enabled) {
-        openPetWindow({ baseUrl: `http://localhost:${deps.port}`, auth: deps.auth ?? null });
+        openPetWindow({ baseUrl: `https://localhost:${deps.port}`, auth: deps.auth ?? null });
       } else {
         closePetWindow();
       }

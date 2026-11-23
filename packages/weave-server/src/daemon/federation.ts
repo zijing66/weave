@@ -36,9 +36,9 @@ export interface WeaveMdnsTxt {
   fp: string;
 }
 
-/** 广播端点：恒 HTTPS（裁决 15⑤ HTTP 降级档 v1 不做）——tlsPort 未开不广播。 */
+/** 广播端点：恒 HTTPS（单端口裁决后 daemon 主端口即 HTTPS 端口）。 */
 export interface WeaveMdnsEndpoint {
-  tlsPort: number;
+  httpsPort: number;
   txt: WeaveMdnsTxt;
 }
 
@@ -61,11 +61,6 @@ export function mdnsTxt(input: {
     name: input.hostname.slice(0, 60),
     fp: (certFingerprint(input.certPem) ?? '').slice(0, 16),
   };
-}
-
-/** 广播完整性判据：tlsPort 开着才算可广播端点（HTTPS + TOFU 唯一形态）。 */
-export function advertisable(tlsPort: number | undefined): boolean {
-  return typeof tlsPort === 'number' && tlsPort > 0;
 }
 
 // ---- TOFU 指纹（纯函数，F1 直接消费）----

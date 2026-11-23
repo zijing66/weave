@@ -1,8 +1,8 @@
-import { DAEMON_HOST } from '@weavecode/server';
 import { logger } from '@weavecode/core';
 import { t } from '../i18n/index.js';
 import { ensureDaemonRunning } from './daemon.js';
 import { localTokenHeader } from './daemon-auth.js';
+import { daemonFetch } from './daemon-fetch.js';
 import type { Command } from '../parser.js';
 
 /**
@@ -24,7 +24,8 @@ async function chpassAction(ctx: { positional: string[] }): Promise<void> {
 
   const handle = await ensureDaemonRunning();
   try {
-    const res = await fetch(`http://${DAEMON_HOST}:${handle.port}/auth/password`, {
+    const res = await daemonFetch('/auth/password', {
+      port: handle.port,
       method: 'PUT',
       headers: { 'content-type': 'application/json', ...localTokenHeader() },
       body: JSON.stringify({ next }),
