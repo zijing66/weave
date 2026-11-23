@@ -51,3 +51,24 @@ test('manifestGaps：main/types/bin/exports 指到的文件缺了就报，齐了
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('manifestGaps：exports 的 development 条件（本地直引 src）不算漏拷', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'pack-gap-dev-'));
+  try {
+    mkdirSync(path.join(dir, 'dist'), { recursive: true });
+    writeFileSync(path.join(dir, 'dist', 'index.js'), '');
+    const manifest = {
+      exports: {
+        '.': { types: 'dist/index.d.ts', development: './src/index.ts', import: 'dist/index.js' },
+        './harness': { development: './src/harness.ts', import: 'dist/harness.js' },
+      },
+    };
+    // src 不在包里，只报真入口的缺（types / dist/harness.js），development 跳过
+    assert.deepEqual(manifestGaps(manifest, dir), ['dist/index.d.ts', 'dist/harness.js']);
+    writeFileSync(path.join(dir, 'dist', 'index.d.ts'), '');
+    writeFileSync(path.join(dir, 'dist', 'harness.js'), '');
+    assert.deepEqual(manifestGaps(manifest, dir), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

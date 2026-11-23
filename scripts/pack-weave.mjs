@@ -122,7 +122,10 @@ export function manifestGaps(manifest, pkgDir, names = ['main', 'types']) {
   for (const v of Object.values(manifest.exports ?? {})) {
     if (typeof v === 'string') refs.push(v);
     else if (v && typeof v === 'object') {
-      for (const inner of Object.values(v)) {
+      for (const [condition, inner] of Object.entries(v)) {
+        // development 条件是仓内直引源码用的（tsconfig paths / vite alias），
+        // 消费者永远走 import/types——src 本就不进包，不算漏拷。
+        if (condition === 'development') continue;
         if (typeof inner === 'string') refs.push(inner);
       }
     }
