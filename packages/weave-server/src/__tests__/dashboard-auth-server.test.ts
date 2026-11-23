@@ -10,6 +10,8 @@ import { AuthService, LOCAL_TOKEN_HEADER, SESSION_COOKIE } from '../daemon/dashb
 import { createWeaveServer } from '../daemon/server.js';
 
 /** 装 auth 的 server：门、登录、本机令牌、改密轮换的端到端口径。 */
+const FAKE_CERT = '-----BEGIN CERTIFICATE-----\\nMIIBfake\\n-----END CERTIFICATE-----\\n';
+
 describe('daemon auth gate', () => {
   let db: DatabaseSync;
   let server: Server;
@@ -37,7 +39,7 @@ describe('daemon auth gate', () => {
     // 导航豁免依赖 staticDir 外壳（index.html）；没有它 SPA 深链无从豁免。
     staticDir = mkdtempSync(path.join(tmpdir(), 'weave-auth-static-'));
     writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><html><body>weave</body></html>');
-    server = createWeaveServer({ projects, port: 0, auth, staticDir });
+    server = createWeaveServer({ projects, port: 0, auth, staticDir, ownCertPem: FAKE_CERT });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -55,6 +57,13 @@ describe('daemon auth gate', () => {
     const status = await fetch(url('/auth/status'));
     expect(status.status).toBe(200);
     expect(await status.json()).toMatchObject({ passwordSet: true, authenticated: false });
+  });
+
+  it('/cert 免认证可下载（手机首访还没有凭据）', async () => {
+    const res = await fetch(url('/cert'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/x-x509-ca-cert');
+    expect(await res.text()).toBe(FAKE_CERT);
   });
 
   it('无凭据的 API 调用 401', async () => {

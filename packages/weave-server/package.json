@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@vscode/ripgrep": "^1.18.0",
     "@weavecode/core": "workspace:^",
     "@weavecode/harness": "workspace:^",
     "@weavecode/templates": "workspace:^",

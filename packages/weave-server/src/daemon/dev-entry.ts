@@ -931,9 +931,11 @@ async function main(): Promise<void> {
     });
   }
 
-  const shutdown = (): void => {
-    // 不向 Host 发 shutdown.graceful（生产入口才收）：tsx watch 热重载每次改码都
-    // 走一遍停机，杀了 Host 终端全断；残留 Host 由 60s 空闲自退兜底。
+  const shutdown = (killHost?: boolean): void => {
+    // 只收「用户显式停机」（POST /daemon/shutdown，stop 传 killHost=true）：
+    // tsx watch 热重载走 SIGTERM 也进这里，杀了 Host 终端会全断——不杀，残留
+    // Host 由空闲自退兜底（有活实例时一直活着，代码也是旧的——用户停机才换血）。
+    if (killHost) void runtimeSup.shutdownHost();
     runtimeSup.stop();
     terminalRefresher.stop();
     livenessRefresher.stop();
@@ -978,9 +980,11 @@ async function main(): Promise<void> {
         process.exit(0);
       });
   };
-  shutdownRef.fn = shutdown;
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  shutdownRef.fn = () => shutdown(true);
+  // SIGTERM = tsx watch 改码重启（热重载，终端要续——不杀 Host）；
+  // SIGINT = 用户 Ctrl+C（`pnpm dev:server` 的收工手势，= 显式停机，杀）。
+  process.on('SIGTERM', () => shutdown());
+  process.on('SIGINT', () => shutdown(true));
   startShutdownSentinel(shutdown);
 
   server.listen(port, bindHost, () => {

@@ -147,6 +147,7 @@ export const zh = {
   'out.dash.noBundle': 'Web 资源包尚未构建，守护进程没有可提供的内容。',
   'out.dash.buildHint': '  可用 `pnpm build:web` 构建，或运行 Vite 开发服务器：`pnpm dev:web`（https://localhost:9527）。',
   'out.dash.url': '\n  控制台：{url}\n',
+  'out.dash.certHint': '  手机/其他主机装证书（避免 HTTPS 告警）：{url}',
   'out.dash.noOpen': '  （--no-open：不启动浏览器）',
   'out.dash.initialPassword':
     '\n  初始登录密码：{password}\n  （只显示这一次；可用 `weave chpass <新密码>` 修改）\n',

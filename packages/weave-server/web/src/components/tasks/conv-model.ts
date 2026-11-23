@@ -158,6 +158,11 @@ export interface ConvEntry {
   preQuestion?: boolean;
   /** 旁白：转录补采的中间 assistant 输出（Stop.lam 之外的段落，没有自己的事件）。 */
   narration?: boolean;
+  /** 转录行标识（claude = 行 uuid）：key/去重用；宿主没带 → 缺省（key 按时刻生成）。 */
+  uuid?: string;
+  /** 显式轮次（claude 转录 turnPosition 透传）：旁白轮归属与「回答段」判定用。 */
+  promptIndex?: number;
+  turnIndex?: number;
   /** 已被回退（宿主 rewind 把这段对话退掉了）：置灰保留展示，不参与「最新回复」。 */
   rewound?: boolean;
   /** 命令执行回显（内建命令没有 hook 事件，正文来自转录）：气泡里摆成胶囊 + 输出。 */
@@ -831,10 +836,15 @@ function sameNarration(a: string, b: string): boolean {
  * 多次输出只有最后一句能进对话气泡——转录里的其余段落（写工具后又补的收尾、
  * 分段讲解）按时刻补进来。**与 close 气泡同文案的跳过**（Stop.lam 本来就在，
  * 补进来就是同一条显示两遍）；时刻取不到的旁白不摆（插哪儿都是猜）。
+ *
+ * 轮归属两路：带 `turnIndex` 的段（claude 转录 turnPosition 透传）按显式轮次
+ * 分组——同轮连续旁白段折过程输出、**最后一段恒为回答气泡**（猜测升格的错判
+ * 根源就是「轮尾 = 紧跟 user」这条不可靠信号）；缺轮次的段（codex / 旧帧）才
+ * 走「无 Stop 收尾的轮升格末段」的猜测降级路径。
  */
 export function withNarration(
   entries: readonly ConvEntry[],
-  narration: ReadonlyArray<{ at: string | null; text: string }> | null,
+  narration: ReadonlyArray<{ at: string | null; text: string; uuid?: string; promptIndex?: number; turnIndex?: number }> | null,
 ): ConvEntry[] {
   if (!narration?.length) return [...entries];
   const closeTexts = entries.filter((e) => e.role === 'assistant' && !e.preQuestion).map((e) => e.text);
@@ -845,23 +855,47 @@ export function withNarration(
     if (!at0 || !seg.text.trim()) continue;
     if (closeTexts.some((t) => sameNarration(t, seg.text))) continue;
     const entry: ConvEntry = {
-      key: `n${at0}:${n++}`,
+      key: seg.uuid ?? `n${at0}:${n++}`,
       role: 'assistant',
       at: at0,
       text: seg.text,
       narration: true,
+      ...(seg.turnIndex !== undefined ? { turnIndex: seg.turnIndex } : {}),
+      ...(seg.promptIndex !== undefined ? { promptIndex: seg.promptIndex } : {}),
     };
     const idx = out.findIndex((e) => e.at > at0);
     if (idx < 0) out.push(entry);
     else out.splice(idx, 0, entry);
   }
-  // 无 Stop 收尾的轮（被打断 / 连续追问顶掉）：转录里这串旁白的最后一段就是
-  // 事实上的收尾回复——后面紧跟下一条用户提问、中间没有闭轮事件。升格为普通
-  // 气泡，别折进过程输出叠层把「回答」藏掉；有 Stop 的轮被闭轮气泡挡住不升。
+  // 显式轮次：同 (promptIndex, turnIndex) 的连续旁白段，末段升格为回答气泡。
+  const byTurn = new Map<string, number[]>();
   for (let i = 0; i < out.length; i += 1) {
-    if (out[i]!.role !== 'assistant' || out[i]!.narration !== true) continue;
+    const e = out[i]!;
+    if (e.role === 'assistant' && e.narration === true && e.turnIndex !== undefined) {
+      const k = `${e.promptIndex ?? '?'}:${e.turnIndex}`;
+      const run = byTurn.get(k);
+      if (run) run.push(i);
+      else byTurn.set(k, [i]);
+    }
+  }
+  for (const run of byTurn.values()) {
+    const last = out[run[run.length - 1]!]!;
+    const { narration: _drop, turnIndex: _t, promptIndex: _p, ...promoted } = last;
+    out[run[run.length - 1]!] = promoted;
+  }
+  // 降级路径（缺轮次的段）：无 Stop 收尾的轮（被打断 / 连续追问顶掉）——转录里
+  // 这串旁白的最后一段是事实上的收尾回复，后面紧跟下一条用户提问、中间没有闭轮
+  // 事件。升格为普通气泡；有 Stop 的轮被闭轮气泡挡住不升。
+  for (let i = 0; i < out.length; i += 1) {
+    if (out[i]!.role !== 'assistant' || out[i]!.narration !== true || out[i]!.turnIndex !== undefined)
+      continue;
     let j = i;
-    while (j + 1 < out.length && out[j + 1]!.role === 'assistant' && out[j + 1]!.narration === true)
+    while (
+      j + 1 < out.length &&
+      out[j + 1]!.role === 'assistant' &&
+      out[j + 1]!.narration === true &&
+      out[j + 1]!.turnIndex === undefined
+    )
       j += 1;
     const next = out[j + 1];
     if (next && (next.role === 'user' || next.role === 'compaction')) {

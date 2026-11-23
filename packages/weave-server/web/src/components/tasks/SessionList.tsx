@@ -9,11 +9,12 @@ import { useT, type TFunc } from '@/i18n/I18nProvider';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip } from '@/components/ui/tooltip';
 import { AgentBadge } from '@/components/AgentBadge';
-import { Archive, Bell, BellRing, Check, ChevronDown, Copy, Cpu, Eye, EyeOff, FileWarning, HardDrive, HelpCircle, Loader2, MemoryStick, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
+import { AlertTriangle, Archive, Bell, BellRing, Check, ChevronDown, Copy, Cpu, Eye, EyeOff, FileWarning, HardDrive, HelpCircle, Loader2, MemoryStick, MessageSquareText, Pencil, Power, SquareTerminal, Trash2 } from 'lucide-react';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useToast } from '@/components/Toast';
 import { api } from '@/lib/api';
 import { useSessionStatus } from './session-status-store';
+import { usePaneFrames } from './term-panes/pane-transfer';
 import { copyText } from '@/lib/clipboard';
 import type { ActionState } from '@/lib/feedback-core';
 import { errorText } from '@/lib/action-feedback';
@@ -150,13 +151,19 @@ export function olderThanDays(row: SessionRow, days: number, now: number): boole
  * 在活动序里的位置，块内保持活动序。没有屏幕信息的行（没装 hooks / 终端不支持
  * 反查 / pane 已关）不分组、原位留在块外——不猜它属于哪个终端。块里只有一个
  * 会话也照样立块头：块头答的是「这块屏在哪」，与会话数无关。
+ * `poppedSessionIds`（可选）= 已弹出为独立框架页的会话 id：只作用于 `web:` 合成
+ * 组——服务端只知道实例活着，不知道浏览器窗口在不在显示；主窗右栏/未弹出的
+ * Web 终端会话不算「有屏」，按散行处理。外部终端组不受影响。
  */
-export function groupByTerminal(rows: readonly SessionRow[]): SessionListEntry[] {
+export function groupByTerminal(
+  rows: readonly SessionRow[],
+  poppedSessionIds?: ReadonlySet<string>,
+): SessionListEntry[] {
   const out: SessionListEntry[] = [];
   const blocks = new Map<string, TerminalBlock>();
   for (const row of rows) {
     const terminal = row.terminal;
-    if (!terminal) {
+    if (!terminal || (terminal.id.startsWith('web:') && poppedSessionIds && !poppedSessionIds.has(row.sessionId))) {
       out.push({ kind: 'row', row });
       continue;
     }
@@ -597,6 +604,16 @@ export function SessionList({
               {sessionLabel(s.title, s.sessionId)}
             </span>
             <span className="ml-auto flex shrink-0 items-center gap-1 [&_svg]:pointer-events-none">
+              {/* 双开告警：同一会话有多个活实例（Web 终端 PTY + 外部终端 resume），
+                  两份进程写同一份转录——纯指示，处置走卡片/对话头部的「关闭」。 */}
+              {(s.liveInstances ?? 0) > 1 && (
+                <Tooltip label={t('tasks.duplicateInstances', { n: s.liveInstances ?? 0 })}>
+                  <span className="inline-flex items-center gap-0.5 rounded border border-red-400/40 bg-red-500/10 px-1 py-0.5 text-10 font-semibold leading-none text-red-300">
+                    <AlertTriangle className="h-3 w-3" />
+                    {s.liveInstances}
+                  </span>
+                </Tooltip>
+              )}
               {/* 消息信号同一格（与动作按钮同行、贴在按钮组左侧）：同一枚消息图标
                   三态换色，一次只亮一个——失败红 > 在途 amber > 草稿 blue（状态机
                   从后往前：failed 是更靠后的态；草稿在 composer，最靠前）。
@@ -871,8 +888,18 @@ export function SessionList({
   };
 
   /** 分块后的渲染项：同屏会话聚块，散行原位（见 groupByTerminal）——只对主体区
-   *  做；收纳区平铺（旧会话不再按终端聚块，块头反而碍事）。 */
-  const entries = useMemo(() => groupByTerminal(activeRows), [activeRows]);
+   *  做；收纳区平铺（旧会话不再按终端聚块，块头反而碍事）。Web 终端合成组只认
+   *  已弹出框架页的会话（active 态记录里的全部视图），主窗/未弹出的不算「有屏」。 */
+  const paneFrames = usePaneFrames();
+  const poppedSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const f of paneFrames) {
+      if (f.state !== 'active') continue;
+      for (const v of Object.values(f.views)) ids.add(v.sessionId);
+    }
+    return ids;
+  }, [paneFrames]);
+  const entries = useMemo(() => groupByTerminal(activeRows, poppedSessionIds), [activeRows, poppedSessionIds]);
 
   return (
     <ul className="space-y-1.5">
@@ -905,7 +932,7 @@ export function SessionList({
               <span className="text-neutral-500">
                 {t('tasks.terminalBlockSessions', { n: entry.rows.length })}
               </span>
-              {projectId != null && (() => {
+              {!entry.terminal.id.startsWith('web:') && projectId != null && (() => {
                 const busy = visBusy.includes(entry.terminal.id);
                 return (
                   <Tooltip label={t(hidden ? 'tasks.terminalTargetShow' : 'tasks.terminalTargetHide')} side="top">
@@ -1033,12 +1060,10 @@ function SessionResourceChip({ sessionId }: { sessionId: string }) {
           {mem < 1024 * 1024 ? `${(mem / 1024).toFixed(1)} KB` : mem < 1024 * 1024 * 1024 ? `${(mem / 1024 / 1024).toFixed(0)} MB` : `${(mem / 1024 / 1024 / 1024).toFixed(1)} GB`}
         </span>
       )}
-      {io !== undefined && (
-        <span className="inline-flex items-center gap-1 text-violet-300">
-          <HardDrive className="h-3 w-3" aria-hidden="true" />
-          {fmtIo(io)}
-        </span>
-      )}
+      <span className="inline-flex items-center gap-1 text-violet-300">
+        <HardDrive className="h-3 w-3" aria-hidden="true" />
+        {io === undefined ? '—' : fmtIo(io)}
+      </span>
     </span>
   );
 }

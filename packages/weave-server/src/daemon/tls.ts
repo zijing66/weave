@@ -78,8 +78,14 @@ export async function ensureDaemonCert(
       const key = readFileSync(keyPath, 'utf-8');
       const x509 = new X509Certificate(readFileSync(certPath, 'utf-8'));
       const coversIps = ips.every((ip) => sanIps(x509).has(ip));
-      // 7 天缓冲：临期证书直接换，不留「昨天还好今天过期」的窗口。
-      if (x509.checkPrivateKey(createPrivateKey(key)) && Date.parse(x509.validTo) > now.getTime() + 7 * 86400_000 && coversIps) {
+      // `x509.ca`：老版本签的是 CA:false 的叶子件，手机端装不进「CA 证书」槽位
+      // （Android 直接拒收）——见到就重签一次，让存量机器也换成可装锚。
+      if (
+        x509.ca &&
+        x509.checkPrivateKey(createPrivateKey(key)) &&
+        Date.parse(x509.validTo) > now.getTime() + 7 * 86400_000 &&
+        coversIps
+      ) {
         return { key, cert: readFileSync(certPath, 'utf-8') };
       }
     } catch {
@@ -91,6 +97,19 @@ export async function ensureDaemonCert(
     keySize: 2048,
     notAfterDate: new Date(now.getTime() + 825 * 86400_000),
     extensions: [
+      // 自签即信任锚：手机/其他主机手动装的那份证书必须本身是一张 CA 证书
+      // （Android 的「安装 CA 证书」直接拒收 basicConstraints 非 CA 的叶子件；
+      // iOS 同样按根证书对待）。keyUsage 补 keyCertSign/cRLSign 同为此。
+      { name: 'basicConstraints', cA: true, critical: true },
+      {
+        name: 'keyUsage',
+        digitalSignature: true,
+        keyEncipherment: true,
+        keyCertSign: true,
+        cRLSign: true,
+        critical: true,
+      },
+      { name: 'extKeyUsage', serverAuth: true },
       {
         name: 'subjectAltName',
         altNames: [

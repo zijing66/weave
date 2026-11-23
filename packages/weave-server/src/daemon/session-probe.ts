@@ -227,6 +227,16 @@ export class SessionProbe {
     return this.pathOf(sessionId);
   }
 
+  /** 已知转录路径全集（去重；全局搜索的 rg 文件清单源——路径都是 hook 旁路上报的，非用户输入）。 */
+  knownTranscriptPaths(): string[] {
+    return [...new Set(this.paths.values())];
+  }
+
+  /** 转录路径 → sessionId 反查账（全局搜索命中定位用；同路径多会话取先登记者）。 */
+  knownTranscripts(): ReadonlyMap<string, string> {
+    return this.paths;
+  }
+
   forget(sessionId: string): void {
     this.paths.delete(sessionId);
     this.known.delete(sessionId);

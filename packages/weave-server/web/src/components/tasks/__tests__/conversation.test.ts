@@ -590,6 +590,42 @@ describe('withNarration（转录补采的中间输出当对话气泡）', () => 
     const out = withNarration(open, [{ at: at(5), text: '还没收尾' }]);
     expect(out.find((e) => e.text === '还没收尾')!.narration).toBe(true);
   });
+
+  it('⑨ 带显式轮次（turnPosition 透传）：同轮末段升格为回答，中间段留叠层，key 用转录 uuid', () => {
+    const noStop: ConvEntry[] = [
+      { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '问' },
+      { key: 'e9', eventId: 9, role: 'user', at: at(9), text: '追问' },
+    ];
+    const out = withNarration(noStop, [
+      { at: at(3), text: '先查一下', uuid: 'u-a', promptIndex: 0, turnIndex: 0 },
+      { at: at(5), text: '改完并提交了', uuid: 'u-b', promptIndex: 0, turnIndex: 0 },
+    ]);
+    expect(out.map((e) => [e.key, e.narration])).toEqual([
+      ['e1', undefined],
+      ['u-a', true],
+      ['u-b', undefined],
+      ['e9', undefined],
+    ]);
+  });
+
+  it('⑩ 轮次分组只归并同 (promptIndex, turnIndex)——跨轮不串，用户消息不会被吞进叠层', () => {
+    const noStop: ConvEntry[] = [
+      { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '第一问' },
+      { key: 'e9', eventId: 9, role: 'user', at: at(9), text: '第二问' },
+    ];
+    const out = withNarration(noStop, [
+      { at: at(3), text: '第一轮过程', uuid: 'u-a', promptIndex: 0, turnIndex: 0 },
+      { at: at(5), text: '第一轮回答', uuid: 'u-b', promptIndex: 0, turnIndex: 0 },
+      { at: at(7), text: '第二轮独句', uuid: 'u-c', promptIndex: 1, turnIndex: 2 },
+    ]);
+    expect(out.map((e) => [e.key, e.narration])).toEqual([
+      ['e1', undefined],
+      ['u-a', true],
+      ['u-b', undefined],
+      ['u-c', undefined],
+      ['e9', undefined],
+    ]);
+  });
 });
 
 describe('withRewinds（被回退的气泡置灰保留展示）', () => {

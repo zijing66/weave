@@ -1,6 +1,7 @@
 import { openSync, readSync, closeSync, statSync } from 'node:fs';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { NarrationSurface, NarrationText } from '@weavecode/harness';
+import { turnAwareParser } from '@weavecode/harness';
 import { getNarrationCursorsPath } from '../db/paths.js';
 import { readJsonLedger, writeJsonLedger } from '../db/json-ledger.js';
 
@@ -26,6 +27,8 @@ interface Cursor {
   carry: string;
   /** 转录路径变了（压缩重建 / resume 换文件）→ 游标作废重读。 */
   path: string;
+  /** 状态化行文法（claude 的轮次继承跨拍延续）；换文件作废重建。 */
+  parser?: ((line: string) => NarrationText | null) | null;
 }
 
 /** 广播出去的一帧。 */
@@ -96,6 +99,13 @@ export class NarrationWatcher {
     return this.pump(sessionId);
   }
 
+  /** 状态化行文法：claude 的轮次继承跨拍延续（`turnAwareParser` 导出自 claude adapter），其余用面给的 lineParser。 */
+  private statefulParser(harness: string | null): ((line: string) => NarrationText | null) | null {
+    if (harness === 'claude') return turnAwareParser();
+    const surface = harness ? this.surfaceOf(harness) : null;
+    return surface?.lineParser ?? null;
+  }
+
   /** 一拍：增量读该会话转录的新增字节，新段广播。 */
   private async pump(sessionId: string): Promise<void> {
     const harness = this.harnessOf(sessionId);
@@ -114,7 +124,12 @@ export class NarrationWatcher {
     // 首拍 / 路径变了 / 文件被截断重写：游标作废，全量重读重建（append-only 转录
     // 的代价 = 一次全量扫描，与 web 初载同价；不广播历史段——web 初载自己拉）。
     if (!cur || cur.path !== path || size < cur.offset) {
-      this.cursors.set(sessionId, { offset: size, carry: '', path });
+      this.cursors.set(sessionId, {
+        offset: size,
+        carry: '',
+        path,
+        parser: this.statefulParser(harness),
+      });
       this.persistCursors();
       return;
     }
@@ -141,7 +156,7 @@ export class NarrationWatcher {
     this.persistCursors();
     const segs: NarrationText[] = [];
     for (const line of lines) {
-      const seg = parser(line);
+      const seg = (cur.parser ?? parser)(line);
       if (seg) segs.push(seg);
     }
     if (segs.length > 0) {

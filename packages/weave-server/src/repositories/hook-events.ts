@@ -311,6 +311,31 @@ export class HookEventRepository {
     }
     return out;
   }
+
+  /**
+   * 最近登记住的转录路径（全局搜索 rg 路的文件清单）：daemon 重启后探针内存账
+   * 是空的——rg 文件清单从库上捞最近带 transcriptPath 的事件，同会话取最新一条。
+   */
+  recentTranscriptPaths(limit = 200): Array<{ sessionId: string; path: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT session_id, payload FROM hook_events
+         WHERE payload LIKE '%transcriptPath%' AND session_id IS NOT NULL
+         ORDER BY id DESC LIMIT ?`,
+      )
+      .all(limit) as Array<{ session_id: string | null; payload: string }>;
+    const out = new Map<string, string>();
+    for (const row of rows) {
+      if (row.session_id == null || out.has(row.session_id)) continue;
+      try {
+        const path = (JSON.parse(row.payload) as { transcriptPath?: unknown }).transcriptPath;
+        if (typeof path === 'string' && path) out.set(row.session_id, path);
+      } catch {
+        // 坏载荷跳过
+      }
+    }
+    return [...out].map(([sessionId, path]) => ({ sessionId, path }));
+  }
 }
 
 /** 一条聊天正文命中（全文随行带；命中窗口由路由层截）。 */

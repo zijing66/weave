@@ -58,6 +58,28 @@ describe('ensureDaemonCert', () => {
     expect(statSync(path.join(dir, 'host.crt')).mtimeMs).toBe(before);
   });
 
+  it('签出来的是可当信任锚的 CA 证书（手机装 CA 槽位要 basicConstraints CA:true）', async () => {
+    const dir = tmpDir();
+    const cert = await ensureDaemonCert(dir, { ips: ['127.0.0.1'] });
+    const x509 = new X509Certificate(cert.cert);
+    expect(x509.ca).toBe(true);
+    expect(x509.keyUsage).toEqual(expect.arrayContaining(['1.3.6.1.5.5.7.3.1'])); // serverAuth
+  });
+
+  it('存量 CA:false 的叶子证书 → 重签成 CA 证书', async () => {
+    const dir = tmpDir();
+    const legacy = await generate([{ name: 'commonName', value: 'weave-daemon' }], {
+      keySize: 2048,
+      extensions: [{ name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.1' }] }],
+    });
+    expect(new X509Certificate(legacy.cert).ca).toBe(false);
+    writeFileSync(path.join(dir, 'host.key'), legacy.private);
+    writeFileSync(path.join(dir, 'host.crt'), legacy.cert);
+    const renewed = await ensureDaemonCert(dir, { ips: ['127.0.0.1'] });
+    expect(renewed.cert).not.toBe(legacy.cert);
+    expect(new X509Certificate(renewed.cert).ca).toBe(true);
+  });
+
   it('当前 IP 不在 SAN 内（DHCP 换网）→ 重签', async () => {
     const dir = tmpDir();
     const first = await ensureDaemonCert(dir, { ips: ['127.0.0.1', '10.0.0.5'] });
@@ -144,6 +166,60 @@ describe('createDaemonServer', () => {
     expect(parsed.service).toBe('weave-daemon');
     expect(parsed.port).toBe(port);
     server.close();
+  });
+
+  it('/cert 出服务器证书本体（手机装锚用），没证书时 404', async () => {
+    const port = await freePort();
+    const { cert } = await ensureDaemonCert(tmpDir(), { ips: ['127.0.0.1'] });
+    const handler = weaveRequestHandler({
+      projects: { list: () => [], getById: () => undefined } as never,
+      port,
+      ownCertPem: cert,
+    });
+    const server = await createDaemonServer(handler, { certDir: tmpDir() });
+    await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+    const res = await new Promise<{ status: number | undefined; type?: string; disp?: string; body: string }>(
+      (resolve, reject) => {
+        https
+          .get({ host: '127.0.0.1', port, rejectUnauthorized: false, path: '/cert' }, (r) => {
+            let out = '';
+            r.on('data', (c) => (out += c));
+            r.on('end', () =>
+              resolve({
+                status: r.statusCode,
+                type: r.headers['content-type'],
+                disp: r.headers['content-disposition'] as string | undefined,
+                body: out,
+              }),
+            );
+          })
+          .on('error', reject);
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.type).toBe('application/x-x509-ca-cert');
+    expect(res.disp).toContain('weave-daemon.crt');
+    expect(res.body).toBe(cert);
+    server.close();
+
+    // 没配证书（老装配）→ 404，不给空文件
+    const port2 = await freePort();
+    const bare = weaveRequestHandler({
+      projects: { list: () => [], getById: () => undefined } as never,
+      port: port2,
+    });
+    const server2 = await createDaemonServer(bare, { certDir: tmpDir() });
+    await new Promise<void>((resolve) => server2.listen(port2, '127.0.0.1', resolve));
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      https
+        .get({ host: '127.0.0.1', port: port2, rejectUnauthorized: false, path: '/cert' }, (r) => {
+          r.resume();
+          r.on('end', () => resolve(r.statusCode));
+        })
+        .on('error', reject);
+    });
+    expect(status).toBe(404);
+    server2.close();
   });
 });
 

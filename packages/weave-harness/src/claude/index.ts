@@ -45,7 +45,7 @@ export {
 } from './transcript.js';
 export { CLAUDE_EDITS } from './edits.js';
 export { CLAUDE_IMAGES } from './images.js';
-export { CLAUDE_NARRATION } from './narration.js';
+export { CLAUDE_NARRATION, turnAwareParser } from './narration.js';
 export { CLAUDE_USAGE } from './usage.js';
 export { CLAUDE_REWIND, stepRewind, type RewindState } from './rewind.js';
 export {

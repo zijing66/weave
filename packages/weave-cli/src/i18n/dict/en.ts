@@ -165,6 +165,7 @@ export const en: Record<keyof typeof zh, string> = {
   'out.dash.buildHint':
     '  Build it with `pnpm build:web`, or run the Vite dev server: `pnpm dev:web` (https://localhost:9527).',
   'out.dash.url': '\n  Dashboard: {url}\n',
+  'out.dash.certHint': '  Install this certificate on phones / other hosts (avoids HTTPS warnings): {url}',
   'out.dash.noOpen': '  (--no-open: not launching a browser)',
   'out.dash.initialPassword':
     '\n  Initial login password: {password}\n  (shown only once; change it with `weave chpass <new password>`)\n',

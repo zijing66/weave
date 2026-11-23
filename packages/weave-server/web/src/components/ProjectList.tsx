@@ -1680,12 +1680,10 @@ function ProjectResourceBadge({ projectId }: { projectId: number }) {
           <MemoryStick className="h-3 w-3 shrink-0" aria-hidden="true" />
           <span className="truncate">{mem === null ? '—' : fmtMem(mem)}</span>
         </span>
-        {io !== null && (
-          <span className="inline-flex min-w-0 items-center gap-1 text-violet-300">
-            <HardDrive className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span className="truncate">{fmtIo(io)}</span>
-          </span>
-        )}
+        <span className="inline-flex min-w-0 items-center gap-1 text-violet-300">
+          <HardDrive className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{io === null ? '—' : fmtIo(io)}</span>
+        </span>
       </span>
     </div>
   );

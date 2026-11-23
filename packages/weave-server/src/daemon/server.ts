@@ -380,6 +380,23 @@ async function handleRequest(
     return;
   }
 
+  // /cert —— 自签证书下载（门豁免：手机/其他主机首次访问前要能拿到这份锚，
+  // 此时还没有凭据）。只出公钥件：`host.crt` 本身就是服务器证书兼信任锚，
+  // 私钥 host.key 绝不在这条路上。
+  if (pathname === '/cert' && req.method === 'GET') {
+    if (!deps.ownCertPem) {
+      sendJson(res, 404, { error: 'Certificate not ready' });
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'application/x-x509-ca-cert',
+      'content-disposition': 'attachment; filename="weave-daemon.crt"',
+      'cache-control': 'no-store',
+    });
+    res.end(deps.ownCertPem);
+    return;
+  }
+
   // /auth/* —— 认证子系统自身（登录/登出/改密/状态），门豁免：登录页要用它。
   if (await handleAuthRoutes(req, res, deps, pathname)) return;
 

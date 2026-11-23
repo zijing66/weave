@@ -290,7 +290,12 @@ export async function handleFederationCall(
     json(
       200,
       await globalSearch(
-        { projects: deps.projects, hookEvents: deps.hookEvents, hookSessions: deps.hookSessions },
+        {
+          projects: deps.projects,
+          hookEvents: deps.hookEvents,
+          hookSessions: deps.hookSessions,
+          sessionProbe: deps.sessionProbe,
+        },
         p.data.q.trim(),
       ),
     );

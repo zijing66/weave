@@ -1143,6 +1143,12 @@ export interface NarrationText {
   /** 该条 assistant 消息的时刻（ISO UTC，转录 timestamp）；宿主没带 → null。 */
   at: string | null;
   text: string;
+  /** 转录行标识（claude = 行 uuid）；宿主没带 → 缺省，消费方按时刻兜底。 */
+  uuid?: string;
+  /** 显式轮次（claude = 转录行 turnPosition）：同一 (promptIndex, turnIndex) 的
+   *  连续段归一轮，轮内最后一段是回答——前端据此分组，不再靠「后面紧跟 user」猜。 */
+  promptIndex?: number;
+  turnIndex?: number;
 }
 
 /**

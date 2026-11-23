@@ -86,6 +86,17 @@ export function LoginPage() {
           <FeedbackIcon state={state} />
           {t('auth.login')}
         </button>
+        {/* 证书下载（/cert 免认证）：手机首访还卡在证书告警页时，点穿一次即可拿到
+            这份锚，装成受信任的 CA 后重载就不再告警。说明走自绘 Tooltip（不叠原生 title）。 */}
+        <Tooltip label={t('auth.certHint')} side="bottom" className="mt-3 w-full justify-center">
+          <a
+            href="/cert"
+            download="weave-daemon.crt"
+            className="text-11 text-neutral-500 underline-offset-2 transition-colors hover:text-neutral-300 hover:underline"
+          >
+            {t('auth.certDownload')}
+          </a>
+        </Tooltip>
       </form>
     </div>
   );

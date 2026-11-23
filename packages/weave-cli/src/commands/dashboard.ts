@@ -66,6 +66,10 @@ async function dashboardAction(ctx: { flags: Record<string, unknown> }): Promise
   if (urls.length > 0) {
     logger.dim(t('out.daemon.urlsTitle'));
     logger.dim(urls.map((u) => `  ${u.url}`).join('\n'));
+    // 证书下载（端口上免认证的 /cert）：手机装上才能免告警；优先给局域网地址，
+    // 那才是别的设备真正要访问的那个。
+    const lan = urls.find((u) => u.scope === 'lan') ?? urls[0];
+    logger.dim(t('out.dash.certHint', { url: `${lan.url}/cert` }));
   }
   // 首启初始密码的一次性领取点（daemon 是 detached 启动，打印必丢）。
   announceInitialPassword();
