@@ -708,6 +708,8 @@ dashboard ↔ 服务端只有一条事件流 = `GET /events`（`packages/weave-s
 - **中枢不得常驻订阅源**：隐藏刷新器靠 `DataBus.hasSubscribers()` 判有没有人在看，宽限期（`UNWIRE_GRACE_MS`）只为让刷新页面/网络抖动落在同一条流里，一过必须摘。
 - 订阅按帧域拆面——`subscribeFrame` 按帧类型、`subscribePush` 按载荷 key、`subscribeHook` 按 kind（支持 `message.` 尾点前缀）、`registerInvalidator` 失效域（一 key 多注册者）——组件不收裸流、不走 window 事件转发（例外 = 页面专属独立流：AI 助手的 fetch-reader 流式是**第二条 SSE 面**（§13），与 B3 终端 WS（§9 末）并列为「单通道」仅有的两个口子）。
 
+**对话窄流（`GET /events/conversation`，独立框架页 /pane-frame 专用）**：同一个 `SseHub`、同一套编号 / 环形缓冲 / `?since=` 补发 / `resync` 文法，只差两点——帧按 `type` 过滤成对话三域（`hook` / `push` / `invalidate`；asset/project 域与 dashboard 快照回调都不给，`skipOnAttach` 跳过 `onAttach` 的分块历史），且不触发三个 refresher 的入连补拍（在途 / 终端 / 更新角标是主窗列表的账）。窗口判定在前端：`lib/sse.ts` 按 `location.pathname` 匹配 `/pane-frame`（route.ts 的固定路由，惰性求值——模块顶层摸 location 会炸 node 测试环境）选窄流 URL（`api.conversationEventsUrl`）——同一窗口生命期内模式不变，两条流共用同一套分发表，不存在双连接。pane 窗口里 `SessionStatusProvider` 的会话清单窄化（`paneSessionId()` 从 window.name 指向的 schema 2 localStorage 记录取 `seedSessionId`，行补丁 `?ids=` 单发；问题清单由对话面板就地拉）——dashboard 全量快照订阅不进弹出窗。
+
 **数据层走 TanStack Query**：`['projects']` 域先行（SSE 帧经 `registerInvalidator`/`subscribeFrame` 桥到 `invalidateQueries`），其余域按同一范式逐个并入、不抢跑；全局缺省 `staleTime: Infinity` + `refetchOnWindowFocus: false` + `retry: false`——刷新只走 SSE 信号，个别查询按需覆写。
 
 **无事件源的数据**（项目终端数（单位 = 可见屏幕，wezterm = tab——与「选哪个终端」弹窗同口径）+ 会话所在可见屏幕、会话存活）由后端隐藏刷新器（形状同 `daemon/terminal-topology-refresher.ts`）只在值变化时推、且只在有 SSE 客户端时才探。
@@ -821,6 +823,8 @@ dashboard 右下角浮层，配置齐才显示。走**服务端代理**——web
 归后端能力面 `TerminalBackend.locateScreens`（与 `locatePane` 同一份旁路 pane env，纯函数 `sessionScreensFromEnvs`；无枚举能力的后端空表 = 不分组）——`SessionTerminal`（id + 窗口/Tab 号 + 同窗口 tab 数）**id 格式归后端、server/web 不自拼**。
 
 数据面吃既有隐藏刷新（`daemon/terminal-topology-refresher.ts` 快照 = `{counts, terminals}`，帧键 `terminalTopology`）：`GET /sessions` 回上次快照、增量经 push 帧补丁行（web 不自算、不新开探测）；`locateScreens` 走 10s 探活缓存（展示滞后无感），而**投递路径的定位必须实时枚举**（缓存会把消息落进刚关的 pane）。
+
+**Web 终端（headless）会话并入分块**：合并通道 `runtime/terminal-channel.ts` 的 `mergedTerminalChannel.locateScreens` 在外部后端之外并一份合成组——`agent_instances.liveGroupedSessions()`（活 headless 且已首绑会话 → projectId，判据只看 `execution_mode`、harness 无关）按项目合成 `web:<projectId>` 行。合并序是关键：外部账**原样保留**（真定位的分块与显式 null 摘除都是事实——null 是「显式移出分组」的契约值，丢了会让失效会话残留旧分块）；web 组只补**外部 null 或缺席**两处（headless 会话也上报过 pane env、外部屏上定位不到回 null，不能拿它抹掉 web 组），外部真分块永远优先。`views.sessionTerminals` 不因 paneEnvs 空表早退——纯 Web 终端场景也要让 locateScreens 跑到，否则 web 组永远进不了快照。
 
 web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚成一块，块位 = 首成员位置、块内保持活动序；**块里只有一个会话也照样立块头**——块头答的是「这块屏在哪」，与会话数无关；反查不到的行不分组、原位留在块外）。
 

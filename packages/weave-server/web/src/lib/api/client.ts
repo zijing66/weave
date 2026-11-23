@@ -54,3 +54,10 @@ export const refreshDashboard = (): Promise<{ ok: boolean }> =>
 /** 事件流地址；`since` = 上次收到的帧 id，服务端据此补发断流期间漏掉的帧。 */
 export const eventsUrl = (since: string | null = null): string =>
   since === null ? `${API_BASE}/events` : `${API_BASE}/events?since=${encodeURIComponent(since)}`;
+
+/** 对话窄流（独立框架页 /pane 专用）：同一份中枢的 hook/push/invalidate 三域，
+ *  不带 asset/project 域，也不触发服务端 dashboard 首连快照。 */
+export const conversationEventsUrl = (since: string | null = null): string =>
+  since === null
+    ? `${API_BASE}/events/conversation`
+    : `${API_BASE}/events/conversation?since=${encodeURIComponent(since)}`;

@@ -128,13 +128,13 @@ export function TerminalPanes({ slot }: { slot: PaneSlot }) {
     [hitTest],
   );
 
-  /** 弹出到独立终端页：描述符落 storage、开独立路由 /pane（window.name 带
-   *  frameId）；本 pane 立即转占位。弹窗被拦（openPaneFrame 抛错）保持本地显示。 */
+  /** 弹出到独立框架页：把该 pane 的会话对话弹出去（框架页 = 一项目的多 pane
+   *  面，终端可在页内再贴）；本 pane 立即转占位。弹窗被拦保持本地显示。 */
   const popout = useCallback(
     (pane: PaneRecord): void => {
       try {
         const frameId = openPaneFrame(
-          { paneId: pane.paneId, kind: 'terminal', label: pane.label, instanceId: pane.instanceId },
+          { projectId: 0, projectLabel: pane.label, sessionId: pane.paneId, label: pane.label },
           'width=900,height=620',
         );
         setPanePopped(pane.paneId, frameId);

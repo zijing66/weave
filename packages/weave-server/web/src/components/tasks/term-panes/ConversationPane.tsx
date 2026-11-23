@@ -84,6 +84,7 @@ export function ConversationPane({
       minimized={false}
       onInterrupt={onInterrupt}
       interruptStateOf={interruptStateOf}
+      pane
     />
   );
 }

@@ -173,9 +173,9 @@ export default function App() {
   // 57/65 卡死：分母固化自上次启动，本次少发几个进度就到不了 1）。
   const dataReady = auth === 'authenticated' && bootReady;
   const stageLabel = t(`app.bootStage.${anonymous || auth === 'unknown' ? 'link' : stage}` as MessageKey);
-  // 分屏框架页（独立路由 /pane）：单独页面，不加载 dashboard 本体（分屏只拆
+  // 分屏框架页（独立路由 /pane-frame）：单独页面，不加载 dashboard 本体（分屏只拆
   // 终端/对话区域）；内容经 storage 队列传递，不进 URL。
-  const popoutMode = parseRoute(location.pathname).kind === 'pane';
+  const popoutMode = parseRoute(location.pathname).kind === 'pane-frame';
   return (
     <>
       {anonymous && <LoginPage />}
@@ -522,7 +522,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   useEffect(() => {
     if (!shellReady) return;
     const route = parseRoute(path);
-    if (route.kind === 'none' || route.kind === 'pane') return;
+    if (route.kind === 'none' || route.kind === 'pane-frame') return;
     if (route.kind === 'rpg') {
       setRpgMode(true);
       setGlobalMode(false);

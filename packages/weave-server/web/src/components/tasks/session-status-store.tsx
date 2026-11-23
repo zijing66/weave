@@ -18,7 +18,7 @@ import {
 import type { ModelAliasTarget } from '@weavecode/harness';
 import { useAuthState } from '@/lib/auth';
 import { useToast } from '@/components/Toast';
-import { subscribeHook, subscribePush, type HookFrame } from '@/lib/sse';
+import { subscribeHook, subscribePush, paneSessionId, type HookFrame } from '@/lib/sse';
 import {
   countSessionsByHarness,
   deriveSessionStatus,
@@ -222,10 +222,15 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   }, [refresh, toast]);
 
   // 认证前不拉：Provider 挂在认证门之上，登录页阶段发请求必 401，而错误会一直
-  // 留到登录后（Provider 不重挂载）被全局总览渲染成红条。
+  // 留到登录后（Provider 不重挂载）被全局总览渲染成红条。pane 窗口只拉自己那条
+  // 会话（`?ids=` 行补丁端点），不全量——全量清单与项目徽标是主窗的事。
   useEffect(() => {
-    if (auth === 'authenticated') void refreshWithToast();
-  }, [auth, refreshWithToast]);
+    if (auth === 'authenticated') {
+      const ids = paneSessionId();
+      if (ids) void patchRows([ids]);
+      else void refreshWithToast();
+    }
+  }, [auth, refreshWithToast, patchRows]);
 
   // 在途消息角标：后端按 message.* 事件重算并推绝对值快照（无轮询、无重拉）。
   useEffect(
@@ -296,6 +301,11 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       // 待答面每拍都跟一次（问题挂起 / 作答落地都认帧）：行补丁只管会话行，
       // 不带它——不在这里补，答完问题的图标与项目卡边框会一直挂着。
       void refreshQuestions();
+      // pane 窗口只关心自己那条会话：整拍都收敛成一次行补丁，全量清单不在窄窗职责里。
+      if (paneSessionId()) {
+        if (ids.length > 0) void patchRows(ids);
+        return;
+      }
       const known = new Set((sessionsRef.current ?? []).map((s) => s.sessionId));
       const missed =
         full ||

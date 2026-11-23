@@ -544,6 +544,14 @@ async function handleRequest(
     return;
   }
 
+  // /events/conversation — 独立框架页（/pane 对话 pane）自己的事件流：只带 hook /
+  // push / invalidate 三域（对话所需的全部帧），不带 asset/project 域与 dashboard
+  // 快照回调——同一份 SseHub 的编号 + 环形缓冲 + 断流补发，不造第二条连接协议。
+  if (pathname === '/events/conversation' && req.method === 'GET') {
+    handleSse(req, res, deps, url, { domains: 'conversation', skipOnAttach: true });
+    return;
+  }
+
   // --- 项目域 → routes/projects.ts（开目录/终端、新会话、归档/恢复、排序、pane 枚举）---
   if (await handleProjectRoutes(req, res, deps, pathname)) return;
 
@@ -563,12 +571,15 @@ async function handleRequest(
 /** SSE 心跳间隔：比常见代理的 30~60s 空闲超时短一截，且远小于前端判死阈值。 */
 const SSE_HEARTBEAT_MS = 25_000;
 
-/** Upgrade a response to an SSE stream fed by the shared hub. */
+/** Upgrade a response to an SSE stream fed by the shared hub.
+ *  `domains: 'conversation'` = 只发对话所需三域（独立框架页的窄流）；`skipOnAttach`
+ *  = 不触发首连快照回调（dashboard 的分块历史对 pane 毫无用处，白查一趟库）。 */
 function handleSse(
   req: IncomingMessage,
   res: ServerResponse,
   deps: WeaveServerDeps,
   url: URL,
+  opts: { domains?: 'all' | 'conversation'; skipOnAttach?: boolean } = {},
 ): void {
   const hub = deps.sseHub;
   if (!hub || (!deps.watch && !deps.hookBus && !deps.dataBus)) {
@@ -603,19 +614,39 @@ function handleSse(
 
   // 漏掉的帧补不回来（纪元变了 / 缓冲越界 / 中断期间没人在听）：先告诉前端整页重来。
   if (replay.gap) res.write(`data: ${JSON.stringify({ type: 'resync' })}\n\n`);
-  for (const frame of replay.frames) res.write(`id: ${frame.id}\ndata: ${frame.data}\n\n`);
+  // 窄流只发对话三域；全量流原样。
+  const inDomain =
+    opts.domains === 'conversation'
+      ? (t: string) => t === 'hook' || t === 'push' || t === 'invalidate'
+      : () => true;
+  for (const frame of replay.frames) {
+    try {
+      if (inDomain(String((JSON.parse(frame.data) as { type?: string }).type))) {
+        res.write(`id: ${frame.id}\ndata: ${frame.data}\n\n`);
+      }
+    } catch {
+      // 坏帧丢掉（写盘侧保证合法 JSON，这里只是对齐分发侧的宽容）
+    }
+  }
 
   // 先接上实时流再补快照：补发与订阅之间不许有空档，否则那一拍的新帧会漏。
   const unsubscribe = hub.subscribe((frame) => {
+    try {
+      if (!inDomain(String((JSON.parse(frame.data) as { type?: string }).type))) return;
+    } catch {
+      // 同上：写不出去的帧不会比能写出的多信息
+    }
     res.write(`id: ${frame.id}\ndata: ${frame.data}\n\n`);
   });
 
   // 新客户端补一份在途消息角标快照：推送只在变化时发，首帧不该等到下一次消息事件。
-  deps.inflightRefresher?.refreshNow();
-  // 终端角标同理：先补上次快照（无则跳过），再后台对一次账补差量——前端零轮询。
-  deps.terminalRefresher?.onSubscriberJoin();
-  // 项目行更新角标：补一份绝对值快照（含 0），页面一打开即准确，不必等 hover。
-  deps.updatesRefresher?.onSubscriberJoin();
+  if (!opts.skipOnAttach) {
+    deps.inflightRefresher?.refreshNow();
+    // 终端角标同理：先补上次快照（无则跳过），再后台对一次账补差量——前端零轮询。
+    deps.terminalRefresher?.onSubscriberJoin();
+    // 项目行更新角标：补一份绝对值快照（含 0），页面一打开即准确，不必等 hover。
+    deps.updatesRefresher?.onSubscriberJoin();
+  }
 
   req.on('close', () => {
     clearInterval(heartbeat);

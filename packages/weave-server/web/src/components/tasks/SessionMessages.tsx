@@ -41,6 +41,7 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import { formatStamp } from '@/lib/hook-payload';
 import { HARNESS_LIFECYCLE } from './lifecycle';
+import { subscribeHook } from '@/lib/sse';
 import { useSessionStatus } from './session-status-store';
 import { useConvThread } from './use-conv-thread';
 import { useDraftEditor } from './use-draft-editor';
@@ -149,6 +150,7 @@ export function SessionMessages({
   onOpenChain,
   webTerminal,
   onPopout,
+  pane,
 }: {
   sessionId: string;
   /** 会话所属项目（路由锚点；会话可能采集到跨项目事件，过滤只按 sessionId）。 */
@@ -188,6 +190,9 @@ export function SessionMessages({
   } | null;
   /** 嵌入形态才给：把这扇对话弹出到独立框架页（右栏留占位 + 切回）。 */
   onPopout?: () => void;
+  /** 独立框架页形态（/pane 弹出窗里的那扇）：状态读取窄化到本会话、询问清单
+   *  就地拉、状态栏条跳过（配置入口在主窗），输入面照常可用。 */
+  pane?: boolean;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -201,10 +206,33 @@ export function SessionMessages({
   const [rewindOpen, setRewindOpen] = useState(false);
   const { sessions, statuses, refresh, modelCatalog, questions } = useSessionStatus();
   /** 挂着待答问题时宿主在等键盘（模态框），此刻发的消息既送不进去也容易打乱作答
-   *  ⇒ 整个输入面（输入框与同排按钮）置灰。 */
-  const asking = questions.has(sessionId);
-  /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。 */
-  const { data: projects } = useQuery(PROJECTS_QUERY);
+   *  ⇒ 整个输入面（输入框与同排按钮）置灰。pane 形态的状态总线不带问题清单——
+   *  阻塞时宿主面板也在这扇窗里，就地拉一次挂起态。 */
+  const [paneQuestions, setPaneQuestions] = useState<string[]>([]);
+  useEffect(() => {
+    if (!pane) return;
+    let alive = true;
+    const load = (): void => {
+      api
+        .listQuestions()
+        .then((entries) => {
+          if (alive) setPaneQuestions(entries.map((e) => e.sessionId));
+        })
+        .catch(() => {});
+    };
+    load();
+    const off = subscribeHook(load, ['question.pending', 'event.ingested']);
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [pane, sessionId]);
+  const asking = pane ? paneQuestions.includes(sessionId) : questions.has(sessionId);
+  /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。
+   *  pane 形态不拉（`enabled:false`——选择器的跨项目标注定向主窗的列表缓存，
+   *  弹出窗里少一发全量清单请求）。 */
+  const projectsQuery = useQuery({ ...PROJECTS_QUERY, enabled: !pane });
+  const projects = pane ? undefined : projectsQuery.data;
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   // 对话数据域：翻页/SSE 增量/投递认领/贴底跟随（数据形状与刷新节奏都在 hook 里）
   const {
@@ -805,6 +833,7 @@ export function SessionMessages({
           if (files.length > 0) stageFiles(files);
         }}
       >
+        <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-2 pb-2 max-lg:gap-x-1 max-lg:gap-y-1 max-lg:pb-1">
         <div
           {...(embedded || fullscreen
             ? {}
@@ -815,11 +844,10 @@ export function SessionMessages({
                 onPointerCancel: onDragUp,
               })}
           className={cn(
-            'flex items-center justify-between gap-2 pb-2 max-lg:pb-1',
-            !embedded && isDesktop && !fullscreen && 'cursor-grab active:cursor-grabbing',
+            'contents',
           )}
         >
-          <div className="flex min-w-0 items-center gap-1.5">
+          <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5">
             {/* 与会话列表同一枚状态图标（SessionStatusIcon 唯一渲染点）：跑马灯/静态
                 形/状态点三种形态都跟列表一致，不再自画 */}
             <SessionStatusIcon status={status ?? 'open'} harness={capability.harness} />
@@ -852,7 +880,7 @@ export function SessionMessages({
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="col-start-3 row-start-2 flex min-w-0 items-center justify-end gap-1 max-lg:overflow-x-auto">
             {/* 嵌入形态：事件链不再占右栏，从这枚按钮开成弹窗 */}
             {embedded && (
               <>
@@ -1002,7 +1030,7 @@ export function SessionMessages({
           </div>
           {/* 弹出独立框架页：独立摆在右上角（不混进功能按钮组），分隔线隔开 */}
           {onPopout && (
-            <div className="flex shrink-0 items-center border-l border-edge/[0.08] pl-1.5 max-lg:pl-1">
+            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
               <Tooltip label={t('tasks.panePopout')} side="top">
                 <button
                   type="button"
@@ -1016,10 +1044,9 @@ export function SessionMessages({
               </Tooltip>
             </div>
           )}
-        </div>
 
-        {/* 历史过滤：只改显示，不动手上的翻页游标与勾选 */}
-        <div className="flex shrink-0 items-center gap-1 pb-2 max-lg:pb-1">
+          {/* 历史过滤：只改显示，不动手上的翻页游标与勾选；与功能按钮同一行 */}
+          <div className="col-start-1 col-span-2 row-start-2 flex min-w-0 items-center gap-1 max-lg:overflow-x-auto">
           {CONV_FILTERS.map((f) => (
             <button
               key={f}
@@ -1041,9 +1068,11 @@ export function SessionMessages({
                     : capability.harness}
             </button>
           ))}
-          <span className="ml-auto text-10 text-neutral-600">
+          <span className="ml-auto shrink-0 text-10 text-neutral-600">
             {t('tasks.convCount', { n: convUnits(visible, selecting).filter((u) => u.kind !== 'rewind').length })}
           </span>
+        </div>
+        </div>
         </div>
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
@@ -2425,15 +2454,16 @@ export function SessionMessages({
         )}
 
         {/* 状态栏条（输入框下方、贴底边）：只读，配置入口在个性化配置里；
-            一块都渲染不出（配置里的块都要宿主 stdin 字段）就不摆（见 StatuslineBar）。 */}
-        <StatuslineBar
+            一块都渲染不出（配置里的块都要宿主 stdin 字段）就不摆（见 StatuslineBar）。
+            pane 形态不摆——配置入口在主窗，弹出窗里没有可改的地方。 */}
+        {!pane && <StatuslineBar
           projectId={projectId}
           sessionName={sessionRow?.title ?? label}
           model={modelDisplay}
           effort={sessionRow?.effort ?? null}
           contextTokens={sessionRow?.contextTokens ?? null}
           contextPercent={contextPercent}
-        />
+        />}
 
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口。
             触屏同样可用——pointer capture + touch-none，grip 自身不吃滚动） */}

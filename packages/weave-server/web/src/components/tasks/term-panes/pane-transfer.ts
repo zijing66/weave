@@ -1,33 +1,87 @@
 import { useSyncExternalStore } from 'react';
 import { routeToPath } from '@/lib/route';
+import {
+  type LayoutNode,
+  decodeLayout,
+  encodeLayout,
+  paneIdsOf,
+  placePane,
+  removePane,
+  adjustWeights as adjustWeightsTree,
+} from './pane-layout';
+
+/**
+ * 弹出框架页的 storage 协议（schema 2）：一个框架页 = **一个项目**的多 pane 面
+ * （wezterm 贴 pane 同款，最多 MAX_PANES 个；同项目的会话都挂这一页）。
+ * 记录只存视图元信息（实例 id / 会话 id / 布局树），不存命令、输入、输出或凭据。
+ * 主窗与弹出窗都经这里读写同一份记录（storage 事件回读），两窗状态天然同源。
+ */
+
+export const FRAME_MAX_PANES = 6;
+
+/** 框架页内的一个视图（pane 内容）。 */
+export type FrameView =
+  | { kind: 'terminal'; instanceId: string; label: string; sessionId: string }
+  | { kind: 'conversation'; label: string; sessionId: string };
 
 export type PaneTransfer = {
-  schema: 1;
+  schema: 2;
   frameId: string;
-  paneId: string;
-  label: string;
+  /** 归属项目（同项目会话全挂这一页；主窗据此路由终端按钮）。 */
+  projectId: number;
+  projectLabel: string;
   state: 'active' | 'returning';
-} & (
-  | { kind: 'terminal'; instanceId: string }
-  | { kind: 'conversation'; sessionId: string; projectId: number; projectLabel: string }
-);
-type PaneInput =
-  | { kind: 'terminal'; paneId: string; instanceId: string; label: string }
-  | { kind: 'conversation'; paneId: string; sessionId: string; projectId: number; label: string; projectLabel: string };
+  /** 打开时的首个视图（会话对话）。后续 pane 的增减走 views/layout。 */
+  seedSessionId: string;
+  label: string;
+  /** paneId → 视图。paneId 即布局树叶子 id（`v:` 前缀 + 会话 id + kind）。 */
+  views: Record<string, FrameView>;
+  /** 布局树（encodeLayout 序列化）；null = 单 pane 免布局。 */
+  layout: string | null;
+};
+
+type PaneInput = {
+  projectId: number;
+  projectLabel: string;
+  sessionId: string;
+  label: string;
+};
 
 const PREFIX = 'weave:pane-frame:';
 const WINDOW_PREFIX = 'weave-pane:';
 const CHANGE = 'weave:pane-frames-changed';
-const windows = new Map<string, Window>();
+const windowRefs = new Map<string, Window>();
+/** 主窗聚焦弹出窗用（只读视图；持有引用由 openPaneFrame 维护）。 */
+export const windows: ReadonlyMap<string, Window> = windowRefs;
+
+export function frameLayoutOf(frame: PaneTransfer): LayoutNode | null {
+  const node = decodeLayout(frame.layout);
+  // 布局里引用了缺失视图的叶子剔除（孤儿清扫，同 term-pane-store）
+  let cur = node;
+  const valid = new Set(Object.keys(frame.views));
+  while (cur) {
+    const orphans = paneIdsOf(cur).filter((id) => !valid.has(id));
+    if (orphans.length === 0) break;
+    cur = removePane(cur, orphans[0]!);
+  }
+  return cur;
+}
 
 export function validPaneTransfer(value: unknown): value is PaneTransfer {
   if (!value || typeof value !== 'object') return false;
   const p = value as Partial<PaneTransfer>;
-  if (p.schema !== 1 || typeof p.frameId !== 'string' || typeof p.paneId !== 'string' || typeof p.label !== 'string') return false;
+  if (p.schema !== 2 || typeof p.frameId !== 'string' || typeof p.label !== 'string') return false;
   if (p.state !== 'active' && p.state !== 'returning') return false;
-  return p.kind === 'terminal'
-    ? typeof p.instanceId === 'string' && p.instanceId.length > 0
-    : p.kind === 'conversation' && typeof p.sessionId === 'string' && Number.isInteger(p.projectId) && typeof p.projectLabel === 'string';
+  if (!Number.isInteger(p.projectId) || typeof p.projectLabel !== 'string' || typeof p.seedSessionId !== 'string') return false;
+  if (!p.views || typeof p.views !== 'object') return false;
+  for (const v of Object.values(p.views)) {
+    if (!v || typeof v !== 'object') return false;
+    const view = v as Partial<FrameView>;
+    if (typeof view.label !== 'string' || typeof view.sessionId !== 'string') return false;
+    if (view.kind === 'terminal' && (typeof view.instanceId !== 'string' || view.instanceId.length === 0)) return false;
+    else if (view.kind !== 'conversation') return false;
+  }
+  return true;
 }
 
 export function readPaneTransfer(frameId = window.name.startsWith(WINDOW_PREFIX) ? window.name.slice(WINDOW_PREFIX.length) : ''): PaneTransfer | null {
@@ -38,6 +92,11 @@ export function readPaneTransfer(frameId = window.name.startsWith(WINDOW_PREFIX)
   } catch {
     return null;
   }
+}
+
+function writeFrame(frame: PaneTransfer): void {
+  localStorage.setItem(PREFIX + frame.frameId, JSON.stringify(frame));
+  changed();
 }
 
 function frames(): PaneTransfer[] {
@@ -67,7 +126,7 @@ export function subscribePaneFrames(listener: () => void): () => void {
   };
 }
 
-// 快照用序列化字符串保持引用稳定；数据只存视图元信息，不存命令、输入、输出或凭据。
+// 快照用序列化字符串保持引用稳定。
 function snapshot(): string {
   return JSON.stringify(frames());
 }
@@ -76,30 +135,93 @@ export function usePaneFrames(): PaneTransfer[] {
   return JSON.parse(useSyncExternalStore(subscribePaneFrames, snapshot)) as PaneTransfer[];
 }
 
+/** 某项目的框架页（active 态；同项目恒同一页——已有即复用，不另开窗）。 */
+export function frameOfProject(projectId: number): PaneTransfer | null {
+  return frames().find((p) => p.projectId === projectId && p.state === 'active') ?? null;
+}
+
+/** 会话的视图 paneId（一个会话可同时有对话 + 终端两个视图，kind 区分）。 */
+export function viewIdOf(sessionId: string, kind: 'conversation' | 'terminal'): string {
+  return `${kind}:${sessionId}`;
+}
+
 export function openPaneFrame(pane: PaneInput, features: string): string {
-  const existing = frames().find((p) => p.paneId === pane.paneId || (p.kind === 'terminal' && pane.kind === 'terminal' && p.instanceId === pane.instanceId));
+  const existing = frameOfProject(pane.projectId);
   if (existing) {
-    windows.get(existing.frameId)?.focus();
+    windowRefs.get(existing.frameId)?.focus();
     return existing.frameId;
   }
   const frameId = crypto.randomUUID();
-  const descriptor: PaneTransfer = { ...pane, schema: 1, frameId, state: 'active' };
+  const viewId = viewIdOf(pane.sessionId, 'conversation');
+  const descriptor: PaneTransfer = {
+    schema: 2,
+    frameId,
+    projectId: pane.projectId,
+    projectLabel: pane.projectLabel,
+    state: 'active',
+    seedSessionId: pane.sessionId,
+    label: pane.label,
+    views: { [viewId]: { kind: 'conversation', label: pane.label, sessionId: pane.sessionId } },
+    layout: null,
+  };
   localStorage.setItem(PREFIX + frameId, JSON.stringify(descriptor));
-  const popup = window.open(routeToPath({ kind: 'pane' }), WINDOW_PREFIX + frameId, features);
+  const popup = window.open(routeToPath({ kind: 'pane-frame' }), WINDOW_PREFIX + frameId, features);
   if (!popup) {
     finishPaneFrame(frameId);
     throw new Error('浏览器阻止了弹出窗口，请允许本站弹窗后重试。');
   }
-  windows.set(frameId, popup);
+  windowRefs.set(frameId, popup);
   changed();
   // 只探浏览器窗口是否关闭，不把后台标签页的节流误判成失联。
   const timer = window.setInterval(() => {
     if (!popup.closed) return;
     window.clearInterval(timer);
-    windows.delete(frameId);
+    windowRefs.delete(frameId);
     finishPaneFrame(frameId);
   }, 1000);
   return frameId;
+}
+
+/** 往框架页贴一个视图（wezterm 贴 pane）：挂在锚视图旁（缺省 = 最后一个叶子）。
+ *  会话已有同 kind 视图 = 幂等（聚焦不重挂）；满 6 拒绝。 */
+export function attachFrameView(
+  frameId: string,
+  view: FrameView,
+  anchorPaneId?: string,
+): { ok: boolean; reason?: 'limit' } {
+  const frame = readPaneTransfer(frameId);
+  if (!frame) return { ok: false };
+  const viewId = viewIdOf(view.sessionId, view.kind);
+  if (frame.views[viewId]) return { ok: true };
+  if (Object.keys(frame.views).length >= FRAME_MAX_PANES) return { ok: false, reason: 'limit' };
+  const views = { ...frame.views, [viewId]: view };
+  const layout = frameLayoutOf(frame);
+  const anchor = anchorPaneId ?? paneIdsOf(layout ?? { kind: 'pane', paneId: viewId }).at(-1)!;
+  const nextLayout = layout
+    ? placePane(layout, anchor, null, 'right', viewId)
+    : ({ kind: 'pane', paneId: viewId } as LayoutNode);
+  if (!nextLayout) return { ok: false };
+  writeFrame({ ...frame, views, layout: encodeLayout(nextLayout) });
+  return { ok: true };
+}
+
+/** 从框架页摘掉一个视图（pane 关闭；单 pane 时只清布局）。 */
+export function detachFrameView(frameId: string, viewPaneId: string): void {
+  const frame = readPaneTransfer(frameId);
+  if (!frame || !frame.views[viewPaneId]) return;
+  const views = { ...frame.views };
+  delete views[viewPaneId];
+  const layout = removePane(frameLayoutOf(frame) ?? ({ kind: 'pane', paneId: viewPaneId } as LayoutNode), viewPaneId);
+  writeFrame({ ...frame, views, layout: layout ? encodeLayout(layout) : null });
+}
+
+/** 分隔条拖动（path/index 来自 layoutGeometry 的 sep）。 */
+export function adjustFrameWeights(frameId: string, path: number[], index: number, delta: number): void {
+  const frame = readPaneTransfer(frameId);
+  if (!frame) return;
+  const layout = frameLayoutOf(frame);
+  if (!layout) return;
+  writeFrame({ ...frame, layout: encodeLayout(adjustWeightsTree(layout, path, index, delta)) });
 }
 
 export function reclaimPaneFrame(frameId: string): void {

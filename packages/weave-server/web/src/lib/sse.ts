@@ -111,6 +111,33 @@ let lastFrameAt = Date.now();
  *  面板停在旧帧上，直到刷新页面才对），所以只能靠心跳缺席自己发现。 */
 const STREAM_SILENT_MS = 65_000;
 const WATCHDOG_MS = 15_000;
+
+// 独立框架页（/pane-frame，route.ts 里的固定路由）只开**对话窄流**（/events/conversation
+// ：hook / push / invalidate 三域，无 dashboard 快照）。dashboard 全量流在框架页窗口
+// 里既用不上、还会在服务端白触发一趟首连快照。两条流共用同一套分发表——同一窗口
+// 只处一种模式（框架页路由是窗口生命期固定的，SPA 不跨模式导航），不存在两路同时
+// 往一张表里投喂。判据惰性求值：模块顶层摸 location 会炸 node 测试环境（无 DOM）。
+const isPaneFrameRoute = (): boolean =>
+  typeof location !== 'undefined' && /^\/pane-frame\/?$/.test(location.pathname);
+
+/**
+ * 框架页窗口锚定的会话 id（window.name = `weave-pane:<frameId>` → localStorage 记录，
+ * 形状归 term-panes/pane-transfer.ts schema 2——lib 层不 import 组件树，这里只做窄读，
+ * 取打开时的种子会话）。非框架页窗口 / 记录没了（归还后主窗会删）= null，
+ * 调用方回落全量口径。
+ */
+export function paneSessionId(): string | null {
+  if (!isPaneFrameRoute() || typeof window === 'undefined' || !window.name.startsWith('weave-pane:')) return null;
+  try {
+    const p = JSON.parse(
+      localStorage.getItem(`weave:pane-frame:${window.name.slice('weave-pane:'.length)}`) ?? 'null',
+    ) as { schema?: number; seedSessionId?: string } | null;
+    return p?.schema === 2 && typeof p.seedSessionId === 'string' ? p.seedSessionId : null;
+  } catch {
+    return null;
+  }
+}
+
 let watchdog: ReturnType<typeof setInterval> | null = null;
 
 /** `reload()` 的防抖闸：补不齐的病根在别处，反复刷新只会把页面刷成幻灯片。 */
@@ -128,7 +155,9 @@ function ensureSource(): EventSource | null {
   // 未登录不建连（连上也是 401）：登录成功后由认证态订阅者补连，或新订阅者触发。
   if (authState() !== 'authenticated') return null;
   if (source) return source;
-  source = new EventSource(api.eventsUrl(lastEventId));
+  source = new EventSource(
+    isPaneFrameRoute() ? api.conversationEventsUrl(lastEventId) : api.eventsUrl(lastEventId),
+  );
   lastFrameAt = Date.now();
   source.onopen = () => {
     lastFrameAt = Date.now();

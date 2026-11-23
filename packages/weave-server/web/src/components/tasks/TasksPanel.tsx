@@ -29,7 +29,7 @@ import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
 import { TerminalPanes } from './term-panes/TerminalPanes';
 import { openPane, useTermPanes } from './term-panes/term-pane-store';
-import { openPaneFrame, reclaimPaneFrame, usePaneFrames } from './term-panes/pane-transfer';
+import { attachFrameView, openPaneFrame, reclaimPaneFrame, usePaneFrames, viewIdOf, windows as paneFrameWindows } from './term-panes/pane-transfer';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
@@ -824,20 +824,23 @@ export function TasksPanel({
     if (selectedId) openConv(selectedId);
   }, [selectedId, openConv]);
 
-  /** 对话弹出（分屏第二批）：这扇对话弹到独立框架页（独立路由 /pane，不加载
-   *  dashboard）；右栏原位置留占位条 + 切回。paneId 用 `conv:<sessionId>`，内容
-   *  经 storage 记录传递（pane-transfer）。占位状态直接从 storage 记录派生：
-   *  持窗关闭（记录被删）或切回（returning → 记录删除）后自动恢复对话显示，
-   *  同一对话不会双挂。 */
+  /** 对话弹出（分屏第三批）：弹到独立框架页（独立路由 /pane-frame，不加载
+   *  dashboard）；一个框架页 = 一个项目（同项目会话都贴进这一页，wezterm 贴
+   *  pane 同款，≤6）。右栏原位置留占位条 + 切回；占位状态直接从 storage 记录
+   *  派生：持窗关闭（记录被删）或切回（returning → 记录删除）后自动恢复对话
+   *  显示，同一对话不会双挂。 */
   const paneFrames = usePaneFrames();
+  const projectFrame = useMemo(
+    () => paneFrames.find((p) => p.projectId === projectId && p.state === 'active') ?? null,
+    [paneFrames, projectId],
+  );
   const poppedConvs = useMemo(() => {
     const map: Record<string, { frameId: string; label: string }> = {};
-    for (const frame of paneFrames) {
-      if (frame.kind !== 'conversation' || frame.state === 'returning') continue;
-      map[frame.paneId.slice('conv:'.length)] = { frameId: frame.frameId, label: frame.label };
+    if (projectFrame && projectFrame.views[viewIdOf(projectFrame.seedSessionId, 'conversation')]) {
+      map[projectFrame.seedSessionId] = { frameId: projectFrame.frameId, label: projectFrame.label };
     }
     return map;
-  }, [paneFrames]);
+  }, [projectFrame]);
   const popoutConversation = useCallback(
     (sessionId: string): void => {
       const conv = convs.get(sessionId);
@@ -845,14 +848,12 @@ export function TasksPanel({
       try {
         openPaneFrame(
           {
-            paneId: `conv:${sessionId}`,
-            kind: 'conversation',
-            label: conv.label,
-            sessionId,
             projectId: conv.projectId,
             projectLabel,
+            sessionId,
+            label: conv.label,
           },
-          'width=760,height=720',
+          'width=900,height=720',
         );
       } catch {
         // 浏览器拦了弹窗：对话留在右栏
@@ -895,16 +896,24 @@ export function TasksPanel({
     [isDesktop, projectId, onSelectSession, openConv],
   );
 
-  /** 进 Web 终端视图：开 pane（同实例已开即聚焦；满/跨窗重复 toast 说明）。
-   *  <lg 时同上——选中会话并展开滑出层，终端才看得见。 */
+  /** 进 Web 终端视图：本项目的框架页已弹出 → 终端贴进那一页（wezterm 贴 pane，
+     幂等）并聚焦持窗；否则开主窗 pane（同实例已开即聚焦；满/跨窗重复 toast
+     说明）。<lg 时同上——选中会话并展开滑出层，终端才看得见。 */
   const showWebTerminal = useCallback(
     (sessionId: string, instanceId: string, label: string): void => {
+      const frame = paneFrames.find((f) => f.projectId === projectId && f.state === 'active');
+      if (frame) {
+        const res = attachFrameView(frame.frameId, { kind: 'terminal', instanceId, label, sessionId });
+        if (!res.ok && res.reason === 'limit') show('error', t('tasks.paneLimit'));
+        paneFrameWindows.get(frame.frameId)?.focus();
+        return;
+      }
       const res = openPane({ instanceId, label, slot: 'panel' });
       if (!res.ok && res.reason === 'limit') show('error', t('tasks.paneLimit'));
       if (!res.ok && res.reason === 'other-window') show('error', t('tasks.paneOtherWindow'));
       focusOnMobile(sessionId);
     },
-    [focusOnMobile, show, t],
+    [paneFrames, projectId, focusOnMobile, show, t],
   );
 
   /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
@@ -1542,10 +1551,10 @@ export function TasksPanel({
       {Object.entries(poppedConvs).map(([sessionId, popped]) => (
         <div
           key={sessionId}
-          className="flex shrink-0 items-center justify-between gap-2 rounded-md border border-dashed border-edge/[0.12] px-2 py-1.5 text-xs text-neutral-500"
+          className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-edge/[0.12] text-xs text-neutral-500"
         >
-          <span className="truncate">
-            <ExternalLink className="mr-1 inline size-3.5 text-neutral-600" />
+          <span className="flex items-center gap-1.5">
+            <ExternalLink className="size-3.5 text-neutral-600" />
             {popped.label} · {t('tasks.panePoppedOut')}
           </span>
           <button

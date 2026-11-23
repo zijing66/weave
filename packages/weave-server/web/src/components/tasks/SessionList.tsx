@@ -390,6 +390,7 @@ export function SessionList({
   /** 块头文案：多实例时标实例号（双实例下两个「终端 0」分不清）；同窗口多个
    *  tab 时才标 Tab 号（单 tab 窗口标了只是噪音）。 */
   const blockTitle = (terminal: SessionTerminal): string => {
+    if (terminal.id.startsWith('web:')) return t('tasks.webTerminalBlock');
     const inst = terminal.instance ? ` · ${terminal.instance}` : '';
     return terminal.tabsInWindow > 1
       ? t('tasks.terminalBlockTab', { w: `${terminal.windowId}${inst}`, t: terminal.tabId })
@@ -1022,8 +1023,8 @@ function SessionResourceChip({ sessionId }: { sessionId: string }) {
   const io = agent.diskBytesPerSec;
   const mem = agent.memRssBytes ?? 0;
   return (
-    <Tooltip label={t('tasks.resTip')}>
-      <span className="inline-flex shrink-0 items-center gap-2 rounded border border-edge/[0.06] bg-edge/[0.04] px-1.5 py-1 text-10 leading-none tabular-nums">
+    <Tooltip label={t('tasks.resTip')} className="ml-auto max-w-full">
+      <span className="inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border border-edge/[0.06] bg-edge/[0.04] px-2 py-1 text-10 leading-none tabular-nums">
         <span className="inline-flex items-center gap-1 text-neutral-500">
           <Cpu className="h-3 w-3" aria-hidden="true" />
           {agent.cpuPercent === undefined ? '—' : `${agent.cpuPercent}%`}

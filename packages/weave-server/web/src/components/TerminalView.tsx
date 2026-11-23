@@ -219,8 +219,22 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       client.resize(term.cols, term.rows);
     };
     window.addEventListener('resize', onResize);
+    // 容器级尺寸变化（分屏重排 / 弹窗首帧晚一拍）window resize 盖不到：
+    // 没有它 PTY 几何停在挂载那拍的错值，屏下留空黑区。
+    let lastCols = term.cols;
+    let lastRows = term.rows;
+    const ro = new ResizeObserver(() => {
+      fit.fit();
+      if (term.cols === lastCols && term.rows === lastRows) return;
+      lastCols = term.cols;
+      lastRows = term.rows;
+      client.setDimensions(term.cols, term.rows);
+      client.resize(term.cols, term.rows);
+    });
+    if (holder.current) ro.observe(holder.current);
     return () => {
       window.removeEventListener('resize', onResize);
+      ro.disconnect();
       if (outTimer !== null) window.clearTimeout(outTimer);
       client.close();
       term.dispose();

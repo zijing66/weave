@@ -26,7 +26,7 @@ import { notifyApi } from './notify';
 import { extensionApi } from './extensions';
 import { rpgApi } from './rpg';
 import { federationApi } from './federation';
-import { refreshDashboard, eventsUrl } from './client';
+import { refreshDashboard, eventsUrl, conversationEventsUrl } from './client';
 
 export const api = {
   ...projectApi,
@@ -50,6 +50,7 @@ export const api = {
   ...federationApi,
   refreshDashboard,
   eventsUrl,
+  conversationEventsUrl,
 };
 
 export { API_BASE } from './client';

@@ -97,4 +97,21 @@ describe('SseHub', () => {
     expect(fresh.frames).toHaveLength(1);
     expect(bus.hasSubscribers()).toBe(true);
   });
+
+  it('缓冲里是原样帧：窄流的 type 过滤判据原样可用（带 payload = push）', () => {
+    const bus = new DataBus();
+    const hub = new SseHub({ dataBus: bus });
+    const a = collect(hub);
+    bus.emit({ key: 'terminalTopology', payload: { terminals: {} } }); // 带 payload = push
+    bus.emit({ key: 'settings' }); // 不带 = invalidate
+    const last = a.frames[1].id;
+    bus.emit({ key: 'inflightCounts', payload: { counts: {} } });
+
+    // 独立框架页的窄流只认对话三域（hook / push / invalidate）；hub 缓冲的是原样
+    // JSON，过滤在 handleSse 按 type 判——补发侧与实时侧同一段判据。
+    const replay = hub.replay(last);
+    expect(replay.gap).toBe(false);
+    const types = replay.frames.map((f) => (JSON.parse(f.data) as { type: string }).type);
+    expect(types).toEqual(['push']);
+  });
 });
