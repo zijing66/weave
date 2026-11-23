@@ -158,6 +158,9 @@ export interface ConvEntry {
   preQuestion?: boolean;
   /** 旁白：转录补采的中间 assistant 输出（Stop.lam 之外的段落，没有自己的事件）。 */
   narration?: boolean;
+  /** 曾是旁白段、被升格为回答气泡（显式轮次末段）：收尾 Stop 还没落时它仍是
+   *  「过程输出」——「生成中…」判据认它，别当已回话。 */
+  narrated?: boolean;
   /** 转录行标识（claude = 行 uuid）：key/去重用；宿主没带 → 缺省（key 按时刻生成）。 */
   uuid?: string;
   /** 显式轮次（claude 转录 turnPosition 透传）：旁白轮归属与「回答段」判定用。 */
@@ -721,6 +724,14 @@ export function isGenerating(
   );
 }
 
+/** 升格段（narrated）是「转录里已见、闭轮事件还没落」的输出：running 下它压尾
+ *  不算回话——否则流式期间尾条是升格段，状态条消失（用户以为卡住了）。 */
+export function isNarrating(
+  entry: ConvEntry | undefined,
+): boolean {
+  return entry?.role === 'assistant' && entry.narrated === true;
+}
+
 /** 尾条是一次失败收尾（宿主把 API 报错当闭轮事件送来）→ 尾巴上那行要换成它报的
  *  错：这一轮已经结束了，不是还在生成，也不是什么都没发生。队列里还有没送出去的
  *  行时不算——那行才是「最新的一件事」，把上一条的错摆在它下面会读成它失败了。 */
@@ -863,25 +874,37 @@ export function withNarration(
       ...(seg.turnIndex !== undefined ? { turnIndex: seg.turnIndex } : {}),
       ...(seg.promptIndex !== undefined ? { promptIndex: seg.promptIndex } : {}),
     };
-    const idx = out.findIndex((e) => e.at > at0);
+    // 插入锚：第一条「时刻更晚」的条目前；**同刻的 user/compaction 也算更晚**——
+    // 转录 timestamp 与事件 createdAt 字符串比较同秒时伪严格，旁白会被插到同刻
+    // 用户条目之后，把 user 夹进前后两段旁白中间（视觉上被叠层吞掉）。
+    const idx = out.findIndex((e) => e.at > at0 || (e.at === at0 && e.role !== 'assistant'));
     if (idx < 0) out.push(entry);
     else out.splice(idx, 0, entry);
   }
-  // 显式轮次：同 (promptIndex, turnIndex) 的连续旁白段，末段升格为回答气泡。
-  const byTurn = new Map<string, number[]>();
-  for (let i = 0; i < out.length; i += 1) {
+  // 显式轮次：同 (promptIndex, turnIndex) 的**相邻**旁白段（任何非旁白条目断 run
+  // ——与 stackUnitsOf 的相邻性分组同判据），末段升格为回答气泡。全表分组会把
+  // 被用户气泡隔开的两段错连成同轮，升格落错位。
+  let i = 0;
+  while (i < out.length) {
     const e = out[i]!;
-    if (e.role === 'assistant' && e.narration === true && e.turnIndex !== undefined) {
-      const k = `${e.promptIndex ?? '?'}:${e.turnIndex}`;
-      const run = byTurn.get(k);
-      if (run) run.push(i);
-      else byTurn.set(k, [i]);
+    if (e.role !== 'assistant' || e.narration !== true || e.turnIndex === undefined) {
+      i += 1;
+      continue;
     }
-  }
-  for (const run of byTurn.values()) {
-    const last = out[run[run.length - 1]!]!;
+    let j = i;
+    while (
+      j + 1 < out.length &&
+      out[j + 1]!.role === 'assistant' &&
+      out[j + 1]!.narration === true &&
+      out[j + 1]!.turnIndex === e.turnIndex &&
+      out[j + 1]!.promptIndex === e.promptIndex
+    )
+      j += 1;
+    const last = out[j]!;
     const { narration: _drop, turnIndex: _t, promptIndex: _p, ...promoted } = last;
-    out[run[run.length - 1]!] = promoted;
+    promoted.narrated = true;
+    out[j] = promoted;
+    i = j + 1;
   }
   // 降级路径（缺轮次的段）：无 Stop 收尾的轮（被打断 / 连续追问顶掉）——转录里
   // 这串旁白的最后一段是事实上的收尾回复，后面紧跟下一条用户提问、中间没有闭轮

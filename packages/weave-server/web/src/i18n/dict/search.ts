@@ -9,6 +9,7 @@ export const searchZh = {
   'search.more': '还有更多——试试更具体的关键词',
   'search.untitled': '未命名会话',
   'search.hintNavigate': '↑↓ 选择 · Enter 打开 · Esc 关闭',
+  'search.copy': '复制完整内容',
 };
 
 export const searchEn: Record<keyof typeof searchZh, string> = {
@@ -21,4 +22,5 @@ export const searchEn: Record<keyof typeof searchZh, string> = {
   'search.more': 'More available — try a more specific keyword',
   'search.untitled': 'Untitled session',
   'search.hintNavigate': '↑↓ navigate · Enter open · Esc close',
+  'search.copy': 'Copy full content',
 };

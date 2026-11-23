@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Folder, Loader2, MessageSquareText, Search } from 'lucide-react';
+import { Check, Copy, FileText, Folder, Loader2, MessageSquareText, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { navigate } from '@/lib/route';
 import { useBackPop } from '@/lib/back-pop';
@@ -8,6 +8,8 @@ import { useT } from '@/i18n/I18nProvider';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { sessionLabel } from '@/lib/hook-payload';
 import { cn } from '@/lib/utils';
+import { copyText } from '@/lib/clipboard';
+import { Tooltip } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 
 /**
@@ -28,6 +30,12 @@ interface PaletteRow {
   ranges: [number, number][];
   /** 副文本（聊天命中窗口 / 项目名）。 */
   detail?: string;
+  /** 右侧固定展示的短文本（文件行 = 文件名；聊天行 = 会话名）。 */
+  meta?: string;
+  /** 悬停 tooltip 的完整文本（可选中复制的那份）。 */
+  metaFull?: string;
+  /** 复制按钮写入剪贴板的内容（文件行 = 完整路径）。 */
+  copyText?: string;
   /** 跳转参数。 */
   projectId: number | null;
   sessionId: string | null;
@@ -144,22 +152,32 @@ export function CommandPalette({ open, onClose, onOpenFile }: CommandPaletteProp
       });
     }
     for (const m of result?.messages ?? []) {
+      const session = m.sessionId
+        ? (sessions ?? []).find((s) => s.sessionId === m.sessionId)
+        : undefined;
+      const meta = session?.title ?? undefined;
       out.push({
         key: `m:${m.eventId}`,
         groupId: 'messages',
         label: m.text,
         ranges: [[m.offset, q.length]],
-        detail: m.clipped ? '…' : undefined,
+        meta: meta ?? (m.clipped ? '…' : undefined),
+        metaFull: meta,
+        copyText: m.text,
         projectId: m.projectId,
         sessionId: m.sessionId,
       });
     }
     for (const f of result?.files ?? []) {
+      const name = f.path.replace(/\/+$/, '').split('/').pop() ?? f.path;
       out.push({
         key: `f:${f.projectId}:${f.path}`,
         groupId: 'files',
         label: f.path,
         ranges: f.ranges,
+        meta: name,
+        metaFull: f.path,
+        copyText: f.path,
         projectId: f.projectId,
         sessionId: null,
         path: f.path,
@@ -273,8 +291,17 @@ export function CommandPalette({ open, onClose, onOpenFile }: CommandPaletteProp
                       <span className="min-w-0 flex-1 truncate text-xs text-neutral-200">
                         <Highlight label={row.label} ranges={row.ranges} />
                       </span>
-                      {row.detail && (
-                        <span className="shrink-0 text-11 text-neutral-600">{row.detail}</span>
+                      {row.meta && (
+                        <span className="shrink-0 max-w-[40%] truncate text-11 text-neutral-500">
+                          {row.meta}
+                        </span>
+                      )}
+                      {row.copyText && (
+                        <CopyButton
+                          text={row.copyText}
+                          tip={row.metaFull ?? row.copyText}
+                          ariaLabel={t('search.copy')}
+                        />
                       )}
                     </button>
                   );
@@ -292,6 +319,35 @@ export function CommandPalette({ open, onClose, onOpenFile }: CommandPaletteProp
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** 行尾复制钮：悬停 tooltip 展示完整内容（可选中复制），点击直写剪贴板。 */
+function CopyButton({ text, tip, ariaLabel }: { text: string; tip: string; ariaLabel: string }) {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!done) return;
+    const timer = setTimeout(() => setDone(false), 1500);
+    return () => clearTimeout(timer);
+  }, [done]);
+  return (
+    <Tooltip label={tip} side="top" className="shrink-0">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        onClick={(e) => {
+          e.stopPropagation();
+          void copyText(text).then((ok) => setDone(ok));
+        }}
+        className="flex items-center rounded p-0.5 text-neutral-600 hover:text-neutral-300"
+      >
+        {done ? (
+          <Check className="h-3 w-3 text-green-500" />
+        ) : (
+          <Copy className="h-3 w-3" />
+        )}
+      </button>
+    </Tooltip>
   );
 }
 

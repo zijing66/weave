@@ -7,6 +7,7 @@ import {
   failedTail,
   filterThread,
   isGenerating,
+  isNarrating,
   openTerminalStateOf,
   queueStatusKey,
   removableOf,
@@ -625,6 +626,44 @@ describe('withNarration（转录补采的中间输出当对话气泡）', () => 
       ['u-c', undefined],
       ['e9', undefined],
     ]);
+  });
+
+  it('⑪ 升格段带 narrated 标记：running 下它压尾仍显「生成中…」（isNarrating）', () => {
+    const noStop: ConvEntry[] = [
+      { key: 'e1', eventId: 1, role: 'user', at: at(1), text: '问' },
+    ];
+    const out = withNarration(noStop, [
+      { at: at(3), text: '还在干活', uuid: 'u-a', promptIndex: 0, turnIndex: 0 },
+    ]);
+    const tail = out[out.length - 1]!;
+    expect(tail.narration).toBeUndefined();
+    expect(tail.narrated).toBe(true);
+    expect(isNarrating(tail)).toBe(true);
+    expect(isNarrating({ key: 'e2', role: 'assistant', at: at(4), text: 'Stop 收尾' })).toBe(false);
+    // 判据组合：running + 升格段压尾 = 生成中（Stop 还没落）
+    expect(isGenerating('running', tail.role) || isNarrating(tail)).toBe(true);
+  });
+
+  it('⑫ 同刻（字符串相等）旁白插在 user 条目之前——不被夹进前后两段旁白中间', () => {
+    const noStop: ConvEntry[] = [
+      { key: 'e1', eventId: 1, role: 'user', at: '2026-11-23T10:00:03.000Z', text: '问' },
+      { key: 'e2', eventId: 2, role: 'user', at: '2026-11-23T10:00:09.000Z', text: '追问' },
+    ];
+    const out = withNarration(noStop, [
+      { at: '2026-11-23T10:00:03.000Z', text: '同刻旁白 A', uuid: 'u-a' },
+      { at: '2026-11-23T10:00:03.500Z', text: '同秒旁白 B', uuid: 'u-b' },
+    ]);
+    // 旁白 A（同刻）在 user 之前，B（更晚半秒）仍在两条 user 之间
+    expect(out.map((e) => [e.key, e.role])).toEqual([
+      ['u-a', 'assistant'],
+      ['e1', 'user'],
+      ['u-b', 'assistant'],
+      ['e2', 'user'],
+    ]);
+    // stackUnitsOf 相邻性：A 独立、B 独立，user 气泡两枚都在
+    const units = stackUnitsOf(out);
+    const userCount = units.filter((u) => u.kind === 'entry' && u.entry.role === 'user').length;
+    expect(userCount).toBe(2);
   });
 });
 

@@ -27,7 +27,12 @@ import {
   X,
 } from 'lucide-react';
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
-import { loadFileHistory, pushFileHistory, type FileHistoryEntry } from '@/lib/file-history';
+import {
+  loadFileHistory,
+  loadMergedFileHistory,
+  pushFileHistory,
+  type FileHistoryEntry,
+} from '@/lib/file-history';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
@@ -269,26 +274,54 @@ export function FileBrowserModal({
   /** 数据面生效的 projectId/projectName：进项目跟 picked，首屏跟 focused。 */
   const activeProjectId = picked?.id ?? focused?.id ?? projectId;
   const activeProjectName = picked?.name ?? focused?.name ?? projectName;
+  /** 全项目模式的首屏（还没进项目）：最近打开显示**跨项目合并**——此时没有
+   *  「当前项目」，按某个项目的桶显示会让内容取决于鼠标停在哪个项目行上。 */
+  const allProjectsMode = (projects?.length ?? 0) > 0 && !picked;
+  const projectIdsKey = (projects ?? []).map((p) => p.id).join(',');
   /** 切项目（含弹窗初开）重读该项目的最近打开账；校验态一并作废。
    *  historyOpen 也在依赖里：面板挂载后写入的账（他处写桶 / 本弹窗早前会话）
    *  只有开面板那一拍重读才看得见——只认 activeProjectId 会永远显示旧 state。 */
   useEffect(() => {
-    setHistory(activeProjectId ? loadFileHistory(activeProjectId) : []);
+    if (allProjectsMode) {
+      setHistory(
+        loadMergedFileHistory().map((e) => ({
+          ...e,
+          projectName: projects?.find((p) => p.id === e.projectId)?.name,
+        })),
+      );
+    } else {
+      setHistory(activeProjectId ? loadFileHistory(activeProjectId) : []);
+    }
     setHistoryAlive(null);
-  }, [activeProjectId, historyOpen]);
+  }, [activeProjectId, historyOpen, allProjectsMode, projectIdsKey]);
   /** 面板开着才惰性校验：按各条目的父目录子树现查（一次拉 200 条够覆盖），
-   *  全部回来才亮出死活（查完前按钮都可点——不因校验在途卡住跳转）。 */
+   *  全部回来才亮出死活（查完前按钮都可点——不因校验在途卡住跳转）。
+   *  合并视图跨项目，逐条按自己的 projectId 查；键带项目前缀防同名路径串。 */
   useEffect(() => {
-    if (!historyOpen || !activeProjectId || history.length === 0) return;
+    if (!historyOpen || history.length === 0) return;
+    const groups = new Map<number, Set<string>>();
+    for (const e of history) {
+      const pid = e.projectId ?? activeProjectId;
+      if (!pid) continue;
+      const dir = e.path.includes('/') ? e.path.slice(0, e.path.lastIndexOf('/')) : '';
+      const set = groups.get(pid) ?? new Set<string>();
+      set.add(dir);
+      groups.set(pid, set);
+    }
+    if (groups.size === 0) return;
     const ctrl = new AbortController();
-    const dirs = [...new Set(history.map((e) => (e.path.includes('/') ? e.path.slice(0, e.path.lastIndexOf('/')) : '')))];
     void Promise.all(
-      dirs.map((d) =>
-        api
-          .listProjectFiles(activeProjectId, { dir: d, limit: 200, signal: ctrl.signal })
-          .then((r) => r.entries.filter((x) => x.kind === 'file').map((x) => x.path))
-          .catch(() => [] as string[]),
-      ),
+      [...groups].map(async ([pid, dirs]) => {
+        const lists = await Promise.all(
+          [...dirs].map((d) =>
+            api
+              .listProjectFiles(pid, { dir: d, limit: 200, signal: ctrl.signal })
+              .then((r) => r.entries.filter((x) => x.kind === 'file').map((x) => `${pid}:${x.path}`))
+              .catch(() => [] as string[]),
+          ),
+        );
+        return lists.flat();
+      }),
     ).then((lists) => {
       if (ctrl.signal.aborted) return;
       setHistoryAlive(new Set(lists.flat()));
@@ -1643,8 +1676,19 @@ export function FileBrowserModal({
                 onClose={() => setHistoryOpen(false)}
                 onOpen={(e) => {
                   setHistoryOpen(false);
-                  if (historyAlive?.has(e.path))
-                    enter({ path: e.path, name: e.name, kind: 'file' });
+                  const key = e.projectId != null ? `${e.projectId}:${e.path}` : e.path;
+                  if (historyAlive && !historyAlive.has(key)) return;
+                  // 合并视图的条目带项目：先切进该项目并定位到这条路径（顺带刷新
+                  // 它在桶里的时刻——与单项目分支 enter() 的记账口径一致）
+                  if (e.projectId != null) {
+                    const p = projects?.find((x) => x.id === e.projectId);
+                    if (p) {
+                      pushFileHistory(e.projectId, { path: e.path, name: e.name });
+                      pickProject(p, e.path);
+                    }
+                    return;
+                  }
+                  enter({ path: e.path, name: e.name, kind: 'file' });
                 }}
               />
             </div>
@@ -1986,10 +2030,11 @@ export function HistoryPanel({
         <p className="px-3 py-3 text-11 text-neutral-600">{t('tasks.fileHistoryEmpty')}</p>
       )}
       {history.map((e) => {
-        const dead = alive !== null && !alive.has(e.path);
+        const key = e.projectId != null ? `${e.projectId}:${e.path}` : e.path;
+        const dead = alive !== null && !alive.has(key);
         return (
           <button
-            key={e.path}
+            key={key}
             type="button"
             disabled={dead}
             title={dead ? t('tasks.fileHistoryDead') : e.path}
@@ -2003,6 +2048,9 @@ export function HistoryPanel({
           >
             <FileCode className="h-3 w-3 shrink-0 text-neutral-500" />
             <span className="min-w-0 flex-1 truncate">{e.name}</span>
+            {e.projectName && (
+              <span className="shrink-0 truncate text-10 text-neutral-600">{e.projectName}</span>
+            )}
             <span className="shrink-0 text-10 text-neutral-600">
               {new Date(e.at).toLocaleDateString()}
             </span>

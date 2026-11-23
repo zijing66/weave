@@ -10,6 +10,10 @@ export interface FileHistoryEntry {
   name: string;
   /** 最近打开时刻（epoch ms）。 */
   at: number;
+  /** 跨项目合并视图（全项目文件浏览器首屏）用：条目所属项目；单项目桶里不填。 */
+  projectId?: number;
+  /** 合并视图里给行尾标项目名用。 */
+  projectName?: string;
 }
 
 const KEY = 'weave:file-browser-history';
@@ -44,6 +48,30 @@ export function pushFileHistory(
     // 存不进去就只活这一局（隐私模式等），不弹错
   }
   return next;
+}
+
+/**
+ * 跨项目合并视图（全项目文件浏览器的首屏用）：各项目桶摊平、按最近倒序，
+ * 每条带 projectId。首屏还没有「当前项目」，只按某个项目的桶显示会让内容
+ * 取决于鼠标恰好停在哪个项目行——合并才是那个界面上该看到的东西。
+ */
+export function loadMergedFileHistory(max = 40): FileHistoryEntry[] {
+  let all: Record<string, unknown>;
+  try {
+    all = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const out: FileHistoryEntry[] = [];
+  for (const [k, arr] of Object.entries(all ?? {})) {
+    const pid = Number(k);
+    if (!Number.isFinite(pid) || !Array.isArray(arr)) continue;
+    for (const e of arr) {
+      if (!e || typeof e !== 'object' || typeof (e as FileHistoryEntry).path !== 'string') continue;
+      out.push({ ...(e as FileHistoryEntry), projectId: pid });
+    }
+  }
+  return out.sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, max);
 }
 
 /** 目录选择器的「最近选择」：绝对路径不分项目一桶，与文件历史同形同限。 */

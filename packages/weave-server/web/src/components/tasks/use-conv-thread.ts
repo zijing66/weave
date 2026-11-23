@@ -17,6 +17,7 @@ import {
   conversationOf,
   filterThread,
   isGenerating,
+  isNarrating,
   failedTail,
   removableOf,
   withCommands,
@@ -31,8 +32,6 @@ import {
   type ConvEntry,
   type ConvFilter,
 } from './conv-model';
-import { stackUnitsOf } from './conv-stack';
-
 /** 一页对话条目（默认首屏窗口 = 最新这一页；向上翻页同宽）。 */
 const CONV_PAGE = 10;
 /** 首屏窗口按**渲染单元**计（连续过程输出整叠算 1 条，用户裁决）：页尾若落在
@@ -116,13 +115,18 @@ export function useConvThread(deps: {
       );
       let page = conversationOf(events, lifecycle, harness);
       let headDone = events.length < CONV_PAGE;
-      // 页尾落在叠层中间 = 首屏单元数虚高（一大叠只算 1 个单元却占了一整页）：
-      // 以「最新 CONV_PAGE 个渲染单元」为准往前补拉，超长叠层由 CONV_UNIT_TOPUP 封顶。
+      // 页首是一记闭轮/压缩而页内没有它的配对开轮 = limit 在轮中间截断（那轮的
+      // UPS 裁在页外）：往前补拉，直到页首是开轮、到头、或补拉次数用尽。
+      // （旧判据看 stackUnitsOf 的 narration 标记——conversationOf 从不设它，恒假，
+      // 补拉一次都不跑，首屏窗口恒为最新 10 个事件。）
+      const headIsClose = (e: ConvEntry | undefined): boolean =>
+        e?.role !== 'user';
       for (
         let tops = 0;
         !headDone &&
         tops < CONV_UNIT_TOPUP &&
-        stackUnitsOf(page).slice(-CONV_PAGE).some((u) => u.kind === 'group');
+        headIsClose(page[0]) &&
+        page.some((e) => e.role === 'user');
         tops++
       ) {
         const older = await api.listSessionHooks(
@@ -141,12 +145,12 @@ export function useConvThread(deps: {
       }
       setHeadDone(headDone);
       setEntries((prev) => {
-        const prevNewest = prev?.length ? prev[prev.length - 1]!.eventId : undefined;
         const pageOldest = page[0]?.eventId;
-        if (prevNewest === undefined || pageOldest === undefined || pageOldest > prevNewest) {
-          return page;
-        }
-        return [...prev!.filter((e) => (e.eventId ?? 0) < pageOldest), ...page];
+        if (!prev?.length || pageOldest === undefined) return page;
+        // 恒续接：保留旧窗口、前接新页——整包替换会把缓存/翻页攒下的历史冲掉
+        // （旁白来自独立全量接口不受影响，于是「用户气泡没了、叠层还在」）。
+        // pageOldest > prevNewest（中间有空档）也只裁到 pageOldest，空档靠拉历史补。
+        return [...prev.filter((e) => (e.eventId ?? 0) < pageOldest), ...page];
       });
       setError(null);
     } catch (e) {
@@ -657,10 +661,9 @@ export function useConvThread(deps: {
   // 尾条是过程输出（narration）≠ 已回话：那是一轮中间的旁白，收尾总结还没来，
   // 「生成中…」必须照挂（否则流式期间状态条消失，用户以为卡住了）。
   const tail = thread[thread.length - 1];
-  const generating = isGenerating(
-    status,
-    tail?.role === 'assistant' && tail.narration === true ? 'user' : tail?.role,
-  );
+  const generating =
+    isGenerating(status, tail?.role) ||
+    (status === 'running' && isNarrating(tail));
   /** 这一轮是失败收尾（API 报错）→ 尾上显那条错，压过「生成中…」与压缩态。 */
   const failed = interrupted ? null : failedTail(thread, outbox.length > 0);
   /** 滚动带只认**本轮**的事（晚到事件里混着上一轮的尾巴，同一份素材还要跨轮）：
