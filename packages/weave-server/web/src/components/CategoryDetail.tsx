@@ -14,10 +14,12 @@ import {
   type PluginRow,
   type PluginRuntime,
   type ProjectRow,
+  type InstallCapabilities,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import type { EnableOverride, ToolScope } from '@weavecode/core/tool';
 import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
+import { capabilitiesOf } from '@/lib/install-capabilities';
 import { cn } from '@/lib/utils';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useT } from '@/i18n/I18nProvider';
@@ -93,6 +95,7 @@ export function CategoryDetail({
   globalSkillGroups,
   pluginRows,
   statuslineSource,
+  installCaps,
   onUninstallSkill,
   onUninstallMcp,
   onCycleMcpEnable,
@@ -125,6 +128,8 @@ export function CategoryDetail({
   pluginRows: PluginRow[];
   /** Statusline source, used only to render the Claude config sub-header. */
   statuslineSource: StatuslineSource | null;
+  /** 安装属性矩阵（App 启动拉取）：类别面按此派生，不按 harness 名硬判。 */
+  installCaps: InstallCapabilities | null;
   onUninstallSkill: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   onUninstallMcp: (name: string, scope: AssetScope, agent?: AssetAgent) => void | Promise<void>;
   /** MCP 启停三态循环：落盘与行刷新由 App 统一负责。 */
@@ -236,13 +241,18 @@ export function CategoryDetail({
   }, [mcpRows, runtimeTab]);
 
   const skillUpdates = updates?.skills.filter((u) => u.scope === scope);
-  // Non-claude harness MCP servers are user-level (scope-agnostic), so their
-  // updates show whenever that harness's servers are visible; claude's updates
-  // track the current scope and hide under another harness's tab.
+  // MCP updates visibility via the install matrix（与 use-asset-mutations 同源）：
+  // harness 在当前 scope 无 MCP 面（如 codex 的 user-only 档）→ 更新行不随当前
+  // scope 收起、只要该 harness 页签可见就显示；有面的 harness 按当前 scope 过滤。
   const mcpUpdates = updates?.mcp.filter((u) => {
-    const h = u.agent && u.agent !== 'claude' ? u.agent : null;
-    if (h) return runtimeTab === 'all' || runtimeTab === h;
-    return u.scope === scope && (runtimeTab === 'all' || runtimeTab === 'claude');
+    const h = u.agent;
+    if (h) {
+      const visible = runtimeTab === 'all' || runtimeTab === h;
+      if (!visible) return false;
+      const surface = capabilitiesOf('mcp', installCaps).surfaces.find((s) => s.harness === h);
+      return !surface || surface.scopes.includes(u.scope) || surface.scopes[0] === u.scope;
+    }
+    return u.scope === scope && (runtimeTab === 'all' || runtimeTab === (HARNESS_ORDER[0] ?? 'claude'));
   });
   const fileUpdates = updates?.files.filter((u) => u.scope === scope);
 
@@ -491,8 +501,13 @@ export function CategoryDetail({
         <OrchestrationCanvas projectId={isGlobal ? null : projectId} projects={projects} />
       )}
 
-      {/* statusline 是 claude 专属特性：只在覆盖 claude 的页签（claude / 全部）显示。 */}
-      {category === 'personalization' && (runtimeTab === 'claude' || runtimeTab === 'all') && (
+      {/* personalization 面按能力矩阵派生：有 statusline 面（tui 可注入）的
+          harness 才有该面；页签覆盖任一有面 harness 即显示。 */}
+      {category === 'personalization' &&
+        (runtimeTab === 'all' ||
+          installCaps?.statusline.some(
+            (s) => s.harness === runtimeTab && s.tui === 'injectable',
+          )) && (
         <div className="space-y-3">
           <p className="text-11 text-neutral-500">
             {isGlobal
@@ -517,7 +532,7 @@ export function CategoryDetail({
         </div>
       )}
 
-      {/* 非 claude 页签（codex / 全部 / 未来 harness）显示「无对等个性化」占位。 */}
+      {/* 无 statusline 面的页签（codex / 全部 / 未来 harness）显示「无对等个性化」占位。 */}
       {category === 'personalization' && runtimeTab !== 'claude' && (
         <RuntimePlaceholder
           harness={runtimeTab === 'all' ? 'codex' : runtimeTab}

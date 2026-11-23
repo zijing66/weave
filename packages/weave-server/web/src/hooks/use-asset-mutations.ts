@@ -224,8 +224,13 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
   const handleUninstallMcp = useCallback(
     async (name: string, scope: AssetScope = 'project', agent?: AssetAgent, target?: ProjectRow | null) => {
       const dest = target !== undefined ? target : selected ?? projects[0];
-      // claude 以外 harness 的 MCP 住用户级文件——卸载恒指用户级（同安装侧判定）。
-      const effectiveScope: AssetScope = (agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'user';
+      // 卸载落点与安装侧同源（安装属性矩阵）：该 harness 的 MCP 面含当前 scope
+      // → 用之；否则回落首档（codex 无 project 档 → user）。不再点名 harness。
+      const resolvedAgent = agent ?? HARNESS_ORDER[0];
+      const caps = installCaps ?? installCapsState;
+      const mcpScopes =
+        capabilitiesOf('mcp', caps).surfaces.find((s) => s.harness === resolvedAgent)?.scopes ?? [];
+      const effectiveScope: AssetScope = mcpScopes.includes(scope) ? scope : mcpScopes[0] ?? 'user';
       // 同上：用户级装卸与项目无关，没有项目时 0 号只是形状上的占位。
       if (!dest && !(globalMode && effectiveScope === 'user')) return;
       const projectId = dest?.id ?? 0;
@@ -240,7 +245,7 @@ export function useAssetMutations(deps: AssetMutationsDeps) {
       refreshMcp(projectId);
       refreshUpdates(projectId);
     },
-    [selected, projects, globalMode, refreshAssets, refreshMcp, refreshUpdates],
+    [selected, projects, globalMode, installCaps, installCapsState, refreshAssets, refreshMcp, refreshUpdates],
   );
 
   // MCP 启停三态循环（on/off/inherit）：服务端解析 effective 并随行回传，

@@ -1283,6 +1283,12 @@ export interface LivenessSurface {
    * 上游把「查不到」当未知，不许误判死）；`ids` 缺省 = 全量。
    */
   alive(ids?: readonly string[]): Promise<Map<string, boolean>>;
+  /**
+   * 同步快照（可选）：探测零 spawn 的面（claude = 注册表 + kill 0）直接现算，
+   * 合并装配按此逐拍取新鲜值；未声明 = 探测有开销（codex 锁探针 spawn），
+   * 由装配层缓存（周期刷新）。
+   */
+  aliveSync?(ids?: readonly string[]): Map<string, boolean>;
 }
 
 /** 一次对话回退（宿主 rewind）：退掉的区间 = `[boundaryAt, at)`。 */

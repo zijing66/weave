@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Input } from '../ui/input';
 import type { Harness } from '@weavecode/core/harness';
 import {
   api,
@@ -1150,7 +1151,7 @@ export function TasksPanel({
         <h3 className="shrink-0 text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
         <div className="relative w-36 shrink-0 lg:w-44">
           <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
-          <input
+          <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('tasks.searchPlaceholder')}

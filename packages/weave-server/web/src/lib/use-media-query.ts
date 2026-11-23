@@ -14,3 +14,10 @@ export function useMediaQuery(query: string): boolean {
   }, [query]);
   return matches;
 }
+
+/** 触屏指针（coarse）查询（归口：matchMedia 裸调不得散写组件里）。 */
+export const COARSE_QUERY = '(hover: none), (pointer: coarse)';
+
+export function useIsCoarsePointer(): boolean {
+  return useMediaQuery(COARSE_QUERY);
+}

@@ -85,8 +85,12 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'system-ui', 'sans-serif'],
-        mono: ['ui-monospace', 'SF Mono', 'Cascadia Code', 'Menlo', 'monospace'],
+        // 全界面统一 Weave Mono（内置 JetBrains Mono Nerd）：weave 界面码味重
+        //（路径/命令/ID/diff 无处不在），两套字形混排反而碎；JetBrains Mono 为
+        // 屏幕 UI 设计，长文本可读性足够。中文回落链 = JetBrains IDE 同款：
+        // 显式点名平台中文字体（雅黑/苹方/思源），度量与 JetBrains Mono 混排稳定。
+        sans: ['Weave Mono', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', 'ui-monospace', 'monospace'],
+        mono: ['Weave Mono', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', 'ui-monospace', 'monospace'],
       },
       colors: {
         mac: {

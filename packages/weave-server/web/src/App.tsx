@@ -1469,6 +1469,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                         globalSkillGroups={globalSkillGroups}
                         pluginRows={pluginRows}
                         statuslineSource={statuslineSource}
+                        installCaps={installCaps}
                         onUninstallSkill={handleUninstallSkill}
                         onUninstallMcp={handleUninstallMcp}
                         onCycleMcpEnable={handleCycleMcpEnable}

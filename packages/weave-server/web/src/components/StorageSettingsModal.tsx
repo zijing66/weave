@@ -7,6 +7,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { useToast } from '@/components/Toast';
 import { errorText } from '@/lib/action-feedback';
 import { DirectoryPickerModal, cleanPath } from '@/components/DirectoryPickerModal';
+import { Input } from '@/components/ui/input';
 import { Tooltip } from '@/components/ui/tooltip';
 import { Image, FolderCog, Loader2, X } from 'lucide-react';
 
@@ -127,7 +128,7 @@ export function StorageSettingsModal({ project, onClose }: StorageSettingsModalP
                           {t(slot === 'images' ? 'project.storageImages' : 'project.storageFiles')}
                         </label>
                         <div className="flex items-center gap-1.5">
-                          <input
+                          <Input
                             value={value}
                             onChange={(e) => setValue(e.target.value)}
                             onBlur={() => setValue(cleanPath(value))}

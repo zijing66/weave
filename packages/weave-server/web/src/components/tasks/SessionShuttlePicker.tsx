@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Input } from '../ui/input';
 import { Check, ChevronLeft, Folder, Globe, Search, X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
 import type { FederatedPeerBucket } from './federation-buckets';
@@ -411,7 +412,7 @@ export function SessionShuttlePicker({
           </p>
           <div className="relative w-56 shrink-0 max-lg:w-40">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
-            <input
+            <Input
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}

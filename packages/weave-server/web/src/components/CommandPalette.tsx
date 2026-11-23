@@ -8,6 +8,7 @@ import { useT } from '@/i18n/I18nProvider';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
 import { sessionLabel } from '@/lib/hook-payload';
 import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
 
 /**
  * 全局搜索弹层（Ctrl/Cmd+K）：会话名 / 聊天记录 / 项目文件三路聚合。
@@ -234,7 +235,7 @@ export function CommandPalette({ open, onClose, onOpenFile }: CommandPaletteProp
       <div className="relative w-[560px] max-w-full rounded-2xl border border-edge/[0.08] bg-neutral-900 shadow-mac overflow-hidden flex flex-col max-h-[70vh]">
         <div className="shrink-0 flex items-center gap-2 px-3.5 h-11 border-b border-edge/[0.06]">
           <Search className="h-4 w-4 text-neutral-500 shrink-0" />
-          <input
+          <Input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}

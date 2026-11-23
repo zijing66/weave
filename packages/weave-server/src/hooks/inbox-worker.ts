@@ -231,7 +231,7 @@ function drainClaim(deps: InboxDrainDeps, claimPath: string, attempts: Map<strin
     return records;
   }
   try {
-    writeFileSync(claimPath, failedLines.join('\n') + '\n');
+    writeFileSync(claimPath, failedLines.join('\n') + '\n', { mode: 0o600 });
   } catch {}
   return records;
 }

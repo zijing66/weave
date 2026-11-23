@@ -1,170 +1,118 @@
-# 架构评审报告：weave 2026-11-16
+# 架构评审报告：weave 2026-11-22
 
 ## 评审配置
 
-- **目标仓**：D:\GitRepo\AIRepo\weave（pnpm workspace monorepo，npm 包分发）
-- **架构模型（archetype）**：软件项目（纯代码包仓，无固件/硬件产物；维度集 = A/B/C/D 四维 + E 通用三维合一）
-- **规则文档**：CLAUDE.md（Architecture 节）、docs/ARCHITECTURE.md、docs/ARCHITECTURE-DETAIL.md；docs/DECISIONS.md 仅作合法例外与裁决对照，不作站立规则提炼源
-- **检查单版本**：阶段 0b 五维检查单（经协调者确认，severity 权重 高3/中2/低1，每维 0–20）
-- **执行方式**：五维并行只读 Explore 子 Agent（阶段 1b），主会话去重合并（不复查不改写）
-- **skill**：zj:code:arch-review-repair 首次实机实验（反馈见附节）
+- **目标仓**：`D:\GitRepo\AIRepo\weave`（基线 29b921d0，分组合并后 26 枚 tip）
+- **Archetype**：软件项目（TypeScript pnpm monorepo：CLI + daemon/server + web + harness + SQLite + Runtime Host；无硬件信号）
+- **规则文档**：站立规则 = 根 `CLAUDE.md` Architecture 节；机制细节 = `docs/ARCHITECTURE-DETAIL.md`（§1–§23）；`docs/DECISIONS.md` 仅作合法例外对照，不作提炼源
+- **维度**：A 分层依赖 / B 能力面装配 / C 数据持久化 / D 前端协议 / E 闭环交付（通用三维 + 端点完备性），5 个只读子 agent 并行
+- **计分口径**：5 维各 0–20；扣分 = 高 3 / 中 2 / 低 1；满分 = 该维无未修复发现
+- **当批豁免/挂账项**（依据 DECISIONS / 规则文档既有裁决，S3 复核按合规处理但单列）：
+  - `web/src/components/tasks/lifecycle.ts` 的 HARNESS_* 常量镜像（§5/§8 点名先例）
+  - AI 助手 fetch-reader 独立流 + `text/event-stream` 第二 SSE 面（§13 明文；建议 §7 补点名）
+  - 对话气泡长按留浏览器、span truncate 与 disabled 按钮原生 title（§9 裁决）
+  - fragment mtime 4s 条件轮询（§20 明示机制）
+  - 编排 secret / notify channel config 明文落 DB（DECISIONS 既有先例）
+  - `use-conv-screen`/`back-pop` 手势辅助（待裁决，见存疑）
 
 ## 评分表（三段对比）
 
-| 维度 | S1 现状分 | S2 预估优化分 | S3 实际优化分 | S1′ 批2前 | S2′ 批2预估 | S3′ 批2后盲评 |
-|---|---|---|---|---|---|---|
-| A 分层与依赖 | 9 | 20 | 16 | 16 | 17 | 17 |
-| B 能力面装配 | 15 | 20 | 14 | 14 | 16 | 17 |
-| C 数据持久化 | 14 | 20 | 16 | 16 | 19 | 17 |
-| D 前端协议 | 11 | 20 | 20 | 20 | 20 | 16 |
-| E 闭环与交付 | 16 | 20 | 20 | 20 | 20 | 18 |
-| **合计** | **65 / 100** | **100 / 100** | **86 / 100** | **86 / 100** | **92 / 100** | **85 / 100** |
+| 维度 | S1 现状 | S2 预估优化 | S3 实际复核（2026-11-22 盲评） |
+|---|---|---|---|
+| A 分层依赖 | 14 | 18 | 14（2 中 + 3 低 + 3 存疑） |
+| B 能力面装配 | 16 | 19 | 13（2 中 + 1 低 + 2 存疑） |
+| C 数据持久化 | 9 | 16 | 15（高已修 0b2af7f4 / 中已修 bd53036a，2 低未修） |
+| D 前端协议 | 18 | 18（input.tsx 挂账） | 12（5 低，均为 matchMedia 归口与轮询形态类） |
+| E 闭环交付 | 13 | 19 | 14（1 高 = 修复 16 时序缺陷已修 bda4071e；1 中登记缺项已补；1 低） |
+| **合计 /100** | **70** | **90（预估，±2 余量未计）** | **S3′ = 68（修复前快照）；当批新增发现修复后 S3″ ≈ 76** |
 
-> 修复批（2026-11-16）收尾：#1 ✅90023f11 #2 ✅7460d1bb #3 ✅3f54fc41（+补漏 a7fb8b69/7ff66f47）#4 ✅a2ece7ed #5 ✅41e3fa10 #9 ✅9ba7be99 #10 ✅43df2250 #11 ✅e341059c #12 ✅a8c9b61f #14 ✅c791841f #15 ✅5eb38731 #17 ✅0c9ff40c；追加单 #18 ✅5675a62f；#6/#7 按 DECISIONS 2026-11-15 豁免、#8 挂账、#13/#16 待裁决。S3 复核由三只盲评只读子 Agent 独立盘点（不见 S1/S2）。
+**S2→S3 偏差解释（逐维）**：A −4——修复期没漏旧账，但盲评口径按「全仓扫描」翻出了 S1 检查单未覆盖的 web 侧四张手工镜像表（lifecycle.ts / harness-meta.tsx）与两处 harness 名硬分支（mcp-rows / toolkit）；B −6——同因：`new-session` 路由的第二份 headless 实现与 `combinedLivenessOf` 直连合并是「新增路由未按既有裁决收敛」类，S1 检查单未列；D −6——S2 把 D 估成挂账即满分，盲评全仓扫出 matchMedia 散调四处与 VisualizationFrame 轮询形态（S2 过乐观的主因）；C +（−1 vs 预估）——`pass` 键漏脱敏是修复 1 自身的漏网，属修复期新发现；E 高危时序缺陷是修复 16 自身引入、当场修掉（bda4071e）。**首跑校准结论**：修复期新发现约占 S3 偏差一半、盲评口径差占另一半，与首跑经验一致；S2 预估应按「每维 −2 新发现余量」计（本批实际 A/B/D 各 −2、C/E 各 −1，合计 −8 ≈ 校准值）。
 
-S2 说明：假设修复顺序表全部完成（满分定义 = 该维度无未修复发现）。S1→S2 差值 35 分，主要收益来源 = **D 维（+9，桌宠域自建 SSE/轮询收敛与备份轮询裁决）与 A 维（+11，core 纯度与 server 散写键形收敛）**；B/C/E 各 +4~6。无高危发现，S1 未出现「断链/泄漏面」级扣分——四条闭环主链（事件采集/投递/问答/渲染块）静态走查全部逐跳走通。
+**当批（S3 批）新增发现与处置**：
+- [高→已修] REDACT_KEYS 漏 `pass`（notify-channels SMTP 密码随 config 回显落日志）— 0b2af7f4
+- [高→已修] pack-weave manifestGaps 校验跑在 cp 之前恒炸（修复 16 自身时序缺陷）— bda4071e
+- [中→已修] db.ts 迁移前 VACUUM 备份库无 0600 — bd53036a
+- [中→已补] 三端点 ARCHITECTURE-DETAIL 登记（harness-install-status §8、delete-batch §14a、/terminals/ws §15）— 本提交
+- [中→已修] `routes/projects.ts:196` new-session 第二份 headless 实现 → `spawnHeadlessInstance` 唯一执行核（session-open.ts 导出，new-session / resume / 「在终端中打开」三处共用；判据统一 terminalBackendFor().hostsSessions）— 0c7b97d4
+- [中→已修] `daemon/liveness.ts` combinedLivenessOf 经 registry liveness 槽枚举（`LivenessSurface.aliveSync` 可选位：零 spawn 面自声明；第三 harness 自动吸收）— 4e37c05a
+- [中→已修] web 四张镜像表漂移闸：`lifecycle-mirror.test` 测试态直引 core 原表逐键比对——**当场抓出 codex 条目已漂移**（subagentStop/sessionExit 停旧值）并修正 — 0681038b
+- [低→已修] matchMedia 归口：`useIsCoarsePointer` 单点，摘 DirectoryPickerModal 快照裸调与 RpgView 局部双镜像；theme.ts（模块级单例）/pet（非 React 树）豁免 — 6e0e154a
+- [低→已修] VisualizationFrame mtime 条件轮询口径入 DECISIONS（「组件挂载期 + 条件跳过 + 组件专属数据面」三齐即豁免）+ layout.ts mergeInto 措辞定案 + protocol.ts 格式 — 60a9165f
 
-S2→S3 偏差逐维解释（S3 = 86）：
-- **A 20→16**：S2 假设「散写清零」，复核仍见 App.tsx:507 的 `harness === 'claude'` 业务计数（中）与 cli claude.ts:99 的 `.claude` 裸字面（低，同文件 codex.ts 已走表、写法不一致）——预估对「散写边角清零」过乐观；pet 忙判据（B/D 兼）按豁免不计入。
-- **B 20→14**：复核口径比 S1 更细——pet/main.ts 忙判据自抄常量（中，豁免挂账但复核盲评仍算发现）+ hooks.ts 死分支散写（低）+ hooks 事件名手抄镜像无编译对账（存疑）压分；其中 pet 项按 DECISIONS 豁免属口径分歧，非真实回归。
-- **C 20→16**：修复项（harness-config/inbox/promptbox 0600、backups 归口、索引）复核全过；扣分来自复核**新发现**——`.weave/token` 可重放凭据无 mode（中）与三处非敏感文件无 mode（低）——S2 无法预估修复期新账。
-- **D 20 / E 20**：全过。pet 独立页壳按豁免口径判合法；2.1.287/MCP version/maxFragmentBytes 单源核过；闭环主链逐跳齐。
-- 总偏差 −14：约半数来自「豁免/挂账项在盲评口径下仍计发现」（pet 三处 + 备份轮询），半数来自修复期新发现（token mode 等）——下次预估应把「豁免项继续计分」与「修复引入新账」两项计入。
+**S3″ 复核（小口径，只核当批改动）**：等价性全过；抓出 1 中 + 2 低已修 —— liveness 首拍从模块加载期挪进首次 combinedLivenessOf()（import 不再起锁探针，primed 随测试 reset）、openSessionTerminal 503 口径复原（spawnHeadlessInstance 补 missingSupervisorStatus）、镜像闸测试 import 合并 — a22912ae。
 
-## 发现总表（按 severity 降序）
+## 发现总表（severity 降序）
 
-无「高」。以下 [中] ×12、[低] ×10（子 Agent 原文合并去重；D2 桌宠三处轮询与 B1 pet 忙判据同源，分属各维保留）。
+### 高（0 条）
 
-### 中（12）
+无。七条主链路全部逐跳闭合、认证门无实际泄漏、凭据落盘卫生全过。
 
-| # | file:line | 维度 | 违反条款 | 实况 |
-|---|---|---|---|---|
-| 1 | packages/weave-core/src/platform.ts:1-2 | A | core 只有纯类型与表（零接口） | `node:os`/`node:path` import + 带逻辑的 `detectPlatform()` |
-| 2 | packages/weave-core/src/utils/fs.ts:1-2 | A | 同上 | `node:fs/promises` 的 ensureDir/writeFileIfAbsent/fileExists IO 实现 |
-| 3 | packages/weave-server/src/install/settings-mcp.ts:15,57-59 | A | harness 专属键形不得在 server 自拼 | 硬编码 `.claude/settings.json` + claude 三键（enableAllProjectMcpServers 等）读写逻辑，未走能力面 |
-| 4 | packages/weave-server/src/rpg/provisioning.ts:113,120 | A | harness 专属路径不得在 server 自拼 | 自拼 `path.join(dir,'.claude','helpers')` 与 settings.json 路径（内容生成部分经 harness，路径散写） |
-| 5 | packages/weave-server/web/src/pet/main.ts:172 | D | 前端唯一 EventSource = lib/sse.ts | 桌宠自建第二条 `new EventSource`，未走统一通道 |
-| 6 | packages/weave-server/web/src/components/BackupSection.tsx:41 | D | 不得写前端自发取数轮询 | 备份进行中每 1s setInterval fetch |
-| 7 | packages/weave-server/web/src/components/BackupOverlay.tsx:38 | D | 同上 | setInterval 周期 fetch /backup 状态 |
-| 8 | packages/weave-server/web/src/pet/main.ts:1055 | D | 同上 | 桌宠 15s 周期拉 sessions/dispatches/questions 三路 |
-| 9 | packages/weave-server/web/src/pet/main.ts:109-137 | B | `isSessionBusy` 会话忙判据单点 | 宠物域自算忙判据 + 自抄 `STALE_TURN_MS`/`ACTIVE_WINDOW_MS` 同值常量 |
-| 10 | packages/weave-server/src/config/profiles.ts:70-73 | C | local/ 档本机 0600 | harness-config 快照（可能带 API key）writeFile 未带 mode，POSIX 落 0644；同目录其余凭据文件全带 0600 |
-| 11 | packages/weave-server/src/hooks/mirror.ts:196-200 | C | 旁路凭据 0600 | `appendInbox` 逐行落 token 进 `<cache>/hooks/inbox/<shard>.jsonl` 无 mode（appendOutbox:223 / promptbox.ts:107 同形，内容非凭据降档） |
-| 12 | packages/weave-server/src/hooks/toolkit.ts:90 | E | 宿主版本下限单一来源（ResumeCommandSpec.minVersion） | `MIN_MOD_HOST_VERSION=[2,1,287]` 与 weave-harness/src/claude/resume.ts:31 的 `minVersion:'2.1.287'` 平行双写互不引用 |
+### 中（7 条）
 
-### 低（10）
+1. **[C1+E1 合并] api-log 脱敏键形缺口** — `packages/weave-server/src/daemon/api-log.ts:24-35` — 违反「凭据类键一律 `[redacted]`（§3）」— `REDACT_KEYS` 缺 `authtoken`（onboarding/`harness-config/models` 的 `authToken` 经 toLowerCase 后不命中表内 `auth`）、`sendkey`（Server酱）、`webhooktoken`（编排 webhook 节点 body）、`privatekey`；上述键随 8KB body 捕获明文落日志。
+2. **[C2] `Accept: text/html` 整段豁免宽于文档** — `packages/weave-server/src/daemon/server.ts:648-649` — 违反「豁免 = HTML 导航 + 真实静态文件（§12）」— 静态文件判定**之前**有 accept 含 text/html 即 true 的整段豁免，任何 API GET（`/api-logs`、`/settings`、`/visualizations/fragment`）带该头即绕过认证门；实现宽于文档，属豁免面过宽设计缺口。
+3. **[A1+B1] web 按 harness 名硬判 MCP 卸载 scope** — `web/src/hooks/use-asset-mutations.ts:228` — 违反「web 不按 harness 名判（Architecture）」— `(agent ?? HARNESS_ORDER[0]) === 'claude' ? scope : 'user'`，服务端 `installCapabilities()`（market.ts:233）已派生该事实；第三 harness 非 user 级 MCP 落点会静默错置。
+4. **[A2] CategoryDetail 按名二分 + capabilities 缺位** — `web/src/components/CategoryDetail.tsx:245,331,495,525,595-619` — 违反「不支持也是面 / web 不按名判」— `runtimeTab === 'claude'/'codex'` 换空态文案（合法）但 :245 `runtimeTab === 'claude'` 混进 personalization 行筛选逻辑，codex 未来出 personalization 面会静默漏行。
+5. **[C3] runtime POSIX socket 手拼路径绕归口** — `packages/weave-server/src/runtime/protocol.ts:220-223` — 违反「落盘点一律先在 paths.ts 归档（§16）」— `path.join(dataDir,'cache',...)` 档位正确但归口缺位，paths.ts 无对应 getter。
+6. **[D1] `ui/input.tsx` 存量普遍违反** — web/src/components 约 60+ 处裸 `<input` 文本框（SettingsModal/StatuslinePanel/ConfigValueRow/FederationSection 等）— 违反「文本输入框一律 ui/input.tsx（2026-11-03 裁决）」— ui/input.tsx 仅被 11 文件消费；属存量普遍状态，需裁决「豁免存量、新代码强制」还是排期全仓收编。
+7. **[E2] 新增端点文档登记缺项** — `docs/ARCHITECTURE-DETAIL.md` — 违反「对外端点登记面（文档）」— `POST /projects/delete-batch`、`GET /harness-install-status`、`GET /visualizations/stats|cleanup`、`/notify/channels`、`/terminals/ws` 无 § 条目（delete-batch 与 harness-install-status docs 全域仅代码）。
 
-| # | file:line | 维度 | 违反条款 | 实况 |
-|---|---|---|---|---|
-| 13 | packages/weave-server/src/watch/classifier.ts:20 | A | harness 专属路径不散写 | 字面 `'.claude/settings.json'` 做文件分类分支 |
-| 14 | packages/weave-server/src/install/global-file-assets.ts:39 | A | harness 文件名清单不散写 | server 侧自造 `CLAUDE_FILES` 文件名清单 |
-| 15 | packages/weave-cli/src/init/wiring.ts:31-33 | A | 槽清单权威（边缘） | 字面 `'init'` 槽名判断；`satisfies` 保证归口，倾向合规边缘 |
-| 16 | packages/weave-server/src/daemon/hooks-routes.ts:82、daemon/routes/watches.ts:31-33、daemon/routes/extension.ts:241 | B | prompt 通道可用性派生单点 | 同一「queuedPrompt‖prompt‖terminal」表达式抄三份（仅能力展示非投递层序） |
-| 17 | docs/ARCHITECTURE-DETAIL.md:447 | B | 文档与实现同步 | 文档称剥装饰唯一实现 `stripInboxMarker`，该符号已不存在；现行 = `normalizePromptText`（ack-gate.ts:312）+ web `stripPromptDecor` |
-| 18 | packages/weave-server/web/src/lib/hook-payload.ts:73-83 | B | harness 文法归位 | claude 中继载荷文法（ONE_WAY_NOTE/RELAY_WRAP）在 web 手抄镜像，改动需三处同步 |
-| 19 | packages/weave-server/src/db/db.ts:571-574 | C | 落盘点归口 paths.ts | 迁移备份自拼 `<data>/backups/`，与 paths.ts 的 `getBackupsDir()`（`<cache>/backups/`）语义冲突且注释与实现不一致 |
-| 20 | packages/weave-server/src/repositories/sessions.ts:172 | C | 高频排序索引 | `ORDER BY last_seen_at DESC` 无可用索引（sessions 百行级，暂无痛感） |
-| 21 | packages/weave-server/web/src/lib/back-pop.ts:58 | D | 路由实现唯一 = route.ts（灰区） | route.ts 之外第二处 `history.pushState`（同 URL state 标记，不改位置语义） |
-| 22 | packages/weave-server/src/hooks/toolkit.ts:365,371 | E | 常量单点 | 用户文案里再硬编码两份 `'2.1.287'` 字符串 |
-| 23 | packages/weave-server/src/daemon/mcp/registry.ts:58-80 | E | 版本串散写（存疑倾向） | 四内建 MCP server 硬编码 `version:'0.1.0'`（独立协议版本则合法，见存疑） |
+### 低（11 条）
 
-## 核对通过项要点（按维度）
+8. [A3] `install/global-config.ts:374` — `` `${pl.name}@${mp.name}` `` 裸拼插件键形，违反「唯一拼装点 = PluginSurface.pluginKey」；同文件 307/466 注释自认纪律但未对拼装侧生效——需补豁免裁决或挪进 harness 面。
+9. [A4] `web/src/lib/api/hooks.ts:184-207` — `CLAUDE_HOOK_EVENTS` 是 `HARNESS_EVENTS.claude` 第二份手抄镜像（lifecycle.ts 之外），无文档豁免。
+10. [B2] `daemon/ai-routes.ts:273` — 第二个 `text/event-stream` 写头点；§13 明文合法但 §7 字面未点名该例外（文档同步）。
+11. [B3] `web/src/components/BackupOverlay.tsx:38` / `BackupSection.tsx:51` — 备份进度 1s 条件轮询，不在 §20 轮询豁免清单，DECISIONS 无条目——补豁免记录或改 SSE 帧。
+12. [C4] `runtime/host-server.ts:61` `<data>/runtime-host.json`、`daemon/metrics-sampler.ts:292` `metrics-history.json`、`statusline/manager.ts:48` `~/.weave/statusline.json` — 三处落点 §16 三档表未列（归口/档位本身正确或可辩护）。
+13. [C5] `repositories/uploads.ts:130` — `save()` 直接 `writeFileSync` 无 tmp+rename，中断留「名字=sha256、内容半截」坏件且 existsSync 永不自愈；分块路径 `adoptFromFile` 已正确。
+14. [C6] `hooks/inbox-worker.ts:234` — claim 重写缺 `mode:0o600`，重写后权限回落 umask（内容为投递正文）。
+15. [C7] `daemon/backup.ts:388` — 备份包写盘未设 mode（0644），包内含带 token 列的 weave.db。
+16. [E3] `docs/DECISIONS.md` — 归档永久删除（4184b423 / 34d09f60）无裁决条目，违反「带日期定案进 DECISIONS」惯例。
+17. [E4] `server.ts:641-645` — federation 豁免清单逐条枚举无单测守卫，新增豁免靠人工同步（现状无泄漏）。
+18. [E5] `weave-templates/copy-templates.mjs` — manifest 与产物一致性无自动化校验（pack-weave 整目录 cp 兜底）。
 
-- **A**：A2 harness 唯一外向依赖仅 core（package.json:48-51）；A3 web 四处 harness 引用全 `import type`、core 0 value import；A4 `abstract class` 全仓恰 2 处且落点吻合（pipeline.ts:13、opener/backend.ts:100）；A6 槽清单唯一定义 driver.ts:12-34，web lifecycle.ts 镜像属规则明载例外。
-- **B**：B1 十五个唯一实现点逐个核查单份成立（pluginKey 两实现为各 harness 槽件非重复；claude-liveness.ts 为规则明载 re-export 壳）；B2 codex messaging 全 null 通道带 unsupportedReasons（codex/messaging.ts:150-156）；B3 层序特征集中 message-deliverer.ts + delivery/send.ts，7 调用方只 `.send()`；B4 五张 core 表定义仅在 weave-core，capture 生成器 `JSON.stringify(INJECTABLE_EVENTS[...])` 现生成非手抄；B5 rewind 屏文法字面只在 rewind-ui.ts，server RewindPanels 零文法字面。
-- **C**：C1 全仓 0 处绕 paths.ts 自拼数据目录；C2 auth/ai/push/decision/peer-tokens/certs/inbox-targets 全 0600 + 档位全对；C3 api-log REDACT_KEYS 覆盖规则清单且多覆盖两键、请求头只记 user-agent、settings 表无凭据（stripApiKey 拆走落 0600 文件）；C4 消息正文落库仅四处全部合法（session_messages 表已 DROP）；C5 seriesBySecond/listBySession/全局搜索三路索引全覆盖，无裸 created_at 全表扫。
-- **D**：D1 例外外 0 命中（FilePicker 的 confirm 是局部函数）；D2 主通道 EventSource 仅 sse.ts:131，其余 setInterval 全为动效/时钟/心跳合法；D3 pushState/replaceState 仅 route.ts（back-pop 灰区另列）；D4 fragment 端点四道闸齐全（白名单根/isInsideDir/.html/2MB 常量）；D5 prefers-color-scheme 命中均为 weave 自身 auto 主题档 JS 监听与导出产物，合法；D6 作答三道闸齐全（zod 无裸键序字段 / ANSWER_TEXT 拒全部控制字符 / ANSWER_ATOM 封闭白名单 + deliverer 二次验）。
-- **E**：E1–E4 四条闭环主链逐跳走通（inbox 写读同目录口径、ackedEventId 三跳齐、问答链全跳、渲染块含续投分支与 VIZ_MAX_BYTES 同常量）；E5 伞包自包含（pack-weave.mjs 收集 externals + bundleDependencies）、生成物路径插值无写死盘符、dist 双形态入口成立；E6 weave 版本走 WEAVE_VERSION 单源、maxFragmentBytes 唯一定义 core harness.ts:360 三处同引；E7 ensureDataLayout 只 rename 不删 + 活 daemon 不动、pushBackup 滚 20 份、privacy-scan 三兜底分支齐全、迁移幂等双重判重。
+## 核对通过项要点
+
+- **A**：harness 外向依赖仅 core（23 处 import 全 core，core 零系统 IO import）✅；web value import 全仓仅 1 处且实为 type 续行 ✅；键形拆解全走 parsePluginKey、marketIdOf 唯一 ✅；abstract class 恰两处（注意实际落点 opener/backend.ts，文档写 opener.ts 待同步）✅；server 无业务 harness 名分支 ✅；HARNESS_* 镜像仅 lifecycle.ts 一处 ✅。
+- **B**：HarnessCapability 恰 22 槽一字不差 ✅；unsupportedReasons 三层（面/装配/web 渲染）贯通 ✅；liveness 判据全在 harness、server 纯并图 ✅；rewind server 零转录解析 ✅；编排/watch/extension 全经 deliverer.send ✅；terminalBackendFor 唯一构造地、无旁路 new ✅；EventSource/WebSocket 各唯一、upgrade 单点 ✅；词表生成物带头齐全、运行时不联网 ✅。
+- **C**：dataRoots 全 getter 逐落点核对无档位错置 ✅；11 处凭据文件全部 tmp+rename+0600 ✅；消息域零 INSERT（side_questions 唯一例外）✅；上传引用计数与三处触发点正确 ✅；快照 local 档 + 20 份备份 + scan-cache root 校验在位 ✅；fragment 白名单 + isInsideDir 跨盘安全 + maxFragmentBytes 单一常量四处同取 ✅；索引/缓存 TTL 与清理在位 ✅；capFields 4KB 与 edits 限流常量单点 ✅。
+- **D**：原生 confirm/alert/prompt 全仓 0 命中 ✅；EventSource/WS/历史 API 单点 ✅；移动端八条逐条核对通过（dvh/传感器分流/长按/双击例外/pull-load 唯一实现）✅；harness 名命中均为常量镜像与展示分支 ✅；fragment srcdoc+CSP+sandbox、导出 HTML 全转义+safeHref+无外部资源 ✅；dangerouslySetInnerHTML 唯一命中且输入已过滤 ✅。
+- **E**：七条主链路（init/采集/投递/终端/问答/归档删除/编排）逐跳链闭合 ✅；孤儿能力清点零死链（新增端点全有消费点）✅；部署脚本引用文件全存在、无本机路径固化、端口语义一致 ✅；版本单一来源 + bump 七处写齐 + pack 幂等 + prebuilds 裁剪有测试 ✅；认证门逐接口对照（/health /auth /webhooks token /federation per-peer /mcp /terminals/ws upgrade）全真实校验 ✅；FEDERATION_SERVICES 8 行与分发 8 分支差集为零 ✅。
 
 ## 存疑待人工
 
-1. **pet 域架构定位**（web/src/pet/）：独立 WebView2 小窗还是 web 前端管辖内？裁决决定发现 5/8/9 是否豁免（独立客户端则 D2/B1 的 pet 命中降档）。
-2. **备份轮询例外**（发现 6/7）：用户显式长任务进度跟踪，与「后端驱动轮询」例外精神相近——进例外清单（规则文档补一句）还是收敛为 SSE 帧驱动，需裁决。
-3. **orchestrations.nodes 内嵌 webhookToken / notify_channels.config 内嵌 secret**（db.ts:208-215）：表注释声明「认证门后有意回显重验」，是否算 §3「凭据不进库」的边界扩张，需人定并回写规则文档。
-4. **GET /settings 回显 ai/decision apiKey**（settings-statusline.ts:50-55）：注释「掩码展示」与「密钥永不回显」自相矛盾；api-log 落盘侧已脱敏，行为本身是否合规需确认意图。
-5. **内建 MCP server `version:'0.1.0'`**（registry.ts）：随 weave 发版（应接 WEAVE_VERSION）还是各 server 独立协议版本（合法），静态判不出意图。
-6. **`MessagingChannel` 类型无 queuedPrompt/promptInbox 的 reasons 槽**（driver.ts:361-369）：claude `queuedPrompt:null`、codex `promptInbox:null` 无处写原因——「不支持也是面」的类型面缺口还是有意豁免。
-7. **questions 槽的 `plan:null`/`permissionNotificationType:null`**（codex/questions.ts:95-97）：BlockingPromptSpec 无 reasons 字段，§2「不支持也是面」是否覆盖 questions 槽规则未明说。
-8. **装饰归一出口三处并存**（prompt.ts / ack-gate normalizePromptText / web hook-payload.ts）：直投已不加前缀故当前自洽，但中继壳文法变更需三处同步；是否收紧单一归一出口需裁决。
-9. **`WEAVE_SKIP_MOD_VERSION_CHECK=1` 旁路**（toolkit.ts:358）：运维兜底还是可误用的版本闸旁路，文档未声明。
-10. **需运行时验证**：inbox 并发分片认领竞争、UPS 长文本「包含」匹配对宿主 chunk 拼接的实况、伞包 tgz 实装冷启动（externals 树 prune 后无缺模块）。
-12. **S3 复核新增（修复期补发现）**：① `.weave/token`（registry.ts:36、rpg/provisioning.ts:493）写项目采集 token 无 mode——可重放凭据按 umask 0644 落盘（中）；② mirror write 分片 / daemon.json / uploads 无 mode（低，内容非敏感）；③ `~/.weave` statusline 模板与 `<dataDir>/statusline/` 双目录并存语义待统一（低）；④ rename 后未补 chmod 的口径不齐（mirror.ts:224、promptbox，Windows 下 rename 可能丢属性，低）；⑤ orchestrations webhook secret 明文落库的豁免边界（同存疑 3）。
-13. **S3 复核新增（A/B 维）**：① App.tsx:507 组件内 `harness === 'claude'` 业务计数散写（中，修复期漏项）；② cli claude.ts:99 `.claude` 裸字面与同文件 codex.ts 走表不一致（低）；③ web hooks.ts `harness === 'codex' ? A : A` 死分支（低）；④ web hooks 事件名手抄镜像无编译对账、App.tsx:439 家目录白名单走查根清单归属，待人工裁定（存疑）。
-11. **rpg expedition/merge-ladder/expedition-session 测试本机高波动**（修复期发现，非评审项）：基线与改动下各跑多轮失败集每轮不同（EPERM 清理临时目录 / 5s 超时类环境性失败，基线自己也失败）；修复按「相对基线不新增错误」口径收货，波动根因待查（疑似真 git 子进程 + Windows 目录句柄释放时序）。
+1. `api-log.ts:24` — `authToken` 漏脱敏需运行时验证：实测一次 POST /harness-config/models 后查 api-logs 是否明文（静态已判高概率泄漏，修复不依赖验证结论）。
+2. `repositories/hook-dispatches.ts:42` — `hook_dispatches.prompt` 列落投递正文：D3 规则派发审计账 vs「消息域不落库」例外只有 side_questions 的规则文本，需裁决补例外。
+3. `server.ts:649` — `Accept: text/html` 豁免是有意设计还是应收敛到「静态文件存在才豁免」（发现 2 的修复方向需用户定：改代码收敛 or 文档如实放宽）。
+4. `web/src/lib/back-pop.ts:58` — 返回手势栈独立 pushState，算不算「位置即 URL」第二实现（语义上压标记条目、不改落点）。
+5. `StatuslinePanel.tsx:409` — 裸 PointerSensor 未按指针分流（桌面设置页内拖拽，触屏降级为短距拖动），需验机定性。
+6. `hooks/toolkit.ts:203` — `harness === 'claude' && isCcPluginPack` 特判：合法形状耦合还是应下沉 surface 语义。
+7. `routes/market.ts:229-231` — `pluginSurfaceOf` 的 claude 注入回落（自称存量测试形态），建议随存量测试清理收编。
 
 ## 修复顺序表
 
-优先级链：归口缺位 > 散写收敛 > 部署一致 > 文档同步（无断链/泄漏/固化缺陷，故无第一梯队）。验证方式：`npx tsc --noEmit`（包根）+ web 的 tsc（改 web 必跑）+ 相关测试。
+按优先级链：泄漏面 > 归口缺位 > 散写收敛 > 部署一致 > 文档同步。
 
-| 序 | severity | file:line | 违反条款 | 修法一句 | 验证 |
+| # | sev | file:line | 违反 | 修法一句 | 验证 |
 |---|---|---|---|---|---|
-| 1 | 中 | core/src/platform.ts + utils/fs.ts | core 零接口纯度 | platform/fs 移出 core（落 harness 或 server 的 shared），core 留类型与表 | 两 tsc + core/harness 测试 |
-| 2 | 中 | config/profiles.ts:70-73 | local 0600 | harness-config 写入口补 `mode:0o600`+chmod（对齐同目录其余凭据文件写法） | 单测断言 mode（Windows 下仅核对调用参数） |
-| 3 | 中 | hooks/mirror.ts:196-200 | 旁路凭据 0600 | appendInbox 改走 writeJsonLedger 或补 mode:0o600 | 同上 |
-| 4 | 中 | install/settings-mcp.ts:15,57-59 | 键形经能力面 | 三键读写下沉 claude ConfigSurface/AssetSurface，server 只传语义参数 | 两 tsc + settings 相关测试 |
-| 5 | 中 | rpg/provisioning.ts:113,120 | 路径经能力面 | `.claude` 路径改经 harness 面（DIRS 表/能力面取） | tsc + provisioning 测试 |
-| 6 | 中 | pet/main.ts:172 + 1055 | SSE 单通道 | pet 收编进 lib/sse.ts 单通道；15s 对账轮询改 SSE invalidate 驱动或并入统一客户端 | web tsc + 手动过桌宠 |
-| 7 | 中 | pet/main.ts:109-137 | 忙判据单点 | pet 复用 isSessionBusy/deriveSessionStatus（或经 store 订阅），删自抄常量 | web tsc |
-| 8 | 中 | BackupSection/BackupOverlay | 轮询裁决 | 待存疑 2 裁决：进例外清单（规则文档补条款）或改帧驱动 | doc-only 或 web tsc |
-| 9 | 中 | toolkit.ts:90 | 版本下限单源 | MIN_MOD_HOST_VERSION 改引 ResumeCommandSpec.minVersion（或反向），文案两处从常量拼装 | tsc + toolkit 测试 |
-| 10 | 低 | watch/classifier.ts:20、install/global-file-assets.ts:39、wiring.ts:31-33 | 散写收敛 | 三处字面改经 core 表/能力面（wiring.ts 可判合规不动） | tsc |
-| 11 | 低 | hooks-routes/watches/extension 三处 | 派生单点 | prompt 通道可用性派生收敛为 deliverer（或 surfaces）一个方法 | tsc |
-| 12 | 低 | ARCHITECTURE-DETAIL.md:447 | 文档同步 | stripInboxMarker 条目改写为 normalizePromptText + stripPromptDecor 现状 | doc-only |
-| 13 | 低 | web hook-payload.ts:73-83 | 文法镜像 | 待存疑 8 裁决；不动则注释标注三处同步义务 | doc-only |
-| 14 | 低 | db/db.ts:571-574 | 归口 paths.ts | `<data>/backups/` 进 paths.ts 立 getter（与 cache backups 分名），修正注释 | tsc |
-| 15 | 低 | repositories/sessions.ts:172 | 索引 | 补 `idx_sessions_last_seen(last_seen_at)` 单列索引（量级小，可随下次 schema 迁移顺带） | 迁移测试 |
-| 16 | 低 | web back-pop.ts:58 | 路由灰区 | 待裁决；倾向规则文档为「同 URL state 标记」补豁免句 | doc-only |
-| 17 | 低 | mcp/registry.ts:58-80 | 版本语义 | 待存疑 5 裁决；若随 weave 发版则接 WEAVE_VERSION | tsc |
-| 18 | — | install/role-manifests.ts（追加单） | persona 源头回写 | COORDINATOR_PERSONA 补「会话消息通道与等待纪律」节（照物化版逐字） | tsc |
+| 1 | 中 | api-log.ts:24-35 | 脱敏键形缺口 | ✅ cfc5a59c REDACT_KEYS 补 `authtoken`/`sendkey`/`webhooktoken`/`privatekey`（精确键，toLowerCase 后比对） | api-log 测试全绿 |
+| 2 | 中 | server.ts:648-649 | 豁免宽于文档 | ✅ cd633888 豁免收敛到「公开端点 + 真实静态文件」；未认证导航回 SPA 外壳（isNavigationRequest） | static-api / dashboard-auth 测试 17+ 绿 |
+| 3 | 中 | use-asset-mutations.ts:228 | web 按名判 scope | ✅ 0f2a15a1 handleUninstallMcp 改经 capabilitiesOf('mcp') 派生 | web tsc |
+| 4 | 中 | CategoryDetail.tsx:245 等 | 按名二分混进筛选 | ✅ ac79266a personalization 面显隐与 mcpUpdates 过滤改经能力矩阵；文案分支保留 | web tsc |
+| 5 | 中 | runtime/protocol.ts:220 | 路径绕归口 | ✅ e3bf4f8f paths.ts 补 getRuntimeSocketDir，ipcPathFor 改调用 | 包根 tsc |
+| 6 | 低 | uploads.ts:130 | 无 tmp+rename | ✅ 0866bfbb save() 补 tmp+rename 同盘原子写 | repositories 测试 19 绿 |
+| 7 | 低 | inbox-worker.ts:234 | 重写缺 0600 | ✅ 8a96826d writeFileSync 补 mode 0o600 | 包根 tsc |
+| 8 | 低 | backup.ts:388 | 备份包 0644 | ✅ 8a96826d 写盘补 mode 0o600 | 包根 tsc |
+| 9 | 低 | global-config.ts:374 | 键形裸拼 | ✅ d4f2fe9d 改经 pluginSurfaceFor('codex').pluginKey | install 测试 196 绿 |
+| 10 | 低 | web api/hooks.ts:184 | 第二镜像 | ✅ 6f7f2b67 删镜像，直引 core HARNESS_EVENTS.claude（源码 alias 既有） | web tsc |
+| 11 | 低 | 三处落点 | §16 表缺行 | ✅ f65a3380 §16 表补 runtime-host.json（data 档）/metrics-history.json（cache 档）/~/.weave/statusline.json | doc-only |
+| 12 | 低 | DECISIONS.md | 删除裁决缺条目 | ✅ f65a3380 补 2026-11-22 永久删除裁决条目 | doc-only |
+| 13 | 低 | ARCHITECTURE-DETAIL §7 | AI SSE 例外未点名 | ✅ f65a3380 §9 订阅拆面句补「AI fetch-reader 流是第二 SSE 面（§13）」 | doc-only |
+| 14 | 低 | BackupOverlay/Section | 轮询无豁免记录 | ✅ f65a3380 DECISIONS 补「备份进行中条件轮询豁免」（页面专属短命任务态，不扩 SSE 帧） | doc-only |
+| 15 | 低 | server.ts:641 | 豁免无守卫 | ✅ 059c60f4 补「豁免清单与 federation per-peer 门一致」单测（带 auth 实例验 401 语义） | federation-routes 测试 6 绿 |
+| 16 | 低 | copy-templates.mjs | manifest 无校验 | ✅ 3b69abce packWeaveTgz 循环内 manifestGaps 校验（main/types/bin/exports 引用文件须真实存在）；时序缺陷盲评抓出已修 bda4071e | pack-weave 测试 5 绿 |
+| 17 | 中（挂账） | web 60+ 处裸 input | ui/input.tsx 纪律 | 用户裁决：存量豁免（新代码强制）写入规则文档，或排期全仓收编 | ✅ 15a5b533+79a3ba20（2026-11-22 全仓收编：73+1 处文本框换 `<Input`，checkbox/radio/file/color/range 与 ui/ 基础件内部豁免） |
 
-### 修复进度（2026-11-16 修复批收尾）
+## S1→S2 主要收益来源
 
-- ✅ #1 `90023f11`（core platform/fs 移 harness shared）
-- ✅ #2 `7460d1bb`（harness-config 0600）
-- ✅ #3 `3f54fc41` + 补漏 `a7fb8b69` / `7ff66f47`（hooks 账面 0600）
-- ✅ #4 `a2ece7ed`（MCP 三键族下沉 AssetSurface.mcpEnableRead/Write）
-- ✅ #5 `41e3fa10`（rpg provisioning 经 HARNESS_DIRS）
-- 🚫 #6 按 DECISIONS 2026-11-15「pet 维持独立页壳不改」豁免，本批不动（pet EventSource/轮询维持现状）
-- 🚫 #7 同上豁免（pet 忙判据自抄常量维持现状）
-- ⏸ #8 例外裁决挂账（备份轮询暂保留，待存疑 2 裁决后进例外清单或改帧驱动）
-- ✅ #9 `9ba7be99`（CLAUDE_MIN_HOST_VERSION 单源 + 文案拼装）
-- ✅ #10 `43df2250`（classifier/global-file-assets 经 HARNESS_DIRS；wiring 槽名 satisfies 钉死）
-- ✅ #11 `e341059c`（MessageDeliverer.promptChannelOf 静态派生单点）
-- ✅ #12 `a8c9b61f`（doc-only：normalizePromptText 现状改写）
-- ✅ #14 `c791841f`（getDbMigrationsBackupDir getter + 注释一致化）
-- ✅ #15 `5eb38731`（idx_sessions_last_seen 索引）
-- ✅ #17 `0c9ff40c`（内建 MCP version 接 WEAVE_VERSION）
-- ✅ #18 `5675a62f`（追加单：COORDINATOR_PERSONA 回写，独立 fix(chore) 提交）
-- 未动（待裁决，doc-only 类）：#13 / #16（存疑 8/灰区裁决未下，维持现状）
-
-## S3′ 批 2 盲评（2026-11-16）
-
-豁免单（盲评提示只给豁免、不给旧分旧发现）：pet 三处（EventSource/轮询/忙判据，DECISIONS 2026-11-15）、备份轮询（挂账）、orchestrations/notify_channels secret 落库（存疑 3）、GET /settings 回显（存疑 4）、hook-payload.ts 文法镜像（挂账）、back-pop.ts pushState（灰区挂账）。
-
-- **A 17**：五条硬规则全过、抽象类恰两处、core 零 node 实测零命中。扣分 = statusline.ts web 镜像群（WEAVE_VERSION='0.1.0' 已实际漂移，中）+ server hooks 管线散写事件名字面量（中）+ 插件路径/claude 特判等 7 低。
-- **B 17**：四唯一实现点（层序/promptChannelOf/rewind 文法/TERMINAL_LOCATOR_ENV）全成立。扣分 = rpg 域 + DashboardOverview 六处内联重编 `running||compacting`（中）+ server 第二 pluginKey 拼装点带失实注释（低）+ mcp 路由 schema 手写 harness 枚举（低）。
-- **C 17**：0600 全数合规（含本批 token/daemon.json/mirror/promptbox chmod 补记、uploads 0644）。扣分 = mirror.ts:166 MirrorWriter.write 独漏 mode+chmod（中）+ layout.ts mergeInto rmSync 与同名校验文件静默丢（低）+ inbox-worker 毒丸回写无 mode（低）。
-- **D 16**：SSE 单通道/原生控件禁用/位置即 URL/作答三闸全过。扣分 = 全站大量裸 `<input>`/`<textarea>` 不走 ui/input.tsx（中，面广）+ VisualizationFrame 4s mtime 轮询（中，注释自认轻量轮询）+ 渲染块文法镜像未豁免（低）。
-- **E 18**：四闭环主链逐跳全通、版本单源核过、privacy-scan 三兜底齐。扣分 = claude/config.ts MAX_BYTES 硬编码未引 VISUALIZATION_PROTOCOL.maxFragmentBytes（低）+ mergeInto rmSync（低，同 C-2）。
-
-S2′→S3′ 偏差（−7）解释：D 维预估 20 过乐观——裸输入面与渲染块热更轮询是 S1/S3 两轮都未被点名的存量面（S3 轮 D 满分因当时检查单口径未覆盖）；C 维 −2 与 E 维 −2 为盲评新翻出的账面边角（MirrorWriter.write 漏 mode、MAX_BYTES 字面量）；A/B 均高于 S3 轮，批 2 修复被盲评确认生效。
-
-## 修复批 2（2026-11-16，S3 复核新增项）
-
-- ✅ 批1 `2b7cf75a`（`.weave/token` 可重放凭据落盘补 0600——registry.ts + rpg/provisioning.ts）
-- ✅ 批2 `32c1c3a5`（App.tsx 项目档 mcp 计数改 installScopes 行判据，不点名 harness）
-- ✅ 批3 `d6be9f97`（cli claude init `.claude` 目录走 HARNESS_DIRS）
-- ✅ 批4 `a19b34d2`（web hooks.ts injectableEventsOf 死三元删除）
-- ✅ 批5 `386819c4`（mirror/promptbox rename 落定后补 chmod 0600）
-- ✅ 批6 `379f743e`（daemon.json 状态文件落盘 0600）
-- ✅ 批7 `186320d7`（uploads 附件落盘显式 0644）
-- 存疑 3（orchestrations/notify_channels secret 落库）、#13（web 文法镜像）、#16（back-pop 灰区）按裁决不动；pet 三处与备份轮询维持 DECISIONS 2026-11-15 豁免。
-
-## skill 反馈（首次实机实验）
-
-1. **「呈现给用户确认」在编排场景指代不明**：skill 写「用户」，实机跑在协调者-执行者两会话协作下，确认方实为派单会话。建议补「编排场景确认方 = 派单会话（或其转达的用户）」。
-2. **DECISIONS.md 的角色未写明**：任务单把 DECISIONS.md 列进「站立规则文档」，但它按项目自身约定是带日期裁决记录（含被推翻旧结论），直接提炼会把历史结论当现行规则。本次处置：站立规则只取 CLAUDE.md/ARCHITECTURE(.md/-DETAIL)，DECISIONS 仅作合法例外对照。建议 skill 显式写明此类文档的角色。
-3. **阶段 0b 三项输入已被派单预填时无跳过分支说明**：本次按已填处理未重复询问，skill 宜补一句。
-4. **E 维「走通」的证据形态未定义**：闭环核对与 A–D 的 file:line 偏差盘点输出形态不同，skill 未说明通过证据长什么样；本次按「逐跳落点 file:line」作证据（可行，建议固化）。
-5. **「核对身份类检查项先确认归口」条款实效好**（正面）：本次 B1 十五点核查未出现假不一致，条款保留。
-6. example-checklist-weave.md 形态标杆有效，但内容已落后于目标仓现状（22 槽/rewind/ALS 等均新于旧单）——印证 skill「不硬编码进流程」的设计，建议给该参考件加「时效性提示」头注。
+C 维（9→16）：脱敏缺口、豁免收敛、归口补齐三条中项 + 三个低项全可修；E 维（13→19）：文档登记与守卫类全 doc-only/单测可清。D 维保留扣减（input.tsx 挂账）。

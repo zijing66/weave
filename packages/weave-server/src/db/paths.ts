@@ -196,6 +196,11 @@ export function getIndexDir(dir?: string): string {
   return path.join(dataRoots(dir).cache, 'index');
 }
 
+/** runtime Host IPC 的 POSIX socket 目录（`<data>/cache/`，stale socket Host 启动时清）。 */
+export function getRuntimeSocketDir(dir?: string): string {
+  return dataRoots(dir).cache;
+}
+
 /** 终端窗口可见性账面（mux windowId → 上次已知 vis；wezterm 后端对称残局消歧用）。 */
 export function getTerminalVisLedgerPath(dir?: string): string {
   return path.join(dataRoots(dir).cache, 'terminal-vis-ledger.json');

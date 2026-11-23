@@ -65,7 +65,7 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
     setLease('pending');
     initialSentRef.current = false;
     const term = new Terminal({
-      fontFamily: "'Weave Nerd Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace",
+      fontFamily: "'Weave Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace",
       fontSize: 12,
       cursorBlink: true,
       convertEol: false,

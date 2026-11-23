@@ -40,9 +40,8 @@
     <title>Weave Dashboard</title>
     <!-- favicon：public/ 下的 SVG，不经 JS、首屏即生效（换图就抬 ?v，缓存口令） -->
     <link rel="icon" type="image/svg+xml" href="/weave-logo.svg?v=4" />
-    <!-- Powerline glyphs load before first paint — no tofu flash in the preview -->
-    <link rel="preload" href="/fonts/WeaveNerdMono-Regular.woff?v=2" as="font" type="font/woff" crossorigin />
-    <link rel="preload" href="/fonts/WeaveNerdMono-Bold.woff?v=2" as="font" type="font/woff" crossorigin />
+    <!-- 全局等宽字体首屏即用（终端/代码块/statusline）：Latin 主档 preload，Nerd 图标子集保留兜底 -->
+    <link rel="preload" href="/fonts/WeaveMono-Regular.woff2" as="font" type="font/woff2" crossorigin />
   </head>
   <body class="bg-neutral-950 text-neutral-100">
     <div id="root"></div>

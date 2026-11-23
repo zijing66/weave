@@ -24,6 +24,9 @@ describe('RuntimeSupervisor 守护', () => {
   let spawnCalls: number;
   let current: RuntimeSupervisor | null = null;
 
+  /** 假 Host 回报的实例清单（测试用例可改写；空 = 无实例）。 */
+  let fakeInstances: Array<{ id: string; status: string }> = [];
+
   const startFakeHost = (): Promise<void> =>
     new Promise((resolve) => {
       server = createServer((socket) => {
@@ -48,7 +51,7 @@ describe('RuntimeSupervisor 守护', () => {
               msg.type === 'hello'
                 ? { hostId: 'fake-host', protocolVersion: RUNTIME_PROTOCOL_VERSION, weaveVersion: 'test', instances: [] }
                 : msg.type === 'instances.list'
-                  ? { instances: [] }
+                  ? { instances: fakeInstances }
                   : {};
             socket.write(JSON.stringify({ id: msg.id, success: true, payload }) + '\n');
           }
@@ -99,6 +102,7 @@ describe('RuntimeSupervisor 守护', () => {
     sockets = new Set();
     connections = 0;
     spawnCalls = 0;
+    fakeInstances = [];
     await startFakeHost();
   });
 
@@ -161,5 +165,33 @@ describe('RuntimeSupervisor 守护', () => {
     expect(connections).toBe(before); // 没有重连
     await expect(sup.ensureHost()).rejects.toThrow();
     expect(spawnCalls).toBe(0);
+  });
+
+  it('孤儿只报增量：同一枚孤儿连拍不重复刷屏，消失后重报', async () => {
+    const logs: string[] = [];
+    const sup = new RuntimeSupervisor(
+      new AgentInstanceRepository(db),
+      dataDir,
+      (m) => logs.push(m),
+      async () => {
+        spawnCalls += 1;
+      },
+    );
+    current = sup;
+    await sup.ensureHost();
+    fakeInstances = [{ id: 'wvt-orphan-1', status: 'running' }];
+    const first = await sup.reconcile();
+    expect(first.orphans.map((o) => o.id)).toEqual(['wvt-orphan-1']);
+    expect(logs.filter((m) => m.includes('wvt-orphan-1'))).toHaveLength(1);
+    // 同一枚再来一拍：不重复报
+    const second = await sup.reconcile();
+    expect(second.orphans.map((o) => o.id)).toEqual(['wvt-orphan-1']);
+    expect(logs.filter((m) => m.includes('wvt-orphan-1'))).toHaveLength(1);
+    // 孤儿消失（Host 清空）后：集合除名，再现身时重报
+    fakeInstances = [];
+    await sup.reconcile();
+    fakeInstances = [{ id: 'wvt-orphan-1', status: 'running' }];
+    await sup.reconcile();
+    expect(logs.filter((m) => m.includes('wvt-orphan-1'))).toHaveLength(2);
   });
 });

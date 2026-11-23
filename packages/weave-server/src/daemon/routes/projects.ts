@@ -19,7 +19,7 @@ import {
 import { purgeProjectPipeline } from '../hook-pipeline.js';
 import { hooksRoot } from '../../hooks/mirror.js';
 import { projectHarnesses, probeBinVersion, withProjectHarnesses } from '../project-harnesses.js';
-import { scheduleBootstrapInjection } from '../session-open.js';
+import { scheduleBootstrapInjection, spawnHeadlessInstance } from '../session-open.js';
 import { getUploadsDir } from '../../db/paths.js';
 import { PENDING_WT_PREFIX, createSessionWorktree, upsertWorktreeEntry } from '../worktree.js';
 
@@ -193,32 +193,17 @@ export async function startSessionInProject(
     // 照常由 hook 事件建档（env 带 WEAVE_INSTANCE_ID，宿主侧 hook 采集归因）。
     // 终端预设选 Web 终端时新会话一律起 headless（那是它的打开方式，客户端
     // 不必再传 mark；显式 executionMode 仍优先）。
-    if (opts.executionMode === 'headless' || settings.terminal.preset === 'web') {
-      if (!deps.runtimeSupervisor) {
-        return { ok: false, status: 501, error: 'Runtime host is not available (daemon too old or disabled)' };
-      }
-      const instanceId = `wvi-${crypto.randomUUID().slice(0, 12)}`;
-      try {
-        await deps.runtimeSupervisor.spawnInstance(
-          {
-            instanceId,
-            command: spec.bin,
-            args: spec.launchArgs ?? [],
-            cwd,
-            cols: 100,
-            rows: 30,
-            env: {
-              ...process.env,
-              WEAVE_INSTANCE_ID: instanceId,
-              WEAVE_RUNTIME_HEADLESS: '1',
-            },
-          },
-          { projectId: project.id, harness: picked!.id },
-        );
-        return { ok: true, command: argv.join(' '), cwd, instanceId };
-      } catch (e) {
-        return { ok: false, status: 503, error: `Runtime host spawn failed: ${e instanceof Error ? e.message : e}` };
-      }
+    if (
+      opts.executionMode === 'headless' ||
+      terminalBackendFor(settings.terminal).hostsSessions === 'headless'
+    ) {
+      const spawned = await spawnHeadlessInstance(
+        deps,
+        { projectId: project.id, harness: picked!.id },
+        { command: spec.bin, args: spec.launchArgs ?? [], cwd },
+      );
+      if (!spawned.ok) return spawned;
+      return { ok: true, command: argv.join(' '), cwd, instanceId: spawned.instanceId };
     }
     // 定点落子（可选 target = list_terminals 的 targetId）：能力归后端——enumerable
     // preset 才有定点通道，其余明确报因；目标没了 / 长满了 throw 转前端报因，
@@ -302,10 +287,6 @@ export async function handleProjectRoutes(
         // 回落外部终端（预设口径就是 headless，回落会把窗开到用户没选的地方）。
         // 已有活的 shell（收起后重进/连点）：接回同一个实例，不每次开无主 shell。
         if (settings.terminal.preset === 'web') {
-          if (!deps.runtimeSupervisor) {
-            sendJson(res, 501, { error: 'Runtime host is not available (daemon too old or disabled)' });
-            return true;
-          }
           const live = deps.agentInstances?.liveShellOf(project.id) ?? null;
           if (live) {
             sendJson(res, 200, {
@@ -317,34 +298,32 @@ export async function handleProjectRoutes(
             });
             return true;
           }
-          const instanceId = `wvt-${crypto.randomUUID().slice(0, 12)}`;
           const shell =
             process.platform === 'win32'
               ? { command: 'powershell.exe', args: ['-NoLogo'] }
               : { command: process.env['SHELL'] ?? 'bash', args: [] };
-          try {
-            await deps.runtimeSupervisor.spawnInstance(
-              {
-                instanceId,
-                command: shell.command,
-                args: shell.args,
-                cwd: project.path,
-                cols: 100,
-                rows: 30,
-                env: { ...process.env, WEAVE_INSTANCE_ID: instanceId },
-              },
-              { projectId: project.id, harness: 'shell' },
-            );
+          // 裸 shell 实例（非 harness 会话）：同一执行核，id 前缀 wvt、不带
+          // WEAVE_RUNTIME_HEADLESS（headless 标记是 harness 会话的归因语义）。
+          const spawned = await spawnHeadlessInstance(
+            deps,
+            { projectId: project.id, harness: 'shell' },
+            {
+              command: shell.command,
+              args: shell.args,
+              cwd: project.path,
+              instanceId: `wvt-${crypto.randomUUID().slice(0, 12)}`,
+              headlessEnv: false,
+            },
+          );
+          if (spawned.ok) {
             sendJson(res, 200, {
               ok: true,
               target: body.target,
               path: project.path,
-              instanceId,
+              instanceId: spawned.instanceId,
             });
-          } catch (e) {
-            sendJson(res, 503, {
-              error: `Runtime host spawn failed: ${e instanceof Error ? e.message : e}`,
-            });
+          } else {
+            sendJson(res, spawned.status, { error: spawned.error });
           }
           return true;
         }

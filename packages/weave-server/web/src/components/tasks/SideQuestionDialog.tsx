@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Input } from '../ui/input';
 import {
   AlertTriangle,
   Check,
@@ -702,7 +703,7 @@ export function SideQuestionDialog({
               </div>
             ) : (
               <div className="mt-2 flex shrink-0 items-center gap-2">
-                <input
+                <Input
                   value={draft}
                   disabled={busy}
                   placeholder={t('tasks.sidePlaceholder')}

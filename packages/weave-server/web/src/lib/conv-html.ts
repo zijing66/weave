@@ -240,7 +240,7 @@ main { max-width: 880px; margin: 0 auto; }
 .body ul, .body ol { margin: 6px 0; padding-left: 22px; }
 .body li { margin: 2px 0; }
 .li-mark { color: var(--muted); }
-.body code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: var(--code); padding: 1px 4px; border-radius: 4px; }
+.body code { font-family: 'Weave Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: var(--code); padding: 1px 4px; border-radius: 4px; }
 .body pre { margin: 8px 0; padding: 10px; overflow-x: auto; background: var(--code); border: 1px solid var(--line); border-radius: 8px; }
 .body pre code { padding: 0; background: none; color: var(--code-fg); }
 .body blockquote { margin: 8px 0; padding: 2px 0 2px 10px; border-left: 2px solid var(--line); color: var(--muted); }

@@ -211,6 +211,11 @@ describe('截断与脱敏', () => {
     const big = {
       password: 'hunter2',
       apiKey: 'AK-1',
+      authToken: 'sk-auth-1',
+      sendKey: 'SCT-1',
+      privateKey: 'pk-1',
+      webhookToken: 'wt-1',
+      pass: 'smtp-pass-1',
       nested: { token: 't-1', keep: 'ok' },
       secret: 's-1',
       authorization: 'Bearer x',
@@ -240,6 +245,11 @@ describe('截断与脱敏', () => {
     const req = entry!.req as Record<string, unknown>;
     expect(req.password).toBe('[redacted]');
     expect(req.apiKey).toBe('[redacted]');
+    expect(req.authToken).toBe('[redacted]');
+    expect(req.sendKey).toBe('[redacted]');
+    expect(req.privateKey).toBe('[redacted]');
+    expect(req.webhookToken).toBe('[redacted]');
+    expect(req.pass).toBe('[redacted]');
     expect((req.nested as Record<string, unknown>).token).toBe('[redacted]');
     expect((req.nested as Record<string, unknown>).keep).toBe('ok');
     expect(req.secret).toBe('[redacted]');

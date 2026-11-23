@@ -45,6 +45,8 @@ export class RuntimeSupervisor {
   private statusHandler: ((reachable: boolean) => void) | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
   private reconcileTimer: NodeJS.Timeout | null = null;
+  /** 已报过命的孤儿实例（增量去重；消失即除名）。 */
+  private readonly knownOrphans = new Set<string>();
   /** daemon 停机后不再拉起 Host（手动停止不复活）。 */
   private stopped = false;
   /** 并发 ensureHost 共享一次连接/拉起（后台重连与用户开终端同时到达不双跑）。 */
@@ -189,7 +191,18 @@ export class RuntimeSupervisor {
         this.repo.markStatus(row.id, 'failed', 'runtime host no longer reports this instance');
       }
     }
-    if (plan.unknown.length > 0) this.log(`orphan instances (not in DB): ${plan.unknown.map((u) => u.id).join(', ')}`);
+    // 孤儿只报增量（已知集合不再刷屏——对账 60s 一拍，同一枚孤儿会连续报几十遍）；
+    // 集合消失（Host 重启清空 / 被处置）后重报。
+    const fresh = plan.unknown.filter((u) => !this.knownOrphans.has(u.id));
+    if (fresh.length > 0) {
+      this.log(`orphan instances (not in DB): ${fresh.map((u) => u.id).join(', ')}`);
+      for (const u of plan.unknown) this.knownOrphans.add(u.id);
+      for (const id of this.knownOrphans) {
+        if (!plan.unknown.some((u) => u.id === id)) this.knownOrphans.delete(id);
+      }
+    } else if (plan.unknown.length === 0 && this.knownOrphans.size > 0) {
+      this.knownOrphans.clear();
+    }
     return {
       hostId: this.hostId ?? '',
       refreshed: plan.refresh.map((r) => r.id),

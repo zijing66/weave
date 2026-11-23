@@ -137,4 +137,44 @@ describe('federation routes（E3）', () => {
     expect((await rest('POST', '/federation/call', { service: 'sessions.list', params: {} })).status).toBe(403);
     expect((await rest('POST', '/federation/invite', {})).status).toBe(404);
   });
+
+  it('认证门豁免清单与 federation 面一致：per-peer 门四端点匿名可达、管理面 401', async () => {
+    // server.ts isPublicRequest 的 /federation/* 白名单必须与 handleFederationRoutes
+    // 的 per-peer token 门端点一一对应：多豁免 = 管理面漏到门外；少豁免 = 对端通道 401。
+    // 本套件主 server 未装 auth（门全开），401 语义单独起一个带 auth 的实例验。
+    const { AuthService } = await import('../../daemon/dashboard-auth.js');
+    const authDir = mkdtempSync(path.join(tmpdir(), 'weave-fed-auth-'));
+    const auth = new AuthService(authDir);
+    auth.setPassword('fed-test-pass');
+    const authed = createWeaveServer({
+      projects: new ProjectRepository(db),
+      port: 0,
+      peers,
+      peerTokensDir: tokenDir,
+      ownCertPem: (await pemsPromise).cert,
+      ownHostname: 'host-a',
+      ownFingerprint: ownFp,
+      auth,
+    });
+    await new Promise<void>((resolve) => authed.listen(0, '127.0.0.1', resolve));
+    const authedPort = (authed.address() as { port: number }).port;
+    try {
+      const noAuth = async (method: string, url: string, body?: unknown) => {
+        const res = await fetch(`http://127.0.0.1:${authedPort}${url}`, {
+          method,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+        return res.status;
+      };
+      for (const p of ['/federation/pair', '/federation/heartbeat', '/federation/caps', '/federation/call']) {
+        expect(await noAuth('POST', p, {}), p).not.toBe(401);
+      }
+      for (const p of ['/federation/peers', '/federation/pairing/offer', '/federation/pairing/initiate']) {
+        expect(await noAuth('GET', p), p).toBe(401);
+      }
+    } finally {
+      authed.close();
+      rmSync(authDir, { recursive: true, force: true });
+    }
+  });
 });

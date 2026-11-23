@@ -56,6 +56,56 @@ export type SessionOpenResult =
     }
   | { ok: false; status: 400 | 404 | 409 | 501 | 503; error: string };
 
+/**
+ * headless 臂的唯一执行核（web 预设 / 显式 executionMode 共用）：Runtime Host
+ * 持 PTY、不开外部终端窗。new-session 路由（sessionId 未定）与 resume 路由
+ * （已知）都走它——spawn 形状只有这一份，宿主形态判据归 terminalBackendFor。
+ * `headless` env 标记只有 harness 会话带（web 终端的裸 shell 实例不带）。
+ */
+export async function spawnHeadlessInstance(
+  deps: SessionOpenDeps,
+  meta: { projectId: number; harness: string },
+  payload: {
+    command: string;
+    args: string[];
+    cwd: string;
+    instanceId?: string;
+    headlessEnv?: boolean;
+    /** runtimeSupervisor 缺席的错误码：resume 链历史口径 503，new-session 501。 */
+    missingSupervisorStatus?: 501 | 503;
+  },
+): Promise<{ ok: true; instanceId: string } | { ok: false; status: 501 | 503; error: string }> {
+  if (!deps.runtimeSupervisor) {
+    return {
+      ok: false,
+      status: payload.missingSupervisorStatus ?? 501,
+      error: 'Runtime host is not available (daemon too old or disabled)',
+    };
+  }
+  const instanceId = payload.instanceId ?? `wvi-${randomUUID().slice(0, 12)}`;
+  try {
+    await deps.runtimeSupervisor.spawnInstance(
+      {
+        instanceId,
+        command: payload.command,
+        args: payload.args,
+        cwd: payload.cwd,
+        cols: 100,
+        rows: 30,
+        env: {
+          ...process.env,
+          WEAVE_INSTANCE_ID: instanceId,
+          ...(payload.headlessEnv === false ? {} : { WEAVE_RUNTIME_HEADLESS: '1' }),
+        },
+      },
+      meta,
+    );
+    return { ok: true, instanceId };
+  } catch (e) {
+    return { ok: false, status: 503, error: `Runtime host spawn failed: ${e instanceof Error ? e.message : e}` };
+  }
+}
+
 /** resume 的 sessionId 已知：起点直接落 pane 定位，不走 pending 队列。
  *  只为 paneEnvSource='launch' 的 harness 生效（'hook' 的 env 精确且自愈，
  *  起点只会引入过期源）。 */
@@ -215,23 +265,14 @@ export async function openSessionTerminal(
   try {
     const settings = await readDaemonSettings();
     if (terminalBackendFor(settings.terminal).hostsSessions === 'headless') {
-      if (!deps.runtimeSupervisor) {
-        return { ok: false, status: 503, error: 'Runtime host is not available (daemon too old or disabled)' };
-      }
-      const instanceId = `wvi-${randomUUID().slice(0, 12)}`;
-      await deps.runtimeSupervisor.spawnInstance(
-        {
-          instanceId,
-          command: spec.bin,
-          args,
-          cwd: runCwd,
-          cols: 100,
-          rows: 30,
-          env: { ...process.env, WEAVE_INSTANCE_ID: instanceId, WEAVE_RUNTIME_HEADLESS: '1' },
-        },
-        { projectId, harness: src },
-      );
-      return { ok: true, sessionId, command: argv.join(' '), cwd: runCwd, instanceId };
+      const spawned = await spawnHeadlessInstance(deps, { projectId, harness: src }, {
+        command: spec.bin,
+        args,
+        cwd: runCwd,
+        missingSupervisorStatus: 503,
+      });
+      if (!spawned.ok) return spawned;
+      return { ok: true, sessionId, command: argv.join(' '), cwd: runCwd, instanceId: spawned.instanceId };
     }
     if (target) {
       // 定点附加的能力归后端：能反查目标的 preset 才有定点通道（wezterm mux /

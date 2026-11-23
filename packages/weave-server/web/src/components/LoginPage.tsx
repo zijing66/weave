@@ -4,6 +4,7 @@ import { AuthError, login } from '@/lib/auth';
 import { useT } from '@/i18n/I18nProvider';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
+import { Input } from '@/components/ui/input';
 import { Tooltip } from '@/components/ui/tooltip';
 import { WeaveMark } from '@/components/WeaveLogo';
 
@@ -48,7 +49,7 @@ export function LoginPage() {
         {/* 登录凭据的**唯一**归属框：current-password 让浏览器把保存的密码稳定填这里；
             设置里的 API key 输入已标为非凭据（见 SettingsModal），两者不再互抢。 */}
         <div className="relative">
-          <input
+          <Input
             type="password"
             value={password}
             autoFocus

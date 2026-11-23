@@ -14,6 +14,7 @@ import {
   type UploadsOverview,
   type VisualizationStats,
 } from '@/lib/api';
+import { Input } from '@/components/ui/input';
 import { useI18n } from '@/i18n/I18nProvider';
 import { SUPPORTED_LOCALES, LOCALE_NATIVE_NAMES } from '@/i18n/locale';
 import { zh, type MessageKey } from '@/i18n/dict';
@@ -191,7 +192,7 @@ function SecretKeyInput(props: {
   const { labels } = props;
   return (
     <div className="flex items-center gap-2">
-      <input
+      <Input
         type="text"
         value={props.value}
         readOnly={!focused}
@@ -771,7 +772,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <code className="text-neutral-400"> alacritty -e cd {'{path}'}</code>
                 </FieldHint>
               </label>
-              <input
+              <Input
                 type="text"
                 value={customCommand}
                 onChange={(e) =>
@@ -1377,7 +1378,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <div className="grid grid-cols-2 gap-2">
               <div className="min-w-0 space-y-1">
                 <FieldLabel>{t('settings.aiBaseUrl')}</FieldLabel>
-                <input
+                <Input
                   value={settings?.ai?.baseUrl ?? ''}
                   onChange={(e) =>
                     setSettings((s) =>
@@ -1414,7 +1415,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     }
                   />
                 ) : (
-                  <input
+                  <Input
                     value={settings?.ai?.model ?? ''}
                     onChange={(e) =>
                       setSettings((s) =>
@@ -1479,7 +1480,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <div className="grid grid-cols-2 gap-2">
               <div className="min-w-0 space-y-1">
                 <FieldLabel>{t('settings.aiBaseUrl')}</FieldLabel>
-                <input
+                <Input
                   value={settings?.decision?.baseUrl ?? ''}
                   onChange={(e) =>
                     setSettings((s) =>
@@ -1497,7 +1498,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </div>
               <div className="min-w-0 space-y-1">
                 <FieldLabel>{t('settings.aiModel')}</FieldLabel>
-                <input
+                <Input
                   value={settings?.decision?.model ?? ''}
                   onChange={(e) =>
                     setSettings((s) =>
@@ -1546,7 +1547,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   className="space-y-1.5 rounded-lg border border-edge/[0.08] bg-neutral-900/60 p-2"
                 >
                   <div className="flex items-center gap-2">
-                    <input
+                    <Input
                       value={profile.name}
                       onChange={(e) => patchProfile(profile.id, { name: e.target.value })}
                       placeholder={t('settings.htmlExportName')}

@@ -142,14 +142,21 @@ function defaultClaudeSessionsDir(): string | null {
 export const CLAUDE_LIVENESS: LivenessSurface = {
   harness: 'claude',
   async alive(ids) {
-    const map = claudeLivenessById();
-    if (map.readable === false) return map; // 读挂：整拍不判（空图会骗兜底判死）
-    if (!ids) return map;
-    const out = new LivenessMap();
-    for (const id of ids) {
-      const v = map.get(id);
-      if (v !== undefined) out.set(id, v);
-    }
-    return out;
+    return aliveFiltered(claudeLivenessById(), ids);
+  },
+  aliveSync(ids) {
+    return aliveFiltered(claudeLivenessById(), ids);
   },
 };
+
+/** alive/aliveSync 共用的过滤半边。 */
+function aliveFiltered(map: LivenessMap, ids?: readonly string[]): LivenessMap {
+  if (map.readable === false) return map; // 读挂：整拍不判（空图会骗兜底判死）
+  if (!ids) return map;
+  const out = new LivenessMap();
+  for (const id of ids) {
+    const v = map.get(id);
+    if (v !== undefined) out.set(id, v);
+  }
+  return out;
+}

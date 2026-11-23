@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -600,6 +600,12 @@ function backupIfMigrating(db: DatabaseSync, dbPath: string): void {
   const dest = path.join(dir, `weave-v${current}-${stamp}.db`);
   try {
     db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+    // VACUUM 不受 umask 外的 mode 参数控制，落成后补 chmod：整库明文副本按敏感件对待
+    try {
+      chmodSync(dest, 0o600);
+    } catch {
+      /* Windows chmod 有限：尽力而为 */
+    }
     console.log(`[weave] database backup before migration: ${dest}`);
     pruneBackups(dir);
   } catch (err) {

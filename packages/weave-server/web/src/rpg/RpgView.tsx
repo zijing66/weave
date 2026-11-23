@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n/I18nProvider';
+import { useIsCoarsePointer } from '@/lib/use-media-query';
 import { RPG_SCENES, roomSceneKey, sceneOf, worldExitHouseIdOf } from './scenes';
 import { useRpgData } from './use-rpg-data';
 import { CharacterSprite, GodSprite, spriteSeedOf } from './CharacterSprite';
@@ -254,16 +255,7 @@ function SceneHotkeysHint() {
 }
 
 function useMediaQueryCoarse(): boolean {
-  const [coarse, setCoarse] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(hover: none), (pointer: coarse)').matches,
-  );
-  useEffect(() => {
-    const mql = window.matchMedia('(hover: none), (pointer: coarse)');
-    const onChange = (): void => setCoarse(mql.matches);
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, []);
-  return coarse;
+  return useIsCoarsePointer();
 }
 
 function roomHouseIdOf(sceneKey: string | undefined): number {

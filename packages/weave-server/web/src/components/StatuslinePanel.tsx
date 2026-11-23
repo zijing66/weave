@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Input } from '@/components/ui/input';
 import { createPortal } from 'react-dom';
 import {
   DndContext,
@@ -327,7 +328,7 @@ function ColorPicker({
                 className="h-6 w-8 bg-transparent"
                 title={t('statusline.pickTruecolor')}
               />
-              <input
+              <Input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -866,7 +867,7 @@ export function StatuslinePanel({
           <label className="flex items-center gap-2 text-xs text-neutral-400">
             {t('statusline.separator')}
             <FieldHint>{t('statusline.separatorHint')}</FieldHint>
-            <input
+            <Input
               value={config.separator}
               disabled={!editable}
               onChange={(e) => patch({ separator: e.target.value })}
@@ -889,7 +890,7 @@ export function StatuslinePanel({
             </label>
             <label className="flex items-center gap-2">
               {t('statusline.fill')}
-              <input
+              <Input
                 value={config.bar.fill}
                 disabled={!editable}
                 onChange={(e) => patch({ bar: { ...config.bar, fill: e.target.value } })}
@@ -898,7 +899,7 @@ export function StatuslinePanel({
             </label>
             <label className="flex items-center gap-2">
               {t('statusline.emptyChar')}
-              <input
+              <Input
                 value={config.bar.empty}
                 disabled={!editable}
                 onChange={(e) => patch({ bar: { ...config.bar, empty: e.target.value } })}
@@ -907,7 +908,7 @@ export function StatuslinePanel({
             </label>
             <label className="flex items-center gap-2">
               {t('statusline.labelSep')}
-              <input
+              <Input
                 value={config.labelSeparator}
                 disabled={!editable}
                 onChange={(e) => patch({ labelSeparator: e.target.value })}
@@ -1378,7 +1379,7 @@ function SegmentModal({
                   {t('statusline.merge')}
                 </label>
               </Tooltip>
-              <input
+              <Input
                 value={seg.icon}
                 onChange={(e) => onPatch(key, { icon: e.target.value })}
                 placeholder={t('statusline.iconPlaceholder')}
@@ -1468,7 +1469,7 @@ function SegmentModal({
 
             <div className="flex items-center gap-2 text-xs">
               <span className="w-10 text-neutral-600">{t('statusline.fieldLabel')}</span>
-              <input
+              <Input
                 value={seg.label ?? ''}
                 onChange={(e) => onPatch(key, { label: e.target.value })}
                 placeholder={t('statusline.labelPlaceholder')}
@@ -1476,7 +1477,7 @@ function SegmentModal({
                 title={t('statusline.labelInputHint')}
               />
               <span className="text-neutral-600">{t('statusline.fieldFormat')}</span>
-              <input
+              <Input
                 value={seg.format ?? ''}
                 onChange={(e) => onPatch(key, { format: e.target.value })}
                 placeholder={SEGMENT_DEFAULT_FORMAT[key]}

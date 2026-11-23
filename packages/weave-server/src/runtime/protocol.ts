@@ -9,7 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import path from 'node:path';
+import { getRuntimeSocketDir } from '../db/paths.js';
 
 /** 实例状态词表（封闭枚举；转场校验见 instance-registry.ts）。 */
 export const AGENT_INSTANCE_STATUSES = [
@@ -203,7 +203,8 @@ export interface ResourceReportPayload {
   at: number;
 }
 
-/** pipe 名 = 裸名 + dataDir 哈希短码（多数据目录并存不冲突）。 */export function runtimePipeName(dataDir: string): string {
+/** pipe 名 = 裸名 + dataDir 哈希短码（多数据目录并存不冲突）。 */
+export function runtimePipeName(dataDir: string): string {
   const hash = createHash('sha256').update(dataDir).digest('hex').slice(0, 8);
   return `weave-runtime-host-${hash}`;
 }
@@ -219,5 +220,5 @@ export function runtimePipePath(dataDir: string): string {
  */
 export function ipcPathFor(dataDir: string, platform: NodeJS.Platform): string {
   if (platform === 'win32') return `\\\\.\\pipe\\${runtimePipeName(dataDir)}`;
-  return path.join(dataDir, 'cache', `${runtimePipeName(dataDir)}.sock`);
+  return path.join(getRuntimeSocketDir(dataDir), `${runtimePipeName(dataDir)}.sock`);
 }

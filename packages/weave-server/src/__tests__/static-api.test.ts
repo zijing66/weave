@@ -19,10 +19,11 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
   let staticDir: string;
   let projectId: number;
   let hookEvents: HookEventRepository;
+  let projects: ProjectRepository;
 
   beforeAll(async () => {
     db = openDatabase(':memory:');
-    const projects = new ProjectRepository(db);
+    projects = new ProjectRepository(db);
     const row = projects.register({
       path: '/proj',
       name: 'test',
@@ -152,5 +153,52 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
     const res = await fetch(`http://127.0.0.1:${port}/some/spa/route`);
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('weave');
+  });
+
+  it('未认证 API GET 带 Accept: text/html 回 HTML 外壳（不再放行 JSON 数据）', async () => {
+    const authDir = mkdtempSync(join(tmpdir(), 'weave-auth-'));
+    const { AuthService } = await import('../daemon/dashboard-auth.js');
+    const auth = new AuthService(authDir);
+    auth.setPassword('test-pass-123');
+    const authed = createWeaveServer({
+      projects,
+      port: 0,
+      hookEvents,
+      adapters: [new ClaudeCodeAdapter()],
+      staticDir,
+      auth,
+    });
+    await new Promise<void>((resolve) => authed.listen(0, '127.0.0.1', resolve));
+    const authedPort = (authed.address() as { port: number }).port;
+    try {
+      // API GET 带 text/html 头：回外壳（200 + HTML），不再是项目数据
+      const api = await fetch(`http://127.0.0.1:${authedPort}/api/projects`, {
+        headers: { accept: 'text/html' },
+      });
+      expect(api.headers.get('content-type')).toContain('text/html');
+      expect(await api.text()).not.toContain('"projects"');
+      // SPA 深链带 text/html 头：外壳照常可载（导航回落）
+      const spa = await fetch(`http://127.0.0.1:${authedPort}/some/spa/route`, {
+        headers: { accept: 'text/html' },
+      });
+      expect(spa.status).toBe(200);
+      expect(await spa.text()).toContain('weave');
+      // 登录后 API GET 恢复可达
+      const login = await fetch(`http://127.0.0.1:${authedPort}/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: 'test-pass-123' }),
+      });
+      expect(login.status).toBe(200);
+      const setCookie = login.headers.get('set-cookie') ?? '';
+      const cookie = setCookie.split(';')[0] ?? '';
+      const ok = await fetch(`http://127.0.0.1:${authedPort}/api/projects`, {
+        headers: { accept: 'text/html', cookie },
+      });
+      expect(ok.status).toBe(200);
+    } finally {
+      authed.close();
+      rmSync(authDir, { recursive: true, force: true });
+    }
   });
 });

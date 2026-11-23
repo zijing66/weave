@@ -127,7 +127,12 @@ export class UploadRepository {
     const dir = input.dir ?? this.dir;
     mkdirSync(dir, { recursive: true });
     const file = this.filePath(id, input.mediaType, input.name, dir);
-    if (!existsSync(file)) writeFileSync(file, input.bytes, { mode: 0o644 });
+    if (!existsSync(file)) {
+      // 同盘 tmp+rename：半截写不冒充完整件（路径形状还带原名，别处按存在性引用）
+      const tmp = `${file}.tmp-${process.pid}`;
+      writeFileSync(tmp, input.bytes, { mode: 0o644 });
+      renameSync(tmp, file);
+    }
     this.db
       .prepare(
         `INSERT INTO uploads (id, media_type, name, size, created_at, dir) VALUES (?, ?, ?, ?, ?, ?)

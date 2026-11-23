@@ -28,6 +28,7 @@ import {
   type ProjectRow,
 } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SkeletonRows } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -962,7 +963,7 @@ export function HooksPanel({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block space-y-1">
                     <span className="text-11 text-neutral-500">{t('hooks.field.name')}</span>
-                    <input
+                    <Input
                       className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.name}
                       onChange={(e) => patchForm({ name: e.target.value })}
@@ -1070,7 +1071,7 @@ export function HooksPanel({
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block space-y-1">
                       <span className="text-11 text-neutral-500">{t('hooks.field.url')}</span>
-                      <input
+                      <Input
                         className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.url}
                         onChange={(e) => patchForm({ url: e.target.value })}
@@ -1079,7 +1080,7 @@ export function HooksPanel({
                     </label>
                     <label className="block space-y-1">
                       <span className="text-11 text-neutral-500">{t('hooks.field.secret')}</span>
-                      <input
+                      <Input
                         className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.secret}
                         onChange={(e) => patchForm({ secret: e.target.value })}
@@ -1092,7 +1093,7 @@ export function HooksPanel({
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="block space-y-1">
                       <span className="text-11 text-neutral-500">{t('hooks.field.pluginId')}</span>
-                      <input
+                      <Input
                         className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.pluginId}
                         onChange={(e) => patchForm({ pluginId: e.target.value })}
@@ -1103,7 +1104,7 @@ export function HooksPanel({
                       <span className="text-11 text-neutral-500">
                         {t('hooks.field.pluginHandlerType')}
                       </span>
-                      <input
+                      <Input
                         className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         value={form.state.pluginHandlerType}
                         onChange={(e) => patchForm({ pluginHandlerType: e.target.value })}
@@ -1129,7 +1130,7 @@ export function HooksPanel({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block space-y-1">
                     <span className="text-11 text-neutral-500">{t('hooks.field.toolNames')}</span>
-                    <input
+                    <Input
                       className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.toolNames}
                       onChange={(e) => patchForm({ toolNames: e.target.value })}
@@ -1138,7 +1139,7 @@ export function HooksPanel({
                   </label>
                   <label className="block space-y-1">
                     <span className="text-11 text-neutral-500">{t('hooks.field.pathGlobs')}</span>
-                    <input
+                    <Input
                       className="w-full rounded-lg border border-edge/[0.08] bg-neutral-800 px-2.5 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       value={form.state.pathGlobs}
                       onChange={(e) => patchForm({ pathGlobs: e.target.value })}

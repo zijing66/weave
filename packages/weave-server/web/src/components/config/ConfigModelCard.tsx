@@ -3,6 +3,7 @@ import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { api, type ConfigFileId, type ConfigModelOption, type ConfigModelsResponse } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
 import { useT } from '@/i18n/I18nProvider';
 import { Tooltip } from '@/components/ui/tooltip';
 
@@ -98,7 +99,7 @@ export function ConfigModelCard({
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="space-y-1">
           <span className="text-11 text-neutral-500">{t('cfg.modelsBaseUrl')}</span>
-          <input
+          <Input
             value={baseUrl}
             placeholder={t('cfg.modelsBaseUrlPlaceholder')}
             onChange={(e) => setBaseUrl(e.target.value)}
@@ -108,7 +109,7 @@ export function ConfigModelCard({
         <label className="space-y-1">
           <span className="text-11 text-neutral-500">{t('cfg.modelsApiKey')}</span>
           <div className="flex items-center gap-1.5">
-            <input
+            <Input
               type="text"
               value={apiKey}
               readOnly={!keyFocused}

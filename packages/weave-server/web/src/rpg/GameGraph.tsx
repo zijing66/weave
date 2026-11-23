@@ -92,7 +92,7 @@ export function GameGraph({
                 x={p.x + 8}
                 y={p.y + NODE_H / 2 + 5}
                 fontSize={13}
-                fontFamily="monospace"
+                fontFamily="'Weave Mono', ui-monospace, monospace"
                 fill={PALETTE32.ink}
               >
                 {isSession ? labelOf(n.id) : n.kind === 'webhook' ? t('rpg.boardTitle') + '·webhook' : 'trigger'}

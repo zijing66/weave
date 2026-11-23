@@ -29,6 +29,7 @@ import {
 import { api, type ProjectFileEntry, type ProjectRow, type SearchFileHit } from '@/lib/api';
 import { loadFileHistory, pushFileHistory, type FileHistoryEntry } from '@/lib/file-history';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Input } from '@/components/ui/input';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { useActionFeedback } from '@/lib/action-feedback';
 import { copyText } from '@/lib/clipboard';
@@ -1318,7 +1319,7 @@ export function FileBrowserModal({
           预览是只读的，ESC 先收它。 */}
       {bar && (
         <div className="flex shrink-0 items-center gap-1 border-b border-edge/[0.06] px-1.5 py-1">
-          <input
+          <Input
             autoFocus
             value={bar === 'find' ? find : jump}
             inputMode={bar === 'line' ? 'numeric' : undefined}
@@ -1672,7 +1673,7 @@ export function FileBrowserModal({
             ) : (
               <>
                 <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
-                <input
+                <Input
                   ref={searchRef}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}

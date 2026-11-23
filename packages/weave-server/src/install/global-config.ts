@@ -371,13 +371,14 @@ async function readCodexPluginSkills(): Promise<GlobalSkillGroup[]> {
       // newest version = lexicographic max (semver-ish)
       const newest = versionDirs.map((v) => v.name).sort().pop()!;
       const skills = await listSkillSubdirs(path.join(plDir, newest, 'skills'));
-      const pluginKey = `${pl.name}@${mp.name}`;
+      const pluginKey = pluginSurfaceFor('codex').pluginKey(pl.name, mp.name);
       const description = await packDescriptionOf(path.join(plDir, newest));
       groups.push({
         source: 'codex-plugin',
         label: pl.name,
-        // Codex 无 plugins 能力槽（driver 明确不注册），键形在 server 拼；
-        // namespace 就地可取（就是缓存路径里的市场名），无需回拆键。
+        // Codex 无 plugins 能力槽（driver 明确不注册），但键形拼装仍经 harness
+        // 面的 pluginKey（与 parsePluginKey 成对）；namespace 就地可取（就是缓存
+        // 路径里的市场名），无需回拆键。
         namespace: mp.name,
         skills,
         pluginKey,

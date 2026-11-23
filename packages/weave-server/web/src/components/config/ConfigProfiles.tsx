@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Copy, Check, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import type { ConfigProfileMeta } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
 import { useT } from '@/i18n/I18nProvider';
 import { Tooltip } from '@/components/ui/tooltip';
 
@@ -53,7 +54,7 @@ export function ConfigProfiles({
         <span className="text-xs font-semibold text-neutral-300">{t('cfg.profiles')}</span>
         {creating ? (
           <div className="flex items-center gap-1">
-            <input
+            <Input
               autoFocus
               value={name}
               placeholder={t('cfg.profileNewPlaceholder')}
@@ -121,7 +122,7 @@ export function ConfigProfiles({
                 )}
               >
                 {renamingId === profile.id ? (
-                  <input
+                  <Input
                     autoFocus
                     value={renameText}
                     onChange={(e) => setRenameText(e.target.value)}

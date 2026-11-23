@@ -4,6 +4,7 @@ import { api, type DiscoveredPeer, type PeerRow, type ProjectRow, type RpgInvita
 import { useI18n } from '@/i18n/I18nProvider';
 import { registerInvalidator } from '@/lib/sse';
 import { Switch } from '@/components/ui/switch';
+import { Input } from '@/components/ui/input';
 import { FieldHint } from '@/components/ui/field-hint';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { errorText } from '@/lib/action-feedback';
@@ -526,14 +527,14 @@ export function FederationSection(props: {
                 </option>
               ))}
           </select>
-          <input
+          <Input
             type="text"
             value={inviteTeam}
             onChange={(e) => setInviteTeam(e.target.value)}
             placeholder={t('settings.fedInviteTeam')}
             className={`${inputCls} w-36`}
           />
-          <input
+          <Input
             type="text"
             value={inviteScene}
             onChange={(e) => setInviteScene(e.target.value)}
@@ -554,14 +555,14 @@ export function FederationSection(props: {
       </div>
 
       <div className="flex items-center gap-1.5">
-        <input
+        <Input
           type="text"
           value={addName}
           onChange={(e) => setAddName(e.target.value)}
           placeholder="10.0.0.2"
           className={`${inputCls} w-40`}
         />
-        <input
+        <Input
           type="text"
           value={addPort}
           onChange={(e) => setAddPort(e.target.value)}
@@ -585,28 +586,28 @@ export function FederationSection(props: {
           <FieldHint>{t('settings.fedInitiateHint')}</FieldHint>
         </label>
         <div className="flex flex-wrap items-center gap-1.5">
-          <input
+          <Input
             type="text"
             value={peerCodeName}
             onChange={(e) => setPeerCodeName(e.target.value)}
             placeholder={t('settings.fedInitiateName')}
             className={`${inputCls} w-28`}
           />
-          <input
+          <Input
             type="text"
             value={peerCodeHost}
             onChange={(e) => setPeerCodeHost(e.target.value)}
             placeholder="10.0.0.2"
             className={`${inputCls} w-32`}
           />
-          <input
+          <Input
             type="text"
             value={peerCodePort}
             onChange={(e) => setPeerCodePort(e.target.value)}
             placeholder="6443"
             className={`${inputCls} w-16`}
           />
-          <input
+          <Input
             type="text"
             value={peerCode}
             onChange={(e) => setPeerCode(e.target.value.replace(/\D/g, '').slice(0, 6))}

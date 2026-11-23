@@ -385,7 +385,7 @@ export class BackupEngine {
     await mkdir(backupsDir, { recursive: true });
     const stamp = stampOf(mtime);
     const file = path.join(backupsDir, `weave-backup-${stamp}.tar.gz`);
-    await writeFile(file, tarGzip(entries));
+    await writeFile(file, tarGzip(entries), { mode: 0o600 });
     const bytes = (await stat(file)).size;
     await pruneOldBackups(backupsDir, this.now());
     return {

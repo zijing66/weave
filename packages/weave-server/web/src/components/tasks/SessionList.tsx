@@ -1,4 +1,5 @@
 import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Input } from '../ui/input';
 import { type SessionRow, type SessionTerminal, type SessionWatchRow, type MessagingCapability, type AnswerPick, type PendingQuestionEntry, type WatchOn } from '@/lib/api';
 import type { Harness } from '@weavecode/core/harness';
 import { cn } from '@/lib/utils';
@@ -572,7 +573,7 @@ export function SessionList({
         <SessionStatusIcon status={status} harness={s.harness} />
 
         {editingId === s.sessionId ? (
-          <input
+          <Input
             ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}

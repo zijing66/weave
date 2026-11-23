@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Copy, Check, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import type { ConfigProfileMeta } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { Tooltip } from '@/components/ui/tooltip';
 import type { ActionState } from '@/lib/action-feedback';
@@ -86,7 +87,7 @@ export function ConfigVault({
           <>
             {creating ? (
               <div className="flex items-center gap-1">
-                <input
+                <Input
                   autoFocus
                   value={name}
                   placeholder={t('cfg.profileNewPlaceholder')}
@@ -155,7 +156,7 @@ export function ConfigVault({
                   )}
                 >
                   {renamingId === profile.id ? (
-                    <input
+                    <Input
                       autoFocus
                       value={renameText}
                       onChange={(e) => setRenameText(e.target.value)}

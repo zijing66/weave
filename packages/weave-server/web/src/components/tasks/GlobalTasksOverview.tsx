@@ -13,6 +13,7 @@ import { useSessionStatus } from './session-status-store';
 import { AgentBadge } from '@/components/AgentBadge';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
 import { Globe, Loader2 } from 'lucide-react';
+import { Input } from '../ui/input';
 
 /** 时间段快捷档（按 lastSeenAt 过滤）；custom = 起止日期双输入。 */
 type RangeKey = 'all' | 'today' | '1d' | '3d' | '7d' | '30d' | 'over30' | 'custom';
@@ -185,7 +186,7 @@ export function GlobalTasksOverview({
         </span>
         {range === 'custom' && (
           <span className="flex items-center gap-1 text-11 text-neutral-500">
-            <input
+            <Input
               type="date"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
@@ -193,7 +194,7 @@ export function GlobalTasksOverview({
               className="rounded-md border border-edge/[0.08] bg-neutral-900 px-1.5 py-0.5 text-11 text-neutral-200"
             />
             —
-            <input
+            <Input
               type="date"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}

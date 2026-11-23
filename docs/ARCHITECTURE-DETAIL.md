@@ -221,7 +221,7 @@ claude 专属机制（inbox socket）；其他 harness 的 `PromptInboxSpec` = n
 
 ### 4.1 消息域 = 纯递送管道，非记录系统
 
-消息唯一归宿是目标会话自己的转录，weave 仅投递前短暂持有（本地文件队列），送达即删、**不落任何 DB 行**。
+消息唯一归宿是目标会话自己的转录，weave 仅投递前短暂持有（本地文件队列），送达即删、**不落任何 DB 行**。记录例外共两例：`side_questions`（旁路会话，§6）与 `hook_dispatches.prompt`（hooks 规则域的派发审计账——正文列是排查「规则触发过什么、派发到哪」的唯一证据；规则域与消息管道正交，见「回合完成判定收敛进编排」节）。
 
 - `MessagingSurface`（messaging 槽）声明通道能力（发现 / prompt / inject / headless / watch idleSignals / attach 附件对齐）与不支持原因。
 - 投递裁决唯一单点 = server 的 `MessageDeliverer`（404/409 语义拒绝；auto 忙→inject、绝无头抢占忙会话）。
@@ -673,6 +673,7 @@ ESC 只救**在途**（内部重试 / 长工具卡住）的静默窗口；报错
 - `GET /projects`（含 `/archived`）逐行带 `harnesses: {id, canStartSession, version?, minVersion?}[]`，项目卡标签与「新建会话」的 harness 选项同源取数。`canStartSession` = resume 槽有裸 bin **且探到的宿主版本过 `resume.minVersion`**；`version`/`minVersion` 只为让 UI 说明为什么置灰。
 - **版本闸是 resume 槽的字段**（`ResumeCommandSpec.minVersion`，宿主版本要求是 harness 知识、不散写 server）：claude = `2.1.287`（与 `MIN_MOD_HOST_VERSION` 同一档——hook 面 / 问答键序 / 计划正文都按这版起写）。探测 = `<bin> --version` 取首个 semver（win32 上 npm shim 是 `.cmd`，须走 shell），**10 分钟缓存、并发共用一次 spawn**（缓存的正是在飞的那个 promise，`GET /projects` 逐项目取版本不会起一串子进程），**失败不缓存**；**探不到不拦**——与 mod 版本闸同口径（拿不到 ≠ 不兼容，低误报优先）。
 - `POST /projects/:id/new-session` 收 `harness`：非法 400、未接入 409、已接入但起不了（无裸 bin 或版本不够）501，缺省取已接入里第一个能起的。
+- `GET /harness-install-status`：对每个 harness 用 `probeBinVersion(resume.bin)` 探测本机安装态，回 `[{harness, installed, version}]`；进程内 15s TTL 缓存（引导卡刷新可见，不受 `GET /projects` 行内 600s promise 缓存影响）。
 - **codex 的 resume 槽有裸 bin**（`codex` 起新会话，`codex exec resume <id> -` 是无头形、prompt 走 stdin）与 `openArgs`（`codex resume <id>`，id = rollout 的 `session_meta.session_id`，rollout 尾读采集可得）；**无 `launchArgs`**——weave 起会话与手动 TUI 同一路径（共享 app-server daemon 代跑 hook，2026-10-26 裁决，见 DECISIONS）。
 - **web 侧只要项目选中了 harness 就恒弹 `HarnessPicker`**（一枚也展开，不再「1 个直接起」——用户要看见有哪几个、为什么起不了）：起不了的置灰并在行内说明原因（版本偏低带出实际版本与下限，其余为「暂不支持新建交互会话」），行与按钮都挂原生 `title`；只有「一个 harness 都没接入」才把按钮置灰。
 - 不落会话行的 harness（`HARNESS_LIFECYCLE[<harness>].sessionMarkers` 为空，今天 = codex）**不等新行**：新建会话的 loading 挂到「新会话行进列表」为止，但这类 harness 永远不会有行到来，等就是白转满 `OPEN_TERMINAL_ALIVE_MS`（30s）⇒ POST 回即收圈。
@@ -705,7 +706,7 @@ dashboard ↔ 服务端只有一条事件流 = `GET /events`（`packages/weave-s
 - 心跳**不带 id**，不挪 offset。
 - **补不齐就整页重来**：纪元不同 / 缓冲已滚过去 / 断开期间没人听（最后一个连接走后 60s 摘源，那段帧是真丢了）→ 服务端只发 `{type:'resync'}`、不给半截帧，前端 `location.reload()`（`sessionStorage` 记时刻，10s 内不连刷）——宁可重来一遍，也不留一个悄悄缺帧的界面。
 - **中枢不得常驻订阅源**：隐藏刷新器靠 `DataBus.hasSubscribers()` 判有没有人在看，宽限期（`UNWIRE_GRACE_MS`）只为让刷新页面/网络抖动落在同一条流里，一过必须摘。
-- 订阅按帧域拆面——`subscribeFrame` 按帧类型、`subscribePush` 按载荷 key、`subscribeHook` 按 kind（支持 `message.` 尾点前缀）、`registerInvalidator` 失效域（一 key 多注册者）——组件不收裸流、不走 window 事件转发（例外 = 页面专属独立流，如 AI 助手的 fetch-reader 流式）。
+- 订阅按帧域拆面——`subscribeFrame` 按帧类型、`subscribePush` 按载荷 key、`subscribeHook` 按 kind（支持 `message.` 尾点前缀）、`registerInvalidator` 失效域（一 key 多注册者）——组件不收裸流、不走 window 事件转发（例外 = 页面专属独立流：AI 助手的 fetch-reader 流式是**第二条 SSE 面**（§13），与 B3 终端 WS（§9 末）并列为「单通道」仅有的两个口子）。
 
 **数据层走 TanStack Query**：`['projects']` 域先行（SSE 帧经 `registerInvalidator`/`subscribeFrame` 桥到 `invalidateQueries`），其余域按同一范式逐个并入、不抢跑；全局缺省 `staleTime: Infinity` + `refetchOnWindowFocus: false` + `retry: false`——刷新只走 SSE 信号，个别查询按需覆写。
 
@@ -799,6 +800,7 @@ dashboard 右下角浮层，配置齐才显示。走**服务端代理**——web
 - **消费面**：web 项目列表与 `GET /projects`、MCP `list_projects` 回包都带 `superagent`；项目行名称右侧渲染 `superagent` pill（`Badge variant="superagent"`）；RPG 世界排他（`RpgView` 的 `activeProjects` 滤掉 superagent——上帝不占项目房，用户项目房槽位序号不变）。
 - **启动挂钩两处同装**：`start.ts`（dist 入口）与 `dev-entry.ts`（dev 入口独立装配）各挂一份 `void scaffoldCoordinator(...)`——dev 入口不经 `startDaemon`，漏挂即 dev 下永不物化（2026-11-11 实测：16:38 重启的 daemon 无 coordinator 行即此因）。
 - **游戏（RPG）域同根**（2026-11-11 第二轮裁决）：角色仓 `getRpgRolesRoot` = `<data>/superagent/weave/roles/`、手法库 `getRpgHandbookRoot` = `<data>/superagent/weave/handbook/`，`<data>/rpg/` 整档退役。出厂七型模板与用户角色仓同层：同名让位由 provisionRole 的 stat 409 挡（新建侧），scaffoldCoordinator 侧见 `.weave` 角色仓标记即整条跳过（不 rm 不写 manifest）。zj 存量角色仓目录 + DB 行 path 随迁移。
+- **归档项目永久删除（2026-11-22 裁决，细则见 DECISIONS）**：`DELETE /projects/:id` 仅归档态可删（活跃 409、superagent 恒保护）；`POST /projects/delete-batch` 批量同判据（一票未归档 409 整体拒绝，不删一半）。删除 = 连库行、`.weave/token`、上传件与对话事件一起清（走既有 purge 链）。
 
 ## §15 终端落点、可见屏幕与唤出终端
 
@@ -837,15 +839,19 @@ web 分块唯一实现 = `SessionList` 的 `groupByTerminal`（同屏会话聚�
   3. 抬 = `ShowWindow(SW_RESTORE)` + 接前台线程与目标线程的输入队列后 `SetForegroundWindow`（Windows 前台锁会吞掉裸调用）。
 - 这层抬窗只有 Windows 有；其他平台的 wezterm 到 `activate-pane` 为止（那边未实机验证），其余后端诚实不支持。
 
+### B3 终端流（`/terminals/ws`）
+
+`runtime/terminal/ws-endpoint.ts` 独立 upgrade 监听（不进 HTTP 门，自带 token 判）：`/terminals/ws?instance=…&token=…` 双向字节流——上行 `input`/`resize` 注入、下行 `output`/`attached` 帧经 Gateway ring（重连带 `lastSequence` 补放）。前端客户端唯一实现 = `web/src/lib/terminal.ts`；它是「SSE 单通道」唯一的 WS 例外（§9）。
+
 ## §16 数据目录三档与搬迁
 
 `<dataDir>`（Windows = `%APPDATA%\weave`）下按**能不能迁移**分三档，路径全部只从 `db/paths.ts` 取（`dataRoots()` 是唯一分档口径，下面每个 getter 都落定在一档里）：
 
 | 档 | 内容 | 迁移 |
 | --- | --- | --- |
-| `data/` | `weave.db`（含 `-wal`/`-shm`/`weave.db.bak-*`）、`market/`（资源市场副本）、`uploads/`（对话图片）、`plugins/`（已装插件内容） | 带走 |
+| `data/` | `weave.db`（含 `-wal`/`-shm`/`weave.db.bak-*`）、`market/`（资源市场副本）、`uploads/`（对话图片）、`plugins/`（已装插件内容）、`runtime-host.json`（Host IPC 端点与进程账，§15） | 带走 |
 | `local/` | `auth.json`（dashboard 口令）、`ai.json`（AI key）、`push.json`（VAPID）、`certs/`、`initial-password`、`weave-autostart.vbs` | 不迁移：换机器 = 重设口令、重填 key、重签证书、重开自启 |
-| `cache/` | `index/`、`logs/`（含 `logs/api`）、`statusline/`、`hooks/`、`tmp/`、`daemon.json` | 不迁移 |
+| `cache/` | `index/`、`logs/`（含 `logs/api`）、`statusline/`、`hooks/`、`tmp/`、`daemon.json`、`backups/`、`metrics-history.json`（仪表盘速率快照，§18） | 不迁移；另 `~/.weave/statusline.json`（statusline 用户开关，家目录、不入三档） |
 
 `libraries.path` 的相对基就是 `data/`（`market/<id>` 这类 posix 相对路径），所以市场副本从 `<dataDir>/market` 搬到 `<dataDir>/data/market` **不需要改任何一行库记录**。
 

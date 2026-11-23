@@ -1,29 +1,37 @@
 @import 'highlight.js/styles/github-dark.css';
 
-/* Nerd Font powerline glyphs ( etc.), preloaded from index.html so the
-   statusline preview never renders tofu. Subset to the powerline block only
-   (U+E0A0-E0FF) — 8KB per weight. Loaded before everything else on purpose. */
+/* 全局等宽字体 = JetBrains Mono Nerd（OFL 1.1，随包内置再分发；源 =
+   JetBrainsMonoNerdFontMono ttf 经 pyftsubset 子集化：拉丁 + Powerline/
+   Material/Octicons/FA 常用图标区，~240KB/字重）。dashboard 的 font-mono 与
+   Web 终端（TerminalView fontFamily 首选同族）渲染同一份字形。 */
 @font-face {
-  font-family: 'Weave Nerd Mono';
-  src: url('/fonts/WeaveNerdMono-Regular.woff?v=2') format('woff');
+  font-family: 'Weave Mono';
+  src: url('/fonts/WeaveMono-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
-  font-display: block;
+  font-display: swap;
 }
 @font-face {
-  font-family: 'Weave Nerd Mono';
-  src: url('/fonts/WeaveNerdMono-Bold.woff?v=2') format('woff');
+  font-family: 'Weave Mono';
+  src: url('/fonts/WeaveMono-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
-  font-display: block;
+  font-display: swap;
 }
 
 /* Unlayered on purpose: outranks Tailwind's font-mono utility so the preview
    stack reads glyphs from the bundled font first. */
 .nerd-font {
-  font-family: 'Weave Nerd Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+  font-family: 'Weave Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
     'Courier New', monospace;
 }
+
+/* 中文回落链（方案 A = JetBrains IDE 同款：CJK 不进主字体，回落系统字）。
+   显式点名平台中文字体而不是让浏览器猜：Windows 走雅黑（与 JetBrains IDE
+   默认回落一致），macOS 走苹方，Android 走思源——各家都是为 UI 调过灰度的；
+   挂在 Weave Mono 之后（tailwind sans 栈显式续上）只在缺字形时接手。
+   度量对照：Weave Mono upm=1000、asc 1.02/desc 0.30——雅黑 asc 1.06/desc 0.26
+   接近，混排基线稳定；行高由各处既有 leading 控制，不另设全局值。 */
 
 /* 掩码但不做密码框：type=password 会让 Chromium/Edge 把同表单的前一个文本框
    当用户名、这个框当密码，弹「保存凭据」并自动填充——API key 不是登录凭据。

@@ -5,6 +5,7 @@ import { api, type BackupStatusBundle } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { errorText } from '@/lib/action-feedback';
 import { useToast } from '@/components/Toast';
+import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { FieldHint } from '@/components/ui/field-hint';
 import { NumberStepper } from '@/components/ui/number-stepper';
@@ -252,7 +253,7 @@ function RestoreConfirmDialog(props: {
                 {t('settings.restoreCopyWord')}
               </button>
             </div>
-            <input
+            <Input
               type="text"
               value={props.confirmText}
               onChange={(e) => props.onConfirmTextChange(e.target.value)}

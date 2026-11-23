@@ -20,10 +20,19 @@ export const MAX_LOG_FILES = 24;
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1_000;
 
-/** 凭据类键：值一律 `[redacted]`（日志是落盘面，绝不落真值）。 */
+/** 凭据类键：值一律 `[redacted]`（日志是落盘面，绝不落真值）。精确键（toLowerCase 后比对）。 */
 const REDACT_KEYS = new Set([
   'password',
   'apikey',
+  // harness-config / onboarding 的网关令牌（authToken）与 Server酱的 sendKey：
+  // 驼峰经 toLowerCase 后的变体，精确键表收口。
+  'authtoken',
+  'sendkey',
+  'privatekey',
+  // 编排 webhook 节点 / extensions 绑定的入口令牌（webhookToken，走请求体）。
+  'webhooktoken',
+  // notify-channels email 通道的 SMTP 密码（config.pass，随整份 config 回显）。
+  'pass',
   'token',
   'secret',
   'authorization',

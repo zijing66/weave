@@ -47,6 +47,7 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { useBackPop } from '@/lib/back-pop';
 import { CanvasBackground, useCanvasTintClass } from '@/components/CanvasBackground';
 import { useSessionStatus } from './session-status-store';
+import { Input } from '../ui/input';
 import { SessionMessages } from './SessionMessages';
 import {
   ORCH_MAX_NODES,
@@ -742,21 +743,21 @@ export function OrchestrationCanvas({
                 </button>
               </div>
               <div className="flex max-w-full flex-wrap items-center gap-1">
-                <input
+                <Input
                   value={orchQuery}
                 onChange={(e) => setOrchQuery(e.target.value)}
                 placeholder={t('orch.filterOrch')}
                 className="w-32 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
               />
               {groupProjects && (
-                <input
+                <Input
                   value={projectQuery}
                   onChange={(e) => setProjectQuery(e.target.value)}
                   placeholder={t('orch.filterProject')}
                   className="w-28 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
               )}
-              <input
+              <Input
                 value={sessionQuery}
                 onChange={(e) => setSessionQuery(e.target.value)}
                 placeholder={t('orch.filterSession')}
@@ -1003,7 +1004,7 @@ export function OrchestrationCanvas({
                 </button>
                 {editing && draft && (
                   <>
-                    <input
+                    <Input
                       value={draft.name}
                       onChange={(e) => patch((d) => ({ ...d, name: e.target.value }))}
                       placeholder={t('orch.namePlaceholder')}
@@ -1058,14 +1059,14 @@ export function OrchestrationCanvas({
               </div>
               <div className="flex max-w-full flex-wrap items-center gap-1">
               {groupProjects && (
-                <input
+                <Input
                   value={projectQuery}
                   onChange={(e) => setProjectQuery(e.target.value)}
                   placeholder={t('orch.filterProject')}
                   className="w-28 rounded border border-edge/[0.1] bg-neutral-950/90 px-1.5 py-0.5 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                 />
               )}
-              <input
+              <Input
                 value={sessionQuery}
                 onChange={(e) => setSessionQuery(e.target.value)}
                 placeholder={t('orch.filterSession')}
@@ -1119,7 +1120,7 @@ export function OrchestrationCanvas({
               {/* 触发行：起始消息 / 手动触发设置（入口子集 + 一次性正文）/ 定时与启用 / 触发一次。 */}
               {editing && (
               <div className="flex max-w-full flex-wrap items-center gap-1.5">
-                <input
+                <Input
                   value={draft.startText}
                   onChange={(e) => patch((d) => ({ ...d, startText: e.target.value }))}
                   placeholder={t('orch.startTextHint')}
@@ -1157,7 +1158,7 @@ export function OrchestrationCanvas({
                     })}
                   </div>
                 )}
-                <input
+                <Input
                   value={triggerText}
                   onChange={(e) => setTriggerText(e.target.value)}
                   onKeyDown={(e) => {
@@ -1571,7 +1572,7 @@ export function OrchestrationCanvas({
                           </p>
                         ) : (
                           <>
-                            <input
+                            <Input
                               value={node?.url ?? ''}
                               onChange={(e) => {
                                 const url = e.target.value;
@@ -1583,7 +1584,7 @@ export function OrchestrationCanvas({
                               placeholder={t('orch.webhookUrlHint')}
                               className="w-full rounded border border-edge/[0.1] bg-neutral-950 px-1.5 py-1 font-mono text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-blue-500/40 focus:outline-none"
                             />
-                            <input
+                            <Input
                               value={node?.secret ?? ''}
                               onChange={(e) => {
                                 const secret = e.target.value;
@@ -1656,7 +1657,7 @@ export function OrchestrationCanvas({
               label: t(RUN_STATUS_KEY[s]),
             }))}
           />
-          <input
+          <Input
             value={runText}
             onChange={(e) => setRunText(e.target.value)}
             placeholder={t('orch.runFilterName')}

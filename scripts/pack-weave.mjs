@@ -25,6 +25,7 @@
  */
 import { execSync } from 'node:child_process';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,6 +104,33 @@ export function prebuildDirsToPrune(dirNames, keep) {
 }
 
 /**
+ * Manifest 条目 vs 实际目录差集校验（评审发现 16）：manifest.exports 引用的
+ * 路径必须在包目录里真实存在——漏拷的 entry（cp ENOENT 被 catch 吞掉的那类）
+ * 在 pack 前就报出来，而不是装完运行时才 ERR_MODULE_NOT_FOUND。
+ * 返回缺失路径列表（相对包根）。
+ */
+export function manifestGaps(manifest, pkgDir, names = ['main', 'types']) {
+  const refs = [];
+  for (const key of names) {
+    if (typeof manifest[key] === 'string') refs.push(manifest[key]);
+  }
+  if (manifest.bin) {
+    for (const v of Object.values(manifest.bin)) {
+      if (typeof v === 'string') refs.push(v);
+    }
+  }
+  for (const v of Object.values(manifest.exports ?? {})) {
+    if (typeof v === 'string') refs.push(v);
+    else if (v && typeof v === 'object') {
+      for (const inner of Object.values(v)) {
+        if (typeof inner === 'string') refs.push(inner);
+      }
+    }
+  }
+  return refs.filter((rel) => !existsSync(path.join(pkgDir, rel)));
+}
+
+/**
  * Stage the bundle and pack it. Returns the produced tarball's absolute path
  * (dist/ keeps the artifact; the staging directory is removed).
  */
@@ -167,6 +195,13 @@ export async function packWeaveTgz({ skipBuild = false } = {}) {
         .catch((err) => {
           if (err.code !== 'ENOENT' && err.code !== 'ERR_FS_CP_EEXIST') throw err;
         });
+    }
+    // 拷完再校验：manifest 指到的文件必须在 stage 里真的存在（cp 的 ENOENT 被
+    // catch 吞掉，缺了 dist/bin 这类入口只在安装运行时才炸）。校验须在 cp 之后，
+    // 否则 stage 还是空壳必炸。
+    const gaps = manifestGaps(manifest, dest);
+    if (gaps.length > 0) {
+      throw new Error(`${pkg.name}: manifest 引用的文件未入包（cp 漏拷？）→ ${gaps.join(', ')}`);
     }
   }
 

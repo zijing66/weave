@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Server } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDatabase } from '../db/db.js';
@@ -16,6 +16,7 @@ describe('daemon auth gate', () => {
   let port: number;
   let auth: AuthService;
   let dir: string;
+  let staticDir: string;
 
   const url = (p: string): string => `http://127.0.0.1:${port}${p}`;
   const json = (body: unknown): RequestInit => ({
@@ -33,7 +34,10 @@ describe('daemon auth gate', () => {
       authPath: path.join(dir, 'auth.json'),
       initialPasswordPath: path.join(dir, 'initial-password'),
     });
-    server = createWeaveServer({ projects, port: 0, auth });
+    // 导航豁免依赖 staticDir 外壳（index.html）；没有它 SPA 深链无从豁免。
+    staticDir = mkdtempSync(path.join(tmpdir(), 'weave-auth-static-'));
+    writeFileSync(path.join(staticDir, 'index.html'), '<!doctype html><html><body>weave</body></html>');
+    server = createWeaveServer({ projects, port: 0, auth, staticDir });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     port = (server.address() as { port: number }).port;
   });
@@ -42,6 +46,7 @@ describe('daemon auth gate', () => {
     server.close();
     db.close();
     rmSync(dir, { recursive: true, force: true });
+    rmSync(staticDir, { recursive: true, force: true });
   });
 
   it('/health 与 /auth/status 未认证可访问', async () => {
@@ -60,6 +65,17 @@ describe('daemon auth gate', () => {
   it('HTML 导航（SPA 外壳/登录页）不受门拦截', async () => {
     const res = await fetch(url('/projects'), { headers: { accept: 'text/html' } });
     expect(res.status).not.toBe(401);
+  });
+
+  it('API GET 带 Accept: text/html 不再放行数据——回 HTML 外壳而非 JSON（评审修复 2）', async () => {
+    const res = await fetch(url('/api-logs'), { headers: { accept: 'text/html' } });
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const body = await res.text();
+    expect(body).toContain('<!doctype html>');
+    expect(body).not.toContain('"events"');
+    // 同一请求不带导航头 = 401 JSON（fetch/CLI 通道不受外壳回落影响）
+    const api = await fetch(url('/api-logs'));
+    expect(api.status).toBe(401);
   });
 
   it('登录：错口令 401；对口令发会话 cookie 并放行', async () => {

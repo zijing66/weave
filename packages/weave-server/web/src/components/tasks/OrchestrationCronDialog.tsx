@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Input } from '../ui/input';
 import { X } from 'lucide-react';
 import { useT } from '@/i18n/I18nProvider';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -56,7 +57,7 @@ function Num({
     <label className="flex shrink-0 items-center gap-1 text-11 text-neutral-400">
       <span className="sr-only">{label}</span>
       <Tooltip label={label}>
-        <input
+        <Input
           type="number"
           value={value}
           min={min}
@@ -177,7 +178,7 @@ export function OrchestrationCronDialog({
             </>
           )}
           {fields.mode === 'custom' && (
-            <input
+            <Input
               value={fields.custom}
               onChange={(e) => patch({ custom: e.target.value })}
               placeholder="*/30 * * * *"

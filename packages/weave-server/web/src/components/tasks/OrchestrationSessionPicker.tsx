@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Input } from '../ui/input';
 import { X } from 'lucide-react';
 import type { ProjectRow, SessionRow } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
@@ -97,7 +98,7 @@ export function OrchestrationSessionPicker({
           </Tooltip>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 pb-2">
-          <input
+          <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('orch.pickerSearch')}

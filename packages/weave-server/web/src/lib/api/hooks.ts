@@ -1,6 +1,7 @@
 /** hooks 域：事件行、规则、插件、指令池派发与工具包（toolkit）。 */
 
 import type { Harness } from '@weavecode/core/harness';
+import { HARNESS_EVENTS } from '@weavecode/core/harness';
 import { apiFetch } from './client';
 import type { UploadFile } from './uploads';
 
@@ -181,21 +182,9 @@ export interface HookDispatch {
   finishedAt: string | null;
 }
 
-/** mirror of `HARNESS_EVENTS.claude`（core；别名 CLAUDE_HOOK_EVENTS）— 同序。
- *  hooks 规则编辑器的事件选项——按 harness 事件表展开随 hooks 域批做。 */
-export const CLAUDE_HOOK_EVENTS = [
-  'PreToolUse',
-  'PostToolUse',
-  'UserPromptSubmit',
-  'SessionStart',
-  'Stop',
-  'SubagentStop',
-  'Notification',
-  'PreCompact',
-  'SessionEnd',
-  'PreModelSwitch',
-  'PostModelSwitch',
-] as const;
+/** hooks 规则编辑器的事件选项：直接引 core 表 `HARNESS_EVENTS.claude`
+ *  （web 源码直引 core，vite/tsconfig 双 alias），零第二镜像。 */
+export const CLAUDE_HOOK_EVENTS = HARNESS_EVENTS.claude;
 
 /** inject 事件候选：`GET /hooks/injectable`（权威表 core `INJECTABLE_EVENTS` 的派生面）。
  *  拉不到时回落 claude 表——规则面板的兜底形态，服务端 400 仍会把越界事件挡住。 */

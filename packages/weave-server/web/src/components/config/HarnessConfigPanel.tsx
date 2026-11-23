@@ -31,6 +31,7 @@ import { useT } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dict';
 import { ConfigTree, type ConfigTreeHandlers } from './ConfigTree';
 import { Combobox } from '@/components/ui/combobox';
+import { Input } from '@/components/ui/input';
 import { Tooltip } from '@/components/ui/tooltip';
 import type { RowEdit } from './ConfigValueRow';
 import { ConfigVault } from './ConfigVault';
@@ -616,7 +617,7 @@ export function HarnessConfigPanel({
 
       {/* 搜索 / 过滤 / 原始视图 */}
       <div className="flex flex-wrap items-center gap-2">
-        <input
+        <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t('cfg.search')}

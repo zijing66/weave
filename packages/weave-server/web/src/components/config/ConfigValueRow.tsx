@@ -17,6 +17,7 @@ import {
   valueOfText,
 } from '@/lib/config-form';
 import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Combobox } from '@/components/ui/combobox';
 import { Tooltip } from '@/components/ui/tooltip';
@@ -146,7 +147,7 @@ export function ConfigValueRow({
     }
     if (control === 'number') {
       return (
-        <input
+        <Input
           type="number"
           value={typeof value === 'number' ? value : textOf(value)}
           onChange={(e) => {
@@ -172,7 +173,7 @@ export function ConfigValueRow({
       return <JsonField key={JSON.stringify(value)} value={value} onCommit={(next) => onChange({ value: next })} />;
     }
     return (
-      <input
+      <Input
         value={typeof value === 'string' ? value : textOf(value)}
         onChange={(e) => onChange({ value: e.target.value })}
         className={cn(INPUT_CLS, 'w-56')}
@@ -471,7 +472,7 @@ function ValueNode({
           ) : null}
         </span>
         {nameEditable ? (
-          <input
+          <Input
             value={name}
             onChange={(e) => onRename?.(e.target.value)}
             placeholder={t('cfg.mapKey')}
@@ -621,7 +622,7 @@ function PlainControl({
   }
   if (control === 'number') {
     return (
-      <input
+      <Input
         type="number"
         value={typeof value === 'number' ? value : textOf(value)}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
@@ -644,7 +645,7 @@ function PlainControl({
     return <JsonField key={JSON.stringify(value)} value={value} onCommit={onChange} />;
   }
   return (
-    <input
+    <Input
       value={typeof value === 'string' ? value : textOf(value)}
       onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
       className={cn(INPUT_CLS, 'w-40')}

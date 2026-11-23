@@ -5,9 +5,10 @@ import { cn } from '@/lib/utils';
 import { cssPx } from '@/lib/font-scale';
 import { useBackPop } from '@/lib/back-pop';
 import { useT } from '@/i18n/I18nProvider';
-import { useMediaQuery } from '@/lib/use-media-query';
+import { useMediaQuery, useIsCoarsePointer } from '@/lib/use-media-query';
 import { FileColumnsBrowser, MobileFadePanels, useColumnWidths } from '@/components/FileColumnsBrowser';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Input } from '@/components/ui/input';
 import type { MessageKey } from '@/i18n/dict';
 import {
   Check,
@@ -318,7 +319,7 @@ export function DirectoryPickerModal({
   }, [quickMenu]);
 
   // 移动端长按 = 右键（加入快速访问）。
-  const coarse = useMemo(() => window.matchMedia('(pointer: coarse)').matches, []);
+  const coarse = useIsCoarsePointer();
   const longPressProps = useCallback(
     (fire: (x: number, y: number) => void) => makeLongPress(fire, coarse),
     [coarse],
@@ -622,7 +623,7 @@ export function DirectoryPickerModal({
             粘贴一个路径加入选择，不必逐层展开。复制/历史按钮在文本右侧（与文件
             浏览器统一排布）；历史 = 最近选择的目录，点条目即回填输入框。 */}
         <div className="shrink-0 flex items-center gap-1.5 px-4 py-2 border-b border-edge/[0.06] max-lg:px-3">
-          <input
+          <Input
             value={pathInput}
             onChange={(e) => setPathInput(e.target.value)}
             onKeyDown={(e) => {

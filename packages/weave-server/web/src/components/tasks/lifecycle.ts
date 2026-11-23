@@ -25,9 +25,9 @@ export const HARNESS_LIFECYCLE = {
     close: ['Stop', 'TurnAborted'],
     closeFailed: [],
     sessionMarkers: ['SessionStart', 'SessionEnd'],
-    subagentStop: '',
+    subagentStop: 'SubagentStop',
     questionTools: [],
-    sessionExit: null,
+    sessionExit: 'SessionEnd',
   },
 } satisfies Record<Harness, HarnessLifecycle>;
 

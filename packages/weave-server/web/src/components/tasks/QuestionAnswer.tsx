@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Input } from '../ui/input';
 import { Check, Loader2, X } from 'lucide-react';
 import type {
   AnswerPick,
@@ -328,7 +329,7 @@ export function QuestionAnswer({
                             <span className="shrink-0 text-11 text-neutral-400">
                               {notesOpt.label}
                             </span>
-                            <input
+                            <Input
                               value={draft}
                               disabled={busy}
                               placeholder={notesOpt.description ?? notesOpt.label}
@@ -434,7 +435,7 @@ export function QuestionAnswer({
                                   {opt.label}
                                 </span>
                               )}
-                              <input
+                              <Input
                                 value={draft}
                                 disabled={busy}
                                 aria-label={opt.label}

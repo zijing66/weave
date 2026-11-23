@@ -51,7 +51,7 @@ export const tasksZh = {
   'tasks.webTerminalTitle': 'Web 终端',
   'tasks.openWebTerminal': '打开 Web 终端',
   'tasks.webTerminalShort': '终端',
-  'tasks.webTerminalClose': '收起 Web 终端（TUI 进程继续运行）',
+  'tasks.webTerminalClose': '收起 Web 终端',
   'tasks.webTerminalBusy': '该会话正在外部终端里运行——Web 终端接不过来，先关掉那个终端',
   'tasks.webTerminalGone': '该会话没有可恢复的转录（或该 harness 不支持交互式恢复）',
   'tasks.headlessImplied': '恒开',
@@ -733,7 +733,7 @@ export const tasksEn: Record<keyof typeof tasksZh, string> = {
   'tasks.webTerminalTitle': 'Web terminal',
   'tasks.openWebTerminal': 'Open web terminal',
   'tasks.webTerminalShort': 'Terminal',
-  'tasks.webTerminalClose': 'Close web terminal (TUI process keeps running)',
+  'tasks.webTerminalClose': 'Close web terminal',
   'tasks.webTerminalBusy':
     'This session is running in an external terminal — the web terminal cannot attach. Close that terminal first',
   'tasks.webTerminalGone':

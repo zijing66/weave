@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Input } from '../ui/input';
 import {
   Compartment,
   EditorState,
@@ -283,7 +284,7 @@ export const cmTheme = (dark: boolean): Extension =>
       '&': { height: '100%', fontSize: '0.6875rem', color: 'rgb(var(--w-neutral-300))', backgroundColor: 'transparent' },
       '&.cm-focused': { outline: 'none' },
       '.cm-scroller': {
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontFamily: "'Weave Mono', ui-monospace, Menlo, Consolas, monospace",
         lineHeight: '1.5',
         overflow: 'auto',
       },
@@ -1212,7 +1213,7 @@ export function FilePicker({
           预览是只读的，ESC 先收它、再关整个选择器。 */}
       {bar && (
         <div className="flex shrink-0 items-center gap-1 border-b border-edge/[0.06] px-1.5 py-1">
-          <input
+          <Input
             autoFocus
             value={bar === 'find' ? find : jump}
             inputMode={bar === 'line' ? 'numeric' : undefined}
@@ -1450,7 +1451,7 @@ export function FilePicker({
           <FieldHint>{t('tasks.fileVisibilityHint')}</FieldHint>
           <div className="relative w-56 shrink-0 max-lg:w-40">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
-            <input
+            <Input
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}

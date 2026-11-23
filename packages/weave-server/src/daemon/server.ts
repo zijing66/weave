@@ -389,11 +389,15 @@ async function handleRequest(
   // 不豁免：门内的路由，只有已登录用户能花机主的 key。
   if (await handleAiRoutes(req, res, deps, pathname)) return;
 
-  // 认证门（装 auth 才生效）：除「HTML 导航 + 真实静态文件」外一律要凭据——
-  // 浏览器 fetch/SSE、CLI 全部走同一条判定（会话 cookie 或本机令牌）。放行 HTML
-  // 与静态文件是因为登录页必须未认证可载；导航类请求带的是 SPA 外壳，不含数据。
+  // 认证门（装 auth 才生效）：公开端点与真实静态文件豁免（isPublicRequest）；
+  // 未认证的浏览器导航回 SPA 外壳（外壳不含数据，应用加载后 API 401 进登录页），
+  // 其余一律要凭据——浏览器 fetch/SSE、CLI 全部走同一条判定。
   if (deps.auth && !isPublicRequest(req, pathname, deps)) {
     if (!deps.auth.isAuthenticated(req.headers)) {
+      if (deps.staticDir && isNavigationRequest(req, pathname)) {
+        serveStatic(res, pathname, deps.staticDir);
+        return;
+      }
       sendJson(res, 401, { error: 'Unauthorized' });
       return;
     }
@@ -620,8 +624,10 @@ function handleSse(
 }
 
 /**
- * 门豁免判定：HTML 导航（SPA 外壳/登录页，浏览器导航必带 `Accept: text/html`，
- * 而 fetch/EventSource 不带）+ staticDir 下真实存在的静态文件。API 数据一律不豁免。
+ * 门豁免判定（§12）：公开端点 + staticDir 下真实存在的静态文件。浏览器导航的
+ * SPA 深链（无对应文件）不在这里豁免——那会让 API GET 带上 `Accept: text/html`
+ * 就绕过认证；未认证导航由认证门直接回 SPA 外壳（isNavigationRequest），
+ * 外壳不含数据，应用加载后 API 401 自然进登录页。API 数据一律不豁免。
  */
 function isPublicRequest(
   req: IncomingMessage,
@@ -646,13 +652,19 @@ function isPublicRequest(
     return true;
   }
   if (req.method !== 'GET') return false;
-  if ((req.headers.accept ?? '').includes('text/html')) return true;
   if (!deps.staticDir) return false;
   const safe = path.normalize(pathname).replace(/^([/\\]\.\.[/\\])+/, '');
   const filePath = path.join(deps.staticDir, safe);
   return (
     filePath.startsWith(deps.staticDir) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()
   );
+}
+
+/** 未认证时的浏览器导航（SPA 深链/登录页）：回 HTML 外壳而不是 401 JSON。 */
+function isNavigationRequest(req: IncomingMessage, pathname: string): boolean {
+  if (req.method !== 'GET') return false;
+  if (!(req.headers.accept ?? '').includes('text/html')) return false;
+  return pathname === '/' || !path.extname(pathname);
 }
 
 /**

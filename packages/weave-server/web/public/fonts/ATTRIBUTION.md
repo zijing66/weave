@@ -1,8 +1,9 @@
 # Font attribution
 
-These WOFF files are **JetBrains Mono**, patched with **Nerd Fonts 3.4.0**
-symbols and subsetted. The font's internal family name is `JetBrainsMono NFM`;
-the files are renamed `WeaveNerdMono` for this project.
+These WOFF2 files are derived from **JetBrainsMono Nerd Font Mono**
+(**JetBrains Mono** patched with **Nerd Fonts 3.4.0** symbols, full-glyph
+release ttf), subsetted with pyftsubset (Latin + Powerline/Material/Octicons/
+FA common icon ranges) and renamed `WeaveMono` for this project.
 
 ## JetBrains Mono
 
