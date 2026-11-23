@@ -27,3 +27,9 @@ dist/
 # 本地草稿/生成物（不提交）
 .codex/
 temp/
+
+# pet-window 构建残留（dotnet publish 中间输出 / 锁文件旁路拷贝）
+tools/packages/
+packages/weave-server/res/pet-window/*.xml
+packages/weave-server/res/pet-window/*.pdb
+packages/weave-server/res/pet-window/*.new
