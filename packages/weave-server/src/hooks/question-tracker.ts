@@ -59,6 +59,8 @@ export interface QuestionTrackerDeps {
   surfaceFor?: (harness: Harness) => BlockingPromptSpec | null;
   /** 新挂起待答（无 → 有）时广播（dashboard 提醒）；不传 = 不广播。 */
   onPending?: (entry: PendingQuestionEntry) => void;
+  /** 待答集合变化（置位/摘除/markAnswered/forgetSession）后通知（SSE 推快照用）。 */
+  onChange?: () => void;
   /** 会话「已中断」时刻（ms；判据归 SessionProbe）。见 {@link QuestionTracker.dropIfInterrupted}。 */
   interruptedAt?: (sessionId: string) => number | null;
 }
@@ -113,6 +115,7 @@ export class QuestionTracker {
         this.pending.set(sessionId, entry);
         // 只播「无 → 有」（同一会话连续挂起不重复打扰）；重放重建不算新发生。
         if (!this.seeding && prev?.kind !== 'question') this.deps.onPending?.(entry);
+        this.deps.onChange?.();
       }
       return;
     }
@@ -177,6 +180,7 @@ export class QuestionTracker {
       };
       this.pending.set(sessionId, entry);
       if (!this.seeding && prev?.kind !== 'switch') this.deps.onPending?.(entry);
+      this.deps.onChange?.();
       return;
     }
     // 其余事件：待答面落定的信号。permission 态任何动静都说明对话框已了结
@@ -195,12 +199,14 @@ export class QuestionTracker {
       if (sticky ? settled : true) {
         this.pending.delete(sessionId);
         this.lastPreTool.delete(sessionId);
+        this.deps.onChange?.();
       }
       return;
     }
     if (entry.kind !== 'question') {
       this.pending.delete(sessionId);
       this.lastPreTool.delete(sessionId);
+      this.deps.onChange?.();
       return;
     }
     const cleared =
@@ -212,6 +218,7 @@ export class QuestionTracker {
     if (cleared) {
       this.pending.delete(sessionId);
       this.lastPreTool.delete(sessionId);
+      this.deps.onChange?.();
     }
   }
 
@@ -262,6 +269,7 @@ export class QuestionTracker {
   private dropIfInterrupted(entry: PendingQuestionEntry): boolean {
     if (this.deps.interruptedAt?.(entry.sessionId) == null) return false;
     this.pending.delete(entry.sessionId);
+    this.deps.onChange?.();
     return true;
   }
 
@@ -270,14 +278,15 @@ export class QuestionTracker {
    * 整 call 一次提交（含 Submit 步），故整条摘除；PostToolUse 到达照常再清一次。
    */
   markAnswered(sessionId: string): void {
-    this.pending.delete(sessionId);
+    if (this.pending.delete(sessionId)) this.deps.onChange?.();
   }
 
   /** 会话删除级联。 */
   forgetSession(sessionId: string): void {
-    this.pending.delete(sessionId);
+    const had = this.pending.delete(sessionId);
     this.lastPreTool.delete(sessionId);
     this.permissionMode.delete(sessionId);
+    if (had) this.deps.onChange?.();
   }
 
   private harnessOf(source: string): Harness {

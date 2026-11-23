@@ -348,7 +348,7 @@ export function DashboardOverview({
                 label={t('dashboard.resAgentsTotal')}
                 cpuPercent={
                   metrics.agents.some((a) => a.cpuPercent !== undefined)
-                    ? metrics.agents.reduce((s, a) => s + (a.cpuPercent ?? 0), 0)
+                    ? Math.round(metrics.agents.reduce((s, a) => s + (a.cpuPercent ?? 0), 0) * 10) / 10
                     : undefined
                 }
                 memRssBytes={metrics.agents.reduce((s, a) => s + (a.memRssBytes ?? 0), 0)}

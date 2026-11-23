@@ -24,7 +24,7 @@ export function BackupOverlay() {
     let alive = true;
     const tick = async (): Promise<void> => {
       try {
-        const b = await api.getBackupStatus();
+        const b = await api.getBackupStatus(true);
         if (!alive) return;
         failures.reset();
         setVisible(b.status.running);

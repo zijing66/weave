@@ -263,6 +263,11 @@ function connectSse(recompute: () => void): { onDispatchStarted: (sessionId: str
       'message.',
     ]),
     subscribeHook((_frame) => pull(refreshDispatches), ['dispatch.']),
+    // 待答面快照帧直写（tracker 变化即推）；老 daemon 无此帧时 question.pending 兜底重拉。
+    subscribePush<PendingQuestionEntry[]>('sessionQuestions', (q) => {
+      questions = q;
+      recompute();
+    }),
     subscribeHook((_frame) => pull(refreshQuestions), ['question.pending']),
   );
   return { onDispatchStarted: (id) => void id };

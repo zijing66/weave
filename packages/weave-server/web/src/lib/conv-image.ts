@@ -74,8 +74,10 @@ const MAX_CANVAS_DIM = 65_535;
 
 export type ConvFont = 'meta' | 'body' | 'small' | 'strong' | 'em' | 'strongEm' | 'h1' | 'h3' | 'mono';
 
-const SANS = 'ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif';
-const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace';
+// 与 tailwind.config 的 sans/mono 同源（全界面统一 Weave Mono 后导出图必须跟齐，
+// 否则屏幕与图两套字形）。canvas 用文档里已加载的 @font-face，无需另装。
+const SANS = `'Weave Mono', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', ui-monospace, monospace`;
+const MONO = SANS;
 
 const FONTS: Record<ConvFont, string> = {
   meta: `10px ${SANS}`,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { HelpCircle } from 'lucide-react';
 import { AuthError, login } from '@/lib/auth';
 import { useT } from '@/i18n/I18nProvider';
@@ -62,8 +62,13 @@ export function LoginPage() {
             placeholder={t('auth.passwordPlaceholder')}
             className="w-full rounded-lg border border-neutral-800 bg-neutral-950 py-2 pl-3 pr-9 text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none"
           />
-          {/* chpass 提示收进「?」：图标与输入框行同高（py-2 行内垂直居中） */}
-          <Tooltip label={t('auth.hint')} side="bottom" className="absolute right-2 top-1/2 -translate-y-1/2">
+          {/* chpass 提示收进「?」：图标与输入框行同高（py-2 行内垂直居中）。
+              hint 词条里的反引号段渲染成 code（Tooltip 只输出纯文本，markdown 不解析）。 */}
+          <Tooltip
+            label={renderCodeHint(t('auth.hint'))}
+            side="bottom"
+            className="absolute right-2 top-1/2 -translate-y-1/2"
+          >
             <span
               role="img"
               aria-label={t('auth.hint')}
@@ -83,5 +88,19 @@ export function LoginPage() {
         </button>
       </form>
     </div>
+  );
+}
+
+/** 提示文本里的 `反引号` 段渲染成 code（偶数段普通文本）。 */
+function renderCodeHint(text: string): ReactNode {
+  const parts = text.split('`');
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <code key={i} className="rounded bg-neutral-800 px-1 font-mono text-10 text-neutral-200">
+        {part}
+      </code>
+    ) : (
+      part
+    ),
   );
 }

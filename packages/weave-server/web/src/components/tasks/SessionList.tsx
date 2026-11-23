@@ -1016,33 +1016,30 @@ export function SessionList({
 /** 会话卡资源芯片：该会话 Agent 进程的 CPU / 内存 / 磁盘 IO 速率（同一份 metrics
  *  帧切出，60s 粒度；Web 终端实例才带进程口径——没采到不摆空壳）。 */
 function SessionResourceChip({ sessionId }: { sessionId: string }) {
-  const t = useT();
   const metrics = useMetrics();
   const agent = metrics?.agents.find((a) => a.harnessSessionId === sessionId);
   if (!agent || (agent.cpuPercent === undefined && agent.memRssBytes === undefined)) return null;
   const io = agent.diskBytesPerSec;
   const mem = agent.memRssBytes ?? 0;
   return (
-    <Tooltip label={t('tasks.resTip')} className="ml-auto max-w-full">
-      <span className="inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border border-edge/[0.06] bg-edge/[0.04] px-2 py-1 text-10 leading-none tabular-nums">
-        <span className="inline-flex items-center gap-1 text-neutral-500">
-          <Cpu className="h-3 w-3" aria-hidden="true" />
-          {agent.cpuPercent === undefined ? '—' : `${agent.cpuPercent}%`}
-        </span>
-        {mem > 0 && (
-          <span className="inline-flex items-center gap-1 text-emerald-400">
-            <MemoryStick className="h-3 w-3" aria-hidden="true" />
-            {mem < 1024 * 1024 ? `${(mem / 1024).toFixed(1)} KB` : mem < 1024 * 1024 * 1024 ? `${(mem / 1024 / 1024).toFixed(0)} MB` : `${(mem / 1024 / 1024 / 1024).toFixed(1)} GB`}
-          </span>
-        )}
-        {io !== undefined && (
-          <span className="inline-flex items-center gap-1 text-violet-300">
-            <HardDrive className="h-3 w-3" aria-hidden="true" />
-            {fmtIo(io)}
-          </span>
-        )}
+    <span className="inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border border-edge/[0.06] bg-edge/[0.04] px-2 py-1 text-10 leading-none tabular-nums">
+      <span className="inline-flex items-center gap-1 text-neutral-500">
+        <Cpu className="h-3 w-3" aria-hidden="true" />
+        {agent.cpuPercent === undefined ? '—' : `${agent.cpuPercent}%`}
       </span>
-    </Tooltip>
+      {mem > 0 && (
+        <span className="inline-flex items-center gap-1 text-emerald-400">
+          <MemoryStick className="h-3 w-3" aria-hidden="true" />
+          {mem < 1024 * 1024 ? `${(mem / 1024).toFixed(1)} KB` : mem < 1024 * 1024 * 1024 ? `${(mem / 1024 / 1024).toFixed(0)} MB` : `${(mem / 1024 / 1024 / 1024).toFixed(1)} GB`}
+        </span>
+      )}
+      {io !== undefined && (
+        <span className="inline-flex items-center gap-1 text-violet-300">
+          <HardDrive className="h-3 w-3" aria-hidden="true" />
+          {fmtIo(io)}
+        </span>
+      )}
+    </span>
   );
 }
 

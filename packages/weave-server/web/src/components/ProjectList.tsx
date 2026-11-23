@@ -1659,7 +1659,6 @@ function HealthBadge({ projectId }: { projectId: number }) {
 /** 项目卡资源徽标：本项目 Agent 进程的 CPU / 内存 / 磁盘 IO 合计（同一份 metrics
  *  帧切出，60s 粒度；没有活实例不摆空壳）。 */
 function ProjectResourceBadge({ projectId }: { projectId: number }) {
-  const t = useT();
   const metrics = useMetrics();
   const agents = metrics?.agents.filter((a) => a.projectId === projectId) ?? [];
   if (agents.length === 0) return null;
@@ -1672,24 +1671,22 @@ function ProjectResourceBadge({ projectId }: { projectId: number }) {
   const io = anyIo ? Math.round(agents.reduce((s, a) => s + (a.diskBytesPerSec ?? 0), 0)) : null;
   return (
     <div className="flex min-w-0 justify-end px-2 pb-1">
-      <Tooltip label={t('project.resTip', { n: agents.length })} className="min-w-0 max-w-full">
-        <span className="flex max-w-full items-center gap-2 truncate rounded-full bg-edge/[0.06] px-2 text-10 leading-5 tabular-nums">
-          <span className="inline-flex min-w-0 items-center gap-1 text-neutral-500">
-            <Cpu className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span className="truncate">{cpu === null ? '—' : `${cpu}%`}</span>
-          </span>
-          <span className="inline-flex min-w-0 items-center gap-1 text-emerald-400">
-            <MemoryStick className="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span className="truncate">{mem === null ? '—' : fmtMem(mem)}</span>
-          </span>
-          {io !== null && (
-            <span className="inline-flex min-w-0 items-center gap-1 text-violet-300">
-              <HardDrive className="h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="truncate">{fmtIo(io)}</span>
-            </span>
-          )}
+      <span className="flex max-w-full items-center gap-2 truncate rounded-full bg-edge/[0.06] px-2 text-10 leading-5 tabular-nums">
+        <span className="inline-flex min-w-0 items-center gap-1 text-neutral-500">
+          <Cpu className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{cpu === null ? '—' : `${cpu}%`}</span>
         </span>
-      </Tooltip>
+        <span className="inline-flex min-w-0 items-center gap-1 text-emerald-400">
+          <MemoryStick className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{mem === null ? '—' : fmtMem(mem)}</span>
+        </span>
+        {io !== null && (
+          <span className="inline-flex min-w-0 items-center gap-1 text-violet-300">
+            <HardDrive className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">{fmtIo(io)}</span>
+          </span>
+        )}
+      </span>
     </div>
   );
 }

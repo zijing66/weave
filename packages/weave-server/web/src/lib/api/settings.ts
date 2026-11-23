@@ -40,8 +40,8 @@ export interface DaemonSettings {
   hooks: { enabled: boolean };
   /** 开机自启 daemon（默认关）。 */
   startup?: { launchOnLogin: boolean };
-  /** 监听绑定地址（默认 0.0.0.0）+ 局域网 HTTPS 端口（0 = 关）。 */
-  server?: { bindHost: string; tlsPort?: number };
+  /** 监听绑定地址（默认 0.0.0.0）；单端口 HTTPS，不再有独立 TLS 端口。 */
+  server?: { bindHost: string };
   /**
    * AI 助手（OpenAI 兼容端点）。地址/模型是非密配置；`apiKey` 服务端拆存
    * `<dataDir>/ai.json`（0600），GET 回显（设置页掩码展示）、PUT 原样写回，
@@ -153,7 +153,8 @@ export interface BackupPackage {
 export interface BackupStatusBundle {
   status: BackupStatus;
   settings: BackupSettings;
-  packages: BackupPackage[];
+  /** `light=1`（秒级轮询）时服务端省略清单。 */
+  packages?: BackupPackage[];
 }
 
 export interface BackupResult {
@@ -175,9 +176,9 @@ export const settingsApi = {
       body: JSON.stringify(settings),
     }),
   // ---- 每日自动备份（/backup/*；缺引擎 503 时前端隐藏面板）----
-  /** 运行态（含进度/ETA）+ 备份设置 + 包清单，一处取齐。 */
-  getBackupStatus: (): Promise<BackupStatusBundle> =>
-    apiFetch<BackupStatusBundle>('/backup/status'),
+  /** 运行态（含进度/ETA）+ 备份设置 + 包清单，一处取齐；`light` 省包清单（秒级轮询用）。 */
+  getBackupStatus: (light?: boolean): Promise<BackupStatusBundle> =>
+    apiFetch<BackupStatusBundle>(`/backup/status${light ? '?light=1' : ''}`),
   /** 手动触发（includeHistory 缺省从设置带）。忙时 409。 */
   runBackup: (includeHistory?: boolean): Promise<{ result: BackupResult }> =>
     apiFetch<{ result: BackupResult }>('/backup/run', {

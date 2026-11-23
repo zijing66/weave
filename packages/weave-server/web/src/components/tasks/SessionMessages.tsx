@@ -41,8 +41,9 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 import { errorText, useActionFeedback, type ActionState } from '@/lib/action-feedback';
 import { formatStamp } from '@/lib/hook-payload';
 import { HARNESS_LIFECYCLE } from './lifecycle';
-import { subscribeHook } from '@/lib/sse';
+import { subscribeHook, subscribePush } from '@/lib/sse';
 import { useSessionStatus } from './session-status-store';
+import type { PendingQuestionEntry } from '@/lib/api/messages';
 import { useConvThread } from './use-conv-thread';
 import { useDraftEditor } from './use-draft-editor';
 import { useConvSelect } from './use-conv-select';
@@ -221,9 +222,15 @@ export function SessionMessages({
         .catch(() => {});
     };
     load();
-    const off = subscribeHook(load, ['question.pending', 'event.ingested']);
+    // 待答面变化走 sessionQuestions 快照帧（tracker 变化即推，无需帧到重拉）；
+    // 老 daemon 无此帧时由 event.ingested 兜底重拉一拍。
+    const offPush = subscribePush<PendingQuestionEntry[]>('sessionQuestions', (entries) => {
+      setPaneQuestions(entries.map((e) => e.sessionId));
+    });
+    const off = subscribeHook(load, ['event.ingested']);
     return () => {
       alive = false;
+      offPush();
       off();
     };
   }, [pane, sessionId]);

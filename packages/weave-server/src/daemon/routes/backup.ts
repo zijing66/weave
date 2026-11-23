@@ -29,12 +29,15 @@ export async function handleBackupRoutes(
   }
 
   // GET /backup/status — 运行态 + 进度 + 当前设置（一处取齐，前端免拼）。
+  // `?light=1` 省掉包清单（BackupOverlay 秒级轮询用：清单要 readdir+stat 全部包，
+  // 高频轮询下是纯浪费；resBytes 也少一个量级，api-log 跟着瘦）。
   if (pathname === '/backup/status' && req.method === 'GET') {
     const settings = await readDaemonSettings();
+    const light = new URL(req.url ?? '', 'http://x').searchParams.get('light') === '1';
     sendJson(res, 200, {
       status: engine.status,
       settings: settings.backup,
-      packages: await listPackages(),
+      ...(light ? {} : { packages: await listPackages() }),
     });
     return true;
   }

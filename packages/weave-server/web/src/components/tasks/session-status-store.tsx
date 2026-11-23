@@ -119,8 +119,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   const [inflight, setInflight] = useState<Map<string, number>>(new Map());
   /** 在途投递失败角标（同帧 failed 快照；failed 是状态机更靠后的态，优先展示）。 */
   const [failedDeliveries, setFailedDeliveries] = useState<Map<string, number>>(new Map());
-  /** 待答阻塞问题：随 hook 帧的 500ms 防抖重拉（tracker 是事件驱动的内存态，
-   *  帧到即变——重拉既覆盖问题出现也覆盖作答/解除，自愈无独立 SSE 通道）。 */
+  /** 待答阻塞问题：服务端变化时经 `sessionQuestions` 帧直推绝对值快照
+   *  （tracker 内存态变化即推；帧到即写，不再帧到后重拉 GET）。 */
   const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
   const [modelCatalog, setModelCatalog] = useState<Record<string, ModelAliasTarget[]>>({});
   /** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt / effort）。push 只在
@@ -157,18 +157,6 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       setError(null);
     } catch {
       // 补丁失败不打扰：下一拍事件还会再来，状态推导降级为帧态与旧值
-    }
-  }, []);
-
-  /** 待答面单独一路重拉：`QuestionTracker` 是事件驱动的内存态，问题出现与作答
-   *  落地都只随 hook 帧变——帧到了就打这一枪，**不搭全量的车**（全量要等外壳
-   *  那三道判据，答完一条问题坐在那儿半小时也不会再有全量）。 */
-  const refreshQuestions = useCallback(async (): Promise<void> => {
-    try {
-      const entries = await api.listQuestions();
-      setQuestions(new Map(entries.map((entry) => [entry.sessionId, entry])));
-    } catch {
-      // 老 daemon 没这个路由：静默降级
     }
   }, []);
 
@@ -278,6 +266,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
         if (p.efforts) rowPush.current.effort = p.efforts;
         land();
       }),
+      // 待答面绝对值快照（tracker 变化即推）：覆盖出现/作答/手动解除/中断摘面全路径。
+      subscribePush<PendingQuestionEntry[]>('sessionQuestions', (entries) => {
+        setQuestions(new Map(entries.map((entry) => [entry.sessionId, entry])));
+      }),
     ];
     return () => {
       for (const off of offs) off();
@@ -298,9 +290,6 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       dirty.clear();
       const full = wantFull;
       wantFull = false;
-      // 待答面每拍都跟一次（问题挂起 / 作答落地都认帧）：行补丁只管会话行，
-      // 不带它——不在这里补，答完问题的图标与项目卡边框会一直挂着。
-      void refreshQuestions();
       // pane 窗口只关心自己那条会话：整拍都收敛成一次行补丁，全量清单不在窄窗职责里。
       if (paneSessionId()) {
         if (ids.length > 0) void patchRows(ids);
@@ -404,7 +393,7 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       off();
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [patchRows, refresh, refreshQuestions]);
+  }, [patchRows, refresh]);
 
   const dispatchBySession = useMemo(() => {
     const m = new Map<string, HookDispatch[]>();

@@ -1,13 +1,11 @@
-import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { openDatabase } from '../db/db.js';
 import { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import { RuntimeSupervisor } from '../runtime/supervisor.js';
 import { TerminalGateway } from '../runtime/terminal/session-gateway.js';
-import { attachTerminalWebSocket, terminalUpgradeHandler } from '../runtime/terminal/ws-endpoint.js';
+import { attachTerminalWebSocket } from '../runtime/terminal/ws-endpoint.js';
 import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { BackupEngine, applyPendingRestore } from './backup.js';
 import { startBackupScheduler } from './backup-scheduler.js';
@@ -90,7 +88,7 @@ import { SyncScheduler } from '../watch/sync-scheduler.js';
 import { FingerprintCache } from '../install/fingerprint.js';
 import { detectProjectUpdateCounts } from '../install/updates.js';
 import { drainServerConnections, weaveRequestHandler } from './server.js';
-import { startTlsServer, type TlsListener } from './tls.js';
+import { createDaemonServer, ensureDaemonCert, installCertTrust } from './tls.js';
 import { DataBus } from './data-bus.js';
 import { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import { SnapshotRefresher } from './snapshot-refresher.js';
@@ -112,16 +110,15 @@ import { readDaemonState, writeDaemonState } from './state.js';
 import { ensureDataLayout } from '../db/layout.js';
 import { pruneFileIndexes } from './project-files.js';
 import { pruneInstallTmp } from '../hooks/plugin-installer.js';
-import { readDaemonSettingsSync, setDaemonSettingsDb, DEFAULT_SERVER_SETTINGS } from './settings.js';
+import { readDaemonSettingsSync, setDaemonSettingsDb } from './settings.js';
 import { AuthService } from './dashboard-auth.js';
-import { getCertsDir } from '../db/paths.js';
 import { syncLaunchOnLogin } from './auto-start.js';
 import { startShutdownSentinel, stopShutdownSentinel } from './shutdown-sentinel.js';
 import { resolveStaticDir } from './static.js';
 import { openPetWindow, shutdownPetWindow } from './pet-window.js';
 import { seedBuiltinPets } from './pet-seed.js';
 import { PeerRepository } from '../repositories/peers.js';
-import { getPeerTokensDir, getBackupsDir } from '../db/paths.js';
+import { getPeerTokensDir, getBackupsDir, getCertsDir } from '../db/paths.js';
 import { startMdnsAdvertiser, type MdnsAdvertiser } from './mdns-advertiser.js';
 import { certFingerprint } from './federation.js';
 import { startFederationHeartbeat, type FederationHeartbeat } from './federation-heartbeat.js';
@@ -138,7 +135,7 @@ for (const key of TERMINAL_LOCATOR_ENV_KEYS) delete process.env[key];
  * 密码认证兜底，见 auth.ts), starts watching all registered projects, wires up
  * hook ingestion, and statically hosts the built SPA if present.
  */
-export function startDaemon(): void {
+export async function startDaemon(): Promise<void> {
   // 三档目录搬迁（data/ local/ cache/）必须先于读状态与开库：库文件自己也在搬。
   ensureDataLayout();
   // 待还原单（设置页备份还原约下的）：开库前吞掉——换上包里的库再开。
@@ -155,7 +152,14 @@ export function startDaemon(): void {
   const db = openDatabase();
   setDaemonSettingsDb(db); // 配置统一落库：settings 表直连本库（测试可注入覆盖）
   const bindHost = readDaemonSettingsSync().server?.bindHost ?? DEFAULT_BIND_HOST;
-  const tlsPort = readDaemonSettingsSync().server?.tlsPort ?? DEFAULT_SERVER_SETTINGS.tlsPort;
+  // 单端口 HTTPS（2026-11-23 裁决）：证书是监听的前提，缺失/过期/IP 变了会重签。
+  const { cert: ownCertPem } = await ensureDaemonCert();
+  // 本机用户级受信任根（跨平台）：同证书只装一次（指纹标记），失败不拦启动。
+  const certPath = path.join(getCertsDir(), 'host.crt');
+  void installCertTrust(certPath);
+  // Node 系子进程（agent 的 MCP http 客户端）默认不读 OS 信任库：把它注进本进程 env，
+  // 拉起的会话继承（用户自己设过就不覆盖）。codex（rustls）不走这条，见 §12 待办。
+  process.env.NODE_EXTRA_CA_CERTS ??= certPath;
   // dashboard 认证（监听放开的配套）：口令材料落 <dataDir>/auth.json。首启生成的
   // 初始密码已写入 initial-password 标记文件——本进程 detached/stdio:ignore 启动，
   // 打印必丢，领取通道是 CLI（`weave dashboard`/`weave chpass` 读标记并显示一次）。
@@ -403,6 +407,10 @@ export function startDaemon(): void {
         count: entry.questions.length,
         at: entry.at,
       });
+    },
+    // 待答面变化 → 绝对值快照直推 SSE（web 不再帧到后重拉 GET /messaging/questions）。
+    onChange: () => {
+      dataBus.emit({ key: 'sessionQuestions', payload: questionTracker.snapshot() });
     },
     // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
     interruptedAt: (sessionId) => {
@@ -820,14 +828,8 @@ export function startDaemon(): void {
   hookPipelineRef = hookPipeline;
   const staticDir = resolveStaticDir();
 
-  // 本机身份（pairing 要约 / TOFU 对齐）：证书来自 <local>/certs（TLS 监听同源）。
-  const certDir = getCertsDir();
-  let ownCert = '';
-  try {
-    ownCert = readFileSync(path.join(certDir, 'host.crt'), 'utf8');
-  } catch {
-    // 证书未生成（TLS 没开过）：pairing 侧如实 503
-  }
+  // 本机身份（pairing 要约 / TOFU 对齐）：证书就是主监听那份（<local>/certs）。
+  const ownCert = ownCertPem;
   let mdnsAdvertiser: MdnsAdvertiser | null = null;
   let federationHeartbeat: FederationHeartbeat | null = null;
   const ownFingerprint = ownCert ? certFingerprint(ownCert) : null;
@@ -851,12 +853,10 @@ export function startDaemon(): void {
     },
   });
 
-  // handler 单独建一次：HTTP 与局域网 HTTPS 两个监听共享（fingerprint 缓存同源）。
   let beginDrain: (() => void) | null = null;
   const requestHandler = weaveRequestHandler({
     projects,
     port: state.port,
-    tlsPort,
     watch,
     hookEvents,
     adapters,
@@ -936,45 +936,30 @@ export function startDaemon(): void {
     auth,
   });
   beginDrain = requestHandler.beginDrain;
-  const server = http.createServer(requestHandler);
-  // B3：终端流 WS（只在两个 runtime deps 都在时挂 upgrade；TLS 监听是独立 server
-  // 实例、upgrade 也要挂同一份——2026-11-20 B4 实测：不挂会把 WS upgrade 当普通
-  // 请求回落 SPA）。
+  // 唯一网络面 = 单端口 HTTPS（2026-11-23 裁决 HTTP 下线）。
+  const server = await createDaemonServer(requestHandler);
+  // B3：终端流 WS（挂同一 server 的 upgrade；不挂会把 WS upgrade 当普通请求回落 SPA）。
   if (terminalGateway && runtimeSup) {
     attachTerminalWebSocket(server, { auth, runtimeSupervisor: runtimeSup }, terminalGateway);
   }
 
-  // 局域网 HTTPS 监听（自签证书，与 HTTP 同 handler/认证面；端口被占等失败仅警告降级）。
-  let tls: TlsListener | null = null;
-  void startTlsServer({
-    port: tlsPort,
-    bindHost,
-    handler: requestHandler,
-    upgrade:
-      terminalGateway && runtimeSup
-        ? terminalUpgradeHandler({ auth, runtimeSupervisor: runtimeSup }, terminalGateway)
-        : undefined,
-  }).then((r) => {
-    tls = r;
-    // mTCP 发现（E3）：联邦/广播开关（settings federation）开着才播；只广播不
-    // 接收执行，安全面不变（对端仍要令牌）。tlsPort 未开 = 无 HTTPS，不播。
-    const fed = readDaemonSettingsSync().federation;
-    if (r && fed?.discovery && tlsPort > 0) {
-      mdnsAdvertiser = startMdnsAdvertiser({
-        tlsPort,
-        httpPort: state.port,
-        certPem: ownCert,
-        hostname: os.hostname(),
-      });
-    }
-    // 心跳出站（F1）：联邦总闸开着才跑（关联邦 = 零网络活动，裁决红线）。
-    if (fed?.enabled) {
-      federationHeartbeat = startFederationHeartbeat({
-        peers,
-        tokenDir: getPeerTokensDir(),
-      });
-    }
-  });
+  // mTCP 发现（E3）：联邦/广播开关（settings federation）开着才播；只广播不
+  // 接收执行，安全面不变（对端仍要令牌）。
+  const fed = readDaemonSettingsSync().federation;
+  if (fed?.discovery) {
+    mdnsAdvertiser = startMdnsAdvertiser({
+      httpsPort: state.port,
+      certPem: ownCert,
+      hostname: os.hostname(),
+    });
+  }
+  // 心跳出站（F1）：联邦总闸开着才跑（关联邦 = 零网络活动，裁决红线）。
+  if (fed?.enabled) {
+    federationHeartbeat = startFederationHeartbeat({
+      peers,
+      tokenDir: getPeerTokensDir(),
+    });
+  }
 
   const shutdown = (): void => {
     pluginLoaderRef?.stopWatching(); // 取当前一代 watcher（「重新扫描」会换代，不能存启动时那个 stop）
@@ -1001,8 +986,6 @@ export function startDaemon(): void {
     beginDrain?.();
     server.close();
     drainServerConnections(server);
-    tls?.server.close();
-    if (tls) drainServerConnections(tls.server);
     // 等 inbox worker 真停（terminate 是异步的，worker 的 DB 连接/WAL 锁要
     // 干净释放）再退——立刻 exit 会把锁释放甩给 OS 慢慢收，紧跟的 start
     // 撞上垂死锁（boot log 实测过 database is locked）。兜底 3s：worker
@@ -1039,13 +1022,13 @@ export function startDaemon(): void {
 
   server.listen(state.port, bindHost, () => {
     // Record the real pid + actual bind host now that we are listening.
-    writeDaemonState({ ...state, pid: process.pid, host: bindHost, tlsPort });
+    writeDaemonState({ ...state, pid: process.pid, host: bindHost });
     // 开机自启对账：设置是唯一事实源（开着但系统项被清 → 重建；反之清掉）。
     syncLaunchOnLogin();
     // 桌面宠物窗：settings pet.enabled 开着才拉（本机回环地址，cookie 认证）。
     // 内置默认宠先播种（缺失才拷），窗与 /pets 列表才有货。
     void seedBuiltinPets().then(() => {
-      openPetWindow({ baseUrl: `http://localhost:${state.port}`, auth });
+      openPetWindow({ baseUrl: `https://localhost:${state.port}`, auth });
     });
   });
   // 端口被占等 listen 失败：不挂这个就是 uncaughtException 静默死（stdio:ignore

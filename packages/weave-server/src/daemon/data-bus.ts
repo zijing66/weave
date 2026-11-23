@@ -23,6 +23,7 @@ export type DataKey =
   | 'sessionInterrupt'
   | 'sessionEffort'
   | 'sessionActivity'
+  | 'sessionQuestions'
   | 'inflightCounts'
   | 'assets'
   | 'toolkit'

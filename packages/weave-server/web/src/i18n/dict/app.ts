@@ -95,10 +95,6 @@ export const appZh = {
   'dashboard.sysMem': '内存',
   'dashboard.sysDisk': '磁盘',
 
-  // —— 资源徽标（项目卡 / 会话卡；数据同源 = 全局仪表盘同一帧 metrics）——
-  'project.resTip': '本项目 Agent 进程 CPU / 内存 / 磁盘 IO 合计，60 秒粒度，活实例 {n} 个',
-  'tasks.resTip': '该会话 Agent 进程 CPU / 内存 / 磁盘 IO，60 秒粒度',
-
   // —— 左侧项目列表 ——
   'project.globalConfig': '全局管理',
   'project.globalSubtitle': '机器级 harness 默认模板',
@@ -333,8 +329,6 @@ export const appEn: Record<keyof typeof appZh, string> = {
   'dashboard.sysMem': 'Memory',
   'dashboard.sysDisk': 'Disk',
   'dashboard.resCpu': 'CPU (single-core %)',
-  'project.resTip': 'Agent CPU / memory / disk IO totals of this project, 60s granularity, {n} live',
-  'tasks.resTip': 'Agent CPU / memory / disk IO of this session, 60s granularity',
 
   // —— Project sidebar ——
   'project.globalConfig': 'Global config',
