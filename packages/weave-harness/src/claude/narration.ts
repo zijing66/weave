@@ -75,12 +75,18 @@ export function assistantTextOf(entry: Record<string, unknown>): NarrationText |
   const turnPosition = entry.turnPosition as
     | { promptIndex?: unknown; turnIndex?: unknown }
     | undefined;
+  const usage = (entry.message as { usage?: Record<string, unknown> } | undefined)?.usage;
+  const num = (k: string): number =>
+    usage && typeof usage[k] === 'number' && Number.isFinite(usage[k]) ? (usage[k] as number) : 0;
+  const inTok = num('input_tokens') + num('cache_read_input_tokens') + num('cache_creation_input_tokens');
+  const outTok = num('output_tokens');
   return {
     at: typeof entry.timestamp === 'string' ? entry.timestamp : null,
     text,
     ...(typeof entry.uuid === 'string' ? { uuid: entry.uuid } : {}),
     ...(typeof turnPosition?.promptIndex === 'number' ? { promptIndex: turnPosition.promptIndex } : {}),
     ...(typeof turnPosition?.turnIndex === 'number' ? { turnIndex: turnPosition.turnIndex } : {}),
+    ...(inTok > 0 || outTok > 0 ? { tokens: { in: inTok, out: outTok } } : {}),
   };
 }
 

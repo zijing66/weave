@@ -166,6 +166,8 @@ export interface ConvEntry {
   /** 显式轮次（claude 转录 turnPosition 透传）：旁白轮归属与「回答段」判定用。 */
   promptIndex?: number;
   turnIndex?: number;
+  /** 该段 API usage（转录行 message.usage；in 含 cache）：气泡时间旁的 token 读数。 */
+  tokens?: { in: number; out: number };
   /** 已被回退（宿主 rewind 把这段对话退掉了）：置灰保留展示，不参与「最新回复」。 */
   rewound?: boolean;
   /** 命令执行回显（内建命令没有 hook 事件，正文来自转录）：气泡里摆成胶囊 + 输出。 */
@@ -724,12 +726,13 @@ export function isGenerating(
   );
 }
 
-/** 升格段（narrated）是「转录里已见、闭轮事件还没落」的输出：running 下它压尾
- *  不算回话——否则流式期间尾条是升格段，状态条消失（用户以为卡住了）。 */
+/** 尾条是过程输出（narrated 升格段 / 仍折叠的 narration 段）=「转录里已见、闭轮
+ *  事件还没落」的输出：running 下压尾不算回话——否则流式期间（尤其轮次继承断链、
+ *  段走降级路径留在叠层里时）尾条一变成旁白，状态条就消失（用户以为卡住了）。 */
 export function isNarrating(
   entry: ConvEntry | undefined,
 ): boolean {
-  return entry?.role === 'assistant' && entry.narrated === true;
+  return entry?.role === 'assistant' && (entry.narrated === true || entry.narration === true);
 }
 
 /** 尾条是一次失败收尾（宿主把 API 报错当闭轮事件送来）→ 尾巴上那行要换成它报的
@@ -855,7 +858,7 @@ function sameNarration(a: string, b: string): boolean {
  */
 export function withNarration(
   entries: readonly ConvEntry[],
-  narration: ReadonlyArray<{ at: string | null; text: string; uuid?: string; promptIndex?: number; turnIndex?: number }> | null,
+  narration: ReadonlyArray<{ at: string | null; text: string; uuid?: string; promptIndex?: number; turnIndex?: number; tokens?: { in: number; out: number } }> | null,
 ): ConvEntry[] {
   if (!narration?.length) return [...entries];
   const closeTexts = entries.filter((e) => e.role === 'assistant' && !e.preQuestion).map((e) => e.text);
@@ -873,6 +876,7 @@ export function withNarration(
       narration: true,
       ...(seg.turnIndex !== undefined ? { turnIndex: seg.turnIndex } : {}),
       ...(seg.promptIndex !== undefined ? { promptIndex: seg.promptIndex } : {}),
+      ...(seg.tokens ? { tokens: seg.tokens } : {}),
     };
     // 插入锚：第一条「时刻更晚」的条目前；**同刻的 user/compaction 也算更晚**——
     // 转录 timestamp 与事件 createdAt 字符串比较同秒时伪严格，旁白会被插到同刻
@@ -903,6 +907,7 @@ export function withNarration(
     const last = out[j]!;
     const { narration: _drop, turnIndex: _t, promptIndex: _p, ...promoted } = last;
     promoted.narrated = true;
+    promoted.tokens = last.tokens;
     out[j] = promoted;
     i = j + 1;
   }

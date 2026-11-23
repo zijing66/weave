@@ -121,6 +121,10 @@ const SEND_KEY_KEY = 'weave:conv-send-key';
 const sendKeyOf = (): SendKeyMode =>
   localStorage.getItem(SEND_KEY_KEY) === 'enter' ? 'enter' : 'ctrl-enter';
 
+/** token 读数的紧凑形（1.2k / 3.4m）：气泡头一行的空间只够短串。 */
+const fmtTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}m` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
+
 
 /**
  * 会话对话：双向时间线 = 用户投递的消息 + 每轮 Stop 的最终总结，外加还
@@ -1248,6 +1252,11 @@ export function SessionMessages({
                       >
                         <span className="mb-0.5 flex items-center gap-1.5 text-10 text-neutral-600">
                           {formatStamp(m.at)}
+                          {m.tokens && (m.tokens.in > 0 || m.tokens.out > 0) && (
+                            <span className="shrink-0 tabular-nums text-neutral-600" title={t('tasks.convTokens')}>
+                              ↑{fmtTokens(m.tokens.in)} ↓{fmtTokens(m.tokens.out)}
+                            </span>
+                          )}
                           {m.plan === true && (
                             <span className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-10 font-medium text-amber-300">
                               {t('tasks.convPlan')}

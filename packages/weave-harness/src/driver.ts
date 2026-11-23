@@ -1149,6 +1149,9 @@ export interface NarrationText {
    *  连续段归一轮，轮内最后一段是回答——前端据此分组，不再靠「后面紧跟 user」猜。 */
   promptIndex?: number;
   turnIndex?: number;
+  /** 该行 API usage（claude = message.usage；in 含 cache 读/建）：气泡时间旁的
+   *  token 读数用。宿主没带 → 缺省。 */
+  tokens?: { in: number; out: number };
 }
 
 /**
