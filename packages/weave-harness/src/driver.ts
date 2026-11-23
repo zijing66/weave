@@ -1292,7 +1292,9 @@ export interface LivenessSurface {
   /**
    * 同一会话的活实例清单（可选）：Web 终端 PTY 与外部终端 `--resume` 会同时打开
    * 同一会话，两个进程写同一份转录——消费方据此告警与防双开。只输出**真活着**
-   * 的 pid；未声明 = 本 harness 没有「同会话多实例」这个概念（不判）。
+   * 的 pid，**按起进程时刻升序（先来在前）**——防双开闸的新实例挤掉旧实例按
+   * 此序取最老者；缺时间戳的实例排最前。未声明 = 本 harness 没有「同会话多
+   * 实例」这个概念（不判）。
    */
   instances?(ids?: readonly string[]): Map<string, number[]>;
 }

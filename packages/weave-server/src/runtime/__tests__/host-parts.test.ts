@@ -152,6 +152,8 @@ describe('InstanceManager', () => {
     fake.exitNow(0);
     expect(events.at(-1)).toMatchObject({ type: 'instance.exited', exitCode: 0 });
     expect(mgr.activeCount()).toBe(0);
-    expect(mgr.summaries()[0]).toMatchObject({ status: 'exited' });
+    // 清单只报活实例（exited 行留 Map 供 replay；dashboard 的 liveHeadlessCounts
+    // 同口径，否则 ack 的 N 与会话数恒差一枚）。
+    expect(mgr.summaries()).toEqual([]);
   });
 });

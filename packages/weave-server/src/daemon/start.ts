@@ -80,7 +80,7 @@ import {
 } from '../repositories/extension-bindings.js';
 import { createDecisionConditionJudge, createDecisionModelTier } from '../hooks/decision-judge.js';
 import { readDecisionKey } from './decision-config.js';
-import { createEnsureOpen } from './session-open.js';
+import { createEnsureOpen, sweepDisplacedWebInstances } from './session-open.js';
 import { loadAllPlugins, type PluginHost, type PluginManager, type WeavePluginLoader } from '../hooks/plugin-loader.js';
 import { ToolkitService } from '../hooks/toolkit.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -722,6 +722,10 @@ export async function startDaemon(): Promise<void> {
   // 定时触发：30s 一枪（同分钟只 fire 一次、跑着的跳过）。
   const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
   cronTimer.unref();
+  // 反向挤掉：用户手动在外部终端 --resume（宿主注册表登记了 pid）时，同一会话
+  // 的 web PTY 实例让位——手动起的赢，不必等用户从 UI 关。
+  const displaceTimer = setInterval(() => sweepDisplacedWebInstances({ agentInstances, runtimeSupervisor: runtimeSup }), 15_000);
+  displaceTimer.unref();
   // goal 驱动循环（G6 批4b）：回合账归 ingest 落库（重启可续），推进节拍随 cron
   // 同 30s 一枪（引擎内 90s 冷却自限频率；目标忙/判死不投，v1 不自动拉起）。
   const rpgGoalEngine = new RpgGoalEngine({
@@ -965,7 +969,10 @@ export async function startDaemon(): Promise<void> {
 
   const shutdown = (): void => {
     pluginLoaderRef?.stopWatching(); // 取当前一代 watcher（「重新扫描」会换代，不能存启动时那个 stop）
-    runtimeSup.stop(); // 停机后不再重连/拉起 Host（Host 进程自身独立存活，不杀）
+    // Host 是 daemon 的守护进程，生命周期一致：生产停机把它一并收掉（实例全杀）。
+    // dev-entry 不走这里（tsx watch 热重载每次都停机，杀 Host 终端会全断）。
+    void runtimeSup.shutdownHost();
+    runtimeSup.stop();
     terminalRefresher.stop();
     livenessRefresher.stop();
     interruptRefresher.stop();
@@ -978,6 +985,7 @@ export async function startDaemon(): Promise<void> {
     headlessRunner.killAll();
     clearInterval(cronTimer);
     clearInterval(goalTimer);
+    clearInterval(displaceTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
     metricsSampler.stop();

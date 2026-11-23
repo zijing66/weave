@@ -816,7 +816,7 @@ export function ProjectList({
                 {/* 第一行：名字占满可伸缩宽度，统计徽标贴右不收缩 */}
                 <span className="flex w-full min-w-0 items-center gap-2">
                   <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                    <span className="min-w-0 truncate text-sm" title={p.name}>
+                    <span className="min-w-0 truncate text-12" title={p.name}>
                       {p.name}
                     </span>
                     {p.superagent && <Badge variant="superagent">superagent</Badge>}

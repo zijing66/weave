@@ -57,7 +57,7 @@ import {
 import { createDecisionConditionJudge, createDecisionModelTier } from '../hooks/decision-judge.js';
 import { createMemoryExit } from '../hooks/memory-exit.js';
 import { readDecisionKey } from './decision-config.js';
-import { createEnsureOpen } from './session-open.js';
+import { createEnsureOpen, sweepDisplacedWebInstances } from './session-open.js';
 import { loadAllPlugins, type PluginManager } from '../hooks/plugin-loader.js';
 import { ensureBuiltinMarket, builtinMarketDir } from '../market/builtin.js';
 import { ToolkitService } from '../hooks/toolkit.js';
@@ -671,6 +671,10 @@ async function main(): Promise<void> {
   orchestrationEngine.rearm();
   const cronTimer = setInterval(() => orchestrationEngine.cronTick(), 30_000);
   cronTimer.unref();
+  // 反向挤掉：用户手动在外部终端 --resume（宿主注册表登记了 pid）时，同一会话
+  // 的 web PTY 实例让位——手动起的赢，不必等用户从 UI 关。
+  const displaceTimer = setInterval(() => sweepDisplacedWebInstances({ agentInstances, runtimeSupervisor: runtimeSup }), 15_000);
+  displaceTimer.unref();
   // goal 驱动循环（G6 批4b，与 start.ts 同装配）：回合账归 ingest 落库，节拍 30s。
   const rpgGoalEngine = new RpgGoalEngine({
     goals: new RpgGoalRepository(db),
@@ -928,7 +932,9 @@ async function main(): Promise<void> {
   }
 
   const shutdown = (): void => {
-    runtimeSup.stop(); // 停机后不再重连/拉起 Host（Host 进程自身独立存活，不杀）
+    // 不向 Host 发 shutdown.graceful（生产入口才收）：tsx watch 热重载每次改码都
+    // 走一遍停机，杀了 Host 终端全断；残留 Host 由 60s 空闲自退兜底。
+    runtimeSup.stop();
     terminalRefresher.stop();
     livenessRefresher.stop();
     interruptRefresher.stop();
@@ -939,6 +945,7 @@ async function main(): Promise<void> {
     headlessRunner.killAll();
     clearInterval(cronTimer);
     clearInterval(goalTimer);
+    clearInterval(displaceTimer);
     narrationWatcher.stop();
     dashboardPusher.stop();
     metricsSampler.stop();

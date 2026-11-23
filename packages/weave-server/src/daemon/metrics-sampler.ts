@@ -91,7 +91,9 @@ export interface MetricsSnapshot {
   history: MetricsHistoryPoint[];
   /** 全局系统读数（整机 CPU/内存/磁盘）；采不到 = null（macOS 暂缺席）。 */
   system: SystemSample | null;
-  /** 系统时序环形（10s 一格，最长 24h；按窗口裁剪由读方做）。 */
+  /** 系统时序环形（10s 一格，最长 24h；按窗口裁剪由读方做）。
+   *  增量拍（非首连）只带近 1h——全量 24h 史 ≈1MB，每 10s 两枪重发一遍是
+   *  2026-11-23 OOM 的放大器（SSE 环形账与停滞客户端按帧全量积字节）。 */
   systemHistory: SystemHistoryPoint[];
 }
 
@@ -198,9 +200,17 @@ export class MetricsSampler {
     this.timers.length = 0;
   }
 
-  /** 首连（SseHub onAttach）与手动刷新共用：全量快照一帧。 */
+  /** 首连（SseHub onAttach）与手动刷新共用：全量快照一帧（systemHistory 带 24h 全量）。 */
   attach(): void {
     this.deps.bus.emit({ kind: 'metrics.snapshot', at: new Date().toISOString(), snapshot: this.snapshot() });
+  }
+
+  /** 增量拍：systemHistory 只带近 1h（窗口裁剪是读方既有逻辑，1h 是图窗可选档）。 */
+  private emitIncremental(): void {
+    const snap = this.snapshot();
+    const cutoff = Date.now() - 3_600_000;
+    snap.systemHistory = snap.systemHistory.filter((p) => Date.parse(`${p.at}Z`) >= cutoff);
+    this.deps.bus.emit({ kind: 'metrics.snapshot', at: new Date().toISOString(), snapshot: snap });
   }
 
   snapshot(): MetricsSnapshot {
@@ -226,7 +236,7 @@ export class MetricsSampler {
     if (elapsed > 0) this.daemonCpuPercent = ((usage.user + usage.system) / 1e6 / elapsed) * 100;
     this.daemonMemRssBytes = process.memoryUsage().rss;
     this.pushHistoryPoint();
-    this.emit();
+    this.emitIncremental();
   }
 
   private pushHistoryPoint(): void {
@@ -241,10 +251,6 @@ export class MetricsSampler {
       ...(host ? { hostCpuPercent: round1(host.cpuPercent), hostMemRssBytes: host.memRssBytes } : {}),
     });
     if (this.history.length > HISTORY_MAX) this.history.shift();
-  }
-
-  private emit(): void {
-    this.deps.bus.emit({ kind: 'metrics.snapshot', at: new Date().toISOString(), snapshot: this.snapshot() });
   }
 
   /** 全局系统采样：整机 CPU（差分）+ 内存 + 各逻辑盘。失败静默缺席（不拖慢请求路径）。 */
@@ -281,7 +287,7 @@ export class MetricsSampler {
       });
       if (this.systemHistory.length > SYSTEM_MAX) this.systemHistory.shift();
       this.systemDirty = true;
-      this.emit();
+      this.emitIncremental();
     } catch {
       /* 本枪失败：缺席而非 0 */
     }
@@ -366,7 +372,7 @@ export class MetricsSampler {
           }
         }
         this.agentSamples = new Map(samples.map((s) => [s.instanceId, s]));
-        this.emit();
+        this.emitIncremental();
         return;
       }
       const prev = this.prevPidReadings;
@@ -398,7 +404,7 @@ export class MetricsSampler {
     }
 
     this.agentSamples = new Map(samples.map((s) => [s.instanceId, s]));
-    this.emit();
+    this.emitIncremental();
   }
 
   /** 全进程树读数（Windows = 一枪 PowerShell CIM；Linux = /proc 零开销）。 */

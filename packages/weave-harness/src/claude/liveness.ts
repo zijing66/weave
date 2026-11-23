@@ -20,6 +20,8 @@ import type { LivenessSurface } from '../driver.js';
 export interface ClaudeSessionReg {
   pid: number;
   sessionId: string;
+  /** 宿主起进程的时刻（ms epoch）；双开挤掉闸按它定先来后到。 */
+  startedAt?: number;
 }
 
 /** 解析一个登记文件；坏输入 null。 */
@@ -30,10 +32,14 @@ export function parseClaudeSessionReg(jsonText: string): ClaudeSessionReg | null
   } catch {
     return null;
   }
-  const reg = raw as { pid?: unknown; sessionId?: unknown };
+  const reg = raw as { pid?: unknown; sessionId?: unknown; startedAt?: unknown };
   if (typeof reg?.pid !== 'number' || !Number.isInteger(reg.pid) || reg.pid < 0) return null;
   if (typeof reg.sessionId !== 'string' || !reg.sessionId) return null;
-  return { pid: reg.pid, sessionId: reg.sessionId };
+  return {
+    pid: reg.pid,
+    sessionId: reg.sessionId,
+    ...(typeof reg.startedAt === 'number' ? { startedAt: reg.startedAt } : {}),
+  };
 }
 
 /** signal 0 探活：ESRCH = 进程不在；EPERM 等 = 存在但无权，按活算。 */
@@ -133,8 +139,9 @@ export function claudeLivenessById(dir: string | null = null): LivenessMap {
 
 /**
  * 同一会话的全部活实例 pid（双开检测）：注册表里同一 sessionId 的多行登记各自
- * kill 0，只回活着的。消费方 = server 的 `/sessions` 行（`liveInstances`）与
- * open-terminal 的防双开闸。
+ * kill 0，只回活着的，**按 startedAt 升序**（先来在前）——消费方 = server 的
+ * `/sessions` 行（`liveInstances`）与 open-terminal 的防双开挤掉闸（新起的
+ * 实例挤掉先起的）。缺 startedAt 的旧行排最前（当最老的让位者）。
  */
 export function claudeLiveInstances(dir: string | null = null): Map<string, number[]> {
   const target = dir ?? defaultClaudeSessionsDir();
@@ -146,6 +153,7 @@ export function claudeLiveInstances(dir: string | null = null): Map<string, numb
   } catch {
     return out; // 读挂 = 空图（消费方按「查不到」处理，不告警）
   }
+  const entries = new Map<string, Array<{ pid: number; startedAt: number }>>();
   for (const name of names) {
     if (!/^\d+\.json$/.test(name)) continue;
     let text: string;
@@ -156,9 +164,14 @@ export function claudeLiveInstances(dir: string | null = null): Map<string, numb
     }
     const reg = parseClaudeSessionReg(text);
     if (!reg || !pidAlive(reg.pid)) continue;
-    const pids = out.get(reg.sessionId);
-    if (pids) pids.push(reg.pid);
-    else out.set(reg.sessionId, [reg.pid]);
+    const entry = { pid: reg.pid, startedAt: reg.startedAt ?? 0 };
+    const list = entries.get(reg.sessionId);
+    if (list) list.push(entry);
+    else entries.set(reg.sessionId, [entry]);
+  }
+  for (const [id, list] of entries) {
+    list.sort((a, b) => a.startedAt - b.startedAt);
+    out.set(id, list.map((e) => e.pid));
   }
   return out;
 }

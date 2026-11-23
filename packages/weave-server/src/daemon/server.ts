@@ -629,11 +629,20 @@ function handleSse(
   }
 
   // 先接上实时流再补快照：补发与订阅之间不许有空档，否则那一拍的新帧会漏。
+  // 背压：res.write 假成功——客户端停滞（手机挂起/代理零窗口）时 socket 不报错
+  // 也不 close，node 内核缓冲无界堆积（2026-11-23 OOM：daemon 跑一天 heap 4GB
+  // 打满，停滞 SSE 连接 ≈3.5GB/天/条）。超限 = 这条流已不可信，直接断，
+  // 浏览器 EventSource 自会带着 Last-Event-ID 重连（补不齐走 resync 整页重来）。
+  const SSE_CLIENT_BUFFER_LIMIT = 8 * 1024 * 1024;
   const unsubscribe = hub.subscribe((frame) => {
     try {
       if (!inDomain(String((JSON.parse(frame.data) as { type?: string }).type))) return;
     } catch {
       // 同上：写不出去的帧不会比能写出的多信息
+    }
+    if (res.writableLength > SSE_CLIENT_BUFFER_LIMIT) {
+      res.destroy();
+      return;
     }
     res.write(`id: ${frame.id}\ndata: ${frame.data}\n\n`);
   });

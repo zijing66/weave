@@ -101,6 +101,32 @@ describe('claudeLivenessById', () => {
     }
   });
 
+  it('claudeLiveInstances 按 startedAt 升序（先来在前；缺 startedAt 排最前）', async () => {
+    const { spawn } = await import('node:child_process');
+    const children = [1, 2].map(() =>
+      spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' }),
+    );
+    try {
+      writeFileSync(
+        join(dir, `${process.pid}.json`),
+        JSON.stringify({ pid: process.pid, sessionId: 'order-1', startedAt: 2000 }),
+      );
+      writeFileSync(
+        join(dir, `${children[0].pid!}.json`),
+        JSON.stringify({ pid: children[0].pid!, sessionId: 'order-1', startedAt: 1000 }),
+      );
+      // 缺 startedAt 的旧行当最老的让位者（排最前）
+      writeFileSync(
+        join(dir, `${children[1].pid!}.json`),
+        JSON.stringify({ pid: children[1].pid!, sessionId: 'order-1' }),
+      );
+      const instances = claudeLiveInstances(dir);
+      expect(instances.get('order-1')).toEqual([children[1].pid!, children[0].pid!, process.pid]);
+    } finally {
+      for (const c of children) c.kill();
+    }
+  });
+
   it('目录读挂（readdir 失败）→ readable:false；ENOENT = 可靠空图', () => {
     // 目录路径挂一个普通文件：readdir 对文件路径报 ENOTDIR（非 ENOENT）→ 读挂
     const asFile = join(dir, 'occupied');

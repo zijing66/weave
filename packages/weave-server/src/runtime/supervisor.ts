@@ -304,6 +304,17 @@ export class RuntimeSupervisor {
     return raw.entries ?? [];
   }
 
+  /** daemon 停机时收 Host（实例全杀 + 进程退出）：Host 是 daemon 的守护进程，
+   *  生命周期一致（2026-11-23 用户裁决）。Host 不在 = 已经死了或自退了，静默。 */
+  async shutdownHost(): Promise<void> {
+    if (!this.client?.connected) return;
+    try {
+      await this.client.request('shutdown.graceful', undefined, undefined, 5_000);
+    } catch {
+      /* Host 已死：无所谓 */
+    }
+  }
+
   resize(instanceId: string, cols: number, rows: number): Promise<unknown> {
     if (!this.client?.connected) return Promise.reject(new Error('runtime host not connected'));
     return this.client.resize(instanceId, cols, rows);

@@ -15,6 +15,9 @@ import type { DataBus } from './data-bus.js';
 
 /** 环形缓冲上限：几百帧足够覆盖一次普通断流，再多就不值得占内存了。 */
 const SSE_BUFFER_MAX = 1000;
+/** 字节上限：metrics 帧带全量 systemHistory（≈1MB），1000 帧光环形账就能吃 1GB
+ *  ——超限从最老开始裁（2026-11-23 OOM 定案）。 */
+const SSE_BUFFER_BYTES = 16 * 1024 * 1024;
 
 /** 最后一个连接走后再挂一会儿：刷新页面、网络抖动、判死重建都落在这一分钟内，
  *  落在里面就还是同一条连续的流（不用整页重来）。 */
@@ -39,6 +42,7 @@ export class SseHub {
   readonly epoch = randomBytes(4).toString('hex');
   private seq = 0;
   private readonly buffer: { seq: number; data: string }[] = [];
+  private bufferBytes = 0;
   private readonly subs = new Set<(frame: SseFrameOut) => void>();
   private detach: (() => void) | null = null;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -63,7 +67,12 @@ export class SseHub {
     const seq = ++this.seq;
     const data = JSON.stringify(payload);
     this.buffer.push({ seq, data });
-    if (this.buffer.length > SSE_BUFFER_MAX) this.buffer.shift();
+    this.bufferBytes += data.length;
+    while (this.buffer.length > SSE_BUFFER_MAX || this.bufferBytes > SSE_BUFFER_BYTES) {
+      const dropped = this.buffer.shift()!;
+      this.bufferBytes -= dropped.data.length;
+      if (this.buffer.length === 0) break;
+    }
     const frame = { id: this.frameId(seq), data };
     for (const fn of this.subs) fn(frame);
   }

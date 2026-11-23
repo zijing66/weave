@@ -98,6 +98,8 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
       cursorBlink: true,
       convertEol: false,
       scrollback: 5000,
+      // Unicode11Addon 注册宽度表走 proposed API（registerProvider）
+      allowProposedApi: true,
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -284,7 +286,9 @@ export function TerminalView({ instanceId, interactive = true, initialCommand }:
   }, [instanceId, interactive, initialCommand]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    // h-full：父层是 display:block 的占位（flex-1 在它身上不生效），不撑满就
+    // 停在内容高——fit 按矮一截的容器量行数，屏下留黑区（2026-11-23 实测定案）。
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--w-muted-foreground, #666)]">
         <span
           className={

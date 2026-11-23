@@ -48,6 +48,8 @@ export type InstanceEvent =
 
 /** per-instance ring 上限（字节；PoC 里 `dir` 一屏就 700KB，512KB 量级合适）。 */
 export const RING_LIMIT_BYTES = 512 * 1024;
+/** exited 实例的 ring 保留窗：断线重放只要短窗，过了就摘（内存态生命周期一致）。 */
+const REAP_EXITED_MS = 60_000;
 
 export class InstanceManager {
   private readonly instances = new Map<string, ManagedInstance>();
@@ -90,6 +92,10 @@ export class InstanceManager {
       inst.exitCode = exitCode;
       inst.pty = null;
       this.emit({ type: 'instance.exited', instanceId: inst.id, exitCode });
+      // 短保留后从 Map 摘除（ring 是内存态）：终端面在 exited 帧已转终态停重连，
+      // 重放窗一过即无人再拉——账不收就常驻（2026-11-23 用户裁决：生命周期一致）。
+      const reap = setTimeout(() => this.instances.delete(inst.id), REAP_EXITED_MS);
+      reap.unref();
     });
     this.emit({ type: 'instance.started', instanceId: inst.id, osPid: pty.pid });
     return { osPid: pty.pid };
@@ -145,13 +151,17 @@ export class InstanceManager {
       .map((i) => ({ instanceId: i.id, osPid: i.osPid, outputBytes: i.outputBytes }));
   }
 
+  /** 实例清单 = 活实例（exited 行留在 Map 供 replay/exitCode 查询，2026-11-23
+   *  实测：不清场不摘行，ack 的 N 与 dashboard 的 liveHeadlessCounts 恒差一枚）。 */
   summaries(): HostInstanceSummary[] {
-    return [...this.instances.values()].map((i) => ({
-      id: i.id,
-      status: i.status === 'exited' ? 'exited' : 'running',
-      osPid: i.osPid,
-      lastSequence: i.sequence,
-    }));
+    return [...this.instances.values()]
+      .filter((i) => i.status !== 'exited')
+      .map((i) => ({
+        id: i.id,
+        status: 'running' as const,
+        osPid: i.osPid,
+        lastSequence: i.sequence,
+      }));
   }
 
   /** 重连补拉：`afterSequence` 之后的 ring 增量（缺口给 gap 条目，不装完整）。 */

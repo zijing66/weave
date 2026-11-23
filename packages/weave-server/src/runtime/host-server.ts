@@ -26,8 +26,9 @@ import { spawnPty } from './adapters/windows-pty.js';
 /** 单连接下行缓冲上限：超过即丢 terminal.output（控制类事件永不丢），落 gap 标记。 */
 const WRITE_LIMIT_BYTES = 4 * 1024 * 1024;
 
-/** pipe 无连接且 0 活实例持续此时长 → 自退（僵尸 Host 兜底）。 */
-const IDLE_EXIT_MS = 10 * 60 * 1000;
+/** pipe 无连接且 0 活实例持续此时长 → 自退（Host 是 daemon 的守护进程，daemon
+ *  崩溃/停机后不留常驻进程；断线重连窗口由 supervisor 侧重拉覆盖）。 */
+const IDLE_EXIT_MS = 60 * 1000;
 
 /** 资源自报周期（§13.3）：daemon 侧 10s 一拍聚合，Host 同拍。 */
 const RESOURCE_REPORT_MS = 10_000;

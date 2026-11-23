@@ -42,6 +42,7 @@ export type SessionOpenDeps = Pick<
   | 'terminalRefresher'
   | 'messageDeliverer'
   | 'runtimeSupervisor'
+  | 'agentInstances'
 >;
 
 export type SessionOpenResult =
@@ -200,19 +201,62 @@ type ResumeGate =
   | { ok: false; status: 400 | 404 | 409 | 501 | 503; error: string };
 
 /**
- * 防双开判据（唯一实现）：该会话已有活实例（Web 终端 PTY 或外部终端里跑着）
- * 就拒绝再 spawn 一个——两个进程写同一份转录，回合会交错。要换宿主先关掉现有
- * 的（关 pane / 退出外部终端）。空 = 放行。
+ * 防双开闸（唯一实现）：该会话已有活实例时按 **pid 时间序** 裁决——新起的实例
+ * 挤掉先起的（instances 清单升序、最老在前）。挤掉通道只有 web PTY
+ * （agent_instances 有账、daemon 经 supervisor 杀）；旧实例若在外部终端
+ * （daemon 杀不了），web 侧让位 409 请用户先关，绝不去 kill 别人家的进程。
  */
-export function duplicateInstanceError(
+export type DuplicateVerdict =
+  | { ok: true; displacedIds: string[] }
+  | { ok: false; status: 409; error: string };
+
+export function duplicateInstanceVerdict(
   pids: readonly number[],
-): { ok: false; status: 409; error: string } | null {
-  if (pids.length === 0) return null;
-  return {
-    ok: false,
-    status: 409,
-    error: `Session is already running (pid ${pids.join(', ')}) — close that instance before opening another`,
-  };
+  webInstanceIds: readonly string[],
+): DuplicateVerdict {
+  if (pids.length === 0) return { ok: true, displacedIds: [] };
+  // 旧实例一个都杀不了（全在外部终端 / 账过期）：新开只能让位。
+  if (webInstanceIds.length === 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: `Session is already running in an external terminal (pid ${pids.join(', ')}) — close that terminal before opening another`,
+    };
+  }
+  // 时间序里最老的先让位：有 web 账就挤掉全部 web 实例（它们同为旧实例，
+  // 新实例无论宿主形态都要独占这份转录）。
+  return { ok: true, displacedIds: [...webInstanceIds] };
+}
+
+/**
+ * 反向挤掉判据（唯一实现）：外部终端拿着 `--resume` 自己起来了（宿主注册表
+ * 里有它的 pid，不经 daemon 的开门闸），此刻该会话若还有 daemon 名下的 web
+ * PTY 实例，就该由 web 让位——后到的赢。pid 清单按起进程时刻升序（先来在前），
+ * 故只看最新那个：是外部的话 web 全让位；最新是 web 自己（外部更老、daemon
+ * 杀不了）就不动手。web 实例 osPid 一个都认不出时一律不下手，绝不误杀自己。
+ */
+export function displacedWebInstances(
+  livePids: readonly number[],
+  webRows: ReadonlyArray<{ id: string; osPid?: number }>,
+): string[] {
+  if (webRows.length === 0 || livePids.length < 2) return [];
+  const own = new Set(webRows.map((r) => r.osPid).filter((p): p is number => typeof p === 'number'));
+  if (own.size === 0) return [];
+  if (own.has(livePids[livePids.length - 1])) return [];
+  return webRows.map((r) => r.id);
+}
+
+/** 反向挤掉的后台一拍（boot 装配 15s 定时器；判据全在 displacedWebInstances）。 */
+export function sweepDisplacedWebInstances(
+  deps: Pick<SessionOpenDeps, 'agentInstances' | 'runtimeSupervisor'>,
+): void {
+  if (!deps.agentInstances || !deps.runtimeSupervisor) return;
+  for (const [sessionId, pids] of combinedInstancesOf()) {
+    const rows = deps.agentInstances.liveBySession(sessionId);
+    for (const id of displacedWebInstances(pids, rows)) {
+      void deps.runtimeSupervisor.killInstance(id).catch(() => {});
+    }
+  }
 }
 
 /** 交互式 resume 的门禁（外部终端开窗与 Web 终端 headless 恢复共用这一份判据）。 */
@@ -237,8 +281,19 @@ async function resolveResume(
     return { ok: false, status: 501, error: `Harness "${src}" does not support interactive resume` };
   }
   if (!session.projectId) return { ok: false, status: 400, error: 'Session is not bound to a project' };
-  const duplicate = duplicateInstanceError(combinedInstancesOf().get(sessionId) ?? []);
-  if (duplicate) return duplicate;
+  const instances = combinedInstancesOf().get(sessionId) ?? [];
+  // 挤掉语义（pid 时间序）：新起的实例挤掉先起的。挤掉通道 = web PTY 账
+  // （supervisor 可杀）；旧实例全在外部终端时杀不了 → 409 请用户先关。
+  const webInstanceIds = (deps.agentInstances?.liveBySession(sessionId) ?? [])
+    .filter((r) => r.status === 'running' || r.status === 'starting')
+    .map((r) => r.id);
+  const duplicate = duplicateInstanceVerdict(instances, webInstanceIds);
+  if (!duplicate.ok) return duplicate;
+  if (duplicate.displacedIds.length > 0 && deps.runtimeSupervisor) {
+    for (const id of duplicate.displacedIds) {
+      await deps.runtimeSupervisor.killInstance(id).catch(() => {});
+    }
+  }
   const project = deps.projects?.getById(session.projectId);
   if (!project) return { ok: false, status: 404, error: 'Project not found' };
   // 转录没了就别 spawn：--resume 认的是那份文件，开出去只会在 pane 里报

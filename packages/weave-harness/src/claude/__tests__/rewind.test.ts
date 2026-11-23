@@ -106,6 +106,7 @@ describe('stepRewind', () => {
     turns: [],
     messages: [],
     prevP: null,
+    prevTi: null,
     turnEnded: false,
     chain: [],
     tailUuid: null,
@@ -184,6 +185,24 @@ describe('stepRewind', () => {
       s,
       JSON.stringify(prompt('This session is being continued from a previous conversation: …', at(3), 1)),
     );
+    expect(s.marks).toEqual([]);
+  });
+
+  it('压缩后的第一条人类 prompt（复用已用过的 p）不当作回退', () => {
+    const s = fresh();
+    stepRewind(s, JSON.stringify(prompt('a', at(1), 1)));
+    stepRewind(s, JSON.stringify(turnDone(at(1))));
+    stepRewind(s, JSON.stringify(prompt('b', at(2), 2)));
+    stepRewind(s, JSON.stringify(turnDone(at(2))));
+    // 实测：续跑行 isCompactSummary = true，p 退到压前（2），之后人类 prompt 又拿到 2
+    stepRewind(
+      s,
+      JSON.stringify({
+        ...prompt('This session is being continued from a previous conversation: …', at(3), 1),
+        isCompactSummary: true,
+      }),
+    );
+    stepRewind(s, JSON.stringify(prompt('c', at(4), 2)));
     expect(s.marks).toEqual([]);
   });
 

@@ -56,11 +56,15 @@ export function stepRewind(state: RewindState, line: string): void {
     return;
   }
   if (isSyntheticPrompt(entry)) {
+    // 压缩续跑行带着压前那一轮的 p（实测压后的人类 prompt 会复用已用过的 p，
+    // turnIndex 也回退）。prevP 留着 ⇒ 下一条人类 prompt 凑齐「相等且上一轮已收尾」，
+    // 压缩后的第一条消息被误判成回退重发（2026-11-22 实测 4 次误报）。
+    if (isCompactionPrompt(entry)) state.prevP = null;
     state.turnEnded = false;
     noteChainRow(state, idOf(entry));
     return;
   }
-  const tp = entry.turnPosition as { promptIndex?: unknown } | undefined;
+  const tp = entry.turnPosition as { promptIndex?: unknown; turnIndex?: unknown } | undefined;
   const p = tp?.promptIndex;
   const ts = entry.timestamp;
   if (typeof p !== 'number' || !Number.isInteger(p) || p < 1 || typeof ts !== 'string') {
@@ -76,6 +80,7 @@ export function stepRewind(state: RewindState, line: string): void {
     noteChainRow(state, idOf(entry));
     return;
   }
+  const ti = typeof tp?.turnIndex === 'number' ? tp.turnIndex : null;
   // 链 fork 判据（2.1.319+）：human prompt 的 parentUuid 指回已知链行而非链尾 =
   // rewind fork（被退掉的链段 = fork 点到旧链尾）。指不回任何已知链行 = 会话开头
   // 之前的史前（resume / 换文件），不是 fork。
@@ -94,14 +99,20 @@ export function stepRewind(state: RewindState, line: string): void {
       state.messages.push(turn);
       state.turns.push(turn);
       state.prevP = p;
+      state.prevTi = ti;
       state.turnEnded = false;
       noteChainRow(state, idOf(entry));
       return;
     }
   }
   // 严格下降 = 退回到更早的轮；相等且上一轮已收尾 = 退回最后一轮重发（计数不变，
-  // 故靠「上一轮已结束」把同轮排队连发排除掉）。
-  const rewound = state.prevP !== null && (p < state.prevP || (p === state.prevP && state.turnEnded));
+  // 故靠「上一轮已结束」把同轮排队连发排除掉）。真回退重发是**重进同一轮**：
+  // turnIndex 不动；宿主在跨轮正常递增时（2026-11-22 实测）可能复用 promptIndex
+  // 而 turnIndex 照升（109 > 108）——那种「相等」不是回退，用 ti 闸掉。
+  const rewound =
+    state.prevP !== null &&
+    (p < state.prevP ||
+      (p === state.prevP && state.turnEnded && (state.prevTi === null || ti === state.prevTi)));
   if (rewound && state.turns.length >= p) {
     const cut = state.turns[p - 1]?.at ?? null;
     state.marks.push({ at: ts, boundaryAt: cut });
@@ -116,6 +127,7 @@ export function stepRewind(state: RewindState, line: string): void {
   else if (state.turns.length === p - 1) state.turns.push(turn);
   else if (state.turns.length < p - 1) state.turns = new Array<Turn | null>(p - 1).fill(null).concat(turn);
   state.prevP = p;
+  state.prevTi = ti;
   state.turnEnded = false;
   noteChainRow(state, idOf(entry));
 }
@@ -187,9 +199,17 @@ function promptTextOf(entry: Record<string, unknown>): string {
 const SYNTHETIC_PREFIX =
   /^(This session is being continued from a previous conversation|\[weave message\]|Another Claude session sent a message|\[Cross-session idle notice\]|\[Cross-session message\]|<task-notification>|<command-|<bash-|<local-command|Check background task)/;
 
+const CONTINUATION_PREFIX = /^This session is being continued from a previous conversation/;
+
 function isSyntheticPrompt(entry: Record<string, unknown>): boolean {
   if (entry.isCompactSummary === true) return true;
   return isSyntheticText(promptTextOf(entry));
+}
+
+/** 压缩续跑行（宿主借此把轮次计数退到压前那一轮）。 */
+function isCompactionPrompt(entry: Record<string, unknown>): boolean {
+  if (entry.isCompactSummary === true) return true;
+  return CONTINUATION_PREFIX.test(promptTextOf(entry));
 }
 
 function isSyntheticText(text: string): boolean {
@@ -213,6 +233,8 @@ export interface RewindState {
   messages: Turn[];
   /** 上一条 prompt 的 promptIndex（同一轮连发时不变）。 */
   prevP: number | null;
+  /** 上一条 prompt 的 turnIndex（「相等」判据的伴生闸：真重发 turnIndex 不动）。 */
+  prevTi: number | null;
   /** 上一条 prompt 之后这一轮是否已收尾（相等计数靠它区分「回退重发」与「同轮排队连发」）。 */
   turnEnded: boolean;
   /** 链账：每个链行的 uuid 与走到它时的轮次/消息表计数（fork 截断用，2.1.319+ 判据）。 */
@@ -246,6 +268,7 @@ function syncCursor(transcriptPath: string | null): RewindState | null {
     turns: [],
     messages: [],
     prevP: null,
+    prevTi: null,
     turnEnded: false,
     chain: [],
     tailUuid: null,
@@ -257,6 +280,7 @@ function syncCursor(transcriptPath: string | null): RewindState | null {
     entry.turns = [];
     entry.messages = [];
     entry.prevP = null;
+    entry.prevTi = null;
     entry.turnEnded = false;
     entry.chain = [];
     entry.tailUuid = null;
