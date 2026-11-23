@@ -158,7 +158,8 @@ describe('daemon server — /api prefix, hooks listing, static hosting', () => {
   it('未认证 API GET 带 Accept: text/html 回 HTML 外壳（不再放行 JSON 数据）', async () => {
     const authDir = mkdtempSync(join(tmpdir(), 'weave-auth-'));
     const { AuthService } = await import('../daemon/dashboard-auth.js');
-    const auth = new AuthService(authDir);
+    // authPath 走 options——裸传目录字符串会回落真机 auth.json（federation-routes 同款坑）
+    const auth = new AuthService({ authPath: join(authDir, 'auth.json') });
     auth.setPassword('test-pass-123');
     const authed = createWeaveServer({
       projects,

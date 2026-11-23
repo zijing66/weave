@@ -126,6 +126,8 @@ export interface BackupSettings {
   hour: number;
   /** 历史会话域随包（气泡 + 上传图同进同退）。 */
   includeHistory: boolean;
+  /** 备份包滚动保留天数（1-365）。 */
+  retentionDays: number;
 }
 
 export interface BackupProgress {

@@ -246,6 +246,12 @@ export const projectApi = {
   /** headless 实例清单（B4 终端视图入口）。 */
   listAgentInstances: (projectId: number): Promise<AgentInstanceRow[]> =>
     apiFetch<{ instances: AgentInstanceRow[] }>(`/projects/${projectId}/agent-instances`).then((r) => r.instances),
+  /** 关掉用户点名的 headless 实例（Runtime Host 里的 PTY 温和终止；只认本项目活的）。 */
+  closeAgentInstances: (projectId: number, instanceIds: string[]): Promise<{ ok: boolean; killed: string[] }> =>
+    apiFetch<{ ok: boolean; killed: string[] }>(`/projects/${projectId}/agent-instances/close`, {
+      method: 'POST',
+      body: JSON.stringify({ instanceIds }),
+    }),
   /** 会话终端的可附加目标（按最近活跃排序）：只 1 个时不弹窗、直接开。
    *  `all` = 别的项目的 tab 也进候选（跨项目分屏落点用；缺省 = 现状只列本项目）。 */
   listProjectTerminals: (projectId: number, all = false): Promise<TerminalTarget[]> =>

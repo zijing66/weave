@@ -252,12 +252,15 @@ export interface BackupSettings {
   hour: number;
   /** 历史会话域随包（气泡 + 上传图同进同退；默认关——包会到 GB 级）。 */
   includeHistory: boolean;
+  /** 备份包滚动保留天数（1-365；默认 7）。 */
+  retentionDays: number;
 }
 
 export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   enabled: true,
   hour: 1,
   includeHistory: false,
+  retentionDays: 7,
 };
 
 /** 尺寸档 → 窗像素（宽×高；精灵单元比例约 12:13，留气泡余量）。 */
@@ -522,6 +525,12 @@ function normalizeBackup(raw: unknown): BackupSettings {
       typeof obj.includeHistory === 'boolean'
         ? obj.includeHistory
         : DEFAULT_BACKUP_SETTINGS.includeHistory,
+    retentionDays:
+      Number.isInteger(obj.retentionDays) &&
+      (obj.retentionDays as number) >= 1 &&
+      (obj.retentionDays as number) <= 365
+        ? (obj.retentionDays as number)
+        : DEFAULT_BACKUP_SETTINGS.retentionDays,
   };
 }
 

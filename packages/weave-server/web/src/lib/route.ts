@@ -12,6 +12,8 @@ import { MAIN_CATEGORIES, type MainCategory } from '@/components/CategoryBar';
  * `/marketplace`                     资源市场（整页；详情查看器挂主栏）。**不叫
  *                                    /market**——那是既有 API 路由（GET /market
  *                                    清单），SPA 深链会被它截走返回 JSON。
+ * `/pane`                             分屏框架页（独立页面，不加载 dashboard；
+ *                                    pane 内容经 storage 队列传递，不进 URL）。
  *
  * 只做**位置**：卡片内的开关（资源管理的视图、claude/codex 页签、文件预览、
  * 移动端抽屉）是页面内状态，不进 URL。深链能直接打开靠 daemon 的 SPA 兜底
@@ -23,7 +25,8 @@ export type Route =
   | { kind: 'global'; category: MainCategory }
   | { kind: 'project'; projectId: number; category: MainCategory; sessionId: string | null }
   | { kind: 'rpg'; scene: string }
-  | { kind: 'market' };
+  | { kind: 'market' }
+  | { kind: 'pane' };
 
 const DEFAULT_CATEGORY: MainCategory = 'tasks';
 const CATEGORY_KEYS: readonly string[] = MAIN_CATEGORIES.map((c) => c.key);
@@ -38,6 +41,7 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'g') return { kind: 'global', category: categoryOf(parts[1]) };
   if (parts[0] === 'rpg') return { kind: 'rpg', scene: parts[1] ?? 'home' };
   if (parts[0] === 'marketplace') return { kind: 'market' };
+  if (parts[0] === 'pane') return { kind: 'pane' };
   if (parts[0] === 'p') {
     const projectId = Number(parts[1]);
     if (!Number.isInteger(projectId) || projectId <= 0) return { kind: 'none' };
@@ -55,6 +59,7 @@ export function routeToPath(route: Route): string {
   if (route.kind === 'none') return '/';
   if (route.kind === 'rpg') return `/rpg/${route.scene}`;
   if (route.kind === 'market') return '/marketplace';
+  if (route.kind === 'pane') return '/pane';
   if (route.kind === 'global') return `/g/${route.category}`;
   const base = `/p/${route.projectId}/${route.category}`;
   return route.sessionId === null ? base : `${base}/${encodeURIComponent(route.sessionId)}`;

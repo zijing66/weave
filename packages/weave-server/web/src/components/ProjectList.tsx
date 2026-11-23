@@ -438,6 +438,37 @@ export function ProjectList({
       );
   };
 
+  /** Runtime Host 实例卡右上角的 X：温和关掉用户点名的这一实例（宿主 PTY kill，
+   *  落库走 daemon 事件泵）；后端只认本项目还活的实例，不活 409 如实报因。 */
+  const closeInstance = (project: ProjectRow, instanceId: string): void => {
+    setTermMenu((cur) =>
+      cur && cur.project.id === project.id
+        ? { ...cur, closeBusy: [...new Set([...cur.closeBusy, instanceId])] }
+        : cur,
+    );
+    api
+      .closeAgentInstances(project.id, [instanceId])
+      .then(() => {
+        setTermMenu((cur) =>
+          cur && cur.project.id === project.id
+            ? {
+                ...cur,
+                instances: cur.instances.filter((i) => i.id !== instanceId),
+                closeBusy: cur.closeBusy.filter((id) => id !== instanceId),
+              }
+            : cur,
+        );
+      })
+      .catch((e: unknown) => {
+        setTermMenu((cur) =>
+          cur && cur.project.id === project.id
+            ? { ...cur, closeBusy: cur.closeBusy.filter((id) => id !== instanceId) }
+            : cur,
+        );
+        show('error', t('errors.closeTerminalFailed', { error: errorText(e) }));
+      });
+  };
+
   /** 点卡片 = 勾选/取消（只收可关的卡：后端给不出 pane 的卡片勾了也关不掉）。 */
   const toggleTarget = (id: string): void => {
     setTermMenu((cur) => {
@@ -1224,21 +1255,34 @@ export function ProjectList({
               <ul className="space-y-1 pb-1">
                 {termMenu.instances.map((instance) => (
                   <li key={instance.id}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onOpenWebTerminal?.(termMenu.project, instance);
-                        setTermMenu(null);
-                      }}
-                      className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-edge/[0.08] px-2 py-2 text-left hover:bg-edge/[0.06]"
-                    >
-                      <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs text-neutral-200">{instance.command}</span>
-                        <span className="block truncate text-10 text-neutral-500">{instance.harnessSessionId ?? instance.id}</span>
-                      </span>
-                      <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
-                    </button>
+                    <div className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-edge/[0.08] px-2 py-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenWebTerminal?.(termMenu.project, instance);
+                          setTermMenu(null);
+                        }}
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      >
+                        <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs text-neutral-200">{instance.command}</span>
+                          <span className="block truncate text-10 text-neutral-500">{instance.harnessSessionId ?? instance.id}</span>
+                        </span>
+                        <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+                      </button>
+                      <QuickButton
+                        tooltip={t('tasks.terminalTargetClose')}
+                        disabled={termMenu.closeBusy.includes(instance.id)}
+                        onClick={() => closeInstance(termMenu.project, instance.id)}
+                      >
+                        {termMenu.closeBusy.includes(instance.id) ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <X className="h-3 w-3" />
+                        )}
+                      </QuickButton>
+                    </div>
                   </li>
                 ))}
               </ul>

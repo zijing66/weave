@@ -139,6 +139,18 @@ describe('TerminalGateway 实例终态（恢复向导的判据面）', () => {
     const term = new HeadlessTerminal(sup as never, { get: () => null } as never, gateway);
     expect(await term.getPaneText('wvi-test')).toBeNull();
   });
+
+  it('HeadlessTerminal.sendText 包 bracketed paste 再补 CR（裸 stdin 无终端代包）', async () => {
+    const written: string[] = [];
+    const sup = { sendStdin: async (_id: string, data: string) => { written.push(data); } };
+    const term = new HeadlessTerminal(sup as never, { get: () => null } as never);
+    await term.sendText('wvi-test', '看这张图\nD:\\x\\image-1.png');
+    expect(written).toEqual(['\x1b[200~看这张图\nD:\\x\\image-1.png\x1b[201~', '\r']);
+    // 空正文仍只补提交键
+    written.length = 0;
+    await term.sendText('wvi-test', '');
+    expect(written).toEqual(['\r']);
+  });
   it('attach 时 Host 已不报该实例 → 回致命 error，不装「已连接」', async () => {
     const { sup } = fakeSupervisor([], undefined, []);
     const frames = attachOnce(new TerminalGateway(sup), { clientId: 'late' });

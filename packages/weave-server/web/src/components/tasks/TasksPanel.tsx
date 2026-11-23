@@ -27,7 +27,9 @@ import { SessionList, byActivity } from './SessionList';
 import { SessionMessages } from './SessionMessages';
 import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
-import { TerminalView } from '@/components/TerminalView';
+import { TerminalPanes } from './term-panes/TerminalPanes';
+import { openPane, useTermPanes } from './term-panes/term-pane-store';
+import { openPaneFrame, reclaimPaneFrame, usePaneFrames } from './term-panes/pane-transfer';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
@@ -45,7 +47,7 @@ import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
 import { subscribeHook, type HookFrame } from '@/lib/sse';
 import { SkeletonRows } from '@/components/ui/skeleton';
-import { Activity, Check, ChevronDown, ChevronRight, Copy, Loader2, Plus, Search, Square, X } from 'lucide-react';
+import { Activity, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Loader2, Plus, Search, Square, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -674,8 +676,9 @@ export function TasksPanel({
   const [worktreeNewSession, setWorktreeNewSession] = useState(false);
   /** headless（B4 Agent Runtime）：起在 Runtime Host、不开外部终端窗，Web 终端交互。 */
   const [headlessNewSession, setHeadlessNewSession] = useState(false);
-  /** 打开中的 Web 终端实例（headless 起会话成功即弹）。 */
-  const [webTerminal, setWebTerminal] = useState<{ instanceId: string; label: string } | null>(null);
+  /** 打开中的 Web 终端：右栏 pane 集合（分屏），窗口级 store、跨会话/刷新保活。 */
+  const termPanes = useTermPanes();
+  const panelPaneCount = Object.values(termPanes.panes).filter((p) => p.slot === 'panel').length;
 
   /** 对话头部的终端入口：Web 预设恒在（没实例则置灰说明）；其他预设只给真有
       headless 实例的会话摆，免得每个对话都多一枚用不上的按钮。 */
@@ -714,7 +717,6 @@ export function TasksPanel({
             const created = sessionsRef.current?.find((s) => !known.has(s.sessionId));
             if (created) {
               setSelectedId(created.sessionId);
-              setWebTerminal(null);
               if (!isDesktop) setPaneOpen(true);
             }
             return;
@@ -821,6 +823,51 @@ export function TasksPanel({
   useEffect(() => {
     if (selectedId) openConv(selectedId);
   }, [selectedId, openConv]);
+
+  /** 对话弹出（分屏第二批）：这扇对话弹到独立框架页（独立路由 /pane，不加载
+   *  dashboard）；右栏原位置留占位条 + 切回。paneId 用 `conv:<sessionId>`，内容
+   *  经 storage 记录传递（pane-transfer）。占位状态直接从 storage 记录派生：
+   *  持窗关闭（记录被删）或切回（returning → 记录删除）后自动恢复对话显示，
+   *  同一对话不会双挂。 */
+  const paneFrames = usePaneFrames();
+  const poppedConvs = useMemo(() => {
+    const map: Record<string, { frameId: string; label: string }> = {};
+    for (const frame of paneFrames) {
+      if (frame.kind !== 'conversation' || frame.state === 'returning') continue;
+      map[frame.paneId.slice('conv:'.length)] = { frameId: frame.frameId, label: frame.label };
+    }
+    return map;
+  }, [paneFrames]);
+  const popoutConversation = useCallback(
+    (sessionId: string): void => {
+      const conv = convs.get(sessionId);
+      if (!conv || poppedConvs[sessionId]) return;
+      try {
+        openPaneFrame(
+          {
+            paneId: `conv:${sessionId}`,
+            kind: 'conversation',
+            label: conv.label,
+            sessionId,
+            projectId: conv.projectId,
+            projectLabel,
+          },
+          'width=760,height=720',
+        );
+      } catch {
+        // 浏览器拦了弹窗：对话留在右栏
+      }
+    },
+    [convs, poppedConvs, projectLabel],
+  );
+  const reclaimConversation = useCallback(
+    (sessionId: string): void => {
+      const popped = poppedConvs[sessionId];
+      if (!popped) return;
+      reclaimPaneFrame(popped.frameId);
+    },
+    [poppedConvs],
+  );
   /** 点会话（行本体或对话图标）= 选中它并挂上它的对话；<lg 进全屏态。 */
   const focusSession = useCallback(
     (sessionId: string): void => {
@@ -828,8 +875,6 @@ export function TasksPanel({
       appliedSel.current = { project: projectId, sessionId };
       onSelectSession?.(sessionId);
       openConv(sessionId);
-      // 换会话恒回对话视图（终端视图属于「那一条会话」，跟着选中走）。
-      setWebTerminal(null);
       if (!isDesktop) setPaneOpen(true);
     },
     [openConv, isDesktop, onSelectSession, projectId],
@@ -850,13 +895,16 @@ export function TasksPanel({
     [isDesktop, projectId, onSelectSession, openConv],
   );
 
-  /** 进 Web 终端视图：<lg 时同上——选中会话并展开滑出层，终端才看得见。 */
+  /** 进 Web 终端视图：开 pane（同实例已开即聚焦；满/跨窗重复 toast 说明）。
+   *  <lg 时同上——选中会话并展开滑出层，终端才看得见。 */
   const showWebTerminal = useCallback(
     (sessionId: string, instanceId: string, label: string): void => {
-      setWebTerminal({ instanceId, label });
+      const res = openPane({ instanceId, label, slot: 'panel' });
+      if (!res.ok && res.reason === 'limit') show('error', t('tasks.paneLimit'));
+      if (!res.ok && res.reason === 'other-window') show('error', t('tasks.paneOtherWindow'));
       focusOnMobile(sessionId);
     },
-    [focusOnMobile],
+    [focusOnMobile, show, t],
   );
 
   /** 在默认终端打开会话：服务端 detached spawn（`claude --resume <id>`），
@@ -1481,32 +1529,34 @@ export function TasksPanel({
    *  解不出能力（无闭轮事件的 harness）→ 仍是事件链本尊。 */
   const paneEl = (
     <div className="flex min-w-0 min-h-0 flex-1 flex-col">
-      {/* Web 终端与对话同区（默认对话）：打开终端 = 这块换成 xterm，X 收起回对话
-          ——关掉的只是这条 WS（detach），Runtime Host 里的 TUI 进程照常跑。 */}
-      {webTerminal && (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between gap-2 pb-2">
-            <p className="truncate text-xs font-medium text-neutral-200">
-              {t('tasks.webTerminalTitle')} · {webTerminal.label}
-            </p>
-            <Tooltip label={t('tasks.webTerminalClose')} side="top">
-              <button
-                type="button"
-                aria-label={t('tasks.webTerminalClose')}
-                onClick={() => setWebTerminal(null)}
-                className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
-              >
-                <X className="size-4" />
-              </button>
-            </Tooltip>
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-edge/[0.08] bg-black/90">
-            <TerminalView instanceId={webTerminal.instanceId} />
-          </div>
+      {/* Web 终端与对话同区（默认对话）：右栏 pane 集合（分屏 grid，拖 pane 头
+          重排/拖出本窗转移）；X 只关 pane（detach），Runtime Host 里的 TUI 进程照常跑。 */}
+      {panelPaneCount > 0 && (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          <TerminalPanes slot="panel" />
         </div>
       )}
       {/* 已挂载的对话全在（非选中项只藏不卸，草稿与已选图片都还在） */}
-      <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', webTerminal && 'hidden')}>
+      <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', panelPaneCount > 0 && 'hidden')}>
+      {/* 已弹出到独立框架页的对话：占位条 + 切回（对话本体藏不卸，切回零重放） */}
+      {Object.entries(poppedConvs).map(([sessionId, popped]) => (
+        <div
+          key={sessionId}
+          className="flex shrink-0 items-center justify-between gap-2 rounded-md border border-dashed border-edge/[0.12] px-2 py-1.5 text-xs text-neutral-500"
+        >
+          <span className="truncate">
+            <ExternalLink className="mr-1 inline size-3.5 text-neutral-600" />
+            {popped.label} · {t('tasks.panePoppedOut')}
+          </span>
+          <button
+            type="button"
+            onClick={() => reclaimConversation(sessionId)}
+            className="shrink-0 rounded bg-blue-500/20 px-2 py-0.5 text-xs text-blue-300 transition-colors hover:bg-blue-500/30"
+          >
+            {t('tasks.paneReclaim')}
+          </button>
+        </div>
+      ))}
       {[...convs.values()].map((c) => (
         <SessionMessages
           key={c.sessionId}
@@ -1517,13 +1567,14 @@ export function TasksPanel({
           projectLabel={projectLabel}
           capability={c.capability}
           promptLimits={promptLimits}
-          minimized={c.sessionId !== selectedId}
+          minimized={c.sessionId !== selectedId || poppedConvs[c.sessionId] != null}
           answerPending={!!questionOf(c.sessionId)}
           onOpenAnswer={() => setAnswerFor(c.sessionId)}
           onInterrupt={onInterrupt}
           interruptStateOf={interruptStateOf}
           onOpenChain={() => setChainDialog(true)}
           webTerminal={webTerminalEntry(c.sessionId)}
+          onPopout={poppedConvs[c.sessionId] ? undefined : () => popoutConversation(c.sessionId)}
         />
       ))}
       {/* 能力矩阵在途时不摆事件链（openConv 还挂不上对话，摆了必闪一拍）；

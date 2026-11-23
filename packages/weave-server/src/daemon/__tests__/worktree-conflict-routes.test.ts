@@ -140,6 +140,7 @@ describe('worktree 冲突闭环路由（重试 / 改派修补）', () => {
           sentTexts.push(input.text);
           return { ok: true, messageId: 'm1', status: 'queued', message: { id: 'm1' } };
         }) as WeaveServerDeps['messageDeliverer'],
+        kickFlush: () => {},
       } as unknown as WeaveServerDeps['messageDeliverer'],
     } as unknown as WeaveServerDeps;
   });

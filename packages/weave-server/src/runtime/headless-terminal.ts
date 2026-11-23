@@ -1,4 +1,5 @@
 import type { PromptTerminal } from '../hooks/message-deliverer.js';
+import { BRACKETED_PASTE_END, BRACKETED_PASTE_START } from '../daemon/opener/shared.js';
 import type { RuntimeSupervisor } from './supervisor.js';
 import type { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import type { TerminalGateway } from './terminal/session-gateway.js';
@@ -44,9 +45,14 @@ export class HeadlessTerminal implements PromptTerminal {
     return id;
   }
 
-  /** prompt 原文 + 提交键（等同既有 sendText 语义：一次粘贴 + CR）。 */
+  /** prompt 原文 + 提交键（等同既有 sendText 语义：一次粘贴 + CR）。粘贴语义必须
+   *  手工包 bracketed paste——外部后端靠终端（wezterm send-text 自带包装），Host
+   *  stdin 是裸字节，不包的话宿主把正文当逐字敲入、粘贴处理器不触发（带图路径
+   *  不再转 `[Image #N]` + image block，2026-11-22 实测回归）。 */
   async sendText(paneId: string, text: string): Promise<void> {
-    await this.supervisor.sendStdin(paneId, text);
+    if (text) {
+      await this.supervisor.sendStdin(paneId, BRACKETED_PASTE_START + text + BRACKETED_PASTE_END);
+    }
     await this.supervisor.sendStdin(paneId, '\r');
   }
 

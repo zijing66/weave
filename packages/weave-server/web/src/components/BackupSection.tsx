@@ -60,7 +60,10 @@ export function BackupSection() {
 
   const patch = async (p: Partial<NonNullable<typeof s>>): Promise<void> => {
     try {
-      const r = await api.putBackupSettings({ ...(s ?? { enabled: true, hour: 1, includeHistory: false }), ...p });
+      const r = await api.putBackupSettings({
+        ...(s ?? { enabled: true, hour: 1, includeHistory: false, retentionDays: 7 }),
+        ...p,
+      });
       setBundle((cur) => (cur ? { ...cur, settings: r.settings } : cur));
     } catch (e) {
       console.warn('backup settings failed', errorText(e));
@@ -139,6 +142,20 @@ export function BackupSection() {
             <FieldHint>{t('settings.backupHistoryHint')}</FieldHint>
           </span>
           <Switch checked={s?.includeHistory ?? false} onChange={(v) => void patch({ includeHistory: v })} />
+        </label>
+
+        <label className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-neutral-300">
+            {t('settings.backupRetention')}
+            <FieldHint>{t('settings.backupRetentionHint')}</FieldHint>
+          </span>
+          <NumberStepper
+            value={s?.retentionDays ?? 7}
+            min={1}
+            max={365}
+            onChange={(v) => void patch({ retentionDays: v })}
+            title={t('settings.backupRetention')}
+          />
         </label>
       </div>
 

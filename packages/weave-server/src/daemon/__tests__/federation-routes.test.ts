@@ -143,8 +143,11 @@ describe('federation routes（E3）', () => {
     // 的 per-peer token 门端点一一对应：多豁免 = 管理面漏到门外；少豁免 = 对端通道 401。
     // 本套件主 server 未装 auth（门全开），401 语义单独起一个带 auth 的实例验。
     const { AuthService } = await import('../../daemon/dashboard-auth.js');
+    // authPath 必须是文件路径且走 options——传目录字符串会让 opts.authPath 取出
+    // undefined 回落真机 auth.json，setPassword 直接改掉活 daemon 的密码（__tests__
+    // 不参与 tsc，这类坑类型层看不见，2026-11-22 实测两次踩中）。
     const authDir = mkdtempSync(path.join(tmpdir(), 'weave-fed-auth-'));
-    const auth = new AuthService(authDir);
+    const auth = new AuthService({ authPath: path.join(authDir, 'auth.json') });
     auth.setPassword('fed-test-pass');
     const authed = createWeaveServer({
       projects: new ProjectRepository(db),

@@ -9,6 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { getRuntimeSocketDir } from '../db/paths.js';
 
 /** 实例状态词表（封闭枚举；转场校验见 instance-registry.ts）。 */

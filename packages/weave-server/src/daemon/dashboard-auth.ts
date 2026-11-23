@@ -156,6 +156,11 @@ export class AuthService {
   readonly initialPassword: string | null;
 
   constructor(opts: AuthServiceOptions = {}) {
+    // __tests__ 不参与 tsc：裸传字符串（目录路径）时 opts.authPath 取出
+    // undefined 会静默回落真机 auth.json——宁可当场炸也不改活档（2026-11-22 两度实测踩中）。
+    if (typeof opts !== 'object' || opts === null) {
+      throw new Error('AuthService options must be an object: new AuthService({ authPath })');
+    }
     this.authPath = opts.authPath ?? getAuthPath();
     this.markerPath = opts.initialPasswordPath ?? getInitialPasswordPath();
     this.now = opts.now ?? Date.now;

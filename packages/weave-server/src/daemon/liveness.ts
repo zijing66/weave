@@ -21,9 +21,9 @@ function livenessSurfaces(): Array<{ harness: string; surface: LivenessSurface }
 /** 异步探测面的缓存：面 id → 上次快照。 */
 const asyncCaches = new Map<string, Map<string, boolean>>();
 
-async function refreshAsyncCache(surface: LivenessSurface, now: number): Promise<void> {
+async function refreshAsyncCache(surface: LivenessSurface): Promise<void> {
   try {
-    asyncCaches.set(surface.harness, await surface.alive(undefined, now));
+    asyncCaches.set(surface.harness, await surface.alive());
   } catch {
     /* 保持旧值 */
   }
@@ -40,16 +40,14 @@ function ensureRefreshLoop(): void {
   // （测试 import 链大面积带到这里，S3″ 盲评指认）。
   if (!primed) {
     primed = true;
-    const now = Date.now();
     for (const { surface } of livenessSurfaces()) {
-      if (!surface.aliveSync) void refreshAsyncCache(surface, now);
+      if (!surface.aliveSync) void refreshAsyncCache(surface);
     }
   }
   refreshTimer = setInterval(() => {
-    const now = Date.now();
     for (const { surface } of livenessSurfaces()) {
       if (surface.aliveSync) continue;
-      void refreshAsyncCache(surface, now);
+      void refreshAsyncCache(surface);
     }
   }, CODEX_REFRESH_MS);
   refreshTimer.unref();

@@ -629,6 +629,60 @@ export async function handleProjectRoutes(
     return true;
   }
 
+  // POST /projects/:id/agent-instances/close — 关掉用户点名的 headless 实例
+  // （项目卡终端弹层里 Runtime Host 卡片右上角那枚 X）。温和终止：经 supervisor
+  // 的 instance.kill（Host 里 PTY kill），落库由事件泵跟随；Host 缺席/实例不活
+  // 409 带原文。只关 instanceIds 清单里的——不提供一口气全关。
+  const instCloseMatch = pathname.match(/^\/projects\/(\d+)\/agent-instances\/close$/);
+  if (instCloseMatch && req.method === 'POST') {
+    const project = deps.projects.getById(Number(instCloseMatch[1]));
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    let body: { instanceIds?: unknown };
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') as { instanceIds?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (
+      !Array.isArray(body.instanceIds) ||
+      body.instanceIds.length === 0 ||
+      body.instanceIds.some((id) => typeof id !== 'string')
+    ) {
+      sendJson(res, 400, { error: 'instanceIds must be a non-empty array of strings' });
+      return true;
+    }
+    if (!deps.runtimeSupervisor) {
+      sendJson(res, 501, { error: 'Runtime host is not available (daemon too old or disabled)' });
+      return true;
+    }
+    // 只认本项目名下还活的实例（exited/failed/别项目的 id 一律拒）——绝不越清单杀。
+    const ids = body.instanceIds as string[];
+    const owned = new Set(
+      deps
+        .agentInstances!.listByProject(project.id)
+        .filter((r) => r.status === 'running' || r.status === 'starting')
+        .map((r) => r.id),
+    );
+    const targets = ids.filter((id) => owned.has(id));
+    if (targets.length === 0) {
+      sendJson(res, 409, { error: 'No live instance matches the requested ids' });
+      return true;
+    }
+    try {
+      for (const id of targets) {
+        await deps.runtimeSupervisor.killInstance(id);
+      }
+      sendJson(res, 200, { ok: true, killed: targets });
+    } catch (e) {
+      sendJson(res, 409, { error: e instanceof Error ? e.message : 'Kill failed' });
+    }
+    return true;
+  }
+
   // POST /projects/:id/init — dashboard 触发重跑 `weave init`（子进程跑 CLI，
   // 隔离 CLI 的 process.exit；实现归 project-init.ts 一处）。
   const initMatch = pathname.match(/^\/projects\/(\d+)\/init$/);

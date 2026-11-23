@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { getBackupsDir } from '../../db/paths.js';
-import { readDaemonSettings, writeDaemonSettings } from '../settings.js';
+import { DEFAULT_BACKUP_SETTINGS, readDaemonSettings, writeDaemonSettings } from '../settings.js';
 import { readBody, sendJson } from '../http.js';
 import { writePendingRestore } from '../backup.js';
 import type { WeaveServerDeps } from '../server.js';
@@ -120,9 +120,9 @@ export async function handleBackupRoutes(
     return true;
   }
 
-  // PUT /backup/settings — 只改 backup 段（enabled/hour/includeHistory）。
+  // PUT /backup/settings — 只改 backup 段（enabled/hour/includeHistory/retentionDays）。
   if (pathname === '/backup/settings' && req.method === 'PUT') {
-    let body: { enabled?: unknown; hour?: unknown; includeHistory?: unknown };
+    let body: { enabled?: unknown; hour?: unknown; includeHistory?: unknown; retentionDays?: unknown };
     try {
       body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
@@ -130,7 +130,7 @@ export async function handleBackupRoutes(
       return true;
     }
     const current = await readDaemonSettings();
-    const cur = current.backup ?? { enabled: true, hour: 1, includeHistory: false };
+    const cur = current.backup ?? DEFAULT_BACKUP_SETTINGS;
     const saved = await writeDaemonSettings({
       ...current,
       backup: {
@@ -138,6 +138,8 @@ export async function handleBackupRoutes(
         hour: typeof body.hour === 'number' ? body.hour : cur.hour,
         includeHistory:
           typeof body.includeHistory === 'boolean' ? body.includeHistory : cur.includeHistory,
+        retentionDays:
+          typeof body.retentionDays === 'number' ? body.retentionDays : cur.retentionDays,
       },
     });
     sendJson(res, 200, { settings: saved.backup });

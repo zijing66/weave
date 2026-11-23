@@ -151,7 +151,7 @@ export async function sessionTerminals(
     for (const sessionId of revoked) out[sessionId] = null;
     revoked.clear();
   }
-  if (!terminal?.locateScreens || paneEnvs.size === 0) return out;
+  if (!terminal?.locateScreens) return out;
   const envs: Record<string, Record<string, string>> = {};
   const liveness = deps.livenessOf?.() ?? combinedLivenessOf();
   for (const [sessionId, env] of paneEnvs) {

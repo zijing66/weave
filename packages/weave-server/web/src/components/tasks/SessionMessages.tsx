@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, SquareTerminal, Trash2, Workflow, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, ExternalLink, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, SquareTerminal, Trash2, Workflow, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -148,6 +148,7 @@ export function SessionMessages({
   embedded,
   onOpenChain,
   webTerminal,
+  onPopout,
 }: {
   sessionId: string;
   /** 会话所属项目（路由锚点；会话可能采集到跨项目事件，过滤只按 sessionId）。 */
@@ -185,6 +186,8 @@ export function SessionMessages({
     reason?: 'busy' | 'gone';
     onOpen: () => void;
   } | null;
+  /** 嵌入形态才给：把这扇对话弹出到独立框架页（右栏留占位 + 切回）。 */
+  onPopout?: () => void;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -997,6 +1000,22 @@ export function SessionMessages({
               </>
             )}
           </div>
+          {/* 弹出独立框架页：独立摆在右上角（不混进功能按钮组），分隔线隔开 */}
+          {onPopout && (
+            <div className="flex shrink-0 items-center border-l border-edge/[0.08] pl-1.5 max-lg:pl-1">
+              <Tooltip label={t('tasks.panePopout')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('tasks.panePopout')}
+                  onClick={onPopout}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                >
+                  <ExternalLink className="h-3 w-3 text-sky-400" />
+                  <span className="max-lg:hidden">{t('tasks.panePopoutShort')}</span>
+                </button>
+              </Tooltip>
+            </div>
+          )}
         </div>
 
         {/* 历史过滤：只改显示，不动手上的翻页游标与勾选 */}

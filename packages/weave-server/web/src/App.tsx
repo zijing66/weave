@@ -26,6 +26,9 @@ import { useCardCounts } from '@/hooks/use-card-counts';
 import { useAssetMutations, pluginEffective } from '@/hooks/use-asset-mutations';
 import { ProjectList } from '@/components/ProjectList';
 import { useSessionStatus } from '@/components/tasks/session-status-store';
+import { TerminalPanesOverlay } from '@/components/tasks/term-panes/TerminalPanes';
+import { PaneFramePage } from '@/components/tasks/term-panes/PaneFramePage';
+import { openPane } from '@/components/tasks/term-panes/term-pane-store';
 import { draftSessionIds, subscribeDraftChanges } from '@/components/tasks/draft-editor';
 import { CategoryBar, type MainCategory, type CategoryBarData } from '@/components/CategoryBar';
 import { CategoryDetail, type Mode, type ResourceView } from '@/components/CategoryDetail';
@@ -41,7 +44,6 @@ import { FileBrowserModal } from '@/components/FileBrowserModal';
 import { DirectoryPickerModal } from '@/components/DirectoryPickerModal';
 import { Resizer } from '@/components/Resizer';
 import { Tooltip } from '@/components/ui/tooltip';
-import { TerminalView } from '@/components/TerminalView';
 import { OnboardingCard, onboardingDismissed, onboardingStarted } from '@/components/OnboardingCard';
 import { SettingsModal } from '@/components/SettingsModal';
 import { CommandPalette } from '@/components/CommandPalette';
@@ -171,14 +173,18 @@ export default function App() {
   // 57/65 卡死：分母固化自上次启动，本次少发几个进度就到不了 1）。
   const dataReady = auth === 'authenticated' && bootReady;
   const stageLabel = t(`app.bootStage.${anonymous || auth === 'unknown' ? 'link' : stage}` as MessageKey);
+  // 分屏框架页（独立路由 /pane）：单独页面，不加载 dashboard 本体（分屏只拆
+  // 终端/对话区域）；内容经 storage 队列传递，不进 URL。
+  const popoutMode = parseRoute(location.pathname).kind === 'pane';
   return (
     <>
       {anonymous && <LoginPage />}
-      {auth === 'authenticated' && <Dashboard onBootReady={handleBootReady} />}
-      <BackupOverlay />
+      {auth === 'authenticated' &&
+        (popoutMode ? <PaneFramePage /> : <Dashboard onBootReady={handleBootReady} />)}
+      {!popoutMode && <BackupOverlay />}
       <BootSplash
-        ready={anonymous || dataReady}
-        progress={anonymous ? 1 : progress}
+        ready={anonymous || dataReady || (popoutMode && auth === 'authenticated')}
+        progress={anonymous || popoutMode ? 1 : progress}
         stageLabel={stageLabel}
         done={anonymous ? total : done}
         total={total}
@@ -516,7 +522,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   useEffect(() => {
     if (!shellReady) return;
     const route = parseRoute(path);
-    if (route.kind === 'none') return;
+    if (route.kind === 'none' || route.kind === 'pane') return;
     if (route.kind === 'rpg') {
       setRpgMode(true);
       setGlobalMode(false);
@@ -744,12 +750,16 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   );
 
   /** 项目级 Web 终端（Web 预设下「在终端中打开」= Runtime Host 的 headless shell
-   *  实例）：全屏弹层承载 TerminalView，X 只收起（detach），shell 进程照跑。 */
-  const [projectTerminal, setProjectTerminal] = useState<{
-    instanceId: string;
-    label: string;
-    autoCommand?: string;
-  } | null>(null);
+   *  实例）：全屏弹层 = 终端 pane 的 overlay 面（可分屏/可弹出独立窗口），X 只
+   *  收起（detach），shell 进程照跑。pane 账在窗口级 store 里。 */
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const openOverlayPane = useCallback(
+    (instanceId: string, label: string, autoCommand?: string) => {
+      openPane({ instanceId, label, slot: 'overlay', initialCommand: autoCommand });
+      setOverlayOpen(true);
+    },
+    [],
+  );
 
   /** 开目录/终端条按钮：explorer/terminal 各一把 fb 键（行内三态 + 吞连点），
       失败 toast；成功无 toast——窗口弹出本身就是反馈。
@@ -768,7 +778,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           const opened = await api.openProject(p.id, target);
           if (target !== 'terminal') return;
           if (opened.instanceId) {
-            setProjectTerminal({ instanceId: opened.instanceId, label: p.name });
+            openOverlayPane(opened.instanceId, p.name);
             return;
           }
           await terminalGate.current.wait(
@@ -1040,7 +1050,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       }}
       onOpenExplorer={(p) => openProjectWithFeedback(p, 'explorer')}
       onOpenTerminal={(p) => openProjectWithFeedback(p, 'terminal')}
-      onOpenWebTerminal={(p, instance) => setProjectTerminal({ instanceId: instance.id, label: p.name })}
+      onOpenWebTerminal={(p, instance) => openOverlayPane(instance.id, p.name)}
       openExplorerStateOf={openExplorerStateOf}
       openTerminalStateOf={openTerminalProjectStateOf}
       onCloseTerminal={closeProjectTerminal}
@@ -1442,7 +1452,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                                 <OnboardingCard
                                   projects={normal}
                                   onProjectTerminal={(instanceId, label, autoCommand) =>
-                                    setProjectTerminal({ instanceId, label, autoCommand })
+                                    openOverlayPane(instanceId, label, autoCommand)
                                   }
                                   onDismissed={() => setOnboardingOff(true)}
                                 />
@@ -1592,33 +1602,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           onClose={() => setBrowserPickerOpen(false)}
         />
       )}
-      {/* 项目级 Web 终端（Web 预设的「在终端中打开」）：全屏弹层，X 只收起
-          （detach），Runtime Host 里的 shell 进程照跑。 */}
-      {projectTerminal && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950/95 p-2 sm:p-4">
-          <div className="flex items-center justify-between gap-2 pb-2">
-            <p className="truncate text-xs font-medium text-neutral-200">
-              {t('project.webTerminalTitle')} · {projectTerminal.label}
-            </p>
-            <Tooltip label={t('tasks.webTerminalClose')} side="top">
-              <button
-                type="button"
-                aria-label={t('tasks.webTerminalClose')}
-                onClick={() => setProjectTerminal(null)}
-                className="rounded-md p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
-              >
-                <X className="size-4" />
-              </button>
-            </Tooltip>
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-edge/[0.08] bg-black/90">
-            <TerminalView
-              instanceId={projectTerminal.instanceId}
-              initialCommand={projectTerminal.autoCommand}
-            />
-          </div>
-        </div>
-      )}
+      {/* 项目级 Web 终端（Web 预设的「在终端中打开」）：全屏弹层 = overlay pane 面
+          （主窗内可分屏），X 只收起（detach），Runtime Host 里的 shell 进程照跑。 */}
+      <TerminalPanesOverlay open={overlayOpen} onClose={() => setOverlayOpen(false)} />
       {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
       <AiAssistant />
 
@@ -1640,7 +1626,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
               // 已注册（含 init 过）：只开终端，init 语义交给用户（重跑是覆盖式刷新）
               const opened = await api.openProject(known.id, 'terminal').catch(() => null);
               if (opened?.instanceId) {
-                setProjectTerminal({ instanceId: opened.instanceId, label: known.name, autoCommand: 'weave init\r' });
+                openOverlayPane(opened.instanceId, known.name, 'weave init\r');
               }
               return;
             }
@@ -1655,7 +1641,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
             navigate({ kind: 'project', projectId: row.id, category: 'tasks', sessionId: null });
             const opened = await api.openProject(row.id, 'terminal').catch(() => null);
             if (opened?.instanceId) {
-              setProjectTerminal({ instanceId: opened.instanceId, label: row.name, autoCommand: 'weave init\r' });
+              openOverlayPane(opened.instanceId, row.name, 'weave init\r');
             } else {
               show('info', t('onboard.runInitManually'));
             }

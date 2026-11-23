@@ -13,6 +13,8 @@ export const settingsZh = {
   'settings.backupHistory': '包含历史会话',
   'settings.backupHistoryHint':
     '把聊天记录（气泡）、上传图片一起备。勾了包会显著变大（GB 级）——备份过程界面会全屏遮罩提示进度。',
+  'settings.backupRetention': '保留天数',
+  'settings.backupRetentionHint': '备份包滚动保留多少天（1-365），过期自动删除。改完下一次备份即生效。',
   'settings.backupRunNow': '立即备份',
   'settings.backupLastRun': '上次：{time} · {size}',
   'settings.backupLastError': '上次备份失败（悬停看原因）',
@@ -225,6 +227,9 @@ export const settingsEn: Record<keyof typeof settingsZh, string> = {
   'settings.backupHistory': 'Include chat history',
   'settings.backupHistoryHint':
     'Also pack conversation bubbles and uploaded images. The archive gets large (GB-level) — the UI shows a fullscreen progress overlay while it runs.',
+  'settings.backupRetention': 'Retention days',
+  'settings.backupRetentionHint':
+    'How many days (1-365) to keep backup archives before they are pruned. Applies from the next backup.',
   'settings.backupRunNow': 'Back up now',
   'settings.backupLastRun': 'Last: {time} · {size}',
   'settings.backupLastError': 'Last backup failed (hover for reason)',

@@ -8,6 +8,7 @@ import { SCHEMA_VERSION, SCHEMA } from '../db/db.js';
 import { marketDir } from '../market/manifest.js';
 import { WEAVE_VERSION } from '../version.js';
 import { defaultWorktreeGitExec, type WorktreeGitExec } from './worktree.js';
+import { readDaemonSettings } from './settings.js';
 
 /**
  * 每日自动备份（配置面）：打包 = DB 白名单表（NDJSON）+ market 各仓的 git
@@ -387,7 +388,8 @@ export class BackupEngine {
     const file = path.join(backupsDir, `weave-backup-${stamp}.tar.gz`);
     await writeFile(file, tarGzip(entries), { mode: 0o600 });
     const bytes = (await stat(file)).size;
-    await pruneOldBackups(backupsDir, this.now());
+    const settings = await readDaemonSettings();
+    await pruneOldBackups(backupsDir, this.now(), settings.backup?.retentionDays ?? BACKUP_RETENTION_DAYS);
     return {
       file,
       bytes,
@@ -471,14 +473,18 @@ async function dirBytes(dir: string): Promise<number> {
 }
 
 /** 滚动保留：删除超过保留期的旧备份包（按文件名时刻戳判，不靠 mtime）。 */
-export async function pruneOldBackups(backupsDir: string, now: Date): Promise<number> {
+export async function pruneOldBackups(
+  backupsDir: string,
+  now: Date,
+  retentionDays: number = BACKUP_RETENTION_DAYS,
+): Promise<number> {
   let names: string[] = [];
   try {
     names = await readdir(backupsDir);
   } catch {
     return 0;
   }
-  const cutoff = now.getTime() - BACKUP_RETENTION_DAYS * 86400_000;
+  const cutoff = now.getTime() - retentionDays * 86400_000;
   let pruned = 0;
   for (const name of names) {
     // 双形兼容：现行 `...-HH-MM-SS` 与旧 `...-HHmmss`（改形前的存量包，期内认到、过期自然滚掉）

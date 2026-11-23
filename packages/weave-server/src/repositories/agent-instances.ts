@@ -73,6 +73,21 @@ export class AgentInstanceRepository {
     ).map(fromRow);
   }
 
+  /** 已首绑会话且仍活的 headless 实例（sessionId → projectId）：Web 终端会话
+   *  并进终端分组的查询面（分组键 = 项目维度的 `web:<projectId>`，见 views.ts）。 */
+  liveGroupedSessions(): Map<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT harness_session_id, project_id FROM agent_instances
+         WHERE execution_mode = 'headless' AND harness_session_id IS NOT NULL
+           AND status IN ('running', 'starting')`,
+      )
+      .all() as Array<{ harness_session_id: string; project_id: number }>;
+    const out = new Map<string, number>();
+    for (const r of rows) out.set(r.harness_session_id, Number(r.project_id));
+    return out;
+  }
+
   markStarting(id: string, runtimeHostId: string, osPid: number): void {
     this.db
       .prepare(`UPDATE agent_instances SET status = CASE WHEN status = 'created' THEN 'starting' ELSE status END, runtime_host_id = ?, os_pid = ?, started_at = ? WHERE id = ?`)
