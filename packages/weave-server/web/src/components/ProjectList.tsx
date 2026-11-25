@@ -47,6 +47,7 @@ import {
   HardDrive,
   MemoryStick,
   FolderOpen,
+  FolderInput,
   Globe,
   GripVertical,
   Loader2,
@@ -106,6 +107,8 @@ interface ProjectListProps {
   archivedProjects?: ProjectRow[];
   /** 右键菜单「归档项目」：确认在组件内，动作（API + 刷新）归 App。 */
   onArchive?: (p: ProjectRow) => void;
+  /** 右键菜单「迁移目录」：确认在组件内（复制语义 + 旧目录保留说明），动作归 App。 */
+  onMigrate?: (p: ProjectRow) => void;
   /** 归档面「恢复」按钮动作。 */
   onRestore?: (p: ProjectRow) => void;
   /** 归档面「永久删除」按钮动作（确认在组件内，动作归 App）。 */
@@ -242,6 +245,7 @@ export function ProjectList({
   onReorder,
   archivedProjects = [],
   onArchive,
+  onMigrate,
   onRestore,
   onDelete,
   onDeleteMany,
@@ -264,6 +268,8 @@ export function ProjectList({
   const [archivedOpen, setArchivedOpen] = useState(false);
   // 待确认归档的项目：右键菜单设入，应用内 ConfirmDialog 确认后交 App 执行
   const [confirmTarget, setConfirmTarget] = useState<ProjectRow | null>(null);
+  // 待确认迁移目录的项目（同上形）；确认后由 App 弹目录选择器
+  const [migrateTarget, setMigrateTarget] = useState<ProjectRow | null>(null);
   // 待确认永久删除的归档项目（删除确认弹窗复用同一 ConfirmDialog 形）
   const [deleteTarget, setDeleteTarget] = useState<ProjectRow | null>(null);
   // 批量删除确认弹窗开合
@@ -1144,6 +1150,22 @@ export function ProjectList({
         onClose={() => setConfirmTarget(null)}
       />
 
+      {/* 迁移目录确认弹窗：复制语义 + 完成后可删旧目录 + hooks 自洽说明 */}
+      <ConfirmDialog
+        open={migrateTarget !== null}
+        title={t('project.move')}
+        message={
+          migrateTarget
+            ? t('project.moveConfirm', { name: migrateTarget.name, path: migrateTarget.path })
+            : ''
+        }
+        confirmLabel={t('common.confirm')}
+        onConfirm={() => {
+          if (migrateTarget) onMigrate?.(migrateTarget);
+        }}
+        onClose={() => setMigrateTarget(null)}
+      />
+
       {/* 永久删除确认弹窗：不可逆，文案明示 */}
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -1180,8 +1202,10 @@ export function ProjectList({
           <div
             ref={menuRef}
             style={{
-              left: Math.min(menu.x, window.innerWidth - 200),
-              top: Math.min(menu.y, window.innerHeight - 88),
+              // 视觉 px 落 style 前经 cssPx 除回 CSS 值（根 zoom 会把 fixed 的 CSS 值
+              // 再乘一次）——与 termMenu 同一口径，缺了这层缩放下菜单飘到别处。
+              left: cssPx(Math.min(menu.x, window.innerWidth - 208)),
+              top: cssPx(Math.min(menu.y, window.innerHeight - 132)),
             }}
             className="fixed z-50 w-48 rounded-lg border border-edge/[0.08] bg-neutral-900 shadow-mac py-1"
             onContextMenu={(e) => e.preventDefault()}
@@ -1202,6 +1226,14 @@ export function ProjectList({
                 }}
               />
             )}
+            <MenuButton
+              icon={<FolderInput className="h-3.5 w-3.5" />}
+              label={t('project.move')}
+              onClick={() => {
+                setMigrateTarget(menu.project);
+                setMenu(null);
+              }}
+            />
             {menu.project.superagent && (
               <p className="px-3 py-1 text-10 text-neutral-500">{t('project.superagentProtected')}</p>
             )}
@@ -1460,7 +1492,10 @@ function MenuButton({
       onClick={onClick}
       className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-neutral-200 hover:bg-edge/[0.06]"
     >
-      <span className="text-neutral-400">{icon}</span>
+      {/* 图标自居中：span 走 flex 后 svg 不再骑在文字 baseline 上（右键菜单两行图标不齐的真因） */}
+      <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-neutral-400">
+        {icon}
+      </span>
       {label}
     </button>
   );

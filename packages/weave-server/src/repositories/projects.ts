@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { scopedProjectIds } from '../daemon/caller-scope.js';
 
 export interface ProjectRow {
@@ -138,6 +138,19 @@ export class ProjectRepository {
       new Date().toISOString(),
       id,
     );
+  }
+
+  /**
+   * 迁移目录落定：path 换新 + name 跟随新目录名。token 不动（hook 管道按 token
+   * 分片，与路径无关）；历史数据全按 project_id 引用，只此一处。UNIQUE 冲突
+   * 向上抛（调用方 validate 已排除，兜底）。行不存在返回 undefined。
+   */
+  setPath(id: number, newPath: string): ProjectRow | undefined {
+    const key = projectKey(newPath);
+    const result = this.db
+      .prepare('UPDATE projects SET path = ?, name = ? WHERE id = ?')
+      .run(key, basename(key), id);
+    return result.changes > 0 ? this.getById(id) : undefined;
   }
 
   remove(id: number): void {

@@ -43,13 +43,13 @@ interface InstallStatusRow {
 
 export function OnboardingCard({
   projects,
-  onProjectTerminal,
+  onInitProject,
   onDismissed,
 }: {
   /** 当前项目列表（活跃普通项目；卡显隐与步骤二状态都由它推导）。 */
   projects: ProjectRow[];
-  /** 步骤一注册成功后打开项目级 web 终端（App 既有弹层），带自动命令。 */
-  onProjectTerminal: (instanceId: string, label: string, autoCommand: string) => void;
+  /** 步骤一注册成功后交给 App 弹 harness 勾选并静默跑 `weave init`。 */
+  onInitProject: (row: ProjectRow) => void;
   onDismissed: () => void;
 }) {
   const t = useT();
@@ -82,7 +82,7 @@ export function OnboardingCard({
       .catch(() => {});
   }, []);
 
-  /** 步骤一：选目录 → 注册 → 打开项目终端自动跑 `weave init`。 */
+  /** 步骤一：选目录 → 注册 → 交给 App 勾 harness 并静默跑 `weave init`。 */
   const registerAndOpen = async (paths: string[]): Promise<void> => {
     setPickerOpen(false);
     const dir = paths[0];
@@ -96,12 +96,7 @@ export function OnboardingCard({
         // 存不进去就只活这一局
       }
       setProjectId(row.id);
-      const opened = await api.openProject(row.id, 'terminal');
-      if (opened.instanceId) {
-        onProjectTerminal(opened.instanceId, row.name, 'weave init\r');
-      } else {
-        show('info', t('onboard.runInitManually'));
-      }
+      onInitProject(row);
     } catch (e) {
       show('error', t('onboard.registerFailed', { error: errorText(e) }));
     } finally {

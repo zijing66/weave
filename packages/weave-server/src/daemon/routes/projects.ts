@@ -9,6 +9,7 @@ import { messagingSurfaceFor } from '../../surfaces.js';
 import { readBody, sendJson } from '../http.js';
 import { generateToken } from '../auth.js';
 import { handleProjectInit } from './project-init.js';
+import { MoveValidationError } from '../move.js';
 import { readDaemonSettings, resolveWebShell } from '../settings.js';
 import {
   closeTerminalsIn,
@@ -685,6 +686,107 @@ export async function handleProjectRoutes(
   const initMatch = pathname.match(/^\/projects\/(\d+)\/init$/);
   if (initMatch && req.method === 'POST') {
     return handleProjectInit(req, res, Number(initMatch[1]), deps);
+  }
+
+  // --- 项目迁移（复制语义）：move 引擎在 daemon 装配，进度走轮询 ---
+  // POST /projects/:id/move — 起约（validate 失败 400 同步回，起跑后 200）。
+  if (pathname.match(/^\/projects\/\d+\/move$/) && req.method === 'POST') {
+    const engine = deps.moveEngine;
+    if (!engine) {
+      sendJson(res, 503, { error: 'Move engine not configured' });
+      return true;
+    }
+    const id = Number(pathname.match(/^\/projects\/(\d+)\/move$/)![1]);
+    const project = deps.projects.getById(id);
+    if (!project) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return true;
+    }
+    let body: { targetPath?: unknown };
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.targetPath !== 'string' || !path.isAbsolute(body.targetPath)) {
+      sendJson(res, 400, { error: 'Invalid "targetPath" (absolute path required)' });
+      return true;
+    }
+    if (engine.status.running) {
+      sendJson(res, 409, { error: 'A move is already running' });
+      return true;
+    }
+    try {
+      // 先同步起跑（validate 在 run 开头同步段），错误当场回 400；复制阶段
+      // 异步走，进度/结果前端轮询 status。
+      const runPromise = engine.run(project, body.targetPath).catch(() => {});
+      // validate 是 run 内第一段同步代码，await 一拍即可拿到同步抛出
+      await Promise.resolve();
+      await runPromise;
+      sendJson(res, 200, { ok: true, status: engine.status });
+    } catch (e) {
+      if (e instanceof MoveValidationError) {
+        sendJson(res, 400, { error: e.message });
+      } else {
+        sendJson(res, 500, { error: e instanceof Error ? e.message : 'Move failed' });
+      }
+    }
+    return true;
+  }
+
+  // GET /projects/move/status — 迁移引擎状态（前端 1s 轮询）。
+  if (pathname === '/projects/move/status' && req.method === 'GET') {
+    if (!deps.moveEngine) {
+      sendJson(res, 503, { error: 'Move engine not configured' });
+      return true;
+    }
+    sendJson(res, 200, { status: deps.moveEngine.status });
+    return true;
+  }
+
+  // POST /projects/move/cancel — 请求取消（复制循环下一块生效；成功与否看 status）。
+  if (pathname === '/projects/move/cancel' && req.method === 'POST') {
+    deps.moveEngine?.requestCancel();
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  // POST /projects/move/discard-old — 迁移完成后用户确认删旧目录：校验该 path
+  // 不再是任何注册项目、归一后非根/非家目录，fs.rm -rf。
+  if (pathname === '/projects/move/discard-old' && req.method === 'POST') {
+    let body: { path?: unknown };
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.path !== 'string') {
+      sendJson(res, 400, { error: 'Invalid "path"' });
+      return true;
+    }
+    const target = path.resolve(body.path);
+    const home = path.resolve(
+      process.env.USERPROFILE ?? process.env.HOME ?? path.parse(target).root,
+    );
+    if (target === path.parse(target).root || target === home) {
+      sendJson(res, 400, { error: 'Refusing to delete root or home directory' });
+      return true;
+    }
+    if (deps.projects.list().some((p) => path.resolve(p.path) === target)) {
+      sendJson(res, 409, { error: 'Path is still a registered project' });
+      return true;
+    }
+    try {
+      await fs.promises.rm(target, { recursive: true, force: false });
+      sendJson(res, 200, { ok: true });
+    } catch (e) {
+      sendJson(res, 500, {
+        error: e instanceof Error ? e.message : 'Failed to delete old directory',
+      });
+    }
+    return true;
   }
 
   // GET /projects/archived — 归档面数据（仅基础信息；历史会话已在归档时清空）。

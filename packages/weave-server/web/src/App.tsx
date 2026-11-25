@@ -14,7 +14,10 @@ import {
   type PluginRuntime,
   type GlobalSkillSource,
   type InstallCapabilities,
+  type MoveStatus,
+  type Harness,
 } from '@/lib/api';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { registerInvalidator, subscribeFrame, subscribeHook, sseConnected, subscribeSseConnection } from '@/lib/sse';
 import { bootRequests } from '@/lib/boot-requests';
 import { sessionLabel } from '@/lib/hook-payload';
@@ -59,11 +62,13 @@ import { useToast } from '@/components/Toast';
 import { CopyPathButton } from '@/components/ui/copy-button';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
+import { InitHarnessDialog } from '@/components/InitHarnessDialog';
 import { logout, refreshAuth, useAuthState } from '@/lib/auth';
 import { WEAVE_REPO_URL, formatStars, useRepoStars } from '@/lib/github';
 import { LoginPage } from '@/components/LoginPage';
 import { BootSplash } from '@/components/BootSplash';
 import { BackupOverlay } from '@/components/BackupOverlay';
+import { MoveOverlay } from '@/components/MoveOverlay';
 import { WeaveLogo } from '@/components/WeaveLogo';
 import { AiAssistant } from '@/components/AiAssistant';
 import { SkeletonMain, SkeletonRows } from '@/components/ui/skeleton';
@@ -296,6 +301,25 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
   const [fileBrowser, setFileBrowser] = useState<{ projectId: number; path?: string } | null>(null);
   /** 添加项目（左栏「+」）：目录选择器 → POST /projects 注册（与引导卡同一链路）。 */
   const [addProjectPickerOpen, setAddProjectPickerOpen] = useState(false);
+  /** 添加项目流程中待勾 harness 的新注册项目行（弹 InitHarnessDialog）。 */
+  const [initHarnessFor, setInitHarnessFor] = useState<ProjectRow | null>(null);
+
+  // 添加项目 / 首接的静默 init（子进程跑 CLI，与「立即同步」的重跑同一端点）；
+  // 跑完刷新 updates 拿真账。
+  const runInitFor = useCallback(
+    (p: ProjectRow, harnesses?: Harness[]) =>
+      fb.run(
+        `init-new:${p.id}`,
+        async () => {
+          await api.runProjectInit(p.id, harnesses);
+          show('success', t('toast.initDone'));
+          ensureUpdates(p.id, true);
+          refreshProjects();
+        },
+        { fail: (e) => t('project.initFailed', { name: p.name, error: errorText(e) }) },
+      ),
+    [fb, show, t, ensureUpdates, refreshProjects],
+  );
   /** 全项目文件浏览器（Ctrl+B / 顶栏按钮）：FileBrowserModal 的全项目模式。 */
   const [browserPickerOpen, setBrowserPickerOpen] = useState(false);
   const themePref = useThemePreference();
@@ -847,6 +871,22 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       ),
     [fb, selected, projects, show, t, refreshProjects],
   );
+
+  // 项目迁移：确认弹窗在 ProjectList，这里只串「选目标目录 → 起约」。
+  // 起约成功后进度/取消/完成弹窗全归 MoveOverlay（App 层常挂轮询）。
+  const [movePickerFor, setMovePickerFor] = useState<ProjectRow | null>(null);
+  const handleMigrateProject = useCallback((p: ProjectRow) => setMovePickerFor(p), []);
+  const [moveSettledOldDir, setMoveSettledOldDir] = useState<{ name: string; path: string } | null>(
+    null,
+  );
+  const handleMoveSettled = useCallback(
+    (s: MoveStatus) => {
+      refreshProjects();
+      if (s.done && s.fromPath) setMoveSettledOldDir({ name: s.projectName ?? '', path: s.fromPath });
+    },
+    [refreshProjects],
+  );
+
   const handleRestoreProject = useCallback(
     (p: ProjectRow) =>
       void fb.run(
@@ -1066,6 +1106,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       onReorder={reorderProjects}
       archivedProjects={archivedProjects}
       onArchive={handleArchiveProject}
+      onMigrate={handleMigrateProject}
       onRestore={handleRestoreProject}
       onDelete={handleDeleteProject}
       onDeleteMany={handleDeleteProjects}
@@ -1451,9 +1492,7 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
                               <div className="mx-auto max-w-2xl">
                                 <OnboardingCard
                                   projects={normal}
-                                  onProjectTerminal={(instanceId, label, autoCommand) =>
-                                    openOverlayPane(instanceId, label, autoCommand)
-                                  }
+                                  onInitProject={(row) => setInitHarnessFor(row)}
                                   onDismissed={() => setOnboardingOff(true)}
                                 />
                               </div>
@@ -1608,10 +1647,9 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
       {/* 右下角 AI 助手（配置齐才显示按钮；系统上下文由服务端注入） */}
       <AiAssistant />
 
-      {/* 添加项目：目录选择器（与资源市场选库路径同一个）→ 直接在 web 终端跑
-          `weave init`——不走 POST /projects 接口注册（用户裁决 2026-11-21）：
-          CLI init 成功才注册（source='init'），harness 选择/安装确认在终端里
-          作答，与引导卡同一链路。多选时只对最后落点起跑。 */}
+      {/* 添加项目：目录选择器 → harness 勾选 → 静默跑 `weave init`（子进程，与
+          「立即同步」同一链路；不再开终端敲命令）。已注册项目跳过勾选直接重跑
+          init（重跑是覆盖式刷新）。多选时只对最后落点起跑。 */}
       <DirectoryPickerModal
         open={addProjectPickerOpen}
         existingPaths={projects.map((p) => p.path)}
@@ -1623,15 +1661,11 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
           void (async () => {
             const known = projects.find((p) => p.path === dir);
             if (known) {
-              // 已注册（含 init 过）：只开终端，init 语义交给用户（重跑是覆盖式刷新）
-              const opened = await api.openProject(known.id, 'terminal').catch(() => null);
-              if (opened?.instanceId) {
-                openOverlayPane(opened.instanceId, known.name, 'weave init\r');
-              }
+              void runInitFor(known);
               return;
             }
-            // 未注册：项目行还没有，开不了 /projects/:id/open——先注册占位再开终端。
-            // 注册只建行 + 落 token，init 成功会把 source 落成 'init'。
+            // 未注册：先注册占位再勾 harness（注册只建行 + 落 token，init
+            // 成功会把 source 落成 'init'）。
             const row = (await api.registerProject(dir).catch(() => null))?.project;
             refreshProjects();
             if (!row) {
@@ -1639,14 +1673,61 @@ function Dashboard({ onBootReady }: { onBootReady: () => void }) {
               return;
             }
             navigate({ kind: 'project', projectId: row.id, category: 'tasks', sessionId: null });
-            const opened = await api.openProject(row.id, 'terminal').catch(() => null);
-            if (opened?.instanceId) {
-              openOverlayPane(opened.instanceId, row.name, 'weave init\r');
-            } else {
-              show('info', t('onboard.runInitManually'));
-            }
+            setInitHarnessFor(row);
           })();
         }}
+      />
+      {initHarnessFor && (
+        <InitHarnessDialog
+          projectName={initHarnessFor.name}
+          onClose={() => setInitHarnessFor(null)}
+          onConfirm={(harnesses) => void runInitFor(initHarnessFor, harnesses)}
+        />
+      )}
+
+      {/* 迁移目录：目标目录选择器（单选 = paths[0]）→ 起约；遮罩由 MoveOverlay 接管 */}
+      <DirectoryPickerModal
+        open={movePickerFor !== null}
+        existingPaths={projects.map((p) => p.path)}
+        onClose={() => setMovePickerFor(null)}
+        onConfirm={(paths) => {
+          const p = movePickerFor;
+          setMovePickerFor(null);
+          const dir = paths[0];
+          if (!p || !dir) return;
+          void api
+            .moveProject(p.id, dir)
+            .then(() => show('success', t('project.moveStarted', { name: p.name })))
+            .catch((e) => show('error', t('project.moveFailed', { error: errorText(e) })));
+        }}
+      />
+
+      {/* 迁移进度遮罩（App 层常挂，轮询自动显隐；可退出三层在其内部） */}
+      <MoveOverlay onSettled={handleMoveSettled} />
+
+      {/* 迁移完成后的旧目录清理确认（用户裁决：二次确认，不删就关掉） */}
+      <ConfirmDialog
+        open={moveSettledOldDir !== null}
+        title={t('project.moveOldDirTitle')}
+        message={
+          moveSettledOldDir
+            ? t('project.moveOldDirConfirm', {
+                name: moveSettledOldDir.name,
+                path: moveSettledOldDir.path,
+              })
+            : ''
+        }
+        confirmLabel={t('project.moveOldDirDelete')}
+        onConfirm={() => {
+          const old = moveSettledOldDir;
+          setMoveSettledOldDir(null);
+          if (!old) return;
+          void api
+            .discardOldProjectDir(old.path)
+            .then(() => show('success', t('project.moveOldDirDeleted', { path: old.path })))
+            .catch((e) => show('error', t('project.moveOldDirFailed', { error: errorText(e) })));
+        }}
+        onClose={() => setMoveSettledOldDir(null)}
       />
     </>
   );

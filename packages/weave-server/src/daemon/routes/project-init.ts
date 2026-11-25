@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { WeaveServerDeps } from '../server.js';
-import { sendJson } from '../http.js';
+import { readBody, sendJson } from '../http.js';
 import { readInitRuntime } from '../../install/init-files.js';
 
 /**
@@ -20,8 +20,8 @@ import { readInitRuntime } from '../../install/init-files.js';
  * 运行期一定解析得到。**dev 前提 = cli 的 dist 已 build**（bin 只认 dist，
  * 改 CLI 源码后须先 build 再触发本端点）。
  *
- * harness 清单从 `.weave/config.yaml` 落档读（init 自己的选择结果）——没跑过
- * init 的项目不在此起 init（无从读清单，接入项目先走终端 init 或 scan）。
+ * harness 清单从 `.weave/config.yaml` 落档读（init 自己的选择结果）；web 首接
+ * 项目可经 body.harnesses 下发用户勾选清单（覆盖落档缺省）。
  * 同项目并发闸：init 改盘上文件，两把并发互踩——在飞直接 409。跑完不 commit
  * （生成物进不进 git 由用户在 IDE 复核），前端收到 ok 后刷新 updates 拿真账。
  */
@@ -32,7 +32,7 @@ const inflight = new Map<number, Promise<void>>();
 const INIT_TIMEOUT_MS = 120_000;
 
 export async function handleProjectInit(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   projectId: number,
   deps: WeaveServerDeps,
@@ -42,9 +42,24 @@ export async function handleProjectInit(
     sendJson(res, 404, { error: 'Project not found' });
     return true;
   }
+  // body 可带 harnesses（web 首接项目：项目还没跑过 init，落档里读不到清单——
+  // 前端把用户勾选的清单随请求下发；缺省仍走落档，老调用零改动）。
+  let bodyHarnesses: string[] | null = null;
+  try {
+    const raw = await readBody(req);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { harnesses?: unknown };
+      if (Array.isArray(parsed.harnesses) && parsed.harnesses.length > 0) {
+        bodyHarnesses = parsed.harnesses.filter((h): h is string => typeof h === 'string');
+      }
+    }
+  } catch {
+    // 无 body / 坏 body = 老调用形态，忽略
+  }
   const runtime = await readInitRuntime(project.path);
   const flag = runtime.preset === 'minimal' ? '--preset=minimal' : runtime.preset === 'full' ? '--preset=full' : null;
-  if (runtime.harnesses.length === 0) {
+  const harnesses = bodyHarnesses ?? runtime.harnesses;
+  if (harnesses.length === 0) {
     sendJson(res, 409, {
       error: 'Project has no harnesses on record; run `weave init` in a terminal first',
     });
@@ -54,7 +69,7 @@ export async function handleProjectInit(
     sendJson(res, 409, { error: 'An init is already running for this project' });
     return true;
   }
-  const run = spawnInit(project.path, runtime.harnesses, flag).finally(() => inflight.delete(projectId));
+  const run = spawnInit(project.path, harnesses, flag).finally(() => inflight.delete(projectId));
   inflight.set(projectId, run);
   try {
     await run;
@@ -90,7 +105,7 @@ function resolveCliBin(): string {
   }
 }
 
-function spawnInit(projectPath: string, harnesses: readonly string[], presetFlag: string | null): Promise<void> {
+export function spawnInit(projectPath: string, harnesses: readonly string[], presetFlag: string | null): Promise<void> {
   const bin = resolveCliBin();
   const args = ['init', '--no-interactive', `--harness=${harnesses.join(',')}`, ...(presetFlag ? [presetFlag] : []), `--dir=${projectPath}`];
   return new Promise<void>((resolve, reject) => {

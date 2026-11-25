@@ -273,6 +273,8 @@ export interface WeaveServerDeps {
   };
   /** 每日自动备份引擎（GET/POST /backup/*）；缺省不挂 = 503（CLI/旧装配）。 */
   backupEngine?: import('./backup.js').BackupEngine;
+  /** 项目迁移引擎（POST /projects/:id/move 等）；缺省不挂 = 503。 */
+  moveEngine?: import('./move.js').MoveEngine;
 }
 
 /**

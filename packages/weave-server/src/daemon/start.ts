@@ -9,6 +9,9 @@ import { attachTerminalWebSocket } from '../runtime/terminal/ws-endpoint.js';
 import { mergedTerminalChannel } from '../runtime/terminal-channel.js';
 import { BackupEngine, applyPendingRestore } from './backup.js';
 import { startBackupScheduler } from './backup-scheduler.js';
+import { MoveEngine } from './move.js';
+import { readInitRuntime } from '../install/init-files.js';
+import { spawnInit } from './routes/project-init.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { LibraryRepository } from '../repositories/libraries.js';
@@ -848,6 +851,25 @@ export async function startDaemon(): Promise<void> {
 
   // 每日自动备份（配置面）：引擎 + 每分钟一看的调度（settings backup 段）。
   const backupEngine = new BackupEngine({ db });
+  // 项目迁移引擎（复制语义）：validate 同步段失败路由 400；复制后 DB 切 path
+  // + 自动 `weave init`（codex trust 按新路径重建）。
+  const moveEngine = new MoveEngine({
+    projects,
+    setPath: (id, newPath) => projects.setPath(id, newPath),
+    reconcile: () => watch.reconcile(),
+    emitProjects: () => dataBus.emit({ key: 'projects' }),
+    runInit: async (projectPath) => {
+      const runtime = await readInitRuntime(projectPath);
+      if (runtime.harnesses.length === 0) return; // 没 init 过的项目无从跑
+      const flag =
+        runtime.preset === 'minimal'
+          ? '--preset=minimal'
+          : runtime.preset === 'full'
+            ? '--preset=full'
+            : null;
+      await spawnInit(projectPath, runtime.harnesses, flag);
+    },
+  });
   startBackupScheduler({
     engine: backupEngine,
     config: () => readDaemonSettingsSync().backup ?? { enabled: true, hour: 1, includeHistory: false },
@@ -943,6 +965,7 @@ export async function startDaemon(): Promise<void> {
     pluginStates: new PluginStateRepository(db),
     toolkit,
     backupEngine,
+    moveEngine,
     auth,
   });
   beginDrain = requestHandler.beginDrain;

@@ -38,6 +38,26 @@ export interface ProjectRow {
   harnesses?: ProjectHarness[];
 }
 
+/** mirror of daemon/move.ts — 保持同步。 */
+export interface MoveProgress {
+  phase: 'measure' | 'copy' | 'finalize';
+  ratio: number;
+  etaSeconds: number | null;
+}
+
+/** mirror of daemon/move.ts — 保持同步。 */
+export interface MoveStatus {
+  running: boolean;
+  projectId: number | null;
+  projectName: string | null;
+  fromPath: string | null;
+  toPath: string | null;
+  progress: MoveProgress | null;
+  lastError: string | null;
+  done: boolean;
+  initError: string | null;
+}
+
 /** 会话终端可附加目标（一个窗口内的一个 tab，按最近活跃排序；id 格式归各终端）。 */
 export interface TerminalTarget {
   /** 不透明 id（回传给 openSessionTerminal）。 */
@@ -186,6 +206,23 @@ export const projectApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
     }),
+
+  /** 项目迁移（复制语义）：起约后进度走 getMoveStatus 轮询；validate 失败 400。 */
+  moveProject: (id: number, targetPath: string): Promise<{ ok: boolean; status: MoveStatus }> =>
+    apiFetch<{ ok: boolean; status: MoveStatus }>(`/projects/${id}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ targetPath }),
+    }),
+  getMoveStatus: (): Promise<{ status: MoveStatus }> =>
+    apiFetch<{ status: MoveStatus }>('/projects/move/status'),
+  cancelMoveProject: (): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>('/projects/move/cancel', { method: 'POST' }),
+  /** 迁移完成后用户确认删旧目录（服务端校验非注册项目/非根非家）。 */
+  discardOldProjectDir: (path: string): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>('/projects/move/discard-old', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
   /** 项目列表拖动排序持久化：payload = 完整目标顺序（id 全量列表），幂等。 */
   reorderProjects: (ids: number[]): Promise<ProjectRow[]> =>
     apiFetch<{ projects: ProjectRow[] }>('/projects/order', {
@@ -305,9 +342,14 @@ export const projectApi = {
       home: r.home,
     })),
   /** 重跑 `weave init`（dashboard 触发，子进程跑 CLI；initVersionBehind / needsInit
-   *  的自愈入口）。409 = 未接入 harness 或已有 init 在飞；500 带 CLI 的 stderr 尾巴。 */
-  runProjectInit: (projectId: number): Promise<{ ok: boolean }> =>
-    apiFetch<{ ok: boolean }>(`/projects/${projectId}/init`, { method: 'POST' }),
+   *  的自愈入口）。`harnesses` = 首接项目首跑时下发的勾选清单（项目还没落档，
+   *  服务端无从读清单）；缺省走落档（重跑形态）。409 = 无 harness 或已有 init
+   *  在飞；500 带 CLI 的 stderr 尾巴。 */
+  runProjectInit: (projectId: number, harnesses?: Harness[]): Promise<{ ok: boolean }> =>
+    apiFetch<{ ok: boolean }>(`/projects/${projectId}/init`, {
+      method: 'POST',
+      ...(harnesses?.length ? { body: JSON.stringify({ harnesses }) } : {}),
+    }),
 
   // --- 项目文件数据面（索引浏览/搜索 + 根内只读预览） ---
   /** 项目文件索引的一页：`q` 非空 = `dir` 子树内模糊匹配，空 = 列 `dir` 的直接子项。 */

@@ -12,6 +12,9 @@ import os from 'node:os';
 import { openDatabase } from '../db/db.js';
 import { BackupEngine, applyPendingRestore } from './backup.js';
 import { startBackupScheduler } from './backup-scheduler.js';
+import { MoveEngine } from './move.js';
+import { readInitRuntime } from '../install/init-files.js';
+import { spawnInit } from './routes/project-init.js';
 import { ProjectRepository } from '../repositories/projects.js';
 import { HookEventRepository } from '../repositories/hook-events.js';
 import { LibraryRepository } from '../repositories/libraries.js';
@@ -813,6 +816,24 @@ async function main(): Promise<void> {
 
   // 每日自动备份（配置面）：引擎 + 每分钟一看的调度（settings backup 段）。
   const backupEngine = new BackupEngine({ db });
+  // 项目迁移引擎（复制语义）：与 start.ts 同一份装配。
+  const moveEngine = new MoveEngine({
+    projects,
+    setPath: (id, newPath) => projects.setPath(id, newPath),
+    reconcile: () => watch.reconcile(),
+    emitProjects: () => dataBus.emit({ key: 'projects' }),
+    runInit: async (projectPath) => {
+      const runtime = await readInitRuntime(projectPath);
+      if (runtime.harnesses.length === 0) return; // 没 init 过的项目无从跑
+      const flag =
+        runtime.preset === 'minimal'
+          ? '--preset=minimal'
+          : runtime.preset === 'full'
+            ? '--preset=full'
+            : null;
+      await spawnInit(projectPath, runtime.harnesses, flag);
+    },
+  });
   startBackupScheduler({
     engine: backupEngine,
     config: () => readDaemonSettingsSync().backup ?? { enabled: true, hour: 1, includeHistory: false },
@@ -908,6 +929,7 @@ async function main(): Promise<void> {
     dashboardRate,
     toolkit,
     backupEngine,
+    moveEngine,
     auth,
     requestShutdown: () => shutdownRef.fn?.(),
   });

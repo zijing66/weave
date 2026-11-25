@@ -223,7 +223,8 @@ export type {
   NotifyChannelInput,
   NotifySendResult,
 } from './notify';
-export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, AgentInstanceRow, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult } from './projects';
+export type { ProjectHarness, ProjectRow, TerminalTarget, TerminalPane, AgentInstanceRow, SessionTerminal, HarnessCheck, ProjectStorage, ProjectStorageResult, MoveProgress, MoveStatus } from './projects';
+export type { Harness } from '@weavecode/core/harness';
 export type {
   ExtensionEndpointKind,
   ExtensionPoint,
