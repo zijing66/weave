@@ -18,6 +18,35 @@ import {
  */
 
 export const FRAME_MAX_PANES = 6;
+/** 移动端（触屏 + 窄屏）框架页上限：一屏只容得下上下/左右两格。 */
+export const FRAME_MAX_PANES_MOBILE = 2;
+
+/** 移动端判据（触屏指针 + 窄视口；桌面大触屏不算——那有空间摆多格）。 */
+export function isMobileViewport(): boolean {
+  try {
+    return (
+      window.matchMedia('(hover: none), (pointer: coarse)').matches &&
+      window.matchMedia('(max-width: 1023px)').matches
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** 本端当前生效的 pane 上限（桌面 6 / 移动端 2；参数化口，别写死调用）。 */
+export function frameMaxPanes(): number {
+  return isMobileViewport() ? FRAME_MAX_PANES_MOBILE : FRAME_MAX_PANES;
+}
+
+/** 移动端落点侧：竖屏 = 上下叠（bottom），横屏 = 左右排（right）；桌面恒 right。 */
+export function frameInsertSide(): 'right' | 'bottom' {
+  if (!isMobileViewport()) return 'right';
+  try {
+    return window.matchMedia('(orientation: portrait)').matches ? 'bottom' : 'right';
+  } catch {
+    return 'bottom';
+  }
+}
 
 /** 框架页内的一个视图（pane 内容）。 */
 export type FrameView =
@@ -151,15 +180,8 @@ export function viewIdOf(sessionId: string, kind: 'conversation' | 'terminal'): 
   return `${kind}:${sessionId}`;
 }
 
-export function openPaneFrame(pane: PaneInput, features: string): string {
-  const existing = frameOfProject(pane.projectId);
-  if (existing) {
-    // 同项目的第二扇对话：贴进已有框架页（幂等）再聚焦——只聚焦不贴的话，
-    // 后续会话点「弹出」没反应，像是被第一扇挡死了。
-    attachFrameView(existing.frameId, { kind: 'conversation', label: pane.label, sessionId: pane.sessionId });
-    windowRefs.get(existing.frameId)?.focus();
-    return existing.frameId;
-  }
+/** 落一个新的框架页（openPaneFrame 的「无已有页」路径抽出复用：溢出开新窗同走这里）。 */
+function spawnPaneFrame(pane: PaneInput, features: string): string {
   const frameId = uuid();
   const viewId = viewIdOf(pane.sessionId, 'conversation');
   const descriptor: PaneTransfer = {
@@ -191,8 +213,23 @@ export function openPaneFrame(pane: PaneInput, features: string): string {
   return frameId;
 }
 
+export function openPaneFrame(pane: PaneInput, features: string): string {
+  const existing = frameOfProject(pane.projectId);
+  if (existing) {
+    // 同项目的第二扇对话：贴进已有框架页（幂等）再聚焦——只聚焦不贴的话，
+    // 后续会话点「弹出」没反应，像是被第一扇挡死了。
+    const res = attachFrameView(existing.frameId, { kind: 'conversation', label: pane.label, sessionId: pane.sessionId });
+    windowRefs.get(existing.frameId)?.focus();
+    // 满 6（移动端 2）：贴不进 = 另开一页容纳（一个项目的框架页可以有多扇）。
+    if (!res.ok) return spawnPaneFrame(pane, features);
+    return existing.frameId;
+  }
+  return spawnPaneFrame(pane, features);
+}
+
 /** 往框架页贴一个视图（wezterm 贴 pane）：挂在锚视图旁（缺省 = 最后一个叶子）。
- *  会话已有同 kind 视图 = 幂等（聚焦不重挂）；满 6 拒绝。 */
+ *  会话已有同 kind 视图 = 幂等（聚焦不重挂）；满上限拒绝（调用方决定是否另开窗）。
+ *  上限与落点按设备形态现取（桌面 6 右插 / 移动端 2 上下叠）。 */
 export function attachFrameView(
   frameId: string,
   view: FrameView,
@@ -202,13 +239,21 @@ export function attachFrameView(
   if (!frame) return { ok: false };
   const viewId = viewIdOf(view.sessionId, view.kind);
   if (frame.views[viewId]) return { ok: true };
-  if (Object.keys(frame.views).length >= FRAME_MAX_PANES) return { ok: false, reason: 'limit' };
+  if (Object.keys(frame.views).length >= frameMaxPanes()) return { ok: false, reason: 'limit' };
   const views = { ...frame.views, [viewId]: view };
   const layout = frameLayoutOf(frame);
-  const anchor = anchorPaneId ?? paneIdsOf(layout ?? { kind: 'pane', paneId: viewId }).at(-1)!;
-  const nextLayout = layout
-    ? placePane(layout, anchor, null, 'right', viewId)
-    : ({ kind: 'pane', paneId: viewId } as LayoutNode);
+  // 锚 = 已有 pane 的最后一个叶子；layout 为 null（单 pane 页）时兜底树也必须是
+  // **已有视图**而非新视图——拿新视图当锚（或直接把布局写成只有新视图）会把旧
+  // pane 挤出布局（新 pane「覆盖」旧 pane）。
+  const anchor = anchorPaneId ?? paneIdsOf(layout ?? { kind: 'pane', paneId: Object.keys(frame.views)[0] ?? viewId }).at(-1)!;
+  const nextLayout = placePane(
+    layout ?? { kind: 'pane', paneId: anchor },
+    anchor,
+    null,
+    frameInsertSide(),
+    viewId,
+    frameMaxPanes(),
+  );
   if (!nextLayout) return { ok: false };
   writeFrame({ ...frame, views, layout: encodeLayout(nextLayout) });
   return { ok: true };

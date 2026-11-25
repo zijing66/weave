@@ -143,8 +143,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
       const r = await api.listSessions(undefined, ids);
       setModelCatalog(r.modelCatalog ?? {});
       setSessions((prev) => {
-        if (!prev) return prev;
         const byId = new Map(r.sessions.map((s) => [s.sessionId, s]));
+        // pane 窗没有全量账（窄窗只拉自己那条）：null 账直接以补丁行起账，
+        // 不能像主窗那样整份丢弃——丢了 sessionRow 就恒缺，控制行永远不渲染。
+        if (!prev) return r.sessions;
         let changed = false;
         const next = prev.map((s) => {
           const row = byId.get(s.sessionId);
@@ -152,6 +154,13 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
           changed = true;
           return applyRowPush([row], rowPush.current)[0] ?? row;
         });
+        // 补丁里有主窗账上没有的行（pane 窗切了别的会话视图）也并入
+        for (const row of r.sessions) {
+          if (!next.some((s) => s.sessionId === row.sessionId)) {
+            changed = true;
+            next.push(applyRowPush([row], rowPush.current)[0] ?? row);
+          }
+        }
         return changed ? next : prev;
       });
       setError(null);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, ExternalLink, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, SquareTerminal, Trash2, Workflow, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Check, CheckCheck, ChevronDown, ChevronUp, Copy, CornerDownLeft, Download, ExternalLink, FileCode, FileDiff, FileText, Gauge, GitMerge, HelpCircle, Image as ImageIcon, Loader2, Maximize, MessageCircleQuestion, Minimize, Minus, Paperclip, RotateCcw, Send, Share2, Square, SquareTerminal, Trash2, Undo2, Workflow, X } from 'lucide-react';
 import type { HarnessLifecycle } from '@weavecode/core/harness';
 import {
   API_BASE,
@@ -21,6 +21,7 @@ import { AssistantMarkdown } from '@/components/ui/assistant-markdown';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { QuestionAnswer } from './QuestionAnswer';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
@@ -144,7 +145,7 @@ export function SessionMessages({
   projectLabel,
   capability,
   promptLimits,
-  answerPending,
+  answerPending: answerPendingProp,
   onOpenAnswer,
   onInterrupt,
   interruptStateOf,
@@ -156,6 +157,8 @@ export function SessionMessages({
   webTerminal,
   onPopout,
   pane,
+  onFrameReclaim,
+  onFrameClose,
 }: {
   sessionId: string;
   /** 会话所属项目（路由锚点；会话可能采集到跨项目事件，过滤只按 sessionId）。 */
@@ -199,6 +202,11 @@ export function SessionMessages({
   /** 独立框架页形态（/pane 弹出窗里的那扇）：状态读取窄化到本会话、询问清单
    *  就地拉、状态栏条跳过（配置入口在主窗），输入面照常可用。 */
   pane?: boolean;
+  /** 框架页窗控·切回（头部右上角、关闭左侧）：视图归还主窗（主窗留空壳占位），
+   *  本窗 pane 不销毁。 */
+  onFrameReclaim?: () => void;
+  /** 框架页窗控·关闭（头部右上角最右）：释放这扇 pane（主窗占位一并撤）。 */
+  onFrameClose?: () => void;
 }) {
   const t = useT();
   const { show } = useToast();
@@ -213,8 +221,8 @@ export function SessionMessages({
   const { sessions, statuses, refresh, modelCatalog, questions } = useSessionStatus();
   /** 挂着待答问题时宿主在等键盘（模态框），此刻发的消息既送不进去也容易打乱作答
    *  ⇒ 整个输入面（输入框与同排按钮）置灰。pane 形态的状态总线不带问题清单——
-   *  阻塞时宿主面板也在这扇窗里，就地拉一次挂起态。 */
-  const [paneQuestions, setPaneQuestions] = useState<string[]>([]);
+   *  就地拉一次挂起态（条目整份留存，作答弹窗要用）。 */
+  const [paneQuestionEntries, setPaneQuestionEntries] = useState<PendingQuestionEntry[]>([]);
   useEffect(() => {
     if (!pane) return;
     let alive = true;
@@ -222,7 +230,7 @@ export function SessionMessages({
       api
         .listQuestions()
         .then((entries) => {
-          if (alive) setPaneQuestions(entries.map((e) => e.sessionId));
+          if (alive) setPaneQuestionEntries(entries);
         })
         .catch(() => {});
     };
@@ -230,7 +238,7 @@ export function SessionMessages({
     // 待答面变化走 sessionQuestions 快照帧（tracker 变化即推，无需帧到重拉）；
     // 老 daemon 无此帧时由 event.ingested 兜底重拉一拍。
     const offPush = subscribePush<PendingQuestionEntry[]>('sessionQuestions', (entries) => {
-      setPaneQuestions(entries.map((e) => e.sessionId));
+      setPaneQuestionEntries(entries);
     });
     const off = subscribeHook(load, ['event.ingested']);
     return () => {
@@ -239,7 +247,12 @@ export function SessionMessages({
       off();
     };
   }, [pane, sessionId]);
-  const asking = pane ? paneQuestions.includes(sessionId) : questions.has(sessionId);
+  /** pane 形态的就地作答：与主窗同一枚 QuestionAnswer 弹窗（数据全走独立 API，
+   *  不依赖 TasksPanel 回调链）。 */
+  const [paneAnswerOpen, setPaneAnswerOpen] = useState(false);
+  const paneEntry = paneQuestionEntries.find((e) => e.sessionId === sessionId) ?? null;
+  const asking = pane ? paneEntry != null : questions.has(sessionId);
+  const answerPending = pane ? asking : answerPendingProp ?? false;
   /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。
    *  pane 形态不拉（`enabled:false`——选择器的跨项目标注定向主窗的列表缓存，
    *  弹出窗里少一发全量清单请求）。 */
@@ -1015,17 +1028,6 @@ export function SessionMessages({
                 </button>
               </>
             )}
-            {/* 框架页 pane 的关闭：按钮排最右（tab 头已拆，这是唯一的关闭入口） */}
-            {pane && onClose && (
-              <button
-                type="button"
-                aria-label={t('tasks.paneClose')}
-                onClick={onClose}
-                className="ml-1 inline-flex shrink-0 items-center rounded border border-edge/[0.08] p-1 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
           </div>
           {/* 弹出独立框架页：独立摆在右上角（不混进功能按钮组），分隔线隔开 */}
           {onPopout && (
@@ -1039,6 +1041,35 @@ export function SessionMessages({
                 <ExternalLink className="h-3 w-3 text-sky-400" />
                 <span className="max-lg:hidden">{t('tasks.panePopoutShort')}</span>
               </button>
+            </div>
+          )}
+          {/* 框架页窗控（pane 形态）：头部右上角独立格——切回（留主窗占位）在
+              关闭（释放 pane）左侧，样式与「弹出」同款镜像（图标反向、桌面带文字、
+              移动端纯图标），语义不同不并进功能按钮排。 */}
+          {pane && (onFrameReclaim || onFrameClose) && (
+            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
+              {onFrameReclaim && (
+                <button
+                  type="button"
+                  aria-label={t('tasks.paneReclaim')}
+                  title={t('tasks.paneReclaim')}
+                  onClick={onFrameReclaim}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                >
+                  <Undo2 className="h-3 w-3 text-sky-400" />
+                  <span className="max-lg:hidden">{t('tasks.paneReclaimShort')}</span>
+                </button>
+              )}
+              {onFrameClose && (
+                <button
+                  type="button"
+                  aria-label={t('tasks.paneClose')}
+                  onClick={onFrameClose}
+                  className="inline-flex shrink-0 items-center rounded p-1 text-neutral-400 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           )}
 
@@ -1781,7 +1812,7 @@ export function SessionMessages({
               {answerPending && (
                 <button
                   type="button"
-                  onClick={() => onOpenAnswer?.()}
+                  onClick={() => (pane ? setPaneAnswerOpen(true) : onOpenAnswer?.())}
                   className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 shadow-sm transition-colors hover:border-amber-400/60 hover:text-amber-200"
                 >
                   <HelpCircle className="h-3 w-3" />
@@ -2678,6 +2709,27 @@ export function SessionMessages({
           onConfirm={cycleMode}
           onClose={() => setConfirmMode(false)}
         />
+
+        {/* pane 形态的就地作答弹窗：与主窗（SessionList 挂的那扇）同一组件，
+            数据与提交全走独立 API——作答完成重拉清单，待答面没了弹窗自关。 */}
+        {pane && paneAnswerOpen && paneEntry && (
+          <QuestionAnswer
+            label={label}
+            entry={paneEntry}
+            busy={fb.stateOf(`answer:${sessionId}`) === 'loading'}
+            onAnswer={(answers) => {
+              void fb.run(
+                `answer:${sessionId}`,
+                async () => {
+                  await api.answerQuestion(sessionId, answers);
+                  setPaneQuestionEntries(await api.listQuestions());
+                },
+                { fail: (e) => t('tasks.answerFailed', { error: errorText(e) }) },
+              );
+            }}
+            onClose={() => setPaneAnswerOpen(false)}
+          />
+        )}
 
         {/* 文件引用选择器：选中的表达式由服务端按 harness 文法算好，这里只管贴进输入框；
             带着 `chip` 来的那次是「改这枚胶囊」，落定就地替换 */}

@@ -29,7 +29,7 @@ import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
 import { TerminalPanes } from './term-panes/TerminalPanes';
 import { focusSessionPanes, openPane, useTermPanes } from './term-panes/term-pane-store';
-import { attachFrameView, openPaneFrame, reclaimPaneFrame, usePaneFrames, viewIdOf, windows as paneFrameWindows } from './term-panes/pane-transfer';
+import { attachFrameView, openPaneFrame, reclaimPaneFrame, usePaneFrames, windows as paneFrameWindows } from './term-panes/pane-transfer';
 import {
   buildLifecycleGroups,
   ORPHAN_GROUP_ID,
@@ -836,8 +836,11 @@ export function TasksPanel({
   );
   const poppedConvs = useMemo(() => {
     const map: Record<string, { frameId: string; label: string }> = {};
-    if (projectFrame && projectFrame.views[viewIdOf(projectFrame.seedSessionId, 'conversation')]) {
-      map[projectFrame.seedSessionId] = { frameId: projectFrame.frameId, label: projectFrame.label };
+    if (!projectFrame) return map;
+    // 认账不只种子会话：贴进同一页的第二个对话也占位（否则它弹出后右栏原地还
+    // 摆着对话本体，同一对话双挂两处）。
+    for (const v of Object.values(projectFrame.views)) {
+      if (v.kind === 'conversation') map[v.sessionId] = { frameId: projectFrame.frameId, label: v.label };
     }
     return map;
   }, [projectFrame]);

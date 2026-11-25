@@ -14,7 +14,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { TerminalView } from '@/components/TerminalView';
 import { useT } from '@/i18n/I18nProvider';
-import { api } from '@/lib/api';
 import { ConversationPane } from './ConversationPane';
 import { paneSync } from './pane-sync';
 import {
@@ -26,8 +25,8 @@ import {
   finishPaneFrame,
   frameLayoutOf,
   readPaneTransfer,
+  reclaimPaneFrame,
   subscribePaneFrames,
-  viewIdOf,
 } from './pane-transfer';
 import { layoutGeometry } from './pane-layout';
 
@@ -37,12 +36,14 @@ export function PaneFramePage() {
   // 记录可能被主窗改（贴终端 pane）→ 订阅常读最新一份；claim 只定身份
   const [frame, setFrame] = useState<PaneTransfer | null>(claim);
 
-  // 记录被外部改写（主窗贴 pane / returning）/ 删除（源窗异常清理）
+  // 记录被外部改写（主窗贴 pane / returning）/ 删除（源窗异常清理）。
+  // returning = 主窗已切回（对话本体在主窗恢复显示）：先卸视图（断 WS / SSE）
+  // 再走收尾删记录自关——不卸就是同一对话双挂两处。
   useEffect(() => {
     if (!claim) return;
     return subscribePaneFrames(() => {
       const cur = readPaneTransfer(claim.frameId);
-      if (!cur) window.close();
+      if (!cur || cur.state === 'returning') setFrame(null);
       else setFrame(cur);
     });
   }, [claim]);
@@ -64,9 +65,11 @@ export function PaneFramePage() {
   }, [claim, shownInstances]);
 
   // 卸载完成后确认归还 + 自关（window.close 可能被拦，留着也不重复显示——
-  // 记录已删，源窗已恢复本地显示；presence 互斥兜底）
+  // 记录已删，源窗已恢复本地显示；presence 互斥兜底）。
+  // 外层窗头已拆：pane 逐扇自关（对话头部 / 终端窄头的 X），最后一扇关掉 = 整窗收尾。
   useEffect(() => {
-    if (frame || !claim) return;
+    if (!claim) return;
+    if (frame && Object.keys(frame.views).length > 0) return;
     finishPaneFrame(claim.frameId);
     window.close();
   }, [frame, claim]);
@@ -83,20 +86,12 @@ export function PaneFramePage() {
   }
 
   return (
-    <div className="flex h-dvh flex-col bg-neutral-950 p-1">
-      <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] bg-neutral-900/80 px-2 py-1 text-xs text-neutral-400">
-        <span className="min-w-0 truncate font-medium text-neutral-300">{frame.projectLabel}</span>
-        <FrameHeaderActions frame={frame} />
-        <button
-          type="button"
-          aria-label="close"
-          onClick={() => setFrame(null)}
-          className="self-center rounded p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
-      <div className="relative min-h-0 flex-1 select-none">
+    // h-full 不用 h-dvh：根 zoom（界面缩放）下视口单位被二次放大、页面下溢一段黑
+    // （移动端「底部多余高度」）——html/body/#root 已钉 100%（index.css），走百分比链。
+    <div className="flex h-full flex-col bg-neutral-950 p-1">
+      {/* 无外层窗头：对话 pane 头部右上角 = 切回 + 关闭（功能按钮不混排）；
+          终端 pane 走窄头 X。最后一扇关掉 = 整窗收尾。 */}
+      <div className="relative min-h-0 flex-1">
         {geo.panes.map((rect) => {
           const view = frame.views[rect.paneId];
           if (!view) return null;
@@ -134,6 +129,7 @@ export function PaneFramePage() {
                   label={view.label}
                   projectLabel={frame.projectLabel}
                   onClose={() => detachFrameView(frame.frameId, rect.paneId)}
+                  onFrameReclaim={() => reclaimPaneFrame(frame.frameId)}
                   onOpenTerminal={(instanceId: string) =>
                     attachFrameView(frame.frameId, {
                       kind: 'terminal',
@@ -153,7 +149,7 @@ export function PaneFramePage() {
             key={sep.key}
             role="separator"
             className={
-              'absolute z-20 touch-none ' +
+              'absolute z-20 touch-none select-none ' +
               (sep.dir === 'row' ? 'w-1.5 cursor-col-resize' : 'h-1.5 cursor-row-resize') +
               ' bg-transparent transition-colors hover:bg-blue-500/40 active:bg-blue-500/60'
             }
@@ -188,58 +184,5 @@ export function PaneFramePage() {
         ))}
       </div>
     </div>
-  );
-}
-
-/** 头部动作区：当前焦点会话（种子会话）的终端切换——主窗终端按钮与本窗按钮
- *  写同一份 storage 记录（attachFrameView 幂等），多窗不冲突。 */
-function FrameHeaderActions({ frame }: { frame: PaneTransfer }) {
-  const t = useT();
-  const [session, setSession] = useState<{ webInstanceId: string | null } | null>(null);
-  const convId = viewIdOf(frame.seedSessionId, 'conversation');
-  const termId = viewIdOf(frame.seedSessionId, 'terminal');
-  const hasConv = !!frame.views[convId];
-  const hasTerm = !!frame.views[termId];
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .listSessions(frame.projectId)
-      .then((r) => {
-        if (!alive) return;
-        const row = r.sessions.find((s) => s.sessionId === frame.seedSessionId);
-        if (row) setSession({ webInstanceId: row.webInstanceId ?? null });
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [frame.projectId, frame.seedSessionId]);
-
-  const toggle = (): void => {
-    if (hasTerm) {
-      detachFrameView(frame.frameId, termId);
-      return;
-    }
-    const inst = session?.webInstanceId;
-    if (!inst) return;
-    attachFrameView(frame.frameId, {
-      kind: 'terminal',
-      instanceId: inst,
-      label: frame.label,
-      sessionId: frame.seedSessionId,
-    });
-  };
-
-  if (!hasConv || !(hasTerm || session?.webInstanceId)) return null;
-  return (
-    <button
-      type="button"
-      aria-label={hasTerm ? t('tasks.paneShowConversation') : t('tasks.paneShowTerminal')}
-      onClick={toggle}
-      className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
-    >
-      {hasTerm ? t('tasks.paneShowConversation') : t('tasks.paneShowTerminal')}
-    </button>
   );
 }

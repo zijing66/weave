@@ -51,13 +51,15 @@ export function removePane(node: LayoutNode, paneId: string): LayoutNode | null 
 }
 
 /** 在 targetPane 的某侧插入新 pane；center = 换位（to 占据 target 的位置）。
- * 返回 null = 拒绝（超上限 / 重复实例 / 目标不在树里）。 */
+ * 返回 null = 拒绝（超上限 / 重复实例 / 目标不在树里）。`maxPanes` = 本窗上限
+ * （缺省 MAX_PANES；移动端等小窗面传更小的值）。 */
 export function placePane(
   node: LayoutNode,
   targetPaneId: string,
   dragPaneId: string | null,
   side: DropSide,
   newPaneId?: string,
+  maxPanes: number = MAX_PANES,
 ): LayoutNode | null {
   // 交换：两个 pane 都已在树里，直接换位，不增数量。
   if (side === 'center' && dragPaneId) {
@@ -66,7 +68,7 @@ export function placePane(
   }
   if (!paneIdsOf(node).includes(targetPaneId)) return null;
   // 新 pane（drag 为 null）才计数上限；移动不增数。
-  if (dragPaneId == null && paneCount(node) >= MAX_PANES) return null;
+  if (dragPaneId == null && paneCount(node) >= maxPanes) return null;
   // 移动且 drag 已在树里：先删再插，数量不变。
   const base = dragPaneId != null ? removePane(node, dragPaneId) : node;
   if (base == null) return null; // 树只有 drag 一个 pane，无处可落——调用方不该走到这
