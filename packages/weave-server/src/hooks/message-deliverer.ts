@@ -698,6 +698,13 @@ export class MessageDeliverer {
       this.awaitingAck.set(sessionId, messageId);
     }
     this.persistedPipeMemory = this.pipeMemoryJson();
+    // 重启前在途的层② prompt：探针协程随旧进程死了——重启即重新布防（ pane 重定位
+    // + 同一套正面证据循环），「已发出未回执」不再因重启漏补（2026-11-25 实测）。
+    for (const msg of this.memory.values()) {
+      if (msg.status === 'delivered' && msg.acked !== true && msg.via === 'terminal') {
+        void this.rearmSubmitProbe(msg);
+      }
+    }
     this.queuedSessions = scanQueuedSessionIds(this.hooksDir);
     this.gate = new AckGate(
       { awaitingAck: this.awaitingAck, stalled: this.stalled, memory: this.memory },
@@ -2521,6 +2528,18 @@ export class MessageDeliverer {
    * 「消息还在 TUI 输入框里」这个状态守不住就绝不盲打。总窗与未回执闸的自动
    * 清除窗（ackStallReleaseMs）对齐：行都没了还补什么。
    */
+  /** 重启后对恢复的「已发出未回执」层② 行重新布防探针：pane 重定位（env 账已
+   *  恢复，同投递口径）；定位不到就放弃——未回执闸照常接手，绝不盲打。 */
+  private async rearmSubmitProbe(msg: PipeMessage): Promise<void> {
+    const session = this.deps.sessions.getBySessionId(msg.sessionId);
+    const project =
+      session?.projectId == null ? null : this.deps.projects.getById(session.projectId);
+    if (!session || !project) return;
+    const pane = await this.terminalPaneFor(session, project);
+    if (!pane) return;
+    void this.confirmPromptSubmit(msg.id, pane.id, this.wireTextOfEntry(msg));
+  }
+
   private async confirmPromptSubmit(messageId: string, paneId: string, text: string): Promise<void> {
     const terminal = this.terminalChannel();
     if (!terminal?.getPaneText) return;
