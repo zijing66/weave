@@ -2,6 +2,7 @@ import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { markdownPre } from '@/components/ui/mermaid-block';
+import { PathLinkAnchor, remarkPaths } from '@/components/ui/path-links';
 
 /**
  * 会话正文的 Markdown 预览（对话气泡、旁路问答、AI 助手共用一套）：标题 / 粗斜体 /
@@ -14,11 +15,23 @@ import { markdownPre } from '@/components/ui/mermaid-block';
  * 代码 11px、标题只比正文大半档，行内元素逐项收边距。链接强制新开页签：点一下不能
  * 把 dashboard 导航走。
  *
+ * **路径识别**（`pathSessionId` 传入才启用）：渲染产物文本节点里的裸路径（盘符/
+ * `~`/POSIX 绝对/`./`·`../`）换成可点击链接，点击走服务端按该会话 cwd 验证并打开；
+ * **只改渲染不改文本**——复制/分享消费原始 `text`，原格式原样。code 与已有链接
+ * 内部不识别。
+ *
  * **`memo`**：react-markdown 的解析发生在 render 里，父组件每重渲染一次就重解析
  * 一遍。对话面板里敲一个字就会重渲染整串气泡——长会话下这是「打字/粘贴发卡」的
  * 主要来源，文本没变就不该重解析。
  */
-export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
+export const AssistantMarkdown = memo(function AssistantMarkdown({
+  text,
+  pathSessionId,
+}: {
+  text: string;
+  /** 传了才启用路径识别（点击按该会话 cwd 定基验证）；不传 = 纯文本渲染。 */
+  pathSessionId?: string;
+}) {
   return (
     <div
       className={
@@ -41,9 +54,15 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { tex
       }
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={pathSessionId ? [remarkGfm, remarkPaths(pathSessionId)] : [remarkGfm]}
         components={{
-          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+          a: ({ node: _node, ...props }) =>
+            // 路径伪协议走 PathLinkAnchor（点击验证打开），普通链接照常新页签。
+            typeof props.href === 'string' && props.href.startsWith('weave-path:') ? (
+              <PathLinkAnchor {...props} />
+            ) : (
+              <a {...props} target="_blank" rel="noreferrer" />
+            ),
           pre: markdownPre,
           table: ({ node: _node, ...props }) => (
             <div className="my-1.5 max-w-full overflow-x-auto">

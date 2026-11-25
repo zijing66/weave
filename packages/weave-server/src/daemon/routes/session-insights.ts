@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path, { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { isHarness, type Harness } from '@weavecode/core';
 import type { FileEdit } from '@weavecode/harness';
 import type { WeaveServerDeps } from '../server.js';
-import { sendJson } from '../http.js';
+import { readBody, sendJson } from '../http.js';
 import { blockingPromptFor, commandsSurfaceFor, editSurfaceFor, narrationSurfaceFor, rewindSurfaceFor, activitySurfaceFor, usageSurfaceFor } from '../../surfaces.js';
 import type { HookEventRow } from '../../repositories/hook-events.js';
 import type { ProjectRow } from '../../repositories/projects.js';
@@ -251,6 +251,98 @@ export async function handleSessionInsightRoutes(
       at: commit.row.createdAt,
       text: text.slice(0, PLAN_MAX_CHARS),
     });
+  }
+
+  // ---- 路径解析（对话气泡里识别出的文件/目录路径，点击时验证）：相对路径按
+  //  会话 cwd 基准解析（最近一条事件的 payload.cwd——模型报相对路径时它正站在
+  //  那里；缺失回落项目根），stat 后回绝对路径与形态。路径来自前端正则识别的
+  //  纯文本片段，server 只做存在性验证——不存在的如实 404，不猜。
+  const resolvePathMatch = pathname.match(/^\/sessions\/([^/]+)\/resolve-path$/);
+  if (resolvePathMatch && req.method === 'GET') {
+    const sessionId = decodeURIComponent(resolvePathMatch[1]!);
+    const project = projectOfSession(res, deps, sessionId);
+    if (!project) return true;
+    const rel = (url.searchParams.get('rel') ?? '').trim();
+    if (!rel) {
+      sendJson(res, 400, { error: 'Missing "rel" query' });
+      return true;
+    }
+    const events = deps.hookEvents!;
+    const cwd = events
+      .listBySession(sessionId, 8)
+      .map((row) => {
+        try {
+          const p = JSON.parse(row.payload) as { cwd?: unknown };
+          return typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd : null;
+        } catch {
+          return null;
+        }
+      })
+      .find((c): c is string => c != null);
+    const abs = path.isAbsolute(rel) ? path.normalize(rel) : join(cwd ?? project.path, rel);
+    try {
+      const st = statSync(abs);
+      sendJson(res, 200, { path: abs, kind: st.isDirectory() ? 'dir' : 'file' });
+    } catch {
+      sendJson(res, 404, { error: 'Path not found' });
+    }
+    return true;
+  }
+
+  // ---- 打开气泡里识别出的路径：POST { path }（前端渲染时识别的那段原文）。
+  //  与 resolve-path 同一套定基与验证；打开走 explorer 选中语义（文件选中、
+  //  目录进入）。路径是模型产物文本片段，验证后才 spawn，绝不裸开。
+  const openPathMatch = pathname.match(/^\/sessions\/([^/]+)\/open-path$/);
+  if (openPathMatch && req.method === 'POST') {
+    const sessionId = decodeURIComponent(openPathMatch[1]!);
+    const project = projectOfSession(res, deps, sessionId);
+    if (!project) return true;
+    let body: { path?: unknown };
+    try {
+      body = JSON.parse(await readBody(req)) as { path?: unknown };
+    } catch {
+      sendJson(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const rel = typeof body.path === 'string' ? body.path.trim() : '';
+    if (!rel) {
+      sendJson(res, 400, { error: 'Missing "path"' });
+      return true;
+    }
+    const events = deps.hookEvents!;
+    const cwd = events
+      .listBySession(sessionId, 8)
+      .map((row) => {
+        try {
+          const p = JSON.parse(row.payload) as { cwd?: unknown };
+          return typeof p.cwd === 'string' && p.cwd.trim() ? p.cwd : null;
+        } catch {
+          return null;
+        }
+      })
+      .find((c): c is string => c != null);
+    const abs = path.isAbsolute(rel) ? path.normalize(rel) : join(cwd ?? project.path, rel);
+    let st: import('node:fs').Stats;
+    try {
+      st = statSync(abs);
+    } catch {
+      sendJson(res, 404, { error: 'Path not found' });
+      return true;
+    }
+    const { openInExplorer } = await import('../opener/facade.js');
+    if (st.isDirectory()) {
+      await openInExplorer(abs);
+    } else {
+      // explorer 的选中语义：开父目录并高亮该文件（win32 /select,；其余平台开父目录）。
+      if (process.platform === 'win32') {
+        const { spawn } = await import('node:child_process');
+        spawn('explorer.exe', ['/select,', abs], { detached: true, stdio: 'ignore' }).unref();
+      } else {
+        await openInExplorer(path.dirname(abs));
+      }
+    }
+    sendJson(res, 200, { ok: true });
+    return true;
   }
 
   // ---- 提问前说明：阻塞提问（AskUserQuestion/计划确认）前模型写下的那段话 ----

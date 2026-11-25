@@ -1357,11 +1357,13 @@ export function SessionMessages({
                             {vizSegs ? (
                               <VizSegments
                                 segments={vizSegs}
-                                markdown={(text) => <AssistantMarkdown text={text} />}
+                                markdown={(text) => (
+                                  <AssistantMarkdown text={text} pathSessionId={sessionId} />
+                                )}
                               />
                             ) : (
                               <div className="[&_p]:whitespace-pre-wrap">
-                                <AssistantMarkdown text={m.text} />
+                                <AssistantMarkdown text={m.text} pathSessionId={sessionId} />
                               </div>
                             )}
                           </Collapsible>

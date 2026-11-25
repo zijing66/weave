@@ -235,6 +235,21 @@ export const messageApi = {
     apiFetch<{ answers: Array<{ at: string; question: string; answer: string }> }>(
       `/sessions/${encodeURIComponent(sessionId)}/answers`,
     ).then((r) => r.answers ?? []),
+  /** 路径解析（气泡里识别出的路径，点击时验证 + 定基）：相对路径按会话 cwd 解析，
+   *  stat 后回绝对路径与形态；不存在 404。 */
+  resolveSessionPath: (
+    sessionId: string,
+    rel: string,
+  ): Promise<{ path: string; kind: 'file' | 'dir' }> =>
+    apiFetch<{ path: string; kind: 'file' | 'dir' }>(
+      `/sessions/${encodeURIComponent(sessionId)}/resolve-path?rel=${encodeURIComponent(rel)}`,
+    ),
+  /** 打开气泡里识别出的路径（先按会话 cwd 解析验证，再资源管理器选中/进入）。 */
+  openSessionPath: (sessionId: string, rel: string): Promise<{ ok: true }> =>
+    apiFetch<{ ok: true }>(`/sessions/${encodeURIComponent(sessionId)}/open-path`, {
+      method: 'POST',
+      body: JSON.stringify({ path: rel }),
+    }),
   /** 旁白：模型在一轮里的全部 assistant 正文（转录里认的；无该面 / 读不到 = null）。 */
   sessionNarration: (sessionId: string): Promise<Array<{ at: string | null; text: string }> | null> =>
     apiFetch<{ supported: boolean; narration: Array<{ at: string | null; text: string }> | null }>(
