@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Input } from '../ui/input';
 import type { Harness } from '@weavecode/core/harness';
 import {
   api,
   type AnswerPick,
-  type HookDispatch,
-  type HookEventRow,
-  type HookRule,
   type MessagingCapability,
   type ProjectHarness,
   type PromptLimits,
@@ -19,35 +15,28 @@ import { useT } from '@/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { useBackPop } from '@/lib/back-pop';
 import { registerInvalidator } from '@/lib/sse';
-import { HARNESS_ORDER, harnessUiOf } from '@/lib/harness-meta';
-import { Badge } from '@/components/ui/badge';
+import { harnessUiOf } from '@/lib/harness-meta';
 import { Combobox } from '@/components/ui/combobox';
-import { formatTime, sessionLabel } from '@/lib/hook-payload';
+import { sessionLabel } from '@/lib/hook-payload';
 import { SessionList, byActivity } from './SessionList';
 import { SessionMessages } from './SessionMessages';
+import type { LifecycleGroup } from './build-lifecycle-groups';
+import { HARNESS_LIFECYCLE } from './lifecycle';
+import { subscribeHook } from '@/lib/sse';
+import { SessionChainPanel } from './SessionChainPanel';
 import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
 import { TerminalPanes } from './term-panes/TerminalPanes';
 import { focusSessionPanes, openPane, useTermPanes } from './term-panes/term-pane-store';
 import { attachFrameView, openPaneFrame, reclaimPaneFrame, usePaneFrames, windows as paneFrameWindows } from './term-panes/pane-transfer';
 import {
-  buildLifecycleGroups,
-  ORPHAN_GROUP_ID,
-  type LifecycleGroup,
-} from './build-lifecycle-groups';
-import { HARNESS_LIFECYCLE } from './lifecycle';
-import {
   openTerminalStateOf as openTerminalButtonState,
   webTerminalAvailabilityOf,
 } from './conv-model';
-import { canInterrupt, hasTurnSignal, isSessionBusy } from './session-status';
-import { LifecycleMindmap } from '@/components/LifecycleMindmap';
-import { HarnessIcon } from './HarnessIcon';
 import { SessionStatusIcon } from './SessionStatusIcon';
 import { useSessionStatus } from './session-status-store';
-import { subscribeHook, type HookFrame } from '@/lib/sse';
+import { AlertTriangle, ExternalLink, Loader2, Plus, X } from 'lucide-react';
 import { SkeletonRows } from '@/components/ui/skeleton';
-import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Loader2, Plus, Search, Square, X } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { RefreshIconButton } from '@/components/RefreshIconButton';
@@ -55,13 +44,11 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Resizer } from '@/components/Resizer';
 import { errorText, useActionFeedback } from '@/lib/action-feedback';
-import { copyText } from '@/lib/clipboard';
 import { ensureNotifyPermission, type NotifyPermission } from '@/lib/browser-notify';
 import { ensurePushSubscribed } from '@/lib/push';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { setConvScreenOpen } from '@/lib/conv-screen';
 import { sweepConvCacheOrphans } from './conv-anchor-cleanup';
-import { usePullLoad } from '@/lib/pull-load';
 import { createAwaitGate } from '@/lib/await-gate';
 import type { MessageKey } from '@/i18n/dict';
 
@@ -136,7 +123,6 @@ export function TasksPanel({
   const fb = useActionFeedback();
   const {
     sessions: allSessions,
-    dispatches,
     statuses,
     inflight: inflightCounts,
     failedDeliveries,
@@ -159,8 +145,6 @@ export function TasksPanel({
   });
   /** 事件链弹窗：右栏被对话占着时从对话头部那枚按钮开（右栏没对话面时事件链仍在原位）。 */
   const [chainDialog, setChainDialog] = useState(false);
-  const [rules, setRules] = useState<HookRule[]>([]);
-  const [events, setEvents] = useState<HookEventRow[]>([]);
   // 深链/跳转带入的会话直接作为初始选中（路由即真源）；不带入才留给列表就绪后
   // 的兜底去选最新。
   const [selectedId, setSelectedId] = useState<string | null>(initialSessionId ?? null);
@@ -185,22 +169,10 @@ export function TasksPanel({
     setChainDialog(false);
     return true;
   });
-  /** 展开组：'' = 默认全折叠（画布点击才按需挂载），其余 = 固定该组。 */
-  const [expandedGroupId, setExpandedGroupId] = useState<string>('');
   /** 待答弹窗目标（会话行图标与事件链组头/画布 tag 共开同一份；null = 关）。 */
   const [answerFor, setAnswerFor] = useState<string | null>(null);
-  /** 组头列表滚动窗口：默认最新 10 条，向上滚动/点击加载更早（折叠条级）。 */
-  const [groupWindow, setGroupWindow] = useState(10);
-  /** 折叠条搜索：按组头可见文字过滤（开组 prompt 为主）；空串 = 不过滤。 */
-  const [search, setSearch] = useState('');
   /** 全局总览跳转定位：该会话行高亮边框（3s 后移除）。 */
   const [highlightId, setHighlightId] = useState<string | null>(null);
-  /** 事件游标已翻到最早（最新窗口不满一条完整批，或更早批次拉空）。 */
-  const [olderExhausted, setOlderExhausted] = useState(false);
-  /** 事件拉取中——空窗期不得冒充「该会话还没有采集到事件」。 */
-  const [loading, setLoading] = useState(false);
-  /** 事件链滚动列表（拉动加载要现读它的位置）。 */
-  const listRef = useRef<HTMLDivElement | null>(null);
 
   /** 本项目会话：总线全量列表按 projectId 过滤（null = 首次加载中，沿用总线状态）。 */
   const projectSessions = useMemo(
@@ -328,28 +300,6 @@ export function TasksPanel({
     [projectId],
   );
 
-  const refreshEvents = useCallback(
-    async (sessionId: string) => {
-      setLoading(true);
-      try {
-        const list = await api.listSessionHooks(projectId, sessionId);
-        // SSE 刷新只替换「最新窗口」尾部，保留已向前翻到的更早批次——否则长 turn
-        // 把窗口截成尾巴时，补拉永远被下一条 hook 帧打回原点、收不了敛。
-        setEvents((prev) => {
-          if (prev.length === 0) return list;
-          const head = list[0]?.id ?? Number.POSITIVE_INFINITY;
-          return [...prev.filter((x) => x.id < head), ...list];
-        });
-        // 已翻到最早后不再被满批窗口「复活」；不满一批 = 确实到头。
-        setOlderExhausted((was) => was || list.length < 300);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [projectId],
-  );
 
   // 三级位置从外面变（深链 / 前进后退 / 全局总览跳转）才落：换项目必落，同项目同值 = 回声
   useEffect(() => {
@@ -365,10 +315,6 @@ export function TasksPanel({
       window.setTimeout(() => setHighlightId((cur) => (cur === next ? null : cur)), 3000);
     }
   }, [projectId, initialSessionId]);
-  useEffect(() => {
-    api.listHooksRules(projectId).then(setRules).catch(() => {});
-  }, [projectId]);
-
   // 消息能力矩阵（服务端 MessagingSurface 纯派生）：按钮门控与弹窗模式选项的
   // 唯一真源——web 只渲染不判定，不写死 harness 白名单。完整表不过滤（不支持
   // 的面也在），行内各按钮按字段自取。
@@ -555,92 +501,6 @@ export function TasksPanel({
     sweepConvCacheOrphans(new Set(allSessions.map((s) => s.sessionId)));
   }, [allSessions]);
 
-  // 切会话：清空上一会话的事件与游标，全折叠 + 窗口重置回最新 10 条
-  // （画布按需点开）——不清会闪现上一会话的组头。
-  useEffect(() => {
-    setEvents([]);
-    setOlderExhausted(false);
-    setExpandedGroupId('');
-    setGroupWindow(10);
-    setSearch('');
-    if (selectedId) void refreshEvents(selectedId);
-  }, [selectedId, refreshEvents]);
-
-  // ---- SSE：总线 hook 帧（不新开 EventSource）----
-  // 会话状态、会话行计数、派发列表都由全局状态总线按同一批帧维护；本面板只
-  // 按需刷新选中会话的事件链（总线的防抖 refetch 会把派发/会话行一并带上）。
-  useEffect(() => {
-    let refreshTimer: number | null = null;
-    const onHook = (f: HookFrame): void => {
-      if (!selectedId || f.sessionId !== selectedId) return;
-      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null;
-        void refreshEvents(selectedId);
-      }, 500);
-    };
-    const off = subscribeHook(onHook);
-    return () => {
-      off();
-      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-    };
-  }, [refreshEvents, selectedId]);
-
-  const dispatchBySession = useMemo(() => {
-    const m = new Map<string, HookDispatch[]>();
-    for (const d of dispatches) {
-      if (!d.sessionId) continue;
-      const list = m.get(d.sessionId) ?? [];
-      list.push(d);
-      m.set(d.sessionId, list);
-    }
-    return m;
-  }, [dispatches]);
-
-  // 会话归属 harness：分组生命周期表按它取（D7——分组差异是 harness 知识，
-  // 不写死 claude 表；无事件流/未知 harness 回落名表首项的表）。
-  // 查未过滤列表：harness 筛选只藏列表行，不塌右栏。
-  const selectedHarness =
-    projectSessions?.find((s) => s.sessionId === selectedId)?.harness ?? null;
-  const selectedLifecycle = HARNESS_LIFECYCLE[selectedHarness ?? HARNESS_ORDER[0] ?? 'claude'];
-
-  // 分组（D7 表驱动）：每组一套事件+派发切片，构图/画布只吃当前展开组。
-  // SSE refetch 后重算：新 UserPromptSubmit 开新组、组内事件归当前 open 组、
-  // 窗口尾无 open 归最后组——组 id 稳定（turn:<事件id>），展开态不跳。
-  // 游离指令组不进组头列表（无生命周期从属、顺序异常——由「待派发」区承载）。
-  const groups = useMemo(
-    () =>
-      selectedId
-        ? buildLifecycleGroups(
-            events,
-            dispatchBySession.get(selectedId) ?? [],
-            selectedLifecycle,
-          ).filter((g) => g.id !== ORPHAN_GROUP_ID)
-            // 头部截断未翻完时，preSession 组是上一 turn 尾巴的窗口伪影
-            //（「会话引导」名不副实）——翻到底（exhausted）后才是真会话引导。
-            .filter((g) => !(g.preSession && !olderExhausted))
-        : [],
-    [selectedId, events, dispatchBySession, olderExhausted, selectedLifecycle],
-  );
-
-  const activeGroupId = useMemo(() => {
-    if (expandedGroupId && groups.some((g) => g.id === expandedGroupId)) {
-      return expandedGroupId;
-    }
-    return null; // 默认全折叠：画布点击展开才按需挂载
-  }, [groups, expandedGroupId]);
-
-  /** 折叠条搜索：按组头可见文字（开组 prompt，缺失回落首事件类型）过滤；空 query 不过滤。 */
-  const query = search.trim().toLowerCase();
-  const matchedGroups = useMemo(() => {
-    if (!query) return null;
-    return groups.filter(
-      (g) =>
-        (g.prompt ?? (g.preSession ? '' : g.events[0]?.eventType ?? '')).toLowerCase().includes(
-          query,
-        ),
-    );
-  }, [groups, query]);
 
   const onRename = async (sessionId: string, title: string): Promise<void> => {
     try {
@@ -1019,105 +879,9 @@ export function TasksPanel({
     if (!hasConv) setChainDialog(false);
   }, [hasConv]);
 
-  /** 待派发行的目标会话（缺省 = 最近活跃会话）。 */
-  const [assign, setAssign] = useState<Record<number, string>>({});
-  /** 待派发清单：未投送的 pending 指令，且规则作用于本项目（本项目+全局规则）。 */
-  const pendingToDispatch = useMemo(
-    () =>
-      dispatches.filter(
-        (d) =>
-          d.status === 'pending' &&
-          d.sessionId === null &&
-          rules.some((r) => r.id === d.ruleId),
-      ),
-    [dispatches, rules],
-  );
-  /** 派发执行：fb 键按 dispatch 隔离——loading 在途吞连点防重复 POST，失败 toast。 */
-  const runDispatch = useCallback(
-    (dispatchId: number, sessionId: string): void => {
-      void fb.run(
-        `dispatch:${dispatchId}`,
-        async () => {
-          await api.runHookDispatch(dispatchId, sessionId);
-          await refreshStatus();
-        },
-        { fail: (e) => t('tasks.dispatchRunFailed', { error: errorText(e) }) },
-      );
-    },
-    [fb, refreshStatus, t],
-  );
-
-  // 组头列表滚动窗口（折叠条级）：**倒序**（最新组在顶），更早的向列表底部
-  // 方向滚——触底自动加载：先扩渲染窗口（10 条/批），组已全渲染且事件游标
-  // 还能往前时改拉更早事件（beforeId 翻页，前缀拼接）。
-  const shownGroups = matchedGroups
-    ? matchedGroups.slice().reverse()
-    : windowGroups(groups, groupWindow, expandedGroupId).slice().reverse();
-  const olderRemaining = groups.length - shownGroups.length;
-  const canLoadOlderEvents = !olderExhausted && events.length > 0;
-  const hasOlder = olderRemaining > 0 || canLoadOlderEvents;
-  const atListEnd = (el: HTMLElement | null): boolean =>
-    !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
-  const loadOlderGroups = async (): Promise<void> => {
-    if (olderRemaining > 0) {
-      setGroupWindow((w) => w + 10);
-      return;
-    }
-    if (!canLoadOlderEvents || !selectedId) return;
-    try {
-      const older = await api.listSessionHooks(projectId, selectedId, 300, events[0]?.id);
-      if (older.length === 0) {
-        setOlderExhausted(true);
-        return;
-      }
-      // 去重：旧版 daemon 忽略 beforeId 返回重复窗口时按 id 收敛（幂等）。
-      const seen = new Set(events.map((x) => x.id));
-      const fresh = older.filter((x) => !seen.has(x.id));
-      if (fresh.length === 0) {
-        setOlderExhausted(true);
-        return;
-      }
-      if (older.length < 300) setOlderExhausted(true);
-      setEvents((prev) => {
-        const ids = new Set(prev.map((x) => x.id));
-        return [...older.filter((x) => !ids.has(x.id)), ...prev];
-      });
-      setGroupWindow((w) => w + 10);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-  /** 拉动加载（向下那头）：触底后继续滚/拖才取更早，且一拉只取一批。 */
-  const pull = usePullLoad({
-    axis: 'bottom',
-    getEdge: () => atListEnd(listRef.current),
-    onFire: () => void loadOlderGroups(),
-    enabled: hasOlder,
-  });
-
-  // 自动补拉：默认承诺「最新 10 条」——头部截断导致窗口内真组不足 10 时，
-  // 静默向前翻页直到凑满或翻到底（通常一批 300 事件即够）。
-  useEffect(() => {
-    if (!selectedId || olderExhausted || events.length === 0) return;
-    if (groups.length >= 10) return;
-    void loadOlderGroups();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, groups.length, olderExhausted, events.length]);
-
-  // 搜索态自动前翻：折叠条搜索须覆盖整条会话（只搜已加载窗口会漏）——query
-  // 非空时先扩满渲染窗口，再逐批拉更早事件直到翻到底；普通浏览路径不受影响。
-  useEffect(() => {
-    if (!query || !selectedId || olderExhausted || events.length === 0) return;
-    if (groups.length > groupWindow) {
-      setGroupWindow(groups.length);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void loadOlderGroups();
-    }, 250);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, selectedId, olderExhausted, events.length, groups.length, groupWindow]);
+  /** 抽屉头与拖拽目标用的选中行/状态（原链态块残留的读侧，链本体已拆 SessionChainPanel）。 */
+  const selectedRow = projectSessions?.find((s) => s.sessionId === selectedId);
+  const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
 
   const onDropDispatch = (dispatchId: number, sessionId: string): void => {
     const session = (sessions ?? []).find((s) => s.sessionId === sessionId);
@@ -1125,20 +889,6 @@ export function TasksPanel({
       dispatchId,
       sessionId,
       sessionLabel: sessionLabel(session?.title ?? null, sessionId),
-    });
-  };
-
-  /** 折叠条复制 prompt：复制该组开组 prompt 原文（1.5s 换 ✓ 反馈）。 */
-  const [copiedGroupId, setCopiedGroupId] = useState<string | null>(null);
-  const copyGroupPrompt = (g: { id: string; prompt?: string }): void => {
-    if (!g.prompt) return;
-    void copyText(g.prompt).then((ok) => {
-      if (!ok) {
-        show('error', t('common.copyFailed'));
-        return;
-      }
-      setCopiedGroupId(g.id);
-      window.setTimeout(() => setCopiedGroupId(null), 1500);
     });
   };
 
@@ -1190,354 +940,6 @@ export function TasksPanel({
   };
 
   const deleteStateOf = useCallback((sessionId: string) => fb.stateOf(`del:${sessionId}`), [fb]);
-
-  // 组头状态展示：运行中显示 harness 跑马灯动效图标，打开/关闭/失败不显示
-  // ——去掉原文字状态 tag（会话状态与组头信息重复）。
-  const activeStatus = statuses.get(selectedId ?? '') ?? 'open';
-
-  const selectedRow = projectSessions?.find((s) => s.sessionId === selectedId);
-
-  /** 停止按钮露不露（事件链组头与对话弹窗共用同一判据）：回合开合信号不可信的
-   *  harness（codex）传 undefined 让判据回落到状态。 */
-  const stoppable = canInterrupt(
-    activeStatus,
-    hasTurnSignal(selectedRow?.harness) ? selectedRow?.turnOpen : undefined,
-  );
-
-  // 链路区（右栏）：桌面 inline 与 <lg 全屏滑出复用同一 JSX 常量（isDesktop
-  // 互斥渲染，不双挂载）——展开态/滚动窗口等状态都在面板级，两态共用。
-  const chainEl = (
-    <section className="flex min-w-0 min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 pb-2">
-        <Activity className="h-3.5 w-3.5 shrink-0 text-rose-400" />
-        <h3 className="shrink-0 text-sm font-semibold text-neutral-200">{t('tasks.chainTitle')}</h3>
-        <div className="relative w-36 shrink-0 lg:w-44">
-          <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-600" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('tasks.searchPlaceholder')}
-            className="h-6 w-full rounded border border-edge/[0.08] bg-neutral-900 pl-6 pr-5 text-11 text-neutral-200 placeholder:text-neutral-600 focus:border-edge/20 focus:outline-none"
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-neutral-600 transition-colors hover:text-neutral-200"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </div>
-        {matchedGroups && (
-          <span className="shrink-0 text-10 text-neutral-500">
-            {t('tasks.searchMatches', { n: matchedGroups.length })}
-          </span>
-        )}
-        <span className="ml-auto text-10 text-neutral-600">{t('tasks.legendNote')}</span>
-      </div>
-
-        {/* 待派发区：未投送的 pending 指令——选活跃会话后派发（结果在事件链高亮） */}
-        {pendingToDispatch.length > 0 && (
-          <div className="mb-2 shrink-0 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-2 py-1.5">
-            <div className="flex items-center gap-1.5">
-              <span className="text-11 font-medium text-amber-300">
-                {t('tasks.dispatchQueue', { n: pendingToDispatch.length })}
-              </span>
-              <span className="text-10 text-amber-200/50">{t('tasks.dispatchHint')}</span>
-            </div>
-            <ul className="mt-1 space-y-1">
-              {pendingToDispatch.map((d) => {
-                const target = assign[d.id] ?? sessions?.[0]?.sessionId ?? '';
-                return (
-                  <li key={d.id} className="flex items-center gap-2">
-                    <span
-                      className="min-w-0 flex-1 truncate text-11 text-neutral-300"
-                      title={d.prompt}
-                    >
-                      {d.prompt}
-                    </span>
-                    <Combobox
-                      value={target}
-                      onChange={(v) => setAssign((prev) => ({ ...prev, [d.id]: v }))}
-                      className="shrink-0 rounded bg-neutral-900 px-1.5 py-0.5 text-11"
-                      options={(sessions ?? []).map((s) => ({
-                        value: s.sessionId,
-                        label: sessionLabel(s.title, s.sessionId),
-                      }))}
-                    />
-                    <button
-                      type="button"
-                      disabled={!target || fb.stateOf(`dispatch:${d.id}`) === 'loading'}
-                      onClick={() => runDispatch(d.id, target)}
-                      className="inline-flex shrink-0 items-center gap-1 rounded bg-emerald-700/80 px-2 py-0.5 text-11 font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-40"
-                    >
-                      <FeedbackIcon state={fb.stateOf(`dispatch:${d.id}`)} className="h-3 w-3" />
-                      {t('tasks.dispatchRun')}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
-        {!selectedId ? (
-          <p className="flex min-h-0 flex-1 items-center justify-center text-xs text-neutral-600">
-            {t('tasks.selectHint')}
-          </p>
-        ) : loading && events.length === 0 ? (
-          <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {t('hooks.loading')}
-          </p>
-        ) : events.length === 0 ? (
-          <p className="flex min-h-0 flex-1 items-center justify-center text-xs text-neutral-600">
-            {t('tasks.chainEmpty')}
-          </p>
-        ) : groups.length === 0 ? (
-          /* 有事件、但最新窗口被长 turn 截成尾巴（没有 prompt 可开组）——正在向
-             前补拉更早批次，不得冒充「该会话还没有采集到事件」。 */
-          <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {t('tasks.chainCatchUp')}
-          </p>
-        ) : matchedGroups && matchedGroups.length === 0 ? (
-          /* 搜索无命中：更早批次还在补拉时不能断言无匹配（继续转圈），翻到底才落定。 */
-          <p className="flex min-h-0 flex-1 items-center justify-center gap-1.5 text-xs text-neutral-600">
-            {olderExhausted ? (
-              t('tasks.searchNoMatch')
-            ) : (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t('tasks.chainCatchUp')}
-              </>
-            )}
-          </p>
-        ) : (
-          /* 事件区域：relative 外壳——遮罩 absolute 固定在区域底边（不随滚动
-              流），内层滚动列表 flex-1 撑满可用高度 */
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            <div
-              ref={listRef}
-              className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pr-1"
-              onScroll={pull.syncEdge}
-              onWheel={(e) => pull.wheel(e.deltaY, e.deltaMode)}
-              onTouchStart={(e) => pull.touchStart(e.touches[0]?.clientY ?? 0)}
-              onTouchMove={(e) => pull.touchMove(e.touches[0]?.clientY ?? 0)}
-              onTouchEnd={pull.touchEnd}
-              onTouchCancel={pull.touchEnd}
-            >
-            {/* 拉动位移：正文整体往上让位（transform 不进布局） */}
-            <div
-              className="flex shrink-0 flex-col gap-1"
-              style={pull.px > 0 ? { transform: `translateY(-${pull.px}px)` } : undefined}
-            >
-            {shownGroups.map((g) => {
-              const title = g.prompt ?? (g.preSession ? null : g.events[0]?.eventType ?? g.id);
-              const lastEvent = g.events[g.events.length - 1];
-              const timeIso = lastEvent?.createdAt ?? g.dispatches[0]?.startedAt;
-              const expanded = activeGroupId === g.id;
-              // 进行中 = **只有最新组**且未 Stop（g.open）且会话活跃——历史组
-              // 无论 open 与否都不再亮（旧组 open 是中断，不是进行中）。
-              const isLatestGroup = groups.length > 0 && g.id === groups[groups.length - 1]!.id;
-              return (
-                <div
-                  key={g.id}
-                  className="shrink-0 rounded-lg border border-edge/[0.06] bg-edge/[0.015]"
-                >
-                  {/* div role=button：内嵌复制按钮（button 嵌套 button 非法）。
-                      flex-wrap：窄屏一排徽标放不下（手机上加号角标更多），不折行会把
-                      最右的复制/停止按钮挤出可视区。 */}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setExpandedGroupId(expanded ? '' : g.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setExpandedGroupId(expanded ? '' : g.id);
-                      }
-                    }}
-                    className="flex w-full flex-wrap cursor-pointer items-center gap-2 px-2 py-1.5 text-left hover:bg-edge/[0.03]"
-                  >
-                    {expanded ? (
-                      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
-                    )}
-                    <span
-                      className="min-w-0 flex-1 truncate text-xs font-medium text-neutral-200"
-                      title={title ?? undefined}
-                    >
-                      {title ?? ''}
-                    </span>
-                    {g.preSession && (
-                      <Badge className="shrink-0 bg-sky-900/40 text-sky-300">
-                        {t('tasks.groupPreSession')}
-                      </Badge>
-                    )}
-                    {g.open &&
-                      (isLatestGroup && isSessionBusy(activeStatus) ? (
-                        <Badge className="shrink-0 bg-emerald-900/40 text-emerald-300">
-                          {t('tasks.groupRunning')}
-                        </Badge>
-                      ) : (
-                        <Badge className="shrink-0 bg-amber-900/40 text-amber-300">
-                          {t('tasks.groupOpen')}
-                        </Badge>
-                      ))}
-                    {/* 最新组被挂起（AskUserQuestion/计划/权限确认）：组头亮待答
-                        tag，点击即远程作答——与画布根节点 tag、会话行图标同开一弹窗。 */}
-                    {isLatestGroup && questionOf(selectedId) && (
-                      <Tooltip label={t('tasks.answerActiveTooltip', {
-                        // 不含收尾屏：它不是宿主的问题 tab
-                        n: questionOf(selectedId)!.questions.filter((q) => !q.submit).length,
-                      })}>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setAnswerFor(selectedId);
-                          }}
-                          className="shrink-0 rounded bg-amber-900/50 px-1 py-px text-10 font-medium leading-tight text-amber-300 transition-colors hover:bg-amber-900/70 hover:text-amber-200"
-                        >
-                          {t('tasks.answerPendingTag')}
-                        </button>
-                      </Tooltip>
-                    )}
-                    {g.questions > 0 && (
-                      <Badge className="shrink-0 bg-teal-900/40 text-teal-300">
-                        {t('tasks.groupQuestions', { n: g.questions })}
-                      </Badge>
-                    )}
-                    {g.subagentStops > 0 && (
-                      <Badge className="shrink-0 bg-purple-900/40 text-purple-300">
-                        {t('tasks.groupSubagent', { n: g.subagentStops })}
-                      </Badge>
-                    )}
-                    {g.agentsDispatched > 0 && (
-                      <Badge className="shrink-0 bg-fuchsia-900/40 text-fuchsia-300">
-                        {t('tasks.groupAgents', { n: g.agentsDispatched })}
-                      </Badge>
-                    )}
-                    {timeIso && (
-                      <span className="shrink-0 text-10 text-neutral-500">
-                        {formatTime(timeIso)}
-                      </span>
-                    )}
-                    <span className="shrink-0 text-10 text-neutral-500">
-                      {t('tasks.events', { n: g.events.length })}
-                    </span>
-                    <span className="shrink-0 text-10 text-neutral-500">
-                      {t('tasks.groupDispatches', { n: g.dispatches.length })}
-                    </span>
-                    {g.prompt && (
-                      <Tooltip label={copiedGroupId === g.id ? t('tasks.copied') : t('tasks.copyPrompt')}>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyGroupPrompt(g);
-                          }}
-                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-neutral-200"
-                        >
-                          {copiedGroupId === g.id ? (
-                            <Check className="h-3 w-3 text-emerald-400" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      </Tooltip>
-                    )}
-                    {(isLatestGroup && g.open && isSessionBusy(activeStatus)) && (
-                      <span className="shrink-0">
-                        <HarnessIcon harness={selectedHarness} running />
-                      </span>
-                    )}
-                    {/* 停止：最新组头（该会话当前那一折）上的会话级动作——回合开着才露
-                        （含卡在 API 报错重试时的长静默，那是 ESC 唯一有用的一记），
-                        正常收尾后不残留。判据唯一实现 = canInterrupt。 */}
-                    {isLatestGroup && stoppable && (
-                      <Tooltip label={t('tasks.stopTooltip')}>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onInterrupt(selectedId);
-                          }}
-                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge/[0.08] bg-edge/[0.02] text-neutral-500 transition-colors hover:border-edge/[0.16] hover:bg-edge/[0.08] hover:text-red-300"
-                        >
-                          <FeedbackIcon
-                            state={fb.stateOf(`interrupt:${selectedId}`)}
-                            className="h-3 w-3"
-                            icon={<Square className="h-3 w-3" />}
-                          />
-                        </button>
-                      </Tooltip>
-                    )}
-                  </div>
-                  {expanded && (
-                    <div className="h-[52%] min-h-[280px] lg:h-[calc(100%-330px)] lg:min-h-[420px] max-h-[760px] shrink-0 border-t border-edge/[0.06] p-1.5">
-                      {/* 画布撑满事件区域可用高度（随视口），不再固定 420px；
-                          合体形态 = 该 prompt 的思维导图即事件链，逐级点开。
-                          <lg 会话列表折到画布上方，330px 桌面预算失真 → 改按视口
-                          比例取高，展开后组头仍在首屏内。百分比不用 dvh：根 zoom
-                          下视口单位被二次放大（见 index.css #root 注）。 */}
-                      <div className="relative h-full rounded-md border border-edge/[0.04] bg-neutral-950/40">
-                        <LifecycleMindmap
-                          key={`${selectedId}:${g.id}`}
-                          projectId={projectId}
-                          sessionId={selectedId}
-                          harness={selectedHarness}
-                          focusGroupId={g.id}
-                          focusGroup={g}
-                          running={isLatestGroup && isSessionBusy(activeStatus)}
-                          answerable={isLatestGroup && !!questionOf(selectedId)}
-                          onOpenAnswer={() => setAnswerFor(selectedId)}
-                        />
-                        <p className="pointer-events-none absolute bottom-1 left-2 text-10 text-neutral-600">
-                          {t('tasks.legendNote')}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            </div>
-            </div>
-            {/* 底部渐变遮罩：absolute 固定在事件区域底边（不占滚动流）——
-                倒序列表（最新在顶），更早 prompt 向底部滚触底自动加载 */}
-            {hasOlder && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-neutral-950/95 via-neutral-950/70 to-transparent px-1 pb-1 pt-6 text-center">
-                <p className="text-10 text-neutral-500">
-                  {pull.px > 0 ? t('tasks.pullMoreEvents') : t('tasks.olderHint')}
-                </p>
-                <span className="pointer-events-auto mt-1 inline-flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void loadOlderGroups()}
-                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 text-neutral-200 transition-colors hover:bg-neutral-800"
-                  >
-                    {olderRemaining > 0
-                      ? t('tasks.loadOlder', { n: Math.min(10, olderRemaining) })
-                      : t('tasks.loadOlderEvents')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setGroupWindow((w) => w + groups.length)}
-                    className="rounded-md border border-edge/[0.1] bg-neutral-900/90 px-2 py-0.5 text-11 text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-                  >
-                    {t('tasks.loadAll')}
-                  </button>
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-    </section>
-  );
 
   /** 右栏主体：选中会话有对话面 → 对话（事件链改从头部按钮开弹窗）；
    *  解不出能力（无闭轮事件的 harness）→ 仍是事件链本尊。 */
@@ -1625,7 +1027,7 @@ export function TasksPanel({
             {t('hooks.loading')}
           </p>
         ) : (
-          chainEl
+          <SessionChainPanel sessionId={selectedId ?? ''} projectId={projectId} />
         ))}
       </div>
     </div>
@@ -1890,7 +1292,9 @@ export function TasksPanel({
                 </button>
               </Tooltip>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col">{chainEl}</div>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <SessionChainPanel sessionId={selectedId ?? ''} projectId={projectId} />
+            </div>
           </div>
         </div>
       )}

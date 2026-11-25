@@ -22,6 +22,7 @@ import { useToast } from '@/components/Toast';
 import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { QuestionAnswer } from './QuestionAnswer';
+import { SessionChainPanel } from './SessionChainPanel';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
@@ -216,6 +217,8 @@ export function SessionMessages({
   const [sideOpen, setSideOpen] = useState(false);
   /** 扩展执行日志弹窗（该会话生效的绑定 + 逐拍执行，SSE extension.execution 驱动）。 */
   const [extExecOpen, setExtExecOpen] = useState(false);
+  /** pane 形态的事件链弹窗（SessionChainPanel 数据自持，挂上即用）。 */
+  const [paneChainOpen, setPaneChainOpen] = useState(false);
   /** 回退选择器（输入框敲 `/rewind` 开）：宿主面板由服务端驱动，这扇只做选择。 */
   const [rewindOpen, setRewindOpen] = useState(false);
   const { sessions, statuses, refresh, modelCatalog, questions } = useSessionStatus();
@@ -1047,7 +1050,16 @@ export function SessionMessages({
               关闭（释放 pane）左侧，样式与「弹出」同款镜像（图标反向、桌面带文字、
               移动端纯图标），语义不同不并进功能按钮排。 */}
           {pane && (onFrameReclaim || onFrameClose) && (
-            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
+            <div className="col-start-3 row-start-1 flex shrink-0 items-center gap-1 justify-self-end">
+              <button
+                type="button"
+                aria-label={t('tasks.chainTitle')}
+                onClick={() => setPaneChainOpen(true)}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+              >
+                <Activity className="h-3 w-3 text-rose-400" />
+                <span className="max-lg:hidden">{t('tasks.chainTitle')}</span>
+              </button>
               {onFrameReclaim && (
                 <button
                   type="button"
@@ -2781,6 +2793,33 @@ export function SessionMessages({
           onClose={() => setUsageOpen(false)}
           scope={usageRange}
         />
+
+        {/* pane 形态的事件链弹窗：同一份 SessionChainPanel（数据自持），与主窗链弹窗同款 */}
+        {pane && paneChainOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => setPaneChainOpen(false)}
+          >
+            <div
+              className="flex h-[86%] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-edge/[0.08] bg-neutral-950 p-3 shadow-mac"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-end">
+                <button
+                  type="button"
+                  aria-label={t('app.mobileDrawerClose')}
+                  onClick={() => setPaneChainOpen(false)}
+                  className="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-neutral-800/60 hover:text-neutral-200"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col">
+                <SessionChainPanel sessionId={sessionId} projectId={projectId} />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 扩展执行日志：生效绑定（叠加）+ 逐拍记录；SSE extension.execution 驱动刷新 */}
         <SessionExtensionExecutionsDialog

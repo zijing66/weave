@@ -112,11 +112,11 @@ let lastFrameAt = Date.now();
 const STREAM_SILENT_MS = 65_000;
 const WATCHDOG_MS = 15_000;
 
-// 独立框架页（/pane-frame，route.ts 里的固定路由）只开**对话窄流**（/events/conversation
-// ：hook / push / invalidate 三域，无 dashboard 快照）。dashboard 全量流在框架页窗口
-// 里既用不上、还会在服务端白触发一趟首连快照。两条流共用同一套分发表——同一窗口
-// 只处一种模式（框架页路由是窗口生命期固定的，SPA 不跨模式导航），不存在两路同时
-// 往一张表里投喂。判据惰性求值：模块顶层摸 location 会炸 node 测试环境（无 DOM）。
+// 独立框架页（/pane-frame，route.ts 里的固定路由）开**会话流**：/events?sessionId=
+// <种子会话>——服务端出站过滤，只发该会话的 hook 帧（push/invalidate 照发，行补丁
+// 与失效信号靠它们），且不触发 dashboard 首连快照。与全量流共用同一套分发表——同一
+// 窗口只处一种模式（框架页路由是窗口生命期固定的，SPA 不跨模式导航）。判据惰性求值：
+// 模块顶层摸 location 会炸 node 测试环境（无 DOM）。
 const isPaneFrameRoute = (): boolean =>
   typeof location !== 'undefined' && /^\/pane-frame\/?$/.test(location.pathname);
 
@@ -155,9 +155,8 @@ function ensureSource(): EventSource | null {
   // 未登录不建连（连上也是 401）：登录成功后由认证态订阅者补连，或新订阅者触发。
   if (authState() !== 'authenticated') return null;
   if (source) return source;
-  source = new EventSource(
-    isPaneFrameRoute() ? api.conversationEventsUrl(lastEventId) : api.eventsUrl(lastEventId),
-  );
+  const paneSid = isPaneFrameRoute() ? paneSessionId() : null;
+  source = new EventSource(api.eventsUrl(lastEventId, paneSid ? [paneSid] : undefined));
   lastFrameAt = Date.now();
   source.onopen = () => {
     lastFrameAt = Date.now();

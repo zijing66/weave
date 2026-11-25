@@ -16,7 +16,7 @@ import type { MirrorWriter } from '../hooks/mirror.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEventBus } from '../hooks/bus.js';
 import type { DataBus } from './data-bus.js';
-import { SseHub } from './sse-hub.js';
+import { SseHub, type SseFrameOut } from './sse-hub.js';
 import type { TerminalTopologyRefresher } from './terminal-topology-refresher.js';
 import type { InflightCountsRefresher } from './inflight-counts-refresher.js';
 import type { SnapshotRefresher } from './snapshot-refresher.js';
@@ -557,16 +557,13 @@ async function handleRequest(
   if (await handleProjectFileRoutes(req, res, deps, pathname, url)) return;
 
   // /events — Server-Sent Events stream of asset change events.
+  // `?sessionId=`（可重复）：逐会话订阅——该连接只发这些会话的 hook 帧（对话
+  // 窗各自订自己的内容流；不带参数 = 全量，主窗照旧）。
   if (pathname === '/events' && req.method === 'GET') {
-    handleSse(req, res, deps, url);
-    return;
-  }
-
-  // /events/conversation — 独立框架页（/pane 对话 pane）自己的事件流：只带 hook /
-  // push / invalidate 三域（对话所需的全部帧），不带 asset/project 域与 dashboard
-  // 快照回调——同一份 SseHub 的编号 + 环形缓冲 + 断流补发，不造第二条连接协议。
-  if (pathname === '/events/conversation' && req.method === 'GET') {
-    handleSse(req, res, deps, url, { domains: 'conversation', skipOnAttach: true });
+    handleSse(req, res, deps, url, {
+      skipOnAttach: url.searchParams.has('sessionId'),
+      sessionIds: url.searchParams.getAll('sessionId'),
+    });
     return;
   }
 
@@ -590,14 +587,14 @@ async function handleRequest(
 const SSE_HEARTBEAT_MS = 25_000;
 
 /** Upgrade a response to an SSE stream fed by the shared hub.
- *  `domains: 'conversation'` = 只发对话所需三域（独立框架页的窄流）；`skipOnAttach`
- *  = 不触发首连快照回调（dashboard 的分块历史对 pane 毫无用处，白查一趟库）。 */
+ *  `skipOnAttach` = 不触发首连快照回调（dashboard 的分块历史对 pane 毫无用处，
+ *  白查一趟库）；`sessionIds` = 逐会话出站过滤（对话窗自己的内容流）。 */
 function handleSse(
   req: IncomingMessage,
   res: ServerResponse,
   deps: WeaveServerDeps,
   url: URL,
-  opts: { domains?: 'all' | 'conversation'; skipOnAttach?: boolean } = {},
+  opts: { skipOnAttach?: boolean; sessionIds?: string[] } = {},
 ): void {
   const hub = deps.sseHub;
   if (!hub || (!deps.watch && !deps.hookBus && !deps.dataBus)) {
@@ -632,14 +629,22 @@ function handleSse(
 
   // 漏掉的帧补不回来（纪元变了 / 缓冲越界 / 中断期间没人在听）：先告诉前端整页重来。
   if (replay.gap) res.write(`data: ${JSON.stringify({ type: 'resync' })}\n\n`);
-  // 窄流只发对话三域；全量流原样。
-  const inDomain =
-    opts.domains === 'conversation'
-      ? (t: string) => t === 'hook' || t === 'push' || t === 'invalidate'
-      : () => true;
+  // 出站谓词：逐会话连接只放行这些会话的 hook 帧（push/invalidate 是全局键，照发——
+  // 弹出窗的行补丁与失效信号全靠它们）。全量连接恒真。
+  const sidSet = opts.sessionIds && opts.sessionIds.length > 0 ? new Set(opts.sessionIds) : null;
+  const outbound = (frame: SseFrameOut): boolean => {
+    if (!sidSet) return true;
+    try {
+      const parsed = JSON.parse(frame.data) as { type?: string; sessionId?: string | null };
+      if (parsed.type !== 'hook') return true;
+      return parsed.sessionId != null && sidSet.has(parsed.sessionId);
+    } catch {
+      return false;
+    }
+  };
   for (const frame of replay.frames) {
     try {
-      if (inDomain(String((JSON.parse(frame.data) as { type?: string }).type))) {
+      if (outbound(frame)) {
         res.write(`id: ${frame.id}\ndata: ${frame.data}\n\n`);
       }
     } catch {
@@ -655,7 +660,7 @@ function handleSse(
   const SSE_CLIENT_BUFFER_LIMIT = 8 * 1024 * 1024;
   const unsubscribe = hub.subscribe((frame) => {
     try {
-      if (!inDomain(String((JSON.parse(frame.data) as { type?: string }).type))) return;
+      if (!outbound(frame)) return;
     } catch {
       // 同上：写不出去的帧不会比能写出的多信息
     }

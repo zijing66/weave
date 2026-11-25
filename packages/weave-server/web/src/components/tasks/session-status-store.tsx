@@ -20,6 +20,12 @@ import { useAuthState } from '@/lib/auth';
 import { useToast } from '@/components/Toast';
 import { subscribeHook, subscribePush, paneSessionId, type HookFrame } from '@/lib/sse';
 import {
+  mergeSharedAccount,
+  readSharedAccount,
+  subscribeSharedAccount,
+  writeSharedAccount,
+} from './shared-account';
+import {
   countSessionsByHarness,
   deriveSessionStatus,
   STALE_SUBAGENT_MS,
@@ -56,6 +62,21 @@ interface SessionStatusValue {
 }
 
 const Ctx = createContext<SessionStatusValue | null>(null);
+
+/** 落共享快照：主窗整份写（sessions 全量只它有）；pane 窗只写自己刷新出的
+ *  dispatches/questions（派发/作答的写入口以对话窗为准，其余窗广播对齐）。 */
+function shareSnapshot(
+  sessions: SessionRow[] | null,
+  dispatches: HookDispatch[],
+  questions: PendingQuestionEntry[],
+  modelCatalog: Record<string, ModelAliasTarget[]>,
+): void {
+  if (paneSessionId()) {
+    mergeSharedAccount({ dispatches, questions, modelCatalog });
+    return;
+  }
+  writeSharedAccount({ at: Date.now(), sessions, dispatches, questions, modelCatalog });
+}
 
 /** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt / effort）。 */
 export interface RowPushPatch {
@@ -106,6 +127,8 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   /** 帧处理里要判「这个会话在不在列表上」（新会话第一笔事件得整套重拉一次）。 */
   const sessionsRef = useRef<SessionRow[] | null>(null);
   sessionsRef.current = sessions;
+  const dispatchesRef = useRef<HookDispatch[]>([]);
+  dispatchesRef.current = dispatches;
   /** 上一次**整套**重拉的落地时刻：帧驱动的补丁攒够这么久就对一次全量
    *  （会话被保留策略删掉、标题改了这类没有事件信号的变化只能这么兜）。 */
   const lastFullAt = useRef(0);
@@ -123,6 +146,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
    *  （tracker 内存态变化即推；帧到即写，不再帧到后重拉 GET）。 */
   const [questions, setQuestions] = useState<Map<string, PendingQuestionEntry>>(new Map());
   const [modelCatalog, setModelCatalog] = useState<Record<string, ModelAliasTarget[]>>({});
+  const questionsRef = useRef<Map<string, PendingQuestionEntry>>(new Map());
+  questionsRef.current = questions;
+  const modelCatalogRef = useRef<Record<string, ModelAliasTarget[]>>({});
+  modelCatalogRef.current = modelCatalog;
   /** 后端 push 的行级补丁最新一份（terminal / pidAlive / interruptedAt / effort）。push 只在
    *  值变时发，**落地前丢掉的那帧不会再来**——首屏列表还没到时先存着，一到立刻并上。 */
   const rowPush = useRef<{
@@ -161,6 +188,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
             next.push(applyRowPush([row], rowPush.current)[0] ?? row);
           }
         }
+        // 主窗生产者：行补丁落账即同步共享快照（消费窗靠它对齐）
+        if (changed && !paneSessionId()) {
+          shareSnapshot(next, dispatchesRef.current, [...questionsRef.current.values()], r.modelCatalog ?? {});
+        }
         return changed ? next : prev;
       });
       setError(null);
@@ -173,8 +204,10 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   const [settled, setSettled] = useState({ sessions: false, dispatches: false, questions: false });
 
   const refresh = useCallback(async (): Promise<string | null> => {
+    // pane 窗不拉全量 sessions（账本是共享的，主窗管）——只拉派发与待答面。
+    const pane = paneSessionId() != null;
     const [s, d, q] = await Promise.allSettled([
-      api.listSessions(),
+      pane ? Promise.resolve(null) : api.listSessions(),
       api.listHookDispatches({ limit: 200 }),
       api.listQuestions(),
     ]);
@@ -184,17 +217,24 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
     if (q.status === 'fulfilled') {
       setQuestions(new Map(q.value.map((entry) => [entry.sessionId, entry])));
     }
-    if (s.status === 'fulfilled') {
-      setSessions(() => applyRowPush(s.value.sessions, rowPush.current));
-      setModelCatalog(s.value.modelCatalog ?? {});
+    if (s.status === 'fulfilled' && s.value) {
+      const full = s.value;
+      setSessions(() => applyRowPush(full.sessions, rowPush.current));
+      setModelCatalog(full.modelCatalog ?? {});
       lastFullAt.current = Date.now();
     }
+    shareSnapshot(
+      s.status === 'fulfilled' && s.value ? s.value.sessions : sessionsRef.current,
+      d.status === 'fulfilled' ? d.value : dispatchesRef.current,
+      q.status === 'fulfilled' ? q.value : [...questionsRef.current.values()],
+      modelCatalogRef.current,
+    );
     setSettled({
       sessions: true,
       dispatches: d.status === 'fulfilled',
       questions: q.status === 'fulfilled',
     });
-    if (s.status !== 'fulfilled') {
+    if (!pane && s.status !== 'fulfilled') {
       const message = s.reason instanceof Error ? s.reason.message : String(s.reason);
       return message;
     }
@@ -219,15 +259,40 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
   }, [refresh, toast]);
 
   // 认证前不拉：Provider 挂在认证门之上，登录页阶段发请求必 401，而错误会一直
-  // 留到登录后（Provider 不重挂载）被全局总览渲染成红条。pane 窗口只拉自己那条
-  // 会话（`?ids=` 行补丁端点），不全量——全量清单与项目徽标是主窗的事。
+  // 留到登录后（Provider 不重挂载）被全局总览渲染成红条。pane 窗不开全局流、不拉
+  // 全量：账本从共享快照起（主窗生产者已写好），自己的会话行再由会话流的帧驱动
+  // 行补丁保持实时（见下方 hook 订阅——pane 分支照常 patchRows）。
   useEffect(() => {
-    if (auth === 'authenticated') {
-      const ids = paneSessionId();
-      if (ids) void patchRows([ids]);
-      else void refreshWithToast();
+    if (auth !== 'authenticated') return;
+    const paneSid = paneSessionId();
+    if (paneSid) {
+      const snap = readSharedAccount();
+      if (snap?.sessions) {
+        setSessions(applyRowPush(snap.sessions, rowPush.current));
+        setDispatches(snap.dispatches);
+        setQuestions(new Map(snap.questions.map((entry) => [entry.sessionId, entry])));
+        setModelCatalog(snap.modelCatalog);
+        setSettled({ sessions: true, dispatches: true, questions: true });
+      }
+      void patchRows([paneSid]);
+      return;
     }
+    void refreshWithToast();
   }, [auth, refreshWithToast, patchRows]);
+
+  // 消费者对齐：主窗广播「账本变了」即重读快照（pane 窗不开全局流，账本变化全靠它）。
+  useEffect(() => {
+    if (!paneSessionId()) return;
+    return subscribeSharedAccount(() => {
+      const snap = readSharedAccount();
+      if (!snap?.sessions) return;
+      // 本窗 push 行补丁（帧驱动的 pidAlive/effort 等）并上快照后整份替换
+      setSessions(applyRowPush(snap.sessions, rowPush.current));
+      setDispatches(snap.dispatches);
+      setQuestions(new Map(snap.questions.map((entry) => [entry.sessionId, entry])));
+      setModelCatalog(snap.modelCatalog);
+    });
+  }, []);
 
   // 在途消息角标：后端按 message.* 事件重算并推绝对值快照（无轮询、无重拉）。
   useEffect(
