@@ -4,6 +4,35 @@ import type { RuntimeSupervisor } from './supervisor.js';
 import type { AgentInstanceRepository } from '../repositories/agent-instances.js';
 import type { TerminalGateway } from './terminal/session-gateway.js';
 
+/** 单枪 stdin 上限（ConPTY 输入缓冲实测安全边界内；1083 字符整包会截头）。 */
+export const STDIN_CHUNK_BYTES = 512;
+/** 块间让拍：pty 消化输入（ConPTY 环形缓冲翻转窗口）。 */
+export const STDIN_CHUNK_GAP_MS = 25;
+
+/** 按 UTF-8 字节切（不劈代理对/多字节序列；与 wezterm 后端 chunkByUtf8Bytes 同语义）。 */
+export function chunkByUtf8Bytes(text: string, maxBytes: number): string[] {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return [text];
+  const out: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = start;
+    let bytes = 0;
+    while (end < text.length) {
+      const code = text.codePointAt(end)!;
+      const width = code > 0xffff ? 4 : code > 0x7f ? (code > 0x7ff ? 3 : 2) : 1;
+      if (bytes + width > maxBytes) break;
+      bytes += width;
+      end += code > 0xffff ? 2 : 1;
+    }
+    if (end === start) end = start + 1; // 单字符超上限（不可能，防御）
+    out.push(text.slice(start, end));
+    start = end;
+  }
+  return out;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 /**
  * headless 实例的层② 终端通道（B1 收尾，agent-runtime-host-design.md §5.2）：
  * 实现 PromptTerminal——pane id = instanceId，sendText/sendKeys 即 Host stdin。
@@ -48,10 +77,21 @@ export class HeadlessTerminal implements PromptTerminal {
   /** prompt 原文 + 提交键（等同既有 sendText 语义：一次粘贴 + CR）。粘贴语义必须
    *  手工包 bracketed paste——外部后端靠终端（wezterm send-text 自带包装），Host
    *  stdin 是裸字节，不包的话宿主把正文当逐字敲入、粘贴处理器不触发（带图路径
-   *  不再转 `[Image #N]` + image block，2026-11-22 实测回归）。 */
+   *  不再转 `[Image #N]` + image block，2026-11-22 实测回归）。
+   *
+   * **大文本分块**（2026-11-25 实测定案）：一次性把 1KB+ 的 paste 写进 node-pty
+   * （ConPTY）会截头——bswmanager 1083 字符的正文只剩尾部 251 字节 ×2（两截断点
+   * 都在词中：`Resu|lt;`），ConPTY 输入缓冲翻丢前段。与外部 wezterm 后端的
+   * 16KB 分块同款：按 UTF-8 字节切块、每块间让一拍（pty 消化输入），paste 标记
+   * 各自成枪——宿主看到的仍是一次粘贴。 */
   async sendText(paneId: string, text: string): Promise<void> {
     if (text) {
-      await this.supervisor.sendStdin(paneId, BRACKETED_PASTE_START + text + BRACKETED_PASTE_END);
+      await this.supervisor.sendStdin(paneId, BRACKETED_PASTE_START);
+      for (const chunk of chunkByUtf8Bytes(text, STDIN_CHUNK_BYTES)) {
+        await this.supervisor.sendStdin(paneId, chunk);
+        await sleep(STDIN_CHUNK_GAP_MS);
+      }
+      await this.supervisor.sendStdin(paneId, BRACKETED_PASTE_END);
     }
     await this.supervisor.sendStdin(paneId, '\r');
   }

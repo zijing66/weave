@@ -4,6 +4,7 @@ import type { AuthService } from '../../daemon/dashboard-auth.js';
 import { acceptWebSocket, startReading, writeClose, writeText } from './ws-frame.js';
 import type { TerminalGateway } from './session-gateway.js';
 import type { RuntimeSupervisor } from '../supervisor.js';
+import { chunkByUtf8Bytes, STDIN_CHUNK_BYTES, STDIN_CHUNK_GAP_MS } from '../headless-terminal.js';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -95,7 +96,20 @@ export function terminalUpgradeHandler(
               writeText(socket, JSON.stringify({ type: 'error', error: 'no input lease — request control first' }));
               return;
             }
-            void deps.runtimeSupervisor?.sendStdin(instanceId, data).catch(() => {});
+            // 大包分块（2026-11-25）：浏览器 xterm 粘贴超长文本一次整包到达，
+            // ConPTY 输入缓冲会翻丢前段（与 headless sendText 同一根因）——按
+            // UTF-8 切块逐枪写、块间让拍。数据先全收再写，读循环不被阻塞。
+            const chunks = chunkByUtf8Bytes(data, STDIN_CHUNK_BYTES);
+            if (chunks.length === 1) {
+              void deps.runtimeSupervisor?.sendStdin(instanceId, data).catch(() => {});
+              return;
+            }
+            void (async () => {
+              for (const chunk of chunks) {
+                await deps.runtimeSupervisor?.sendStdin(instanceId, chunk).catch(() => {});
+                await new Promise((r) => setTimeout(r, STDIN_CHUNK_GAP_MS));
+              }
+            })();
             return;
           }
           case 'resize': {

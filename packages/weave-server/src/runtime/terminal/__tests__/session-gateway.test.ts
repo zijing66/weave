@@ -145,11 +145,23 @@ describe('TerminalGateway 实例终态（恢复向导的判据面）', () => {
     const sup = { sendStdin: async (_id: string, data: string) => { written.push(data); } };
     const term = new HeadlessTerminal(sup as never, { get: () => null } as never);
     await term.sendText('wvi-test', '看这张图\nD:\\x\\image-1.png');
-    expect(written).toEqual(['\x1b[200~看这张图\nD:\\x\\image-1.png\x1b[201~', '\r']);
+    // 小文本一枪进（分块只在超 512 字节时展开）；paste 标记独立成枪
+    expect(written).toEqual(['\x1b[200~', '看这张图\nD:\\x\\image-1.png', '\x1b[201~', '\r']);
     // 空正文仍只补提交键
     written.length = 0;
     await term.sendText('wvi-test', '');
     expect(written).toEqual(['\r']);
+  });
+  it('sendText 超长分块：512 字节/块（UTF-8 边界切，不劈中文），块间让拍；ConPTY 截头回归（2026-11-25 实测）', async () => {
+    const written: string[] = [];
+    const sup = { sendStdin: async (_id: string, data: string) => { written.push(data); } };
+    const term = new HeadlessTerminal(sup as never, { get: () => null } as never);
+    const body = '长'.repeat(400); // 400×3 = 1200 字节 → 3 块
+    await term.sendText('wvi-test', body);
+    const chunks = written.filter((d) => d !== '\x1b[200~' && d !== '\x1b[201~' && d !== '\r');
+    expect(chunks.join('')).toBe(body);
+    expect(chunks.length).toBe(3);
+    for (const c of chunks) expect(Buffer.byteLength(c, 'utf8')).toBeLessThanOrEqual(512);
   });
   it('attach 时 Host 已不报该实例 → 回致命 error，不装「已连接」', async () => {
     const { sup } = fakeSupervisor([], undefined, []);

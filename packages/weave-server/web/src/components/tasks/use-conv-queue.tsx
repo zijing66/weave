@@ -42,7 +42,7 @@ export function useConvQueue(deps: {
   stick: MutableRefObject<boolean>;
   fb: ActionFeedback;
   t: TFunc;
-  show: (kind: 'success' | 'error', msg: string) => void;
+  show: (kind: 'success' | 'error' | 'info', msg: string) => void;
   refreshMessages: () => Promise<void>;
   /** 在途视图的落点（乐观反显：发送那一拍就插一行本地 pending，服务端数据回来覆盖）。 */
   setMessages: Dispatch<SetStateAction<SessionMessageRow[] | null>>;
@@ -188,6 +188,12 @@ const send = (): void => {
   if (promptLimits && text.length > promptLimits.maxChars) {
     show('error', t('tasks.msgTooLong', { max: String(promptLimits.maxChars) }));
     return;
+  }
+  // 超长软提示（2026-11-25 用户裁决）：几 KB 以上正文建议走文件附件——层② 分块
+  // 投递能到（逐 512 字节枪），但几十 KB 级投递要近十秒、气泡里也难读；不拦，
+  // 只提醒一次，发了照样发。
+  if (promptLimits && text.length > promptLimits.pasteThreshold * 5) {
+    show('info', t('tasks.msgHugeHint'));
   }
   setDraftText('');
   setStaged((s) => s.filter((x) => x.state !== 'done' || !x.upload));

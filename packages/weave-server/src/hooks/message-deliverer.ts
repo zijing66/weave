@@ -404,6 +404,22 @@ export function screenTailMatches(screen: string, tail: string): boolean {
   return joined.endsWith(tail);
 }
 
+/** 宿主把超长粘贴折叠成摘要块的屏上特征（折叠后全文尾巴不在屏上，
+ *  `screenTailMatches` 必然对不上——但「正文在框、待提交」仍是事实）。 */
+const PASTE_FOLD_RE = /\+\s*\d+\s+lines?|\[Pasted text/i;
+
+/**
+ * 折叠态判据：屏上找不到正文尾、但 `❯` 行起挂着一枚 paste 折叠摘要 = 超长正文
+ * 在输入框里等着提交。此刻补 CR 与人手那一下等价；正文不在框（真已提交）时
+ * ❯ 行是空的、不会带摘要——两个状态可分，绝不盲打。
+ */
+export function screenPasteFolded(screen: string): boolean {
+  const lines = screen.split('\n');
+  const start = lines.findIndex((l) => l.includes(SUBMIT_PROMPT_PREFIX));
+  if (start < 0) return false;
+  return PASTE_FOLD_RE.test(lines.slice(start).join('\n'));
+}
+
 /** 等 inbox 凭据就位的轮询间隔（编排域「到达前启动 + socket 就绪」）。 */
 const INBOX_READY_POLL_MS = 250;
 
@@ -2556,16 +2572,19 @@ export class MessageDeliverer {
       if (Date.now() >= deadline) return;
       const screen = await terminal.getPaneText(paneId).catch(() => null);
       if (screen === null) return; // pane 没了/读不到：状态守不住，不盲打
-      if (!screenTailMatches(screen, tail)) return; // 片段不在输入行 = 已提交，收手
+      // 片段不在输入行的两种情形：真已提交（❯ 行无正文无摘要 → 收手）；超长正文
+      // 被宿主折叠成 paste 摘要（全文尾巴不在屏上，但正文在框待提交 → 照样补）。
+      if (!screenTailMatches(screen, tail) && !screenPasteFolded(screen)) return;
       try {
         await terminal.sendKeys(paneId, '\r');
       } catch {
         return; // 补打失败不落 failed：文本已在框里，未回执闸会接手（人工重发只补回车）
       }
-      // 复读确认：片段从输入行消失 = 补键生效；还在 = 下一拍再来。
+      // 复读确认：正文/摘要都从输入行消失 = 补键生效（折叠态下成功的证据就是
+      // 摘要消失）；还在 = 下一拍再来。
       await sleep(SUBMIT_PROBE_VERIFY_MS);
       const after = await terminal.getPaneText(paneId).catch(() => null);
-      if (after !== null && !screenTailMatches(after, tail)) {
+      if (after !== null && !screenTailMatches(after, tail) && !screenPasteFolded(after)) {
         this.memory.set(messageId, { ...this.memory.get(messageId)!, settledAt: new Date().toISOString() });
         return;
       }
