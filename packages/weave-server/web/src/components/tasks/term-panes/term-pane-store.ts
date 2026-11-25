@@ -29,6 +29,8 @@ export interface PaneRecord {
   /** 绑定的会话（panel 面的会话终端）：pane 与会话同生命周期，切会话即让位。
    *  overlay 面（项目级 shell）不带。 */
   sessionId?: string;
+  /** 归属项目（渲染端按项目过滤跨窗共享账；存量 pane 无此字段照显）。 */
+  projectId?: number;
   /** 连上后一次性注入的命令（带 \r；转窗/恢复都不补发）。 */
   initialCommand?: string;
   /** 已弹出到独立窗口：本窗只留占位卡（不挂 xterm/WS），点切回即恢复。 */
@@ -137,6 +139,7 @@ export interface OpenPaneInput {
   slot: PaneSlot;
   initialCommand?: string;
   sessionId?: string;
+  projectId?: number;
 }
 
 export interface OpenPaneResult {

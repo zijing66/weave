@@ -32,7 +32,7 @@ interface LocalDrag {
   over: { target: string; side: DropSide } | null;
 }
 
-export function TerminalPanes({ slot }: { slot: PaneSlot }) {
+export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?: number }) {
   const t = useT();
   const state = useTermPanes();
   const holder = useRef<HTMLDivElement | null>(null);
@@ -41,8 +41,11 @@ export function TerminalPanes({ slot }: { slot: PaneSlot }) {
   const dragRef = useRef<LocalDrag | null>(null);
 
   const panes = useMemo(
-    () => Object.values(state.panes).filter((p) => p.slot === slot),
-    [state.panes, slot],
+    () =>
+      Object.values(state.panes).filter(
+        (p) => p.slot === slot && (projectId === undefined || p.projectId === undefined || p.projectId === projectId),
+      ),
+    [state.panes, slot, projectId],
   );
   const layout = state.layouts[slot];
   const geo = useMemo(() => (layout ? layoutGeometry(layout) : null), [layout]);
@@ -128,13 +131,22 @@ export function TerminalPanes({ slot }: { slot: PaneSlot }) {
     [hitTest],
   );
 
-  /** 弹出到独立框架页：把该 pane 的会话对话弹出去（框架页 = 一项目的多 pane
-   *  面，终端可在页内再贴）；本 pane 立即转占位。弹窗被拦保持本地显示。 */
+  /** 弹出到独立框架页：把该 pane 贴成框架页的**终端**视图（会话对话不跟着走，
+   *  PaneFramePage 按视图 kind 渲染 TerminalView）；本 pane 立即转占位。
+   *  弹窗被拦保持本地显示。openPaneFrame 要求 seed 一个 conversation 视图——
+   *  用 pane 自己绑的会话（没有绑定的 overlay shell 才落 sessionId=paneId 的
+   *  纯终端 seed，弹出页只显示终端视图）。 */
   const popout = useCallback(
     (pane: PaneRecord): void => {
       try {
         const frameId = openPaneFrame(
-          { projectId: 0, projectLabel: pane.label, sessionId: pane.paneId, label: pane.label },
+          {
+            projectId: pane.projectId ?? 0,
+            projectLabel: pane.label,
+            sessionId: pane.sessionId ?? pane.paneId,
+            label: pane.label,
+            terminalInstance: pane.instanceId,
+          },
           'width=900,height=620',
         );
         setPanePopped(pane.paneId, frameId);
@@ -233,7 +245,7 @@ export function TerminalPanes({ slot }: { slot: PaneSlot }) {
             >
               <span className="truncate font-medium">{pane.label}</span>
               <span className="flex items-center gap-0.5">
-                {!pane.poppedOut && (
+                {!pane.poppedOut && slot === 'overlay' && (
                   <button
                     type="button"
                     aria-label={t('tasks.panePopout')}

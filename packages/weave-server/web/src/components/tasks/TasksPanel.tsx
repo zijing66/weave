@@ -26,7 +26,6 @@ import { subscribeHook } from '@/lib/sse';
 import { SessionChainPanel } from './SessionChainPanel';
 import { TerminalPicker } from './TerminalPicker';
 import { HarnessPicker } from './HarnessPicker';
-import { TerminalPanes } from './term-panes/TerminalPanes';
 import { focusSessionPanes, openPane, useTermPanes } from './term-panes/term-pane-store';
 import { attachFrameView, openPaneFrame, reclaimPaneFrame, usePaneFrames, windows as paneFrameWindows } from './term-panes/pane-transfer';
 import {
@@ -537,8 +536,7 @@ export function TasksPanel({
   /** headless（B4 Agent Runtime）：起在 Runtime Host、不开外部终端窗，Web 终端交互。 */
   const [headlessNewSession, setHeadlessNewSession] = useState(false);
   /** 打开中的 Web 终端：右栏 pane 集合（分屏），窗口级 store、跨会话/刷新保活。 */
-  const termPanes = useTermPanes();
-  const panelPaneCount = Object.values(termPanes.panes).filter((p) => p.slot === 'panel').length;
+  useTermPanes();
 
   /** 对话头部的终端入口：Web 预设恒在（没实例则置灰说明）；其他预设只给真有
       headless 实例的会话摆，免得每个对话都多一枚用不上的按钮。 */
@@ -773,7 +771,7 @@ export function TasksPanel({
         paneFrameWindows.get(frame.frameId)?.focus();
         return;
       }
-      const res = openPane({ instanceId, label, slot: 'panel', sessionId });
+      const res = openPane({ instanceId, label, slot: 'panel', sessionId, projectId });
       if (!res.ok && res.reason === 'limit') show('error', t('tasks.paneLimit'));
       if (!res.ok && res.reason === 'other-window') show('error', t('tasks.paneOtherWindow'));
       focusOnMobile(sessionId);
@@ -945,13 +943,7 @@ export function TasksPanel({
    *  解不出能力（无闭轮事件的 harness）→ 仍是事件链本尊。 */
   const paneEl = (
     <div className="flex min-w-0 min-h-0 flex-1 flex-col">
-      {/* Web 终端与对话同区（默认对话）：右栏 pane 集合（分屏 grid，拖 pane 头
-          重排/拖出本窗转移）；X 只关 pane（detach），Runtime Host 里的 TUI 进程照常跑。 */}
-      {panelPaneCount > 0 && (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          <TerminalPanes slot="panel" />
-        </div>
-      )}
+      {/* Web 终端（panel 面）渲染在对话气泡区内（SessionMessages 覆盖层），头部/输入区照常。 */}
       {/* 双开告警：选中会话有多个活实例（Web 终端 PTY + 外部终端 resume）——
           两份进程写同一份转录。处置只给「关闭 Web 实例」：外部那个不是 weave
           起的进程，不碰；关完这里自然消失（下一拍 /sessions 带回新计数）。 */}
@@ -977,7 +969,7 @@ export function TasksPanel({
         );
       })()}
       {/* 已挂载的对话全在（非选中项只藏不卸，草稿与已选图片都还在） */}
-      <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', panelPaneCount > 0 && 'hidden')}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* 已弹出到独立框架页的对话：占位条 + 切回（对话本体藏不卸，切回零重放）。
           与对话同生命周期——只随**选中的那个**会话显形，切走即让位。 */}
       {selectedId && poppedConvs[selectedId] && (

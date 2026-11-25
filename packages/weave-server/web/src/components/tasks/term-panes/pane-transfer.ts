@@ -74,6 +74,9 @@ type PaneInput = {
   projectLabel: string;
   sessionId: string;
   label: string;
+  /** 终端 pane 弹出（TerminalPanes.popout）：seed 页除对话外贴的终端实例。
+   *  会话弹出（TasksPanel.popoutConversation）不带 = 页里只有对话。 */
+  terminalInstance?: string;
 };
 
 const PREFIX = 'weave:pane-frame:';
@@ -184,6 +187,20 @@ export function viewIdOf(sessionId: string, kind: 'conversation' | 'terminal'): 
 function spawnPaneFrame(pane: PaneInput, features: string): string {
   const frameId = uuid();
   const viewId = viewIdOf(pane.sessionId, 'conversation');
+  const terminalViewId = pane.terminalInstance
+    ? viewIdOf(`terminal:${pane.terminalInstance}`, 'terminal')
+    : null;
+  const views: Record<string, FrameView> = {
+    [viewId]: { kind: 'conversation', label: pane.label, sessionId: pane.sessionId },
+  };
+  if (pane.terminalInstance) {
+    views[terminalViewId!] = {
+      kind: 'terminal',
+      instanceId: pane.terminalInstance,
+      label: pane.label,
+      sessionId: pane.sessionId,
+    };
+  }
   const descriptor: PaneTransfer = {
     schema: 2,
     frameId,
@@ -192,8 +209,11 @@ function spawnPaneFrame(pane: PaneInput, features: string): string {
     state: 'active',
     seedSessionId: pane.sessionId,
     label: pane.label,
-    views: { [viewId]: { kind: 'conversation', label: pane.label, sessionId: pane.sessionId } },
-    layout: null,
+    views,
+    // 双视图（终端 pane 弹出）= 对话左、终端右；单视图免布局。
+    layout: terminalViewId
+      ? encodeLayout({ kind: 'split', dir: 'row', children: [{ kind: 'pane', paneId: viewId }, { kind: 'pane', paneId: terminalViewId }], weights: [0.5, 0.5] })
+      : null,
   };
   localStorage.setItem(PREFIX + frameId, JSON.stringify(descriptor));
   const popup = window.open(routeToPath({ kind: 'pane-frame' }), WINDOW_PREFIX + frameId, features);
@@ -219,6 +239,15 @@ export function openPaneFrame(pane: PaneInput, features: string): string {
     // 同项目的第二扇对话：贴进已有框架页（幂等）再聚焦——只聚焦不贴的话，
     // 后续会话点「弹出」没反应，像是被第一扇挡死了。
     const res = attachFrameView(existing.frameId, { kind: 'conversation', label: pane.label, sessionId: pane.sessionId });
+    // 终端 pane 弹出：终端视图一并贴（同实例已在页里 = 幂等）。
+    if (pane.terminalInstance) {
+      attachFrameView(existing.frameId, {
+        kind: 'terminal',
+        instanceId: pane.terminalInstance,
+        label: pane.label,
+        sessionId: pane.sessionId,
+      });
+    }
     windowRefs.get(existing.frameId)?.focus();
     // 满 6（移动端 2）：贴不进 = 另开一页容纳（一个项目的框架页可以有多扇）。
     if (!res.ok) return spawnPaneFrame(pane, features);

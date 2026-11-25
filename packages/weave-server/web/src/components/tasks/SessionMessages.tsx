@@ -23,6 +23,8 @@ import { FeedbackIcon } from '@/components/FeedbackIcon';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { QuestionAnswer } from './QuestionAnswer';
 import { SessionChainPanel } from './SessionChainPanel';
+import { TerminalPanes } from './term-panes/TerminalPanes';
+import { useTermPanes } from './term-panes/term-pane-store';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
@@ -255,6 +257,12 @@ export function SessionMessages({
    *  不依赖 TasksPanel 回调链）。 */
   const [paneAnswerOpen, setPaneAnswerOpen] = useState(false);
   const paneEntry = paneQuestionEntries.find((e) => e.sessionId === sessionId) ?? null;
+  // 本会话的 panel 终端 pane（Web 终端盖在气泡区的账；pane 与会话同生命周期）
+  const termPanes = useTermPanes();
+  const panelPaneIds = useMemo(
+    () => Object.values(termPanes.panes).filter((p) => p.slot === 'panel' && p.sessionId === sessionId),
+    [termPanes.panes, sessionId],
+  );
   const asking = pane ? paneEntry != null : questions.has(sessionId);
   const answerPending = pane ? asking : answerPendingProp ?? false;
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
@@ -1076,8 +1084,24 @@ export function SessionMessages({
             </div>
           )}
 
-          {/* 历史过滤：只改显示，不动手上的翻页游标与勾选；与功能按钮同一行 */}
-          <div className="col-start-1 col-span-2 row-start-2 flex min-w-0 items-center gap-1 max-lg:overflow-x-auto">
+          {/* 历史过滤：只改显示，不动手上的翻页游标与勾选；与功能按钮同一行。
+              整行归「Web 终端要盖住的区域」——覆盖壳从这里开始（下方壳注释）。 */}
+          </div>
+          </div>
+
+        {/* Web 终端要盖住的区域（过滤行 + 气泡区 + 分界条 + 输入区）的壳：
+            panel 面覆盖层铺满这里，头部标题行与状态行照常可见；「收起 Web 终端」
+            X 关 pane 后自然回落对话。pane 形态（弹出窗）不渲染——弹出窗的终端
+            走 attachFrameView（PaneFramePage 布局树），term-pane-store 是跨窗
+            共享账，这里再渲染一层会出现第二份终端与「弹出到新窗口」误弹。 */}
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {embedded && !pane && panelPaneIds.length > 0 && (
+          <div className="absolute inset-0 z-30 flex flex-col overflow-hidden rounded bg-neutral-900">
+            <TerminalPanes slot="panel" projectId={projectId} />
+          </div>
+        )}
+
+          <div className="flex shrink-0 items-center gap-1 max-lg:overflow-x-auto">
           {CONV_FILTERS.map((f) => (
             <button
               key={f}
@@ -1102,9 +1126,7 @@ export function SessionMessages({
           <span className="ml-auto shrink-0 text-10 text-neutral-600">
             {t('tasks.convCount', { n: convUnits(visible, selecting).filter((u) => u.kind !== 'rewind').length })}
           </span>
-        </div>
-        </div>
-        </div>
+          </div>
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
             尾巴上把还没落进事件流的投递行当最新气泡摆着（Held/失败/暂停闸成因 + 重发）。
@@ -2527,7 +2549,9 @@ export function SessionMessages({
           effort={sessionRow?.effort ?? null}
           contextTokens={sessionRow?.contextTokens ?? null}
           contextPercent={contextPercent}
+          inset={embedded}
         />
+        </div>
 
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口。
             触屏同样可用——pointer capture + touch-none，grip 自身不吃滚动） */}

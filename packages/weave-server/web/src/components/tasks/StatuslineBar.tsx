@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { cn } from '@/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import { api, type StatuslineConfig } from '@/lib/api';
 import { buildPreviewItems, type StatuslineTokens } from '@/lib/statusline-preview';
@@ -33,6 +34,7 @@ export function StatuslineBar({
   effort,
   contextTokens,
   contextPercent,
+  inset,
 }: {
   projectId: number;
   /** 会话显示名（title 回退）。 */
@@ -46,6 +48,9 @@ export function StatuslineBar({
   contextTokens: number | null;
   /** 同一读数按窗口档位（200k/1M）折成的百分比：`context` 块的 `percent` 与 `bar`。 */
   contextPercent: number | null;
+  /** 嵌在对话壳内（Web 终端覆盖层的裁切边界 = 本条所在壳）：不吃面板负边距，
+   *  溢出会被壳裁掉半行。 */
+  inset?: boolean;
 }) {
   const t = useT();
   const [config, setConfig] = useState<StatuslineConfig | null>(null);
@@ -107,10 +112,14 @@ export function StatuslineBar({
   if (lines.length === 0) return null;
 
   return (
-    // 贴边：面板本体是 p-3，这里把内边距吃回去，底条铺满一条
+    // 贴边：面板本体是 p-3，负边距吃掉内边距铺满一条；壳内形态（inset）不吃
+    // 负边距——壳没有内边距，负边距会把溢出半行送进壳的 overflow-hidden 里裁掉
     <Tooltip label={t('statusline.barTitle')} side="top" className="block">
     <div
-      className="-mx-3 -mb-3 mt-1.5 shrink-0 overflow-x-auto overflow-y-hidden border-t border-edge/[0.06] bg-neutral-950/50 px-3 py-1"
+      className={cn(
+        'mt-1.5 shrink-0 overflow-x-auto overflow-y-hidden border-t border-edge/[0.06] bg-neutral-950/50 py-1',
+        inset ? 'px-3' : '-mx-3 -mb-3 px-3',
+      )}
     >
       {/* 整条一起横滚（行不各滚各的）：块多/路径长时不折行——折了 powerline 的块
           就断了；`w-max` 让这条按最宽那行撑开，各行左侧始终对齐 */}
