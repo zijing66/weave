@@ -1011,18 +1011,6 @@ export function SessionMessages({
                 {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               </span>
             </button>
-            {/* 弹出：桌面并入本排最右；<lg 右上角独立格（与关闭钮同款，见下） */}
-            {onPopout && (
-              <button
-                type="button"
-                aria-label={t('tasks.panePopout')}
-                onClick={onPopout}
-                className="max-lg:hidden inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
-              >
-                <ExternalLink className="h-3 w-3 text-sky-400" />
-                <span>{t('tasks.panePopoutShort')}</span>
-              </button>
-            )}
             {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
               <>
@@ -1045,9 +1033,9 @@ export function SessionMessages({
               </>
             )}
           </div>
-          {/* 弹出独立框架页（<lg）：右上角独立格，与关闭钮同款（桌面版在标题行内） */}
+          {/* 弹出：右上角独立格（与功能按钮排同列右对齐、跨行同右缘） */}
           {onPopout && (
-            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end max-lg:flex lg:hidden">
+            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
               <button
                 type="button"
                 aria-label={t('tasks.panePopout')}
