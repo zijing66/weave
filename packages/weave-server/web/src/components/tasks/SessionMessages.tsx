@@ -180,7 +180,8 @@ export function SessionMessages({
   minimized: boolean;
   /** 挂起（浮窗限定：嵌入形态下切走由调用方置 `minimized`）。 */
   onMinimize?: () => void;
-  /** 真销毁（浮窗限定：嵌入形态右栏就是这扇对话，没有关闭这回事）。 */
+  /** 真销毁（浮窗限定：嵌入形态右栏就是这扇对话，没有关闭这回事；框架页 pane
+   *  复用同一通道关自己的 pane）。 */
   onClose?: () => void;
   /** 嵌进任务视图右栏（不再套门户与蒙版、不可拖拽缩放，填满容器）。 */
   embedded?: boolean;
@@ -1040,6 +1041,19 @@ export function SessionMessages({
                   </button>
                 </Tooltip>
               </>
+            )}
+            {/* 框架页 pane 的关闭：按钮排最右（tab 头已拆，这是唯一的关闭入口） */}
+            {pane && onClose && (
+              <Tooltip label={t('tasks.paneClose')} side="top">
+                <button
+                  type="button"
+                  aria-label={t('tasks.paneClose')}
+                  onClick={onClose}
+                  className="ml-1 inline-flex shrink-0 items-center rounded border border-edge/[0.08] p-1 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Tooltip>
             )}
           </div>
           {/* 弹出独立框架页：独立摆在右上角（不混进功能按钮组），分隔线隔开 */}

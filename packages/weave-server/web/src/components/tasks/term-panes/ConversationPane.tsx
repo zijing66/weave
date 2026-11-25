@@ -20,12 +20,15 @@ export function ConversationPane({
   projectId,
   label,
   projectLabel,
+  onClose,
   onOpenTerminal,
 }: {
   sessionId: string;
   projectId: number;
   label: string;
   projectLabel: string;
+  /** 关闭这扇 pane（对话头部按钮排最右）：给了才摆关闭按钮。 */
+  onClose?: () => void;
   /** 头部终端按钮的落点（框架页 = 贴进本窗布局树）：给了才摆按钮。 */
   onOpenTerminal?: (instanceId: string) => void;
 }) {
@@ -129,6 +132,7 @@ export function ConversationPane({
       onInterrupt={onInterrupt}
       interruptStateOf={interruptStateOf}
       webTerminal={webTerminal}
+      onClose={onClose}
       pane
     />
   );

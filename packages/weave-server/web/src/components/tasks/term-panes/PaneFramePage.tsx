@@ -111,28 +111,29 @@ export function PaneFramePage() {
                 height: `${rect.h * 100}%`,
               }}
             >
-              <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] bg-neutral-900/80 px-2 py-1 text-10 text-neutral-500">
-                <span className="min-w-0 truncate">
-                  {view.kind === 'terminal' ? '⌨ ' : ''}
-                  {view.label}
-                </span>
-                <button
-                  type="button"
-                  aria-label={t('tasks.paneClose')}
-                  onClick={() => detachFrameView(frame.frameId, rect.paneId)}
-                  className="ml-auto shrink-0 rounded p-0.5 text-neutral-600 transition-colors hover:bg-edge/[0.06] hover:text-neutral-300"
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
               {view.kind === 'terminal' ? (
-                <TerminalView instanceId={view.instanceId} />
+                <>
+                  {/* 终端 pane 保留窄头：只有关闭（对话 pane 的关闭并进对话头部） */}
+                  <div className="flex shrink-0 items-center gap-2 border-b border-edge/[0.06] bg-neutral-900/80 px-2 py-1 text-10 text-neutral-500">
+                    <span className="min-w-0 truncate">{view.label}</span>
+                    <button
+                      type="button"
+                      aria-label={t('tasks.paneClose')}
+                      onClick={() => detachFrameView(frame.frameId, rect.paneId)}
+                      className="ml-auto shrink-0 rounded p-0.5 text-neutral-600 transition-colors hover:bg-edge/[0.06] hover:text-neutral-300"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                  <TerminalView instanceId={view.instanceId} />
+                </>
               ) : (
                 <ConversationPane
                   sessionId={view.sessionId}
                   projectId={frame.projectId}
                   label={view.label}
                   projectLabel={frame.projectLabel}
+                  onClose={() => detachFrameView(frame.frameId, rect.paneId)}
                   onOpenTerminal={(instanceId: string) =>
                     attachFrameView(frame.frameId, {
                       kind: 'terminal',
