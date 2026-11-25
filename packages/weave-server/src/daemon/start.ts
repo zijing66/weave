@@ -853,7 +853,10 @@ export async function startDaemon(): Promise<void> {
   const shutdownRef: { fn?: () => void } = {};
 
   // 每日自动备份（配置面）：引擎 + 每分钟一看的调度（settings backup 段）。
-  const backupEngine = new BackupEngine({ db });
+  const backupEngine = new BackupEngine({
+    db,
+    onChange: () => dataBus.emit({ key: 'backupStatus', payload: { status: backupEngine.status } }),
+  });
   // 项目迁移引擎（复制语义）：validate 同步段失败路由 400；复制后 DB 切 path
   // + 自动 `weave init`（codex trust 按新路径重建）。
   const moveEngine = new MoveEngine({
@@ -861,6 +864,7 @@ export async function startDaemon(): Promise<void> {
     setPath: (id, newPath) => projects.setPath(id, newPath),
     reconcile: () => watch.reconcile(),
     emitProjects: () => dataBus.emit({ key: 'projects' }),
+    onChange: () => dataBus.emit({ key: 'moveStatus', payload: { status: moveEngine.status } }),
     runInit: async (projectPath) => {
       const runtime = await readInitRuntime(projectPath);
       if (runtime.harnesses.length === 0) return; // 没 init 过的项目无从跑

@@ -1,46 +1,48 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DatabaseBackup, Loader2 } from 'lucide-react';
-import { api, type BackupProgress } from '@/lib/api';
+import { api, type BackupProgress, type BackupStatus } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
+import { subscribePush, subscribeSseConnection, sseConnected } from '@/lib/sse';
 
 /**
- * 备份中全屏遮罩（App 层常挂）：轮询 /backup/status，running 即盖全屏——
- * 备份要写库 + 打大包，期间界面操作的结果可能被包过期的快照盖掉。进度
- * 显示 phase + 百分比 + 剩余估算（ETA 为 null 只摆 spinner，不编数字）。
- * 完成/出错即散；轮询失败连续多拍也散（daemon 重启中，不该焊屏）。
+ * 备份中全屏遮罩（App 层常挂）：备份要写库 + 打大包，期间界面操作的结果可能被
+ * 包过期的快照盖掉。进度显示 phase + 百分比 + 剩余估算（ETA 为 null 只摆 spinner，
+ * 不编数字）。
+ *
+ * 状态走服务端 push（`backupStatus` 帧，装配处挂在引擎的 onChange 上），只在挂载
+ * 与断线时各拉一次现状——常挂组件不轮询。SSE 断流即散屏（daemon 重启中，不该焊屏）。
  */
-
-const POLL_MS = 1000;
-const MAX_POLL_FAILURES = 5;
-
 export function BackupOverlay() {
   const t = useT();
   const [progress, setProgress] = useState<BackupProgress | null>(null);
   const [visible, setVisible] = useState(false);
-  const failures = useRefCount();
 
   useEffect(() => {
     let alive = true;
-    const tick = async (): Promise<void> => {
-      try {
-        const b = await api.getBackupStatus(true);
-        if (!alive) return;
-        failures.reset();
-        setVisible(b.status.running);
-        setProgress(b.status.progress);
-      } catch {
-        if (!alive) return;
-        if (visible && failures.bump() >= MAX_POLL_FAILURES) setVisible(false);
-      }
+    const apply = (status: BackupStatus): void => {
+      setVisible(status.running);
+      setProgress(status.progress);
     };
-    void tick();
-    const timer = setInterval(() => void tick(), POLL_MS);
+    // 首拍：页面刷新后备份可能已经在跑（push 只在变动时才来）
+    api
+      .getBackupStatus(true)
+      .then((b) => {
+        if (alive) apply(b.status);
+      })
+      .catch(() => {});
+    const offPush = subscribePush<{ status: BackupStatus }>('backupStatus', (p) => {
+      if (p?.status) apply(p.status);
+    });
+    const offConn = subscribeSseConnection(() => {
+      if (!sseConnected()) setVisible(false);
+    });
     return () => {
       alive = false;
-      clearInterval(timer);
+      offPush();
+      offConn();
     };
-  }, [visible]);
+  }, []);
 
   if (!visible) return null;
 
@@ -74,15 +76,4 @@ export function BackupOverlay() {
     </div>,
     document.body,
   );
-}
-
-/** 连续失败计数（组件内小状态；重挂即清零）。 */
-function useRefCount(): { bump(): number; reset(): void } {
-  const ref = useRef({ n: 0 });
-  return {
-    bump: () => ++ref.current.n,
-    reset: () => {
-      ref.current.n = 0;
-    },
-  };
 }

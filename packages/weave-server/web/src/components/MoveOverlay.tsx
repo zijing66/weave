@@ -5,21 +5,23 @@ import { api, type MoveStatus } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { errorText } from '@/lib/action-feedback';
 import { useToast } from '@/components/Toast';
+import { subscribePush, subscribeSseConnection, sseConnected } from '@/lib/sse';
 
 /**
- * 迁移中全屏遮罩（App 层常挂）：轮询 /projects/move/status，running 即盖全屏。
+ * 迁移中全屏遮罩（App 层常挂）：状态走服务端 push（`moveStatus` 帧，装配处挂在
+ * 引擎的 onChange 上），只在挂载与断线时各拉一次现状——常挂组件不轮询。
+ *
  * 可退出三层（用户裁决「绝不允许卡死 loading」）：
  * ① 「取消迁移」按钮 → cancel API，等 running 落 false 自然散；
- * ② 轮询连续失败散屏（daemon 重启中不焊屏）；
- * ③ 进度看门狗——ratio 60s 无变化自动散屏（引擎假死兜底）。
+ * ② SSE 断流即散屏（daemon 重启中不焊屏）；
+ * ③ 进度看门狗——ratio 60s 无变化自动散屏（引擎假死兜底；纯本地计时，不发请求）。
  * done → toast 成功 + 弹「删除旧目录？」确认（用户点了才删，关掉即留）；
  * lastError → toast 错误散屏（项目行原样，可重试）。
  */
 
-const POLL_MS = 1000;
-const MAX_POLL_FAILURES = 5;
 /** 看门狗：progress.ratio 连续这么久没动 = 引擎假死，散屏。 */
 const STALL_MS = 60_000;
+const WATCHDOG_MS = 5_000;
 
 export function MoveOverlay({ onSettled }: { onSettled?: (status: MoveStatus) => void }) {
   const t = useT();
@@ -27,7 +29,6 @@ export function MoveOverlay({ onSettled }: { onSettled?: (status: MoveStatus) =>
   const [status, setStatus] = useState<MoveStatus | null>(null);
   const [visible, setVisible] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const failures = useRef(0);
   const lastProgressAt = useRef(Date.now());
   const lastRatio = useRef(-1);
   /** settled 只发一次：done/error 落定那一拍。 */
@@ -35,60 +36,69 @@ export function MoveOverlay({ onSettled }: { onSettled?: (status: MoveStatus) =>
 
   useEffect(() => {
     let alive = true;
-    const tick = async (): Promise<void> => {
-      try {
-        const r = await api.getMoveStatus();
-        if (!alive) return;
-        failures.current = 0;
-        const s = r.status;
-        setStatus(s);
-        setVisible(s.running);
-        // 进度看门狗：ratio 有动就续命
-        const ratio = s.progress?.ratio ?? -1;
-        if (ratio !== lastRatio.current) {
-          lastRatio.current = ratio;
-          lastProgressAt.current = Date.now();
-        } else if (s.running && Date.now() - lastProgressAt.current > STALL_MS) {
-          setVisible(false);
-          show('error', t('project.moveStalled'));
-          settledRef.current = true;
-          onSettled?.(s);
+    const apply = (s: MoveStatus): void => {
+      setStatus(s);
+      setVisible(s.running);
+      // 进度看门狗：ratio 有动就续命
+      const ratio = s.progress?.ratio ?? -1;
+      if (ratio !== lastRatio.current) {
+        lastRatio.current = ratio;
+        lastProgressAt.current = Date.now();
+      }
+      if (settledRef.current || s.running) return;
+      if (s.done || s.lastError) {
+        settledRef.current = true;
+        setVisible(false);
+        setCancelling(false);
+        if (s.done) {
+          show('success', t('project.moveDone', { name: s.projectName ?? '' }));
+          if (s.initError) show('error', t('project.moveInitFailed', { error: s.initError }));
+        } else if (s.lastError === 'cancelled') {
+          show('success', t('project.moveCancelled'));
+        } else {
+          show('error', t('project.moveFailed', { error: s.lastError ?? '' }));
         }
-        if (settledRef.current) return;
-        if (!s.running && (s.done || s.lastError)) {
-          settledRef.current = true;
-          setVisible(false);
-          setCancelling(false);
-          if (s.done) {
-            show('success', t('project.moveDone', { name: s.projectName ?? '' }));
-            if (s.initError) show('error', t('project.moveInitFailed', { error: s.initError }));
-          } else if (s.lastError === 'cancelled') {
-            show('success', t('project.moveCancelled'));
-          } else {
-            show('error', t('project.moveFailed', { error: s.lastError ?? '' }));
-          }
-          onSettled?.(s);
-        }
-      } catch (e) {
-        if (!alive) return;
-        if (visible && ++failures.current >= MAX_POLL_FAILURES) {
-          setVisible(false);
-          show('error', t('project.movePollLost', { error: errorText(e) }));
-        }
+        onSettled?.(s);
       }
     };
-    void tick();
-    const timer = setInterval(() => void tick(), POLL_MS);
+    // 首拍：页面刷新后迁移可能已经在跑
+    api
+      .getMoveStatus()
+      .then((r) => {
+        if (alive) apply(r.status);
+      })
+      .catch((e) => {
+        if (alive) show('error', t('project.movePollLost', { error: errorText(e) }));
+      });
+    const offPush = subscribePush<{ status: MoveStatus }>('moveStatus', (p) => {
+      if (p?.status && alive) apply(p.status);
+    });
+    const offConn = subscribeSseConnection(() => {
+      if (!sseConnected()) setVisible(false);
+    });
     return () => {
       alive = false;
-      clearInterval(timer);
+      offPush();
+      offConn();
     };
-  }, [visible, show, t, onSettled]);
+  }, [show, t, onSettled]);
+
+  // 进度看门狗（本地判活，不发请求）：running 且 ratio 长期不动 → 散屏
+  useEffect(() => {
+    if (!visible) return;
+    const timer = window.setInterval(() => {
+      if (Date.now() - lastProgressAt.current > STALL_MS) {
+        setVisible(false);
+        show('error', t('project.moveStalled'));
+        settledRef.current = true;
+      }
+    }, WATCHDOG_MS);
+    return () => window.clearInterval(timer);
+  }, [visible, show, t]);
 
   // 组件重挂（dev 热重载/路由切换）后 settled 门复位
   useEffect(() => {
     settledRef.current = false;
-    failures.current = 0;
   }, []);
 
   const cancel = (): void => {

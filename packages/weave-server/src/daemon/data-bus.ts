@@ -25,6 +25,8 @@ export type DataKey =
   | 'sessionActivity'
   | 'sessionQuestions'
   | 'inflightCounts'
+  | 'moveStatus'
+  | 'backupStatus'
   | 'assets'
   | 'toolkit'
   | 'market'

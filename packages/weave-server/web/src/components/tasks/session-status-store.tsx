@@ -457,8 +457,12 @@ export function SessionStatusProvider({ children }: { children: ReactNode }) {
         default:
           break;
       }
+      // 只有会动「会话行 / 派发列表」的帧才值得重拉：dashboard.delta、metrics.snapshot、
+      // narration/message/orchestration/watch 各域都有自己的按域订阅，与本总线无关——
+      // 一律当全局变化会让首页每几秒整拉三路（sessions+dispatches+questions）。
       if (f.kind === 'event.ingested' && f.sessionId) dirty.add(f.sessionId);
-      else wantFull = true;
+      else if (f.kind === 'dispatch.started' || f.kind === 'dispatch.finished') wantFull = true;
+      else return;
       refetch();
     };
 

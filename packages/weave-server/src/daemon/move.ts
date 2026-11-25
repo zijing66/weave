@@ -40,6 +40,8 @@ export interface MoveDeps {
   /** setPath 成功后重建 watcher 与推送 projects 帧（可选，测试不注入）。 */
   reconcile?: () => void;
   emitProjects?: () => void;
+  /** 状态变动（起跑/进度/落定）：装配处借此推 push 帧，前端不必轮询 status。 */
+  onChange?: () => void;
   /** finalize 后自动 init（spawn CLI 子进程）；缺省跳过。 */
   runInit?: (projectPath: string) => Promise<void>;
 }
@@ -96,6 +98,7 @@ export class MoveEngine {
       done: false,
       initError: null,
     };
+    this.deps.onChange?.();
     // 取消/失败清理的判据（try 外声明：外层 catch 也要用）
     let createdTarget = false;
     let sourceTop: string[] = [];
@@ -125,6 +128,7 @@ export class MoveEngine {
       est.planTotal(totalBytes);
       const report = (phase: MoveProgress['phase']): void => {
         this.current.progress = { phase, ratio: est.ratio(), etaSeconds: est.etaSeconds() };
+        this.deps.onChange?.();
       };
       report('measure');
 
@@ -158,6 +162,7 @@ export class MoveEngine {
       this.current.done = true;
       this.current.running = false;
       this.current.progress = null;
+      this.deps.onChange?.();
 
       // 自动 init（信任预写/codex trust 按新路径重建）：失败不回滚迁移，
       // 只如实记 initError——迁移成功态已落定。
@@ -166,6 +171,7 @@ export class MoveEngine {
           await this.deps.runInit(to);
         } catch (e) {
           this.current.initError = e instanceof Error ? e.message : String(e);
+          this.deps.onChange?.();
         }
       }
     } catch (e) {
@@ -183,6 +189,7 @@ export class MoveEngine {
         // 取消与复制失败的半成品清理（validate 失败根本没起复制，不用清）
         await this.cleanup(to, createdTarget, sourceTop);
       }
+      this.deps.onChange?.();
     }
   }
 

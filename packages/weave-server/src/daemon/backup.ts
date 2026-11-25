@@ -225,6 +225,8 @@ export interface BackupDeps {
   now?: () => Date;
   /** 进度回调（引擎在阶段推进与字节进账时调用）。 */
   onProgress?: (p: BackupProgress) => void;
+  /** 状态变动（起跑/进度/收尾）：装配处借此推 push 帧，前端不必轮询 status。 */
+  onChange?: () => void;
 }
 
 export class BackupEngine {
@@ -257,6 +259,7 @@ export class BackupEngine {
     this.running = true;
     this.lastError = null;
     this.startedAt = this.now().toISOString();
+    this.deps.onChange?.();
     try {
       const result = await this.pack(includeHistory);
       this.lastResult = result;
@@ -267,6 +270,7 @@ export class BackupEngine {
     } finally {
       this.running = false;
       this.progress = null;
+      this.deps.onChange?.();
     }
   }
 
@@ -289,6 +293,7 @@ export class BackupEngine {
   private report(p: BackupProgress): void {
     this.progress = p;
     this.deps.onProgress?.(p);
+    this.deps.onChange?.();
   }
 
   private async pack(includeHistory: boolean): Promise<BackupResult> {
