@@ -61,6 +61,7 @@ import {
   TriangleAlert,
   Users,
   X,
+  Bot,
 } from 'lucide-react';
 
 interface ProjectListProps {
@@ -865,7 +866,7 @@ export function ProjectList({
                   角标与 tooltip 上（用户裁决）：待同步 = 橙色脉动点（既有）、
                   init 落后 = 琥珀色常亮点，两者并存并排；胶囊退役。 */}
               <div className="flex items-center gap-1 px-2 pb-1 pl-9">
-                <span className="relative">
+                <span className="relative inline-flex">
                   <QuickButton tooltip={syncTooltipOf(t, summary)} onClick={() => onSyncNow?.(p)}>
                     <FeedbackIcon
                       state={syncStateOf?.(p.id) ?? 'idle'}
@@ -920,7 +921,7 @@ export function ProjectList({
                     点卡片 = 把那个终端切到前台，点「+」= 照旧开新终端；没有终端时
                     列表里只剩那张「+」。图标转绿 + 角标示数仍是窗口级口径（分屏
                     pane 与会话都不计）。 */}
-                <span className="relative">
+                <span className="relative inline-flex">
                   <QuickButton
                     tooltip={
                       terminals > 0
@@ -1287,7 +1288,14 @@ export function ProjectList({
               <ul className="space-y-1 pb-1">
                 {termMenu.instances.map((instance) => (
                   <li key={instance.id}>
-                    <div className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-edge/[0.08] px-2 py-2">
+                    <div
+                      className={cn(
+                        'flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-2',
+                        instance.harnessSessionId
+                          ? 'border-blue-500/30 bg-blue-500/[0.06]'
+                          : 'border-edge/[0.08]',
+                      )}
+                    >
                       <button
                         type="button"
                         onClick={() => {
@@ -1296,7 +1304,11 @@ export function ProjectList({
                         }}
                         className="flex min-w-0 flex-1 items-center gap-2 text-left"
                       >
-                        <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                        {instance.harnessSessionId ? (
+                          <Bot className="h-3.5 w-3.5 shrink-0 text-blue-300" />
+                        ) : (
+                          <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                        )}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-xs text-neutral-200">{instance.command}</span>
                           <span className="block truncate text-10 text-neutral-500">{instance.harnessSessionId ?? instance.id}</span>
