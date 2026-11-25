@@ -1761,7 +1761,13 @@ export function SessionMessages({
             相对整个内容高度，内容一长就出视口）——贴底恒可见、不被内容滚动带走
             （2026-11-24 用户裁决：就悬浮在气泡区域贴底）。 */}
         {(answerPending || generating || interrupted) && (
-            <div className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center justify-start gap-1.5 bg-gradient-to-t from-neutral-950/85 via-neutral-950/60 to-transparent px-1 pb-1.5 pt-3">
+            <div className={cn(
+              'absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center justify-start gap-1.5 bg-gradient-to-t from-neutral-950/85 via-neutral-950/60 to-transparent pb-1.5 pt-3',
+              // 边框与气泡框区域对齐：嵌入右栏时滚动区自身描边（rounded border），
+              // 状态条贴着它的底边线——左右同进退（inset 由外层 px 决定）；非嵌入
+              // 不描边，状态条也不描。
+              embedded ? 'px-1' : 'px-0.5',
+            )}>
               {answerPending && (
                 <Tooltip label={t('tasks.answerTooltip')}>
                   <button
@@ -1777,10 +1783,13 @@ export function SessionMessages({
               {(generating || interrupted || failed) && (
                 <div
                   className={cn(
-                    'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10 shadow-sm',
+                    // 边框/圆角随气泡框区域：嵌入态气泡区有描边圆角，状态条同款对齐
+                    'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg px-2 py-1.5 text-10 shadow-sm',
                     failed
-                      ? 'border-red-500/30 bg-red-950/30 text-red-300'
-                      : 'border-edge/[0.16] bg-neutral-900 text-neutral-500',
+                      ? 'border border-red-500/30 bg-red-950/30 text-red-300'
+                      : embedded
+                        ? 'border border-edge/[0.1] bg-neutral-900/90 text-neutral-500'
+                        : 'bg-neutral-900/90 text-neutral-500',
                   )}
                 >
                   {interrupted ? (

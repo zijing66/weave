@@ -304,17 +304,9 @@ const insertTargetChip = (chip: HTMLElement): void => {
   if (!el) return;
   const saved = hashRange.current;
   hashRange.current = null;
-  const lead = (() => {
-    const anchor = saved && el.contains(saved.startContainer) ? saved.startContainer : null;
-    const node =
-      anchor?.nodeType === TEXT_NODE
-        ? (anchor.textContent ?? '').slice(0, saved!.startOffset)
-        : null;
-    return node && node !== '' && !/\s$/.test(node)
-      ? [document.createTextNode(' ')]
-      : [];
-  })();
-  insertNodesUndoably(el, [...lead, chip, document.createTextNode(' ')], saved);
+  const anchor = saved && el.contains(saved.startContainer) ? saved.startContainer : null;
+  const [lead, trail] = chipPad(saved, anchor?.previousSibling ?? null);
+  insertNodesUndoably(el, [...lead, chip, ...trail], saved);
 };
 
 const insertSessionTarget = (sessionId: string, name: string): void => {
@@ -366,38 +358,54 @@ const buildAttachChip = (part: { a: string; p: string; n: string; m: string }): 
  *  是宿主认图的前提），前后不补空格。插入走 `execCommand('insertHTML')`——
  *  粘贴文件后的自动摆入必须留在浏览器撤销栈里，Ctrl+Z 才能整步撤掉（手插节点
  *  那条路没有撤销，undo 会跳过粘贴直接撤更早的打字）；不支持时退回手插。 */
+/** 胶囊前后空格判据（**引用前后必须是空白**——服务端认引用/序列化出的是独立
+ *  标注，粘着字就成了另一段文字）：看插入点两侧——文本邻居非空白侧要补；
+ *  前邻居是胶囊（contenteditable=false 的 span）也当「粘着」补空格（背靠背
+ *  两枚胶囊序列化会连串）。`textBefore` = 光标前那截文本，null = 不是文本邻居。
+ *  返回 [前空格, 尾空格] 两枚节点（按需）。 */
+const chipPad = (
+  range: Range | null,
+  prevChip: Node | null,
+): [Node[], Node[]] => {
+  const space = (): Node[] => [document.createTextNode(' ')];
+  if (range?.startContainer.nodeType === TEXT_NODE) {
+    const value = range.startContainer.nodeValue ?? '';
+    const at = range.startOffset;
+    const lead = at > 0 && !/\s/.test(value[at - 1] ?? '');
+    const trail = at < value.length && !/\s/.test(value[at] ?? '');
+    return [lead ? space() : [], trail ? space() : []];
+  }
+  // 非文本邻居：前邻居是胶囊（或本次插入点前是另一枚胶囊）= 粘着，补；否则不补
+  const glued = prevChip != null;
+  return [glued ? space() : [], []];
+};
+
+/** 末尾追加时的「粘着」判据：最后一个子节点是非空白文本或胶囊（BR = 已换行不补）。 */
+const tailGlued = (el: HTMLDivElement): boolean => {
+  const last = el.lastChild;
+  if (last == null) return false;
+  return last.nodeType === TEXT_NODE
+    ? !/\s$/.test(last.nodeValue ?? '')
+    : (last as HTMLElement).tagName !== 'BR';
+};
+
 const insertAttach = (upload: UploadFile): void => {
   const el = draftRef.current;
   if (!el) return;
   const chip = buildAttachChip({ a: upload.id, p: upload.path ?? '', n: upload.name, m: upload.mediaType });
   if (caretInDraft(el) == null && atRange.current == null) {
-    // 末尾追加：收尾若是非空白文本或胶囊，先补一个空格——否则路径粘在字上
-    // （两枚文件胶囊背靠背时路径会连成一串）；BR 收尾 = 已是新行，不用补
-    const last = el.lastChild;
-    const glued =
-      last != null &&
-      (last.nodeType === TEXT_NODE
-        ? !/\s$/.test(last.nodeValue ?? '')
-        : (last as HTMLElement).tagName !== 'BR');
-    if (glued) el.appendChild(document.createTextNode(' '));
+    // 末尾追加：收尾粘着（非空白文本/胶囊）先补一个空格；BR 收尾 = 已换行不补
+    if (tailGlued(el)) el.appendChild(document.createTextNode(' '));
     el.appendChild(chip);
     setDraft(serializeDraft(el));
     return;
   }
   const pad = !isImageUpload(upload);
-  let lead = false;
-  let trail = false;
-  const range = caretInDraft(el);
-  if (range?.startContainer.nodeType === TEXT_NODE) {
-    const value = range.startContainer.nodeValue ?? '';
-    const at = range.startOffset;
-    lead = at > 0 && !/\s/.test(value[at - 1] ?? '');
-    trail = at < value.length && !/\s/.test(value[at] ?? '');
-  }
+  const [lead, trail] = chipPad(caretInDraft(el), null);
   const nodes: Node[] = [];
-  if (pad && lead) nodes.push(document.createTextNode(' '));
+  if (pad) nodes.push(...lead);
   nodes.push(chip);
-  if (pad && trail) nodes.push(document.createTextNode(' '));
+  if (pad) nodes.push(...trail);
   const saved = atRange.current;
   atRange.current = null;
   insertNodesUndoably(el, nodes, saved);
@@ -523,6 +531,7 @@ const insertRefs = (items: PickItem[]): void => {
   if (lead) nodes.push(document.createTextNode(' '));
   items.forEach((it, i) => {
     nodes.push(buildChip(it.ref, it.target));
+    // 胶囊之间的空格恒补（背靠背两枚胶囊序列化会连串）；尾部按光标右侧判据
     if (i < items.length - 1 || trail) nodes.push(document.createTextNode(' '));
   });
   insertNodes(nodes);
@@ -546,13 +555,25 @@ const insertRichText = (text: string): void => {
     return;
   }
   api.recognizeRefs(sessionId, text).then((refs) => {
-    const nodes = buildSegments(text, refs).flatMap((seg): Node[] =>
-      seg.kind === 'text'
-        ? [document.createTextNode(seg.text)]
-        : [buildChip(seg.item.ref, seg.item.target)],
-    );
     const saved = atRange.current;
     atRange.current = null;
+    // 胶囊前后必须是空白（与落定/粘贴同判据）：段落边界处按邻居补空格——
+    // 粘的文本贴着已有字时，第一枚胶囊前、最后一枚胶囊后各补一记
+    const [head, tail] = chipPad(saved, null);
+    const segs = buildSegments(text, refs);
+    const lastIsChip = segs[segs.length - 1]?.kind !== 'text';
+    const nodes: Node[] = [...head];
+    segs.forEach((seg, i) => {
+      const isChip = seg.kind !== 'text';
+      nodes.push(
+        ...(seg.kind === 'text'
+          ? [document.createTextNode(seg.text)]
+          : [buildChip(seg.item.ref, seg.item.target)]),
+      );
+      if (isChip && (i < segs.length - 1 || (lastIsChip && tail.length > 0)))
+        nodes.push(document.createTextNode(' '));
+    });
+    if (lastIsChip) nodes.push(...tail);
     insertNodesUndoably(el, nodes, saved);
   }, plain);
 };
@@ -642,37 +663,22 @@ const maybeOpenTrigger = (
 const maybeOpenPicker = (el: HTMLDivElement, native: InputEvent): boolean =>
   maybeOpenTrigger(el, native, '@', atRange, () => setPicker({ chip: null }));
 
-/** 敲 `#` 唤出会话选择器（`\#` 除外；补回字面 `#` 的那一拍被抑制）。返回 true =
- *  这次输入已被接管。 */
-const maybeOpenSessionPicker = (el: HTMLDivElement, native: InputEvent): boolean => {
-  if (suppressHashTrigger.current) {
-    setDraft(serializeDraft(el));
-    return true;
-  }
-  return maybeOpenTrigger(el, native, '#', hashRange, () => setSessionPickerOpen(true));
-};
+/** 敲 `#` 唤出会话选择器（`\#` 除外）。返回 true = 这次输入已被接管。 */
+const maybeOpenSessionPicker = (el: HTMLDivElement, native: InputEvent): boolean =>
+  maybeOpenTrigger(el, native, '#', hashRange, () => setSessionPickerOpen(true));
 
-/** 补回的 `#` 不该再唤出选择器：insertText 的 input 事件会同步再进
- *  maybeOpenSessionPicker（重开 + 重记账 → 关一次冒两枚 `#`），用标志抑制一拍。 */
-const suppressHashTrigger = useRef(false);
-
-/** 关掉会话选择器：把那枚 `#` 补回原位（markdown 标题撞的就是这枚键，不补回去
- *  标题就丢字了——想引用会话就选中一个目标，而不是关掉它）。 */
+/** 关掉会话选择器：与文件选择器同口径——**不动正文**，只把光标放回那枚 `#`
+ *  原来的位置（`#` 已被触发时收掉、不补回；没选会话就不留半截触发符）。
+ *  想打字面 `#`（markdown 标题）用 `\#`。 */
 const closeSessionPicker = (): void => {
   setSessionPickerOpen(false);
   const saved = hashRange.current;
   hashRange.current = null;
-  const el = draftRef.current;
-  if (!el) return;
-  el.focus({ preventScroll: true });
   if (!saved) return;
+  draftRef.current?.focus({ preventScroll: true });
   const sel = window.getSelection();
   sel?.removeAllRanges();
   sel?.addRange(saved);
-  suppressHashTrigger.current = true;
-  insertText('#');
-  suppressHashTrigger.current = false;
-  hashRange.current = null;
 };
 
 /** 整段写回（出队编辑 / 发走清空）：DOM 与镜像一起换。胶囊在这里退化回
