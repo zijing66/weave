@@ -1089,8 +1089,14 @@ export function SessionMessages({
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
             尾巴上把还没落进事件流的投递行当最新气泡摆着（Held/失败/暂停闸成因 + 重发）。
             外层 relative 壳：生成中状态条 absolute 挂它上面（滚动容器内挂 absolute
-            会随内容滚走，bottom-0 相对整个内容高度）。 */}
-        <div className="relative min-h-0 flex-1">
+            会随内容滚走，bottom-0 相对整个内容高度）；嵌入态描边也挂壳上——渐变
+            层在壳内、边框在壳上，状态条不会盖住气泡框底边。 */}
+        <div
+          className={cn(
+            'relative min-h-0 flex-1',
+            embedded && 'overflow-hidden rounded border border-edge/[0.1]',
+          )}
+        >
         <div
           ref={threadRef}
           onScroll={() => {
@@ -1137,7 +1143,7 @@ export function SessionMessages({
             // （Safari 无原生锚定、必须保留）；Chrome 的原生滚动锚定会再调一次
             // scrollTop，两套叠加 = 补两遍、视口跳走（用户报「加载历史后对话跳转异常」）。
             '[overflow-anchor:none]',
-            embedded ? 'rounded border border-edge/[0.1] bg-neutral-950 p-2' : 'pr-1',
+            embedded ? 'bg-neutral-950 p-2' : 'pr-1',
           )}
           // 渲染块的高度上限按这个容器算（见 lib/visualization 的 CONV_SCROLLER_ATTR）
           {...{ [CONV_SCROLLER_ATTR]: '' }}

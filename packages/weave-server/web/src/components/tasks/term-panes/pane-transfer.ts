@@ -154,6 +154,9 @@ export function viewIdOf(sessionId: string, kind: 'conversation' | 'terminal'): 
 export function openPaneFrame(pane: PaneInput, features: string): string {
   const existing = frameOfProject(pane.projectId);
   if (existing) {
+    // 同项目的第二扇对话：贴进已有框架页（幂等）再聚焦——只聚焦不贴的话，
+    // 后续会话点「弹出」没反应，像是被第一扇挡死了。
+    attachFrameView(existing.frameId, { kind: 'conversation', label: pane.label, sessionId: pane.sessionId });
     windowRefs.get(existing.frameId)?.focus();
     return existing.frameId;
   }

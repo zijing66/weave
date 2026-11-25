@@ -1573,25 +1573,26 @@ export function TasksPanel({
       })()}
       {/* 已挂载的对话全在（非选中项只藏不卸，草稿与已选图片都还在） */}
       <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', panelPaneCount > 0 && 'hidden')}>
-      {/* 已弹出到独立框架页的对话：占位条 + 切回（对话本体藏不卸，切回零重放） */}
-      {Object.entries(poppedConvs).map(([sessionId, popped]) => (
+      {/* 已弹出到独立框架页的对话：占位条 + 切回（对话本体藏不卸，切回零重放）。
+          与对话同生命周期——只随**选中的那个**会话显形，切走即让位。 */}
+      {selectedId && poppedConvs[selectedId] && (
         <div
-          key={sessionId}
+          key={selectedId}
           className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-edge/[0.12] text-xs text-neutral-500"
         >
           <span className="flex items-center gap-1.5">
             <ExternalLink className="size-3.5 text-neutral-600" />
-            {popped.label} · {t('tasks.panePoppedOut')}
+            {poppedConvs[selectedId]!.label} · {t('tasks.panePoppedOut')}
           </span>
           <button
             type="button"
-            onClick={() => reclaimConversation(sessionId)}
+            onClick={() => reclaimConversation(selectedId)}
             className="shrink-0 rounded bg-blue-500/20 px-2 py-0.5 text-xs text-blue-300 transition-colors hover:bg-blue-500/30"
           >
             {t('tasks.paneReclaim')}
           </button>
         </div>
-      ))}
+      )}
       {[...convs.values()].map((c) => (
         <SessionMessages
           key={c.sessionId}
