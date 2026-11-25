@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SessionRow } from '@/lib/api';
 import { byActivity, mergeNewRows, archiveExempt, olderThanDays } from '../SessionList';
+import type { SessionStatus } from '../session-status';
 
 const row = (over: Partial<SessionRow>): SessionRow => ({
   sessionId: 's',
@@ -39,6 +40,33 @@ describe('byActivity（活动序）', () => {
       row({ sessionId: 'b', createdAt: '2026-10-12T00:00:00.000Z', lastSeenAt: '2026-10-12T00:00:00.000Z' }),
     ];
     expect(list.slice().sort(byActivity).map((s) => s.sessionId)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('给 statuses 时已关闭类（closed/terminated/gone）整体沉底，层内仍按活动序', () => {
+    const statuses = new Map<string, SessionStatus>([
+      ['closed-recent', 'closed'],
+      ['gone-old', 'gone'],
+      ['open-old', 'open'],
+      ['run-new', 'running'],
+    ]);
+    const list = [
+      // closed 但 lastSeenAt 最新——不给 statuses 时它排第一，会压住刚打开的
+      row({ sessionId: 'closed-recent', createdAt: '2026-10-15T12:00:00.000Z', lastSeenAt: '2026-10-15T12:00:00.000Z' }),
+      row({ sessionId: 'open-old', createdAt: '2026-10-01T00:00:00.000Z', lastSeenAt: '2026-10-15T09:00:00.000Z' }),
+      row({ sessionId: 'run-new', createdAt: '2026-10-15T08:00:00.000Z', lastSeenAt: '2026-10-15T08:00:00.000Z' }),
+      row({ sessionId: 'gone-old', createdAt: '2026-10-02T00:00:00.000Z', lastSeenAt: '2026-10-03T00:00:00.000Z' }),
+    ];
+    expect(
+      list.slice().sort((a, b) => byActivity(a, b, statuses)).map((s) => s.sessionId),
+    ).toEqual(['open-old', 'run-new', 'closed-recent', 'gone-old']);
+  });
+
+  it('不给 statuses 时行为不变（旧口径）', () => {
+    const list = [
+      row({ sessionId: 'closed-recent', createdAt: '2026-10-15T12:00:00.000Z', lastSeenAt: '2026-10-15T12:00:00.000Z' }),
+      row({ sessionId: 'open-old', createdAt: '2026-10-01T00:00:00.000Z', lastSeenAt: '2026-10-15T09:00:00.000Z' }),
+    ];
+    expect(list.slice().sort(byActivity).map((s) => s.sessionId)).toEqual(['closed-recent', 'open-old']);
   });
 });
 

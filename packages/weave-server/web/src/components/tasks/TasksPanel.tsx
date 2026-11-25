@@ -543,10 +543,10 @@ export function TasksPanel({
     setSelectedId(
       (prev) =>
         prev ??
-        sessions?.slice().sort(byActivity)[0]?.sessionId ??
+        sessions?.slice().sort((a, b) => byActivity(a, b, statuses))[0]?.sessionId ??
         null,
     );
-  }, [sessions]);
+  }, [sessions, statuses]);
 
   // 打开项目时顺手清对话缓存的孤儿（会话已被 sweeper 清掉的，conv 缓存只剩
   // TTL 兜底、anchor 更是只写不删）：按服务端现存会话清单对账（用户裁决 2026-11-20）。

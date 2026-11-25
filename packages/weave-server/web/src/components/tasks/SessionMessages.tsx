@@ -1191,7 +1191,7 @@ export function SessionMessages({
                 if (unit.kind === 'group') {
                   const g = unit.group;
                   return (
-                    <div key={g.key} data-conv-anchor={g.key} className="group/stack">
+                    <div key={g.key} data-conv-anchor={g.key} className="weave-conv-row group/stack">
                       <NarrationStack
                         group={g}
                         selecting={selecting}
@@ -1206,7 +1206,7 @@ export function SessionMessages({
                 if (m.role === 'compaction') {
                   // 压缩分隔：不是谁说的话，只标上下文在这里断过一次（不参与勾选）
                   return (
-                    <div key={m.key} className="flex items-center gap-2 py-1 text-10 text-neutral-600">
+                    <div key={m.key} className="weave-conv-row flex items-center gap-2 py-1 text-10 text-neutral-600">
                       <span className="h-px flex-1 bg-edge/[0.08]" />
                       <span className="shrink-0">
                         {t('hooks.mindmap.compactTag')} · {formatStamp(m.at)}
@@ -1226,7 +1226,7 @@ export function SessionMessages({
                       {...rowProps(m.key)}
                       className={cn(
                         // touch-manipulation：双击是我们开菜单的手势，压掉移动浏览器的双击缩放
-                        'flex touch-manipulation justify-start',
+                        'weave-conv-row flex touch-manipulation justify-start',
                         selecting && 'select-none',
                       )}
                     >
@@ -1252,11 +1252,6 @@ export function SessionMessages({
                       >
                         <span className="mb-0.5 flex items-center gap-1.5 text-10 text-neutral-600">
                           {formatStamp(m.at)}
-                          {m.tokens && (m.tokens.in > 0 || m.tokens.out > 0) && (
-                            <span className="shrink-0 tabular-nums text-neutral-600" title={t('tasks.convTokens')}>
-                              ↑{fmtTokens(m.tokens.in)} ↓{fmtTokens(m.tokens.out)}
-                            </span>
-                          )}
                           {m.plan === true && (
                             <span className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-10 font-medium text-amber-300">
                               {t('tasks.convPlan')}
@@ -1281,6 +1276,14 @@ export function SessionMessages({
                           {m.rewound === true && (
                             <span className="shrink-0 rounded bg-red-500/15 px-1 py-px text-10 font-medium text-red-300">
                               {t('tasks.convRewound')}
+                            </span>
+                          )}
+                          {m.tokens && (m.tokens.in > 0 || m.tokens.out > 0) && (
+                            <span
+                              className="ml-auto inline-flex shrink-0 items-center self-center rounded bg-neutral-500/10 px-1 leading-none text-9 tabular-nums text-neutral-500"
+                              title={t('tasks.convTokens')}
+                            >
+                              ↑{fmtTokens(m.tokens.in)} ↓{fmtTokens(m.tokens.out)}
                             </span>
                           )}
                         </span>
@@ -1345,7 +1348,7 @@ export function SessionMessages({
                     {...rowProps(m.key)}
                     className={cn(
                       // touch-manipulation：同助手气泡，双击开菜单不触发双击缩放
-                      'flex touch-manipulation items-end justify-end gap-1',
+                      'weave-conv-row flex touch-manipulation items-end justify-end gap-1',
                       selecting && 'select-none',
                     )}
                   >

@@ -98,8 +98,18 @@ export function remainingLabel(t: TFunc, remainingMs: number): string {
  * 会话排序口径（活动序）：lastSeenAt（最后一条 hook 事件时刻）倒序、createdAt
  * 决胜——活跃会话上浮、新会话落地即置顶、静默的沉底；对完全静默的列表等价于
  * 创建时间倒序（服务端列表恒 created_at 倒序，活动序是前端层的事）。
+ * 给了 `statuses` 时，已关闭类（closed/terminated/gone——会话已不活）整体沉到
+ * 活着的后面，层内仍按活动序：旧列表里一条已关闭的高 lastSeenAt 会压住刚打开的。
  */
-export function byActivity(a: SessionRow, b: SessionRow): number {
+export function byActivity(a: SessionRow, b: SessionRow, statuses?: ReadonlyMap<string, SessionStatus>): number {
+  if (statuses) {
+    const closedOf = (id: string): 0 | 1 => {
+      const s = statuses.get(id);
+      return s === 'closed' || s === 'terminated' || s === 'gone' ? 1 : 0;
+    };
+    const byClosed = closedOf(a.sessionId) - closedOf(b.sessionId);
+    if (byClosed !== 0) return byClosed;
+  }
   return (
     Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt) ||
     Date.parse(b.createdAt) - Date.parse(a.createdAt)
@@ -417,8 +427,8 @@ export function SessionList({
   // 时取快照（见 useActivityOrder）——两次快照之间顺序冻结（不随事件实时跳动），
   // 行内容（计数/状态/角标）仍实时刷新。
   const sortedIds = useMemo(
-    () => sessions.slice().sort(byActivity).map((s) => s.sessionId),
-    [sessions],
+    () => sessions.slice().sort((a, b) => byActivity(a, b, statuses)).map((s) => s.sessionId),
+    [sessions, statuses],
   );
   const appliedIds = useActivityOrder(sortedIds);
 

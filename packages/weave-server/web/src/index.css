@@ -347,6 +347,15 @@
   animation: weave-card-in 180ms ease-out;
 }
 
+/* 对话行的进视口再渲染（虚拟滚动的原生等价物）：视口外的行浏览器跳过布局/绘制
+   （DOM 节点仍在，查询/锚点/多选不受影响），滚近才真正渲染——长对话首屏与翻页
+   的 DOM 成本从全量降到可见行。contain-intrinsic-size 给占位高度，避免滚动条
+   长度随渲染进度跳动；进过视口的行浏览器自己记住实测尺寸。 */
+.weave-conv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
 /* ---- 移动端滑出抽屉动效（<lg 布局，一次滑入） ---- */
 @keyframes drawer-slide-left {
   from {

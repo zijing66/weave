@@ -117,8 +117,8 @@ export function GlobalTasksOverview({
   // 变化或周期 tick 时取快照（见 useActivityOrder）；过滤条件换批走 filterKey。
   const filterKey = `${projectFilter}|${range}|${fromDate}|${toDate}`;
   const sortedIds = useMemo(
-    () => filtered.slice().sort(byActivity).map((s) => s.sessionId),
-    [filtered],
+    () => filtered.slice().sort((a, b) => byActivity(a, b, statuses)).map((s) => s.sessionId),
+    [filtered, statuses],
   );
   const appliedIds = useActivityOrder(sortedIds, filterKey);
 
