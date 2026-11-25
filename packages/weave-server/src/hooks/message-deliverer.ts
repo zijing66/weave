@@ -381,6 +381,8 @@ const INTERRUPT_FALLBACK_VERIFY_MS = 600;
 /** 提交确认探针：层② 贴完正文等这么久再读屏（宿主消化 paste/附件要一两拍），
  *  CR 被吞时正文尾片段还挂在输入行。 */
 const SUBMIT_PROBE_DELAY_MS = 2_000;
+/** 重试循环的补键间隔（首拍仍等 DELAY；此后每拍都重验状态与读屏再补）。 */
+const SUBMIT_PROBE_RETRY_MS = 2_500;
 /** 补键后的复读确认等待（宿主消化 CR、把正文挪出输入行要一两拍）。 */
 const SUBMIT_PROBE_VERIFY_MS = 1_200;
 /** 探针判据用正文尾的多少个字符（屏宽折行会让长正文对不上全量，尾部片段足够认）。 */
@@ -2457,17 +2459,13 @@ export class MessageDeliverer {
       // 行没了 = 期间被强制移除（投递卡死时人工清队头）：不写回，删了就是删了。
       const current = this.memory.get(messageId);
       if (!current) return;
-      // 提交确认探针（带图/超长才布防）：paste 与末尾 CR 同拍写入时，宿主消化
-      // 图片附件常把那记 CR 吞掉——正文留在输入框、气泡却已「已发出」，只能人工
-      // 点 enter（2026-11-09 实测）。探针等 2s 读屏，正文尾片段仍挂在输入行 = CR
-      // 没生效，补一记（等价于人手那一下）；屏上没有 = 已提交，照常收尾。
+      // 提交确认探针（全部层② prompt 布防）：paste 与末尾 CR 同拍写入时，宿主
+      // 消化附件/长文常把那记 CR 吞掉——正文留在输入框、气泡却已「已发出」
+      // （2026-11-09 实测；2026-11-24 放宽到全部 prompt + 周期重试，普通文本被吞
+      // 也不再只靠人工）。探针等 2s 读屏，正文尾片段仍挂在输入行 = CR 没生效，
+      // 补一记并周期重试直到片段消失/窗口结束；屏上没有 = 已提交，照常收尾。
       const text = this.wireTextOfEntry(current);
-      if (
-        promptPaneId &&
-        (hasImages(current) || isLongPrompt(text)) &&
-        terminal.getPaneText &&
-        current.acked !== true
-      ) {
+      if (promptPaneId && terminal.getPaneText && current.acked !== true) {
         void this.confirmPromptSubmit(messageId, promptPaneId, text);
       }
       const done: PipeMessage = { ...current, status: 'delivered', settledAt: new Date().toISOString() };
@@ -2514,32 +2512,44 @@ export class MessageDeliverer {
    * 人手那一下 enter；2026-11-09 实测带图消息 paste 与 CR 同拍写入时常被宿主
    * 消化附件吞掉，正文滞留输入框、只能人工提交）。判据只认正面证据、且要求
    * **片段贴着输入行前缀**：正文出现在对话流里（已提交成功的回显）不算；`❯` 行
-   * 起至屏底拼接后认**结尾**（长正文被终端折成多行时不漏判）。补一记后复读一次
-   * 确认片段已从输入行消失才算数——没消失不重试，交给既有未回执闸（ackStallMs）
-   * 与人工重发。所有读不到/对不上/歧义一律不动作（漏补 = 现状人工，绝不误补）。
+   * 起至屏底拼接后认**结尾**（长正文被终端折成多行时不漏判）。
+   *
+   * **重试循环**（2026-11-24 用户裁决：一记不够就周期补，直到窗口结束）：补一记
+   * 后复读，片段还在 = 没补上，隔一拍再来——宿主消化慢 / 连续吞键都能接住，
+   * 不再留给人工。**每一拍都以当下读屏为前提**：片段从输入行消失（已提交 /
+   * 已被回执认领 / 行被重发置 delivering）立即收手；pane 读不到也收手——
+   * 「消息还在 TUI 输入框里」这个状态守不住就绝不盲打。总窗与未回执闸的自动
+   * 清除窗（ackStallReleaseMs）对齐：行都没了还补什么。
    */
   private async confirmPromptSubmit(messageId: string, paneId: string, text: string): Promise<void> {
-    await sleep(SUBMIT_PROBE_DELAY_MS);
-    // 探针窗口里行可能已被 UPS 认领（正常送达）或被人工移除：都别再补。
-    const current = this.memory.get(messageId);
-    if (!current || current.acked === true || current.status !== 'delivered') return;
     const terminal = this.terminalChannel();
     if (!terminal?.getPaneText) return;
     const tail = promptTailOf(text);
     if (!tail) return;
-    const screen = await terminal.getPaneText(paneId).catch(() => null);
-    if (screen === null) return;
-    if (!screenTailMatches(screen, tail)) return;
-    try {
-      await terminal.sendKeys(paneId, '\r');
-    } catch {
-      return; // 补打失败不落 failed：文本已在框里，未回执闸会接手（人工重发只补回车）
-    }
-    // 复读确认：片段从输入行消失 = 补键生效；还在 = 没补上，如实交给既有闸。
-    await sleep(SUBMIT_PROBE_VERIFY_MS);
-    const after = await terminal.getPaneText(paneId).catch(() => null);
-    if (after !== null && !screenTailMatches(after, tail)) {
-      this.memory.set(messageId, { ...this.memory.get(messageId)!, settledAt: new Date().toISOString() });
+    const deadline = Date.now() + ACK_STALL_RELEASE_MS;
+    let first = true;
+    while (true) {
+      await sleep(first ? SUBMIT_PROBE_DELAY_MS : SUBMIT_PROBE_RETRY_MS);
+      first = false;
+      // 每拍重验：回执到了（正常送达）/ 行被人工移除 / 重发置 delivering / 已超窗——都停。
+      const current = this.memory.get(messageId);
+      if (!current || current.acked === true || current.status !== 'delivered') return;
+      if (Date.now() >= deadline) return;
+      const screen = await terminal.getPaneText(paneId).catch(() => null);
+      if (screen === null) return; // pane 没了/读不到：状态守不住，不盲打
+      if (!screenTailMatches(screen, tail)) return; // 片段不在输入行 = 已提交，收手
+      try {
+        await terminal.sendKeys(paneId, '\r');
+      } catch {
+        return; // 补打失败不落 failed：文本已在框里，未回执闸会接手（人工重发只补回车）
+      }
+      // 复读确认：片段从输入行消失 = 补键生效；还在 = 下一拍再来。
+      await sleep(SUBMIT_PROBE_VERIFY_MS);
+      const after = await terminal.getPaneText(paneId).catch(() => null);
+      if (after !== null && !screenTailMatches(after, tail)) {
+        this.memory.set(messageId, { ...this.memory.get(messageId)!, settledAt: new Date().toISOString() });
+        return;
+      }
     }
   }
 
