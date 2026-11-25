@@ -13,6 +13,9 @@ export interface SessionRow {
   title: string | null;
   /** dashboard 改名待生效：下次 SessionStart/UserPromptSubmit 时经 hook 下发。 */
   pendingTitle: string | null;
+  /** 宿主侧当前生效名（titles 面；`#` 引用序列化用它——宿主 SendMessage 按
+   *  名字寻址，pending 改名宿主还没消费）。null = 读不到。 */
+  effectiveTitle?: string | null;
   lastSeenAt: string;
   createdAt: string;
   /** 该会话 hook 事件数（GET /sessions 的 listWithCounts 填充）。 */

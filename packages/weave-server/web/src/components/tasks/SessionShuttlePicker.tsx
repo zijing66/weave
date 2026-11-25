@@ -41,6 +41,15 @@ export function shuttleVisibleProjects(projects: readonly ProjectRow[]): Project
   return projects.filter((p) => !p.hidden);
 }
 
+/**
+ * 落定引用名 = 宿主当前生效名（`effectiveTitle`），不是行上展示的 title——
+ * 改名待生效时 title 已是新名，但宿主 SendMessage 按名字寻址、还认旧名；
+ * 行展示仍用 title（用户看到的是自己改的名）。
+ */
+function refNameOf(s: SessionRow): string {
+  return sessionLabel(s.effectiveTitle ?? s.title, s.sessionId);
+}
+
 export function SessionShuttlePicker({
   sessions,
   projects,
@@ -303,9 +312,9 @@ export function SessionShuttlePicker({
       if (!hit) return;
       // 联邦行落定 = peer 目标形（投递层一等公民）；普通行 = 本机 sessionId
       if (rightIsPeer && peerIdx != null) {
-        onPick(`peer:${federatedPeers![peerIdx]!.peerName}/${hit.sessionId}`, sessionLabel(hit.title, hit.sessionId));
+        onPick(`peer:${federatedPeers![peerIdx]!.peerName}/${hit.sessionId}`, refNameOf(hit as SessionRow));
       } else {
-        onPick(hit.sessionId, sessionLabel(hit.title, hit.sessionId));
+        onPick(hit.sessionId, refNameOf(hit as SessionRow));
       }
       return;
     }
@@ -330,7 +339,7 @@ export function SessionShuttlePicker({
       }
       const hit = rightRows[sessIdx];
       if (!hit) return;
-      const name = sessionLabel(hit.title, hit.sessionId);
+      const name = refNameOf(hit as SessionRow);
       const project = rightIsPeer ? null : ((hit as SessionRow).projectId != null ? (projectName.get((hit as SessionRow).projectId!) ?? `#${(hit as SessionRow).projectId}`) : undefined);
       setPicked((prev) =>
         prev.some((p) => p.sessionId === hit.sessionId)
@@ -602,7 +611,7 @@ export function SessionShuttlePicker({
               const pickId = rightIsPeer && peerIdx != null
                 ? `peer:${federatedPeers![peerIdx]!.peerName}/${s.sessionId}`
                 : s.sessionId;
-              const pick = (): void => onPick(pickId, sessionLabel(s.title, s.sessionId));
+              const pick = (): void => onPick(pickId, refNameOf(s as SessionRow));
               return (
                 <li key={s.sessionId} className="relative">
                   <button
@@ -664,7 +673,7 @@ export function SessionShuttlePicker({
                         e.stopPropagation();
                         setSessIdx(i);
                         setCol('sessions');
-                        const name = sessionLabel(s.title, s.sessionId);
+                        const name = refNameOf(s as SessionRow);
                         const projectId = (s as SessionRow).projectId;
                         const project = projectId != null ? (projectName.get(projectId) ?? `#${projectId}`) : undefined;
                         setPicked((prev) =>

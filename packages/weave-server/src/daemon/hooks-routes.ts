@@ -266,6 +266,20 @@ export async function handleHooksRoutes(
       if (key in catalog) continue;
       catalog[key] = modelAliasTargets(HARNESS_SESSION_CONTROL[s.harness as Harness]?.modelNames ?? []);
     }
+    // 宿主侧当前生效名（titles 面，claude = 注册表落盘名）：`#` 引用序列化成
+    // `#<名>` 收件人标注、宿主 SendMessage 按名字寻址——pending 改名宿主还没消费，
+    // 引用必须用宿主认的名；pending 名只作选择器展示（read 失败回落库 title）。
+    const effectiveTitles = new Map<string, string>();
+    for (const s of sessions) {
+      const surface = isHarness(s.harness) ? sessionTitleSurfaceFor(s.harness) : null;
+      if (!surface) continue;
+      try {
+        const name = await surface.sessionTitleOf(s.sessionId);
+        if (name) effectiveTitles.set(s.sessionId, name);
+      } catch {
+        // 读失败不拦列表
+      }
+    }
     sendJson(res, 200, {
       sessions: sessions.map((s) => {
         const model = deps.sessionProbe?.currentModel(s.sessionId) ?? null;
@@ -278,6 +292,8 @@ export async function handleHooksRoutes(
         const resume = isHarness(s.harness) ? deps.harnesses?.get(s.harness)?.resume : undefined;
         return {
           ...s,
+          /** 宿主当前生效名（`#` 引用序列化用它；null = 读不到，前端回落 title）。 */
+          effectiveTitle: effectiveTitles.get(s.sessionId) ?? s.title,
           pidAlive: pidAliveOf(s, liveness),
           /** 该会话当前的活实例数（0/1/2+）：>1 = 双开，写入会交错。 */
           liveInstances: (instancesById.get(s.sessionId) ?? []).length,
