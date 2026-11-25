@@ -212,7 +212,7 @@ export type {
   BackupStatusBundle,
   BackupResult,
 } from './settings';
-export type { SearchMessageHit, SearchFileHit, SearchResult } from './search';
+export type { SearchMessageHit, SearchFileHit, SearchContentHit, SearchResult, MessageContextResult } from './search';
 export type { VisualizationFragment } from './visualizations';
 export type { PetRow } from './pets';
 export type {
