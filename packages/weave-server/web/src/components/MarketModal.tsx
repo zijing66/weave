@@ -54,6 +54,7 @@ import {
   FolderOpen,
   GitBranch,
   Globe,
+  Loader2,
   Package,
   Puzzle,
   RefreshCw,
@@ -158,6 +159,8 @@ export function MarketModal({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   /** 库资产缓存（id → 四类扫描结果）；搜索时全量补齐。 */
   const [libCache, setLibCache] = useState<Map<number, LibraryAssets>>(new Map());
+  /** 选中源首拉在途（libCache 无该源时）：右栏出 loading 态，落账即收。 */
+  const [loadingLib, setLoadingLib] = useState(false);
   const [query, setQuery] = useState('');
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -233,10 +236,27 @@ export function MarketModal({
     [libCache],
   );
 
-  // 选中源 → 拉资产（MCP 配置虚拟源不拉库资产）
+  // 选中源 → 拉资产（MCP 配置虚拟源不拉库资产）。缓存未命中期间亮 loading。
   useEffect(() => {
-    if (selectedId !== null && selectedId !== MCP_VIEW_ID) void loadLibrary(selectedId).catch(() => setLibCache((prev) => new Map(prev).set(selectedId, EMPTY_ASSETS)));
-  }, [selectedId, loadLibrary]);
+    if (selectedId === null || selectedId === MCP_VIEW_ID) {
+      setLoadingLib(false);
+      return;
+    }
+    if (libCache.has(selectedId)) {
+      setLoadingLib(false);
+      return;
+    }
+    setLoadingLib(true);
+    let alive = true;
+    void loadLibrary(selectedId)
+      .catch(() => setLibCache((prev) => new Map(prev).set(selectedId, EMPTY_ASSETS)))
+      .finally(() => {
+        if (alive) setLoadingLib(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedId, loadLibrary, libCache]);
 
   // 搜索态：跨全部源——没缓存的库并行补齐（一次性，之后纯内存过滤）
   const searching = query.trim().length > 0;
@@ -855,8 +875,15 @@ export function MarketModal({
               />
             )}
             {(searching || (selectedId !== null && selectedId !== MCP_VIEW_ID)) && rows.length === 0 && (
-              <p className="p-6 text-center text-xs text-neutral-500">
-                {searching ? t('market.noResults') : t('library.scanning')}
+              <p className="flex items-center justify-center gap-1.5 p-6 text-center text-xs text-neutral-500">
+                {loadingLib && !searching ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {t('market.loading')}
+                  </>
+                ) : (
+                  (searching ? t('market.noResults') : t('library.scanning'))
+                )}
               </p>
             )}
             {selectedId !== MCP_VIEW_ID && rows.map((row) => (
