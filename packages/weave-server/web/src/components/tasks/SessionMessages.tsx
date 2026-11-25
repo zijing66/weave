@@ -1743,7 +1743,7 @@ export function SessionMessages({
               )}
 
               {(answerPending || generating || interrupted) && (
-                <div className="flex flex-wrap items-center justify-start gap-1.5">
+                <div className="flex flex-wrap items-center justify-start gap-1.5 pb-1">
                   {answerPending && (
                     <Tooltip label={t('tasks.answerTooltip')}>
                       <button
@@ -1759,7 +1759,10 @@ export function SessionMessages({
                   {(generating || interrupted || failed) && (
                     <div
                       className={cn(
-                        'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10',
+                        // sticky bottom-0：状态条钉在滚动区底（视口内恒可见），不随最后一个
+                        // 气泡走——气泡高时它悬浮贴底，气泡矮时钉在内容流末端之下（用户裁决：
+                        // 生成中状态条贴底固定，不跟随最后气泡）。
+                        'sticky bottom-0 z-10 flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10',
                         failed
                           ? 'border-red-500/30 bg-red-950/30 text-red-300'
                           : 'border-edge/[0.16] bg-neutral-900 text-neutral-500',
