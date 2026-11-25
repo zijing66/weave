@@ -402,34 +402,37 @@ export async function startDaemon(): Promise<void> {
   );
   narrationWatcher.start();
   // 阻塞问答跟踪（AskUserQuestion / 计划与权限确认）：内存状态机挂 ingest
-  // 事件流（inbox-worker 消费线程驱动），重启即 seedFromDb 重放补状态。
-  const questionTracker = new QuestionTracker({
-    sessions: hookSessions,
-    hookEvents,
-    // 新挂起待答 → 广播提醒帧（web 弹 toast/系统通知；作答入口仍是手动点图标）。
-    onPending: (entry) => {
-      hookBus.emit({
-        kind: 'question.pending',
-        sessionId: entry.sessionId,
-        harness: entry.harness,
-        count: entry.questions.length,
-        at: entry.at,
-      });
+  // 事件流（inbox-worker 消费线程驱动），重启恢复走落盘账 + seedFromDb 重放。
+  const questionTracker = new QuestionTracker(
+    {
+      sessions: hookSessions,
+      hookEvents,
+      // 新挂起待答 → 广播提醒帧（web 弹 toast/系统通知；作答入口仍是手动点图标）。
+      onPending: (entry) => {
+        hookBus.emit({
+          kind: 'question.pending',
+          sessionId: entry.sessionId,
+          harness: entry.harness,
+          count: entry.questions.length,
+          at: entry.at,
+        });
+      },
+      // 待答面变化 → 绝对值快照直推 SSE（web 不再帧到后重拉 GET /messaging/questions）。
+      onChange: () => {
+        dataBus.emit({ key: 'sessionQuestions', payload: questionTracker.snapshot() });
+      },
+      // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
+      interruptedAt: (sessionId) => {
+        const session = hookSessions.getBySessionId(sessionId);
+        if (!session) return null;
+        return sessionProbe.interruptedAt(
+          sessionId,
+          hookSessions.lastMainEventAtOf(sessionId) ?? session.lastSeenAt,
+        );
+      },
     },
-    // 待答面变化 → 绝对值快照直推 SSE（web 不再帧到后重拉 GET /messaging/questions）。
-    onChange: () => {
-      dataBus.emit({ key: 'sessionQuestions', payload: questionTracker.snapshot() });
-    },
-    // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
-    interruptedAt: (sessionId) => {
-      const session = hookSessions.getBySessionId(sessionId);
-      if (!session) return null;
-      return sessionProbe.interruptedAt(
-        sessionId,
-        hookSessions.lastMainEventAtOf(sessionId) ?? session.lastSeenAt,
-      );
-    },
-  });
+    path.join(hooksRoot(), 'question-pending.json'),
+  );
   questionTracker.seedFromDb();
   // 会话活动跟踪（子 agent/后台 shell/任务清单的事件账；文件面在 activity 槽）。
   const activityTracker = new ActivityTracker({ sessions: hookSessions, hookEvents });

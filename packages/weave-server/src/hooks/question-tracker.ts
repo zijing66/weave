@@ -1,5 +1,6 @@
 import { isHarness, type Harness } from '@weavecode/core';
 import { permissionModeOf, type BlockingPromptSpec, type BlockingQuestion } from '@weavecode/harness';
+import { readJsonLedger, writeJsonLedger } from '../db/json-ledger.js';
 import type { HookEventRepository } from '../repositories/hook-events.js';
 import type { SessionRepository } from '../repositories/sessions.js';
 import { blockingPromptFor } from '../surfaces.js';
@@ -78,7 +79,34 @@ export class QuestionTracker {
   /** seedFromDb 重放期间不广播（重建不是新发生）。 */
   private seeding = false;
 
-  constructor(private readonly deps: QuestionTrackerDeps) {}
+  constructor(
+    private readonly deps: QuestionTrackerDeps,
+    /** 待答面落盘文件（`<dataDir>/hooks/question-pending.json`）：重启即恢复，
+     *  不再依赖 seedFromDb 的 12 条重放窗（会话正等着、不来新事件，重放窗
+     *  罩不到就是永久丢面——2026-11-25 实测）。缺省 = 不落盘（测试）。 */
+    private readonly pendingFile?: string,
+  ) {
+    const saved = this.pendingFile ? readJsonLedger<unknown>(this.pendingFile) : null;
+    if (Array.isArray(saved)) {
+      for (const item of saved) {
+        if (
+          item &&
+          typeof item === 'object' &&
+          typeof (item as PendingQuestionEntry).sessionId === 'string' &&
+          isHarness((item as PendingQuestionEntry).harness) &&
+          Array.isArray((item as PendingQuestionEntry).questions)
+        ) {
+          this.pending.set((item as PendingQuestionEntry).sessionId, item as PendingQuestionEntry);
+        }
+      }
+    }
+  }
+
+  /** 待答面落盘（坏值形静默跳过；失败不冒泡——内存态照常工作）。 */
+  private persistPending(): void {
+    if (!this.pendingFile) return;
+    writeJsonLedger(this.pendingFile, [...this.pending.values()]);
+  }
 
   private specOf(source: string): BlockingPromptSpec | null {
     if (!isHarness(source)) return null;
@@ -113,6 +141,7 @@ export class QuestionTracker {
           at: new Date().toISOString(),
         };
         this.pending.set(sessionId, entry);
+        this.persistPending();
         // 只播「无 → 有」（同一会话连续挂起不重复打扰）；重放重建不算新发生。
         if (!this.seeding && prev?.kind !== 'question') this.deps.onPending?.(entry);
         this.deps.onChange?.();
@@ -159,6 +188,7 @@ export class QuestionTracker {
           ],
           at: new Date().toISOString(),
         });
+        this.persistPending();
       }
       return; // 其他 Notification（idle 等）不动状态
     }
@@ -186,6 +216,7 @@ export class QuestionTracker {
         at: new Date().toISOString(),
       };
       this.pending.set(sessionId, entry);
+      this.persistPending();
       if (!this.seeding && prev?.kind !== 'switch') this.deps.onPending?.(entry);
       this.deps.onChange?.();
       return;
@@ -206,6 +237,7 @@ export class QuestionTracker {
       if (sticky ? settled : true) {
         this.pending.delete(sessionId);
         this.lastPreTool.delete(sessionId);
+        this.persistPending();
         this.deps.onChange?.();
       }
       return;
@@ -213,6 +245,7 @@ export class QuestionTracker {
     if (entry.kind !== 'question') {
       this.pending.delete(sessionId);
       this.lastPreTool.delete(sessionId);
+      this.persistPending();
       this.deps.onChange?.();
       return;
     }
@@ -225,6 +258,7 @@ export class QuestionTracker {
     if (cleared) {
       this.pending.delete(sessionId);
       this.lastPreTool.delete(sessionId);
+      this.persistPending();
       this.deps.onChange?.();
     }
   }
@@ -276,6 +310,7 @@ export class QuestionTracker {
   private dropIfInterrupted(entry: PendingQuestionEntry): boolean {
     if (this.deps.interruptedAt?.(entry.sessionId) == null) return false;
     this.pending.delete(entry.sessionId);
+    this.persistPending();
     this.deps.onChange?.();
     return true;
   }
@@ -285,7 +320,10 @@ export class QuestionTracker {
    * 整 call 一次提交（含 Submit 步），故整条摘除；PostToolUse 到达照常再清一次。
    */
   markAnswered(sessionId: string): void {
-    if (this.pending.delete(sessionId)) this.deps.onChange?.();
+    if (this.pending.delete(sessionId)) {
+      this.persistPending();
+      this.deps.onChange?.();
+    }
   }
 
   /** 会话删除级联。 */
@@ -293,7 +331,10 @@ export class QuestionTracker {
     const had = this.pending.delete(sessionId);
     this.lastPreTool.delete(sessionId);
     this.permissionMode.delete(sessionId);
-    if (had) this.deps.onChange?.();
+    if (had) {
+      this.persistPending();
+      this.deps.onChange?.();
+    }
   }
 
   private harnessOf(source: string): Harness {

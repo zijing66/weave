@@ -67,6 +67,7 @@ import { ToolkitService } from '../hooks/toolkit.js';
 import { startSessionSweeper } from '../hooks/session-sweeper.js';
 import { startStatuslineCacheSweeper } from '../statusline/cache-sweeper.js';
 import { defaultWorktreeGitExec, startWorktreeMergeSweeper, type SessionWorktreeEntry } from './worktree.js';
+import { join } from 'node:path';
 import { hooksRoot } from '../hooks/mirror.js';
 import { readStatuslineFacts } from '../statusline/manager.js';
 import { WatchService } from '../watch/watch-service.js';
@@ -411,34 +412,37 @@ async function main(): Promise<void> {
   // 绑 SSE 客户端数。
   // （提前建：questionTracker 的 onChange 回调在 seedFromDb 那一拍就会 emit。）
   const dataBus = new DataBus();
-  // 阻塞问答跟踪（与生产入口同一装配）：内存状态机 + 重启 seedFromDb 补状态。
-  const questionTracker = new QuestionTracker({
-    sessions: hookSessions,
-    hookEvents,
-    // 新挂起待答 → 广播提醒帧（web 弹 toast/系统通知；作答入口仍是手动点图标）。
-    onPending: (entry) => {
-      hookBus.emit({
-        kind: 'question.pending',
-        sessionId: entry.sessionId,
-        harness: entry.harness,
-        count: entry.questions.length,
-        at: entry.at,
-      });
+  // 阻塞问答跟踪（与生产入口同一装配）：内存状态机 + 重启恢复（落盘账 + seedFromDb）。
+  const questionTracker = new QuestionTracker(
+    {
+      sessions: hookSessions,
+      hookEvents,
+      // 新挂起待答 → 广播提醒帧（web 弹 toast/系统通知；作答入口仍是手动点图标）。
+      onPending: (entry) => {
+        hookBus.emit({
+          kind: 'question.pending',
+          sessionId: entry.sessionId,
+          harness: entry.harness,
+          count: entry.questions.length,
+          at: entry.at,
+        });
+      },
+      // 待答面变化 → 绝对值快照直推 SSE（web 不再帧到后重拉 GET /messaging/questions）。
+      onChange: () => {
+        dataBus.emit({ key: 'sessionQuestions', payload: questionTracker.snapshot() });
+      },
+      // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
+      interruptedAt: (sessionId) => {
+        const session = hookSessions.getBySessionId(sessionId);
+        if (!session) return null;
+        return sessionProbe.interruptedAt(
+          sessionId,
+          hookSessions.lastMainEventAtOf(sessionId) ?? session.lastSeenAt,
+        );
+      },
     },
-    // 待答面变化 → 绝对值快照直推 SSE（web 不再帧到后重拉 GET /messaging/questions）。
-    onChange: () => {
-      dataBus.emit({ key: 'sessionQuestions', payload: questionTracker.snapshot() });
-    },
-    // 手动了结掉那个对话框（ESC / 选掉）⇒ 问题面失据，读时顺手摘掉。
-    interruptedAt: (sessionId) => {
-      const session = hookSessions.getBySessionId(sessionId);
-      if (!session) return null;
-      return sessionProbe.interruptedAt(
-        sessionId,
-        hookSessions.lastMainEventAtOf(sessionId) ?? session.lastSeenAt,
-      );
-    },
-  });
+    join(hooksRoot(), 'question-pending.json'),
+  );
   questionTracker.seedFromDb();
   // 会话活动跟踪（子 agent/后台 shell/任务清单的事件账；文件面在 activity 槽）。
   const activityTracker = new ActivityTracker({ sessions: hookSessions, hookEvents });
