@@ -18,6 +18,7 @@ import {
   closePane,
   focusPane,
   movePane,
+  openPane,
   type PaneRecord,
   type PaneSlot,
   setPanePopped,
@@ -38,6 +39,8 @@ export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?:
   const holder = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<LocalDrag | null>(null);
   const [remoteDrag, setRemoteDrag] = useState<RemoteDrag | null>(null);
+  /** 分隔条拖动中：关位置过渡（权重连续更新，吃过渡会发黏） */
+  const [sepDrag, setSepDrag] = useState(false);
   const dragRef = useRef<LocalDrag | null>(null);
 
   const panes = useMemo(
@@ -166,9 +169,29 @@ export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?:
       if (!cur) return;
       const pane = state.panes[paneId];
       if (!pane) return;
-      // 拖出本窗内容区 = 弹出独立终端页（不再进任何 dashboard 的 grid）
+      // 拖出本窗内容区：落在另一个框架页窗口上 = 投放进去（对方接单才让位）；
+      // 没人接（空白桌面 / 超上限 / 项目不符）= 弹出独立终端页
       const win = paneSync.windowAt(e.screenX, e.screenY);
-      if (!win || !win.self) {
+      if (win && !win.self) {
+        void paneSync
+          .offerDrop(win.winId, {
+            screenX: e.screenX,
+            screenY: e.screenY,
+            projectId: pane.projectId,
+            view: {
+              kind: 'terminal',
+              instanceId: pane.instanceId,
+              label: pane.label,
+              sessionId: pane.sessionId ?? pane.paneId,
+            },
+          })
+          .then((accepted) => {
+            if (accepted) closePane(pane.paneId);
+            else popout(pane);
+          });
+        return;
+      }
+      if (!win) {
         popout(pane);
         return;
       }
@@ -204,6 +227,26 @@ export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?:
 
   useEffect(() => paneSync.onRemoteDrag(setRemoteDrag), []);
 
+  // 跨窗投放的接收端（只面板槽接；同项目才接）：拖进来的终端落成同一槽位的一格
+  useEffect(() => {
+    if (slot !== 'panel') return;
+    return paneSync.onDropOffer((offer) => {
+      if (offer.view.kind !== 'terminal') return false;
+      if (projectId !== undefined && offer.projectId !== undefined && offer.projectId !== projectId) return false;
+      const r = openPane(
+        {
+          instanceId: offer.view.instanceId,
+          label: offer.view.label,
+          slot,
+          sessionId: offer.view.sessionId,
+          projectId: offer.projectId ?? projectId,
+        },
+        { fromDrop: true },
+      );
+      return r.ok || r.reason === 'duplicate';
+    });
+  }, [slot, projectId]);
+
   if (!geo || panes.length === 0) return null;
 
   const activePane = state.active[slot];
@@ -218,7 +261,8 @@ export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?:
             key={rect.paneId}
             className={cn(
               'absolute flex flex-col overflow-hidden rounded-md border bg-black/90',
-              activePane === rect.paneId ? 'border-blue-500/50' : 'border-edge/[0.08]',
+              activePane === rect.paneId ? 'border-blue-500/50' : 'border-edge/[0.2]',
+              sepDrag ? 'transition-none' : 'transition-[left,top,width,height] duration-150 ease-out',
               drag?.paneId === rect.paneId && 'opacity-60',
             )}
             style={{
@@ -295,16 +339,25 @@ export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?:
                 {drag?.over?.target === rect.paneId && drag.over.side !== 'center' && (
                   <div
                     className={cn(
-                      'pointer-events-none absolute z-10 bg-blue-500/20 ring-1 ring-blue-400/60',
+                      'pointer-events-none absolute z-10 flex items-center justify-center bg-blue-500/15 p-2 ring-1 ring-blue-400/60',
+                      'transition-[left,top,width,height] duration-150 ease-out',
                       drag.over.side === 'left' && 'inset-y-0 left-0 w-1/2',
                       drag.over.side === 'right' && 'inset-y-0 right-0 w-1/2',
                       drag.over.side === 'top' && 'inset-x-0 top-0 h-1/2',
                       drag.over.side === 'bottom' && 'inset-x-0 bottom-0 h-1/2',
                     )}
-                  />
+                  >
+                    <span className="max-w-full truncate rounded bg-blue-500/80 px-2 py-0.5 text-10 text-white shadow-mac">
+                      {state.panes[drag.paneId]?.label ?? ''}
+                    </span>
+                  </div>
                 )}
                 {drag?.over?.target === rect.paneId && drag.over.side === 'center' && (
-                  <div className="pointer-events-none absolute inset-2 z-10 rounded ring-2 ring-blue-400/60" />
+                  <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded ring-2 ring-blue-400/60">
+                    <span className="max-w-full truncate rounded bg-blue-500/80 px-2 py-0.5 text-10 text-white shadow-mac">
+                      {state.panes[drag.paneId]?.label ?? ''}
+                    </span>
+                  </div>
                 )}
               </div>
             )}
@@ -332,6 +385,7 @@ export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?:
             (e.currentTarget as HTMLElement).dataset.px = String(
               sep.dir === 'row' ? e.clientX : e.clientY,
             );
+            setSepDrag(true);
           }}
           onPointerMove={(e) => {
             const el = e.currentTarget as HTMLElement;
@@ -347,9 +401,11 @@ export function TerminalPanes({ slot, projectId }: { slot: PaneSlot; projectId?:
           }}
           onPointerUp={(e) => {
             delete (e.currentTarget as HTMLElement).dataset.px;
+            setSepDrag(false);
           }}
           onPointerCancel={(e) => {
             delete (e.currentTarget as HTMLElement).dataset.px;
+            setSepDrag(false);
           }}
         />
       ))}

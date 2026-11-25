@@ -20,7 +20,31 @@ type Msg =
   | { type: 'presence'; winId: string; bounds: Bounds; instances: string[] }
   | { type: 'bye'; winId: string }
   | { type: 'drag'; winId: string; screenX: number; screenY: number }
-  | { type: 'drag-end'; winId: string };
+  | { type: 'drag-end'; winId: string }
+  | {
+      type: 'drop-offer';
+      winId: string;
+      to: string;
+      screenX: number;
+      screenY: number;
+      projectId?: number;
+      view: DropView;
+    }
+  | { type: 'drop-ack'; winId: string; to: string; accepted: boolean };
+
+/** 跨窗投放的视图载荷（与 pane-transfer 的 FrameView 同形；不携带任何凭据）。 */
+export type DropView =
+  | { kind: 'terminal'; instanceId: string; label: string; sessionId: string }
+  | { kind: 'conversation'; label: string; sessionId: string };
+
+export interface DropOffer {
+  winId: string;
+  screenX: number;
+  screenY: number;
+  /** 视图所属项目；undefined = 未知（照收）。 */
+  projectId?: number;
+  view: DropView;
+}
 
 export interface RemoteDrag {
   winId: string;
@@ -43,6 +67,9 @@ class PaneSync {
   private channel: BroadcastChannel | null = null;
   private peers = new Map<string, PeerInfo>();
   private dragCb: ((drag: RemoteDrag | null) => void) | null = null;
+  private dropOfferCb: ((offer: DropOffer) => boolean) | null = null;
+  /** 在飞的投放请求（一次只等一单：拖拽天然串行）。 */
+  private pendingDrop: { to: string; resolve: (accepted: boolean) => void } | null = null;
 
   start(): void {
     if (this.channel || typeof BroadcastChannel === 'undefined') return;
@@ -76,6 +103,22 @@ class PaneSync {
       this.dragCb?.({ winId: msg.winId, screenX: msg.screenX, screenY: msg.screenY });
     } else if (msg.type === 'drag-end') {
       this.dragCb?.(null);
+    } else if (msg.type === 'drop-offer') {
+      if (msg.to !== this.winId) return;
+      const accepted =
+        this.dropOfferCb?.({
+          winId: msg.winId,
+          screenX: msg.screenX,
+          screenY: msg.screenY,
+          projectId: msg.projectId,
+          view: msg.view,
+        }) ?? false;
+      this.post({ type: 'drop-ack', winId: this.winId, to: msg.winId, accepted });
+    } else if (msg.type === 'drop-ack') {
+      const p = this.pendingDrop;
+      if (!p || msg.to !== this.winId || msg.winId !== p.to) return;
+      this.pendingDrop = null;
+      p.resolve(msg.accepted);
     }
   }
 
@@ -115,6 +158,35 @@ class PaneSync {
 
   endDrag(): void {
     this.post({ type: 'drag-end', winId: this.winId });
+  }
+
+  /** 目标窗收到投放请求时调用；返回是否接单（true 终态才回 ack）。 */
+  onDropOffer(cb: (offer: DropOffer) => boolean): () => void {
+    this.dropOfferCb = cb;
+    return () => {
+      if (this.dropOfferCb === cb) this.dropOfferCb = null;
+    };
+  }
+
+  /** 松手那一刻问目标窗要不要这份视图；无接单方（窗口已关/超上限）回 false。 */
+  offerDrop(
+    winId: string,
+    payload: { screenX: number; screenY: number; projectId?: number; view: DropView },
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!this.channel) {
+        resolve(false);
+        return;
+      }
+      this.pendingDrop = { to: winId, resolve };
+      this.post({ type: 'drop-offer', winId: this.winId, to: winId, ...payload });
+      setTimeout(() => {
+        if (this.pendingDrop?.resolve === resolve) {
+          this.pendingDrop = null;
+          resolve(false);
+        }
+      }, 400);
+    });
   }
 
   /** 指针落在哪个已知窗口（含本窗）的**内容区**里。 */

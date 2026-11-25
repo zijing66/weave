@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { routeToPath } from '@/lib/route';
 import {
+  type DropSide,
   type LayoutNode,
   decodeLayout,
   encodeLayout,
@@ -33,19 +34,30 @@ export function isMobileViewport(): boolean {
   }
 }
 
-/** 本端当前生效的 pane 上限（桌面 6 / 移动端 2；参数化口，别写死调用）。 */
+/** 本端当前生效的 pane 上限：随窗口长宽自适应（移动端 2 / 小窗 2 / 中窗 4 / 大窗 6）。
+ *  参数化口，别写死调用。 */
 export function frameMaxPanes(): number {
-  return isMobileViewport() ? FRAME_MAX_PANES_MOBILE : FRAME_MAX_PANES;
+  if (isMobileViewport()) return FRAME_MAX_PANES_MOBILE;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (w < 900 || h < 560) return 2;
+  if (w < 1280 || h < 760) return 4;
+  return FRAME_MAX_PANES;
 }
 
-/** 移动端落点侧：竖屏 = 上下叠（bottom），横屏 = 左右排（right）；桌面恒 right。 */
+/** 自动插入侧：按窗口长宽比定行列方向（宽 → 右列、高 → 下行、近似方 → 右列）。 */
 export function frameInsertSide(): 'right' | 'bottom' {
-  if (!isMobileViewport()) return 'right';
-  try {
-    return window.matchMedia('(orientation: portrait)').matches ? 'bottom' : 'right';
-  } catch {
-    return 'bottom';
+  if (isMobileViewport()) {
+    try {
+      return window.matchMedia('(orientation: portrait)').matches ? 'bottom' : 'right';
+    } catch {
+      return 'bottom';
+    }
   }
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (h >= w * 1.1) return 'bottom';
+  return 'right';
 }
 
 /** 框架页内的一个视图（pane 内容）。 */
@@ -116,8 +128,9 @@ export function validPaneTransfer(value: unknown): value is PaneTransfer {
     if (!v || typeof v !== 'object') return false;
     const view = v as Partial<FrameView>;
     if (typeof view.label !== 'string' || typeof view.sessionId !== 'string') return false;
-    if (view.kind === 'terminal' && (typeof view.instanceId !== 'string' || view.instanceId.length === 0)) return false;
-    else if (view.kind !== 'conversation') return false;
+    if (view.kind === 'terminal') {
+      if (typeof view.instanceId !== 'string' || view.instanceId.length === 0) return false;
+    } else if (view.kind !== 'conversation') return false;
   }
   return true;
 }
@@ -210,9 +223,14 @@ function spawnPaneFrame(pane: PaneInput, features: string): string {
     seedSessionId: pane.sessionId,
     label: pane.label,
     views,
-    // 双视图（终端 pane 弹出）= 对话左、终端右；单视图免布局。
+    // 双视图（终端 pane 弹出）= 对话一面、终端另一面；排布方向跟窗口长宽比走
     layout: terminalViewId
-      ? encodeLayout({ kind: 'split', dir: 'row', children: [{ kind: 'pane', paneId: viewId }, { kind: 'pane', paneId: terminalViewId }], weights: [0.5, 0.5] })
+      ? encodeLayout({
+          kind: 'split',
+          dir: frameInsertSide() === 'bottom' ? 'col' : 'row',
+          children: [{ kind: 'pane', paneId: viewId }, { kind: 'pane', paneId: terminalViewId }],
+          weights: [0.5, 0.5],
+        })
       : null,
   };
   localStorage.setItem(PREFIX + frameId, JSON.stringify(descriptor));
@@ -263,6 +281,7 @@ export function attachFrameView(
   frameId: string,
   view: FrameView,
   anchorPaneId?: string,
+  side?: DropSide,
 ): { ok: boolean; reason?: 'limit' } {
   const frame = readPaneTransfer(frameId);
   if (!frame) return { ok: false };
@@ -279,13 +298,25 @@ export function attachFrameView(
     layout ?? { kind: 'pane', paneId: anchor },
     anchor,
     null,
-    frameInsertSide(),
+    side ?? frameInsertSide(),
     viewId,
     frameMaxPanes(),
   );
   if (!nextLayout) return { ok: false };
   writeFrame({ ...frame, views, layout: encodeLayout(nextLayout) });
   return { ok: true };
+}
+
+/** 框架页内 pane 换位（四象限/中心换位）：只挪布局树里的叶子，视图与实例不变。 */
+export function moveFrameView(frameId: string, paneId: string, targetPaneId: string, side: DropSide): void {
+  if (paneId === targetPaneId) return;
+  const frame = readPaneTransfer(frameId);
+  if (!frame) return;
+  const layout = frameLayoutOf(frame);
+  if (!layout) return;
+  const next = placePane(layout, targetPaneId, paneId, side, undefined, frameMaxPanes());
+  if (!next) return;
+  writeFrame({ ...frame, layout: encodeLayout(next) });
 }
 
 /** 从框架页摘掉一个视图（pane 关闭；单 pane 时只清布局）。 */

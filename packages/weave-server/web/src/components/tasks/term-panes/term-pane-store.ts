@@ -149,13 +149,14 @@ export interface OpenPaneResult {
 }
 
 /** 开一个 pane（新终端）。同实例在本窗已有 pane → 聚焦它；在别的窗口 → 拒绝。 */
-export function openPane(input: OpenPaneInput): OpenPaneResult {
+export function openPane(input: OpenPaneInput, opts?: { fromDrop?: boolean }): OpenPaneResult {
   const dup = Object.values(state.panes).find((p) => p.instanceId === input.instanceId);
   if (dup) {
     focusPane(dup.paneId);
     return { ok: false, reason: 'duplicate', paneId: dup.paneId };
   }
-  if (paneSync.instanceShownElsewhere(input.instanceId)) return { ok: false, reason: 'other-window' };
+  // 跨窗投放进来时来源窗还挂着该实例（ack 后马上下）——presence 闸此时必假，跳过
+  if (!opts?.fromDrop && paneSync.instanceShownElsewhere(input.instanceId)) return { ok: false, reason: 'other-window' };
   const panesOfSlot = Object.values(state.panes).filter((p) => p.slot === input.slot);
   if (panesOfSlot.length >= MAX_PANES) return { ok: false, reason: 'limit' };
   const paneId = newPaneId();
