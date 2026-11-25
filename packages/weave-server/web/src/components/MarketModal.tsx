@@ -8,6 +8,7 @@ import {
   type InstallCapabilities,
   type MarketItem,
   type MarketPluginAsset,
+  type MarketUpdateCheck,
   type MarketUpdateStatus,
   type McpServerConfig,
   type McpSharedRow,
@@ -133,6 +134,44 @@ const EMPTY_ASSETS: LibraryAssets = { skills: [], mcp: [], files: [], plugins: [
 /** MCP 配置虚拟源 id（不存在于 libraries 表；-1 安全）。 */
 const MCP_VIEW_ID = -1;
 
+/** 检查更新结果的会话级缓存（sessionStorage）：关闭市场页再开还在，关标签页即失。
+ *  状态是「与 origin 比对的快照」，缓存按 checkedAt 过 30 分钟作废（比不查更误导）。 */
+const CHECK_CACHE_KEY = 'weave.market-check';
+const CHECK_CACHE_TTL_MS = 30 * 60_000;
+
+interface CheckCacheEntry {
+  id: number;
+  status: MarketUpdateStatus;
+  checkedAt: number;
+}
+
+function loadCheckCache(): { status: Map<number, MarketUpdateStatus>; checkedAt: number } {
+  try {
+    const raw = sessionStorage.getItem(CHECK_CACHE_KEY);
+    if (!raw) return { status: new Map(), checkedAt: 0 };
+    const parsed = JSON.parse(raw) as CheckCacheEntry[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return { status: new Map(), checkedAt: 0 };
+    const newest = Math.max(...parsed.map((e) => e.checkedAt));
+    if (Date.now() - newest > CHECK_CACHE_TTL_MS) return { status: new Map(), checkedAt: 0 };
+    return { status: new Map(parsed.map((e) => [e.id, e.status])), checkedAt: newest };
+  } catch {
+    return { status: new Map(), checkedAt: 0 };
+  }
+}
+
+function saveCheckCache(status: Map<number, MarketUpdateStatus>, checkedAt: number): void {
+  try {
+    const entries: CheckCacheEntry[] = [...status.entries()].map(([id, s]) => ({
+      id,
+      status: s,
+      checkedAt,
+    }));
+    sessionStorage.setItem(CHECK_CACHE_KEY, JSON.stringify(entries));
+  } catch {
+    // 存储满/隐私模式：缓存缺席 = 下次打开重新查，不碍事
+  }
+}
+
 export function MarketModal({
   onClose,
   projects,
@@ -171,6 +210,8 @@ export function MarketModal({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [gitUrl, setGitUrl] = useState('');
   const [marketStatus, setMarketStatus] = useState<Map<number, MarketUpdateStatus>>(new Map());
+  /** 最近一次检查更新的时刻（结果集同源）：来源行 tooltip 提示新鲜度；0 = 未查过。 */
+  const [checkedAt, setCheckedAt] = useState<number>(0);
   /** 多选批操作：选中行 uid 集 + 开关态（有选中即开）。 */
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<string[]>([]);
@@ -410,13 +451,37 @@ export function MarketModal({
   const refreshing = fb.stateOf('mkt-refresh-all') === 'loading';
   const gitImporting = fb.stateOf('mkt-git-import') === 'loading';
 
+  /** 检查结果并入 status 表 + 记时刻 + 写 sessionStorage（关闭页面后还能接上）。 */
+  const mergeCheckResults = useCallback(
+    (results: MarketUpdateCheck[]) => {
+      const at = Date.now();
+      setMarketStatus((prev) => {
+        const next = new Map(prev);
+        for (const r of results) next.set(r.id, r.status);
+        saveCheckCache(next, at);
+        return next;
+      });
+      setCheckedAt(at);
+    },
+    [],
+  );
+
+  // 挂载即接上次检查结果（30 分钟内的 sessionStorage 快照）
+  useEffect(() => {
+    const { status, checkedAt: at } = loadCheckCache();
+    if (status.size > 0) {
+      setMarketStatus(status);
+      setCheckedAt(at);
+    }
+  }, []);
+
   async function handleCheckUpdates() {
     if (checking) return;
     await fb.run(
       'mkt-check-updates',
       async () => {
         const results = await api.checkMarketUpdates();
-        setMarketStatus(new Map(results.map((r) => [r.id, r.status])));
+        mergeCheckResults(results);
         show('success', t('library.checkDone', { n: results.filter((r) => r.status === 'update-available').length }));
       },
       { fail: (e) => t('library.checkFailed', { error: errorText(e) }) },
@@ -429,11 +494,7 @@ export function MarketModal({
       `mkt-check-one:${item.id}`,
       async () => {
         const results = await api.checkMarketUpdates([item.id]);
-        setMarketStatus((prev) => {
-          const next = new Map(prev);
-          for (const r of results) next.set(r.id, r.status);
-          return next;
-        });
+        mergeCheckResults(results);
         const hit = results.filter((r) => r.status === 'update-available').length;
         show('success', t('library.checkDone', { n: hit }));
       },
@@ -451,11 +512,7 @@ export function MarketModal({
         setLibCache(new Map());
         if (selectedId !== null) void loadLibrary(selectedId);
         const recheck = await api.checkMarketUpdates([item.id]);
-        setMarketStatus((prev) => {
-          const next = new Map(prev);
-          for (const r of recheck) next.set(r.id, r.status);
-          return next;
-        });
+        mergeCheckResults(recheck);
         show('success', t('library.refreshDone', { n: 1 }));
       },
       { fail: (e) => t('library.refreshFailed', { error: errorText(e) }) },
@@ -475,11 +532,7 @@ export function MarketModal({
         setLibCache(new Map()); // 副本已刷新，缓存作废重扫
         if (selectedId !== null) void loadLibrary(selectedId);
         const recheck = await api.checkMarketUpdates(ids);
-        setMarketStatus((prev) => {
-          const next = new Map(prev);
-          for (const r of recheck) next.set(r.id, r.status);
-          return next;
-        });
+        mergeCheckResults(recheck);
         show('success', t('library.refreshDone', { n: ids.length }));
       },
       { fail: (e) => t('library.refreshFailed', { error: errorText(e) }) },
@@ -721,6 +774,7 @@ export function MarketModal({
                 item={item}
                 selected={selectedId === item.id}
                 status={marketStatus.get(item.id)}
+                checkedAtMs={checkedAt}
                 onSelect={() => {
                   setQuery('');
                   setSelectedId(item.id);
@@ -793,6 +847,7 @@ export function MarketModal({
                     item={item}
                     selected={false}
                     status={marketStatus.get(item.id)}
+                    checkedAtMs={checkedAt}
                     onSelect={() => {
                       setQuery('');
                       setSelectedId(item.id);
@@ -991,6 +1046,7 @@ function SourceRow({
   item,
   selected,
   status,
+  checkedAtMs,
   onSelect,
   onRemove,
   onMigrate,
@@ -1004,6 +1060,8 @@ function SourceRow({
   item: MarketItem;
   selected: boolean;
   status?: MarketUpdateStatus;
+  /** 最近一次检查更新的时刻（epoch ms；0 = 本会话没查过）——tooltip 提示新鲜度。 */
+  checkedAtMs: number;
   onSelect: () => void;
   onRemove: (item: MarketItem) => void;
   onMigrate: (item: MarketItem) => void;
@@ -1063,7 +1121,12 @@ function SourceRow({
         <span className="flex shrink-0 items-center gap-1">
           {!item.builtin && (
             <Tooltip
-              label={status === 'update-available' ? t('library.refreshUpdatesTip') : t('library.checkUpdatesTip')}
+              label={
+                (status === 'update-available' ? t('library.refreshUpdatesTip') : t('library.checkUpdatesTip')) +
+                (checkedAtMs > 0
+                  ? ` (${t('market.checkedAgo', { min: Math.max(1, Math.round((Date.now() - checkedAtMs) / 60_000)) })})`
+                  : '')
+              }
               side="top"
             >
               <button
