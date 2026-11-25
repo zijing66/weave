@@ -547,9 +547,13 @@ export function useConvThread(deps: {
     } catch {
       anchorRef.current = null;
     }
-    // 贴底 effect 同拍先跑（tailSig 首拍会贴底），这里随后覆盖
+    // 贴底 effect 同拍先跑（tailSig 首拍会贴底），这里随后覆盖。
+    // **stick 在场锚让位**（2026-11-24 用户实测：进长会话锚跳到会话最上方）：
+    // 缓存首屏 + 过期锚会把视口按旧位置放走，压过「首次进入按最新气泡定位」
+    // （2026-11-15 裁决）。用户没滚过（stick=true）恒贴底；锚只在恢复用户
+    // 上翻阅读位（stick=false）时才有发言权。
     requestAnimationFrame(() => {
-      if (anchorRef.current) restoreAnchor();
+      if (anchorRef.current && !stick.current) restoreAnchor();
     });
   }, [entries, minimized, sessionId]);
 
@@ -570,11 +574,13 @@ export function useConvThread(deps: {
     [answers, entries, executions, manualDeliveries, narration, plan, preQuestion, rewinds],
   );
   // 过程输出迟加载 / 图片解码把内容撑高：恢复后头几拍里视口被顶走就重放锚原位
-  // （限恢复后 3 拍，之后交给用户——不能终身抢滚动）。这也是「开窗后过程输出
-  // 加载完、视口漂到非底部」的修法：漂走的那一刻锚还在，按锚落回原位。
+  // （限恢复后 3 拍，之后交给用户——不能终身抢滚动）。**stick 在场不重放**：
+  // 没滚过就交给贴底跟随——否则缓存对账/旁白补采每一拍都把视口从底部顶回旧锚
+  // （2026-11-24 用户实测：进长会话被锚重放拽到会话最上方，另一半成因）。
   const restoredTick = useRef(0);
   useEffect(() => {
     if (minimized || !restoredRef.current) return;
+    if (stick.current) return;
     const id = requestAnimationFrame(() => {
       restoredTick.current += 1;
       if (restoredTick.current <= 3 && anchorRef.current) restoreAnchor();
