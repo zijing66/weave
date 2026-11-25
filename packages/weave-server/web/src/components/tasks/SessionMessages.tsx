@@ -1087,7 +1087,10 @@ export function SessionMessages({
         </div>
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
-            尾巴上把还没落进事件流的投递行当最新气泡摆着（Held/失败/暂停闸成因 + 重发） */}
+            尾巴上把还没落进事件流的投递行当最新气泡摆着（Held/失败/暂停闸成因 + 重发）。
+            外层 relative 壳：生成中状态条 absolute 挂它上面（滚动容器内挂 absolute
+            会随内容滚走，bottom-0 相对整个内容高度）。 */}
+        <div className="relative min-h-0 flex-1">
         <div
           ref={threadRef}
           onScroll={() => {
@@ -1129,7 +1132,7 @@ export function SessionMessages({
           // 角，整条高度让位只会在对话区右侧留一条空竖条（2026-11-08 用户截图）；
           // 气泡区用满宽度，右边与控制行（模式/模型）对齐。
           className={cn(
-            'relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain',
+            'min-h-0 h-full overflow-y-auto overflow-x-hidden overscroll-contain',
             // overflow-anchor:none：向上翻页的视口定位由翻页锚（pageAnchor）手动做
             // （Safari 无原生锚定、必须保留）；Chrome 的原生滚动锚定会再调一次
             // scrollTop，两套叠加 = 补两遍、视口跳走（用户报「加载历史后对话跳转异常」）。
@@ -1153,7 +1156,12 @@ export function SessionMessages({
           <div
             ref={contentRef}
             className="flex min-h-full flex-col space-y-2"
-            style={pull.px > 0 ? { transform: `translateY(${pull.px}px)` } : undefined}
+            style={{
+              // 悬浮状态条在场时内容尾部让位：最后一条气泡不被状态条盖住
+              //（状态条高度约 30px + 边距）。
+              paddingBottom: answerPending || generating || interrupted ? 38 : undefined,
+              ...(pull.px > 0 ? { transform: `translateY(${pull.px}px)` } : {}),
+            }}
           >
           {entries === null ? (
             <p className="flex items-center justify-center gap-1.5 pt-6 text-xs text-neutral-600">
@@ -1742,59 +1750,63 @@ export function SessionMessages({
                 </div>
               )}
 
-              {(answerPending || generating || interrupted) && (
-                <div className="flex flex-wrap items-center justify-start gap-1.5 pb-1">
-                  {answerPending && (
-                    <Tooltip label={t('tasks.answerTooltip')}>
-                      <button
-                        type="button"
-                        onClick={() => onOpenAnswer?.()}
-                        className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 transition-colors hover:border-amber-400/60 hover:text-amber-200"
-                      >
-                        <HelpCircle className="h-3 w-3" />
-                        {t('tasks.convAnswer')}
-                      </button>
-                    </Tooltip>
-                  )}
-                  {(generating || interrupted || failed) && (
-                    <div
-                      className={cn(
-                        // sticky bottom-0：状态条钉在滚动区底（视口内恒可见），不随最后一个
-                        // 气泡走——气泡高时它悬浮贴底，气泡矮时钉在内容流末端之下（用户裁决：
-                        // 生成中状态条贴底固定，不跟随最后气泡）。
-                        'sticky bottom-0 z-10 mt-auto flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10',
-                        failed
-                          ? 'border-red-500/30 bg-red-950/30 text-red-300'
-                          : 'border-edge/[0.16] bg-neutral-900 text-neutral-500',
-                      )}
-                    >
-                      {interrupted ? (
-                        <Ban className="h-3 w-3 shrink-0" />
-                      ) : failed ? (
-                        <AlertTriangle className="h-3 w-3 shrink-0" />
-                      ) : (
-                        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                      )}
-                      {interrupted ? (
-                        t('tasks.msgInterrupted')
-                      ) : failed ? (
-                        <span className="min-w-0 truncate" title={failed.text}>
-                          {failed.text}
-                        </span>
-                      ) : compacting ? (
-                        t('tasks.msgCompacting')
-                      ) : liveText ? (
-                        <EventTicker text={liveText} />
-                      ) : (
-                        t('tasks.msgGenerating')
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
             </>
           )}
           </div>
+
+        </div>
+
+        {/* 生成中/中断/待答状态条：悬浮在气泡区底部。absolute 挂在**外层 relative
+            壳**（threadRef 是滚动容器，absolute 放它内部会随内容滚走——bottom-0
+            相对整个内容高度，内容一长就出视口）——贴底恒可见、不被内容滚动带走
+            （2026-11-24 用户裁决：就悬浮在气泡区域贴底）。 */}
+        {(answerPending || generating || interrupted) && (
+            <div className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center justify-start gap-1.5 bg-gradient-to-t from-neutral-950/85 via-neutral-950/60 to-transparent px-1 pb-1.5 pt-3">
+              {answerPending && (
+                <Tooltip label={t('tasks.answerTooltip')}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAnswer?.()}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 shadow-sm transition-colors hover:border-amber-400/60 hover:text-amber-200"
+                  >
+                    <HelpCircle className="h-3 w-3" />
+                    {t('tasks.convAnswer')}
+                  </button>
+                </Tooltip>
+              )}
+              {(generating || interrupted || failed) && (
+                <div
+                  className={cn(
+                    'flex min-w-0 grow basis-48 items-center gap-1.5 rounded-lg border px-2 py-1.5 text-10 shadow-sm',
+                    failed
+                      ? 'border-red-500/30 bg-red-950/30 text-red-300'
+                      : 'border-edge/[0.16] bg-neutral-900 text-neutral-500',
+                  )}
+                >
+                  {interrupted ? (
+                    <Ban className="h-3 w-3 shrink-0" />
+                  ) : failed ? (
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                  ) : (
+                    <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                  )}
+                  {interrupted ? (
+                    t('tasks.msgInterrupted')
+                  ) : failed ? (
+                    <span className="min-w-0 truncate" title={failed.text}>
+                      {failed.text}
+                    </span>
+                  ) : compacting ? (
+                    t('tasks.msgCompacting')
+                  ) : liveText ? (
+                    <EventTicker text={liveText} />
+                  ) : (
+                    t('tasks.msgGenerating')
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 分界拖拽手柄：贴在**对话区的下边线**上（拖动 = 调对话区大小，输入区
