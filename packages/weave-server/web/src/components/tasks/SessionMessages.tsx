@@ -901,64 +901,47 @@ export function SessionMessages({
               <>
                 {/* 旁路会话（claude 的 /btw）：能力面没有这种机制就不渲染 */}
                 {capability.sideQuestion && (
-                  <Tooltip label={t('tasks.sideTitle')} side="top">
-                    <button
-                      type="button"
-                      aria-label={t('tasks.sideTitle')}
+                  <button
+                    type="button"
+                    aria-label={t('tasks.sideTitle')}
                     onClick={() => setSideOpen(true)}
                     className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                   >
                     <MessageCircleQuestion className="h-3 w-3 text-violet-400" />
                     <span className="max-lg:hidden">{t('tasks.sideTitle')}</span>
-                    </button>
-                  </Tooltip>
+                  </button>
                 )}
                 {webTerminal && (
-                  <Tooltip
-                    label={
-                      webTerminal.available
-                        ? t('tasks.openWebTerminal')
-                        : webTerminal.reason === 'busy'
-                          ? t('tasks.webTerminalBusy')
-                          : t('tasks.webTerminalGone')
-                    }
-                    side="top"
-                  >
-                    <button
-                      type="button"
-                      aria-label={t('tasks.openWebTerminal')}
-                      disabled={!webTerminal.available}
-                      onClick={webTerminal.onOpen}
-                      className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 disabled:cursor-not-allowed disabled:hover:border-edge/[0.08] disabled:hover:text-neutral-400 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
-                    >
-                      <SquareTerminal className="h-3 w-3 text-emerald-400" />
-                      <span className="max-lg:hidden">{t('tasks.webTerminalShort')}</span>
-                    </button>
-                  </Tooltip>
-                )}
-                <Tooltip label={t('tasks.chainTitle')} side="top">
                   <button
                     type="button"
-                    aria-label={t('tasks.chainTitle')}
+                    aria-label={t('tasks.openWebTerminal')}
+                    disabled={!webTerminal.available}
+                    onClick={webTerminal.onOpen}
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 disabled:cursor-not-allowed disabled:hover:border-edge/[0.08] disabled:hover:text-neutral-400 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                  >
+                    <SquareTerminal className="h-3 w-3 text-emerald-400" />
+                    <span className="max-lg:hidden">{t('tasks.webTerminalShort')}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label={t('tasks.chainTitle')}
                   onClick={onOpenChain}
                   className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   <Activity className="h-3 w-3 text-rose-400" />
                   <span className="max-lg:hidden">{t('tasks.chainTitle')}</span>
                 </button>
-                </Tooltip>
                 {/* 扩展执行日志（该会话生效的绑定 + 逐拍记录；SSE 帧驱动） */}
-                <Tooltip label={t('ext.execTitle')} side="top">
-                  <button
-                    type="button"
-                    aria-label={t('ext.execTitle')}
+                <button
+                  type="button"
+                  aria-label={t('ext.execTitle')}
                   onClick={() => setExtExecOpen(true)}
                   className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   <Workflow className="h-3 w-3 text-cyan-400" />
                   <span className="max-lg:hidden">{t('ext.execTitle')}</span>
                 </button>
-                </Tooltip>
               </>
             )}
             {/* B5 并回冲突/失败卡的两枚 AI 通道（冲突闭环恒走 AI）：重试恒在，
@@ -966,48 +949,43 @@ export function SessionMessages({
             {sessionRow?.worktree &&
               (sessionRow.worktree.status === 'conflict' || sessionRow.worktree.status === 'error') && (
                 <>
-                  <Tooltip label={t('tasks.worktreeRetryHint')} side="top">
+                  <button
+                    type="button"
+                    aria-label={t('tasks.worktreeRetry')}
+                    disabled={fb.stateOf('wt-retry') === 'loading'}
+                    onClick={retryWorktreeMerge}
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/30 px-1.5 py-0.5 text-10 text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                  >
+                    <FeedbackIcon
+                      state={fb.stateOf('wt-retry')}
+                      className="h-3 w-3"
+                      icon={<RotateCcw className="h-3 w-3" />}
+                    />
+                    <span className="max-lg:hidden">{t('tasks.worktreeRetry')}</span>
+                  </button>
+                  {sessionRow.worktree.status === 'conflict' && (
                     <button
                       type="button"
-                      aria-label={t('tasks.worktreeRetry')}
-                      disabled={fb.stateOf('wt-retry') === 'loading'}
-                      onClick={retryWorktreeMerge}
+                      aria-label={t('tasks.worktreeRepair')}
+                      disabled={fb.stateOf('wt-repair') === 'loading'}
+                      onClick={dispatchWorktreeRepair}
                       className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/30 px-1.5 py-0.5 text-10 text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                     >
                       <FeedbackIcon
-                        state={fb.stateOf('wt-retry')}
+                        state={fb.stateOf('wt-repair')}
                         className="h-3 w-3"
-                        icon={<RotateCcw className="h-3 w-3" />}
+                        icon={<GitMerge className="h-3 w-3" />}
                       />
-                      <span className="max-lg:hidden">{t('tasks.worktreeRetry')}</span>
+                      <span className="max-lg:hidden">{t('tasks.worktreeRepair')}</span>
                     </button>
-                  </Tooltip>
-                  {sessionRow.worktree.status === 'conflict' && (
-                    <Tooltip label={t('tasks.worktreeRepairHint')} side="top">
-                      <button
-                        type="button"
-                        aria-label={t('tasks.worktreeRepair')}
-                        disabled={fb.stateOf('wt-repair') === 'loading'}
-                        onClick={dispatchWorktreeRepair}
-                        className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/30 px-1.5 py-0.5 text-10 text-amber-300 transition-colors hover:border-amber-500/50 disabled:opacity-40 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
-                      >
-                        <FeedbackIcon
-                          state={fb.stateOf('wt-repair')}
-                          className="h-3 w-3"
-                          icon={<GitMerge className="h-3 w-3" />}
-                        />
-                        <span className="max-lg:hidden">{t('tasks.worktreeRepair')}</span>
-                      </button>
-                    </Tooltip>
                   )}
                 </>
               )}
             {/* 全屏：两种形态都能用（嵌入右栏被挤窄时尤其有用）；ESC 也能退。
                 样式与「事件链」同款按钮，图标用四角括线（放大 = 往外、缩小 = 往里）。 */}
-            <Tooltip label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')} side="top">
-              <button
-                type="button"
-                aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
+            <button
+              type="button"
+              aria-label={fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               onClick={toggleFullscreen}
               className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
             >
@@ -1015,61 +993,52 @@ export function SessionMessages({
               <span className="max-lg:hidden">
                 {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               </span>
-              </button>
-            </Tooltip>
+            </button>
             {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
               <>
-                <Tooltip label={t('tasks.messagesMinimize')} side="top">
-                  <button
-                    type="button"
-                    aria-label={t('tasks.messagesMinimize')}
-                    onClick={onMinimize}
-                    className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                </Tooltip>
-                <Tooltip label={t('tasks.messagesClose')} side="top">
-                  <button
-                    type="button"
-                    aria-label={t('tasks.messagesClose')}
-                    onClick={requestClose}
-                    className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </Tooltip>
+                <button
+                  type="button"
+                  aria-label={t('tasks.messagesMinimize')}
+                  onClick={onMinimize}
+                  className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={t('tasks.messagesClose')}
+                  onClick={requestClose}
+                  className="rounded p-0.5 text-neutral-500 hover:text-neutral-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               </>
             )}
             {/* 框架页 pane 的关闭：按钮排最右（tab 头已拆，这是唯一的关闭入口） */}
             {pane && onClose && (
-              <Tooltip label={t('tasks.paneClose')} side="top">
-                <button
-                  type="button"
-                  aria-label={t('tasks.paneClose')}
-                  onClick={onClose}
-                  className="ml-1 inline-flex shrink-0 items-center rounded border border-edge/[0.08] p-1 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </Tooltip>
+              <button
+                type="button"
+                aria-label={t('tasks.paneClose')}
+                onClick={onClose}
+                className="ml-1 inline-flex shrink-0 items-center rounded border border-edge/[0.08] p-1 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
+              >
+                <X className="h-3 w-3" />
+              </button>
             )}
           </div>
           {/* 弹出独立框架页：独立摆在右上角（不混进功能按钮组），分隔线隔开 */}
           {onPopout && (
             <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
-              <Tooltip label={t('tasks.panePopout')} side="top">
-                <button
-                  type="button"
-                  aria-label={t('tasks.panePopout')}
-                  onClick={onPopout}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
-                >
-                  <ExternalLink className="h-3 w-3 text-sky-400" />
-                  <span className="max-lg:hidden">{t('tasks.panePopoutShort')}</span>
-                </button>
-              </Tooltip>
+              <button
+                type="button"
+                aria-label={t('tasks.panePopout')}
+                onClick={onPopout}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+              >
+                <ExternalLink className="h-3 w-3 text-sky-400" />
+                <span className="max-lg:hidden">{t('tasks.panePopoutShort')}</span>
+              </button>
             </div>
           )}
 
@@ -1603,12 +1572,7 @@ export function SessionMessages({
                           )}
                           {/* 删除：这条从对话里彻底消失（是暂停闸成因时一并解闸并续排空；
                               还在队列里的 pending 行则是取消发送） */}
-                          <Tooltip label={t(
-                              pipe.status === 'pending'
-                                ? 'tasks.msgDismissQueuedHint'
-                                : 'tasks.msgDismissHint',
-                            )}>
-                            <button
+                          <button
                             type="button"
                             disabled={fb.stateOf(`dismiss:${pipe.id}`) === 'loading'}
                             onClick={() =>
@@ -1630,7 +1594,6 @@ export function SessionMessages({
                             />
                             {t('tasks.msgDismiss')}
                           </button>
-                          </Tooltip>
                         </div>
                       )}
                     </div>
@@ -1711,12 +1674,11 @@ export function SessionMessages({
                                 </span>
                               </div>
                             ) : (
-                              <Tooltip label={m.text}>
-                                <button
-                                  type="button"
-                                  onClick={toggle}
-                                  className="flex w-full min-w-0 items-center gap-1.5 text-left"
-                                >
+                              <button
+                                type="button"
+                                onClick={toggle}
+                                className="flex w-full min-w-0 items-center gap-1.5 text-left"
+                              >
                                 <Badge className={cn('shrink-0', STATUS_BADGE[m.status])}>
                                   {t(queueStatusKey(m))}
                                 </Badge>
@@ -1732,8 +1694,7 @@ export function SessionMessages({
                                 <span className="shrink-0 text-10 text-neutral-400">
                                   {formatStamp(m.at)}
                                 </span>
-                                </button>
-                              </Tooltip>
+                              </button>
                             )}
                             {open && (
                               <>
@@ -1785,26 +1746,24 @@ export function SessionMessages({
         {/* 「滚到最下」：上翻超过 240px 才显（onScroll 置态）。absolute 挂 relative
             壳（与状态条同层）右下角——点击贴底，跟随逻辑接管。 */}
         {showJump && (
-          <Tooltip label={t('tasks.convJumpBottom')}>
-            <button
-              type="button"
-              aria-label={t('tasks.convJumpBottom')}
-              onClick={() => {
-                const el = threadRef.current;
-                if (!el) return;
-                stick.current = true;
-                userScrolled.current = false;
-                el.scrollTop = el.scrollHeight;
-                setShowJump(false);
-              }}
-              className={cn(
-                'absolute right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.12] bg-neutral-900/90 text-neutral-400 shadow-mac transition-colors hover:text-neutral-200',
-                (answerPending || generating || interrupted) ? 'bottom-12' : 'bottom-2',
-              )}
-            >
-              <ChevronDown className="h-4 w-4" />
-            </button>
-          </Tooltip>
+          <button
+            type="button"
+            aria-label={t('tasks.convJumpBottom')}
+            onClick={() => {
+              const el = threadRef.current;
+              if (!el) return;
+              stick.current = true;
+              userScrolled.current = false;
+              el.scrollTop = el.scrollHeight;
+              setShowJump(false);
+            }}
+            className={cn(
+              'absolute right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.12] bg-neutral-900/90 text-neutral-400 shadow-mac transition-colors hover:text-neutral-200',
+              (answerPending || generating || interrupted) ? 'bottom-12' : 'bottom-2',
+            )}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
         )}
 
         {/* 生成中/中断/待答状态条：悬浮在气泡区底部。absolute 挂在**外层 relative
@@ -1820,16 +1779,14 @@ export function SessionMessages({
               embedded ? 'px-1' : 'px-0.5',
             )}>
               {answerPending && (
-                <Tooltip label={t('tasks.answerTooltip')}>
-                  <button
-                    type="button"
-                    onClick={() => onOpenAnswer?.()}
-                    className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 shadow-sm transition-colors hover:border-amber-400/60 hover:text-amber-200"
-                  >
-                    <HelpCircle className="h-3 w-3" />
-                    {t('tasks.convAnswer')}
-                  </button>
-                </Tooltip>
+                <button
+                  type="button"
+                  onClick={() => onOpenAnswer?.()}
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5 text-10 font-medium text-amber-300 shadow-sm transition-colors hover:border-amber-400/60 hover:text-amber-200"
+                >
+                  <HelpCircle className="h-3 w-3" />
+                  {t('tasks.convAnswer')}
+                </button>
               )}
               {(generating || interrupted || failed) && (
                 <div
@@ -1883,9 +1840,7 @@ export function SessionMessages({
           onPointerCancel={onRowsUp}
           className="group -my-1 flex h-3 shrink-0 cursor-ns-resize touch-none items-center justify-center"
         >
-          <Tooltip label={t('tasks.msgResizeInput')} side="top">
-            <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
-          </Tooltip>
+          <span className="h-0.5 w-8 rounded-full bg-edge/[0.12] transition-colors group-hover:bg-blue-500/50" />
         </div>
 
         {error && (
@@ -1916,7 +1871,6 @@ export function SessionMessages({
                 <CheckCheck className="h-3 w-3" />
                 {t(allPicked ? 'tasks.convDeselectAll' : 'tasks.convSelectAll')}
               </button>
-              <Tooltip label={t('tasks.convShare')}>
               <button
                 type="button"
                 disabled={picked.size === 0}
@@ -1936,7 +1890,6 @@ export function SessionMessages({
                   <ChevronDown className="h-3 w-3 shrink-0 text-neutral-500" />
                 )}
               </button>
-              </Tooltip>
               <button
                 type="button"
                 onClick={() => {
@@ -2001,7 +1954,6 @@ export function SessionMessages({
                     e.target.value = '';
                   }}
                 />
-                <Tooltip label={t('tasks.msgAttachImageHint')}>
                 <button
                   type="button"
                   disabled={!attachKinds.includes('image') || staged.length >= ATTACH_MAX_COUNT}
@@ -2017,8 +1969,6 @@ export function SessionMessages({
                   <ImageIcon className="h-3 w-3" />
                   <span className="max-lg:hidden">{t('tasks.msgAttachImage')}</span>
                 </button>
-                </Tooltip>
-                <Tooltip label={t('tasks.msgAttachFileHint')}>
                 <button
                   type="button"
                   disabled={!attachKinds.includes('file') || staged.length >= ATTACH_MAX_COUNT}
@@ -2038,10 +1988,8 @@ export function SessionMessages({
                   )}
                   <span className="max-lg:hidden">{t('tasks.msgAttachFile')}</span>
                 </button>
-                </Tooltip>
                 {/* 引用文件（@ 路径引用选择器）：与上传是两扇门——它插的是项目内
                     文件的引用胶囊，不占附件格。 */}
-                <Tooltip label={t('tasks.fileAttachHint')}>
                 <button
                   type="button"
                   disabled={!capability.pathRefs}
@@ -2057,7 +2005,6 @@ export function SessionMessages({
                   <FileCode className="h-3 w-3" />
                   <span className="max-lg:hidden">{t('tasks.fileAttach')}</span>
                 </button>
-                </Tooltip>
                 {/* 会话活动（子 agent/任务/后台 shell）：与图片/文件同排；无活动时
                     disabled，点开 portal popover 向上弹（不占布局）。 */}
                 <ActivityButton sessionId={sessionId} busy={statuses.get(sessionId) === 'running'} />
@@ -2098,10 +2045,9 @@ export function SessionMessages({
               {(modeNames.length > 0 || modelNames.length > 0) && (
                 <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-lg:contents">
                   {modeNames.length > 0 && (
-                    <Tooltip label={t('tasks.modeCycle')}>
-                      <button
-                        type="button"
-                        aria-label={t('tasks.modeCycle')}
+                    <button
+                      type="button"
+                      aria-label={t('tasks.modeCycle')}
                       onClick={() => setConfirmMode(true)}
                       className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded border border-edge/[0.1] px-1.5 py-0.5 transition-colors hover:border-blue-500/40"
                     >
@@ -2129,8 +2075,7 @@ export function SessionMessages({
                           ? t('tasks.modeSwitching')
                           : (currentMode ?? t('tasks.modeUnknown'))}
                       </span>
-                      </button>
-                    </Tooltip>
+                    </button>
                   )}
                   {modelNames.length > 0 && (
                     <div className="flex min-w-0 items-center gap-1">
@@ -2358,17 +2303,15 @@ export function SessionMessages({
                   用文字不用图标——Enter 键帽已占了 CornerDownLeft，再摆一枚同形的
                   就是两个一样的箭头。`pointerdown` 压掉默认 = 不把焦点从输入框抢走
                   （抢了软键盘会收）。 */}
-              <Tooltip label={t('tasks.msgNewline')}>
-                <button
-                  type="button"
-                  aria-label={t('tasks.msgNewline')}
-                  onPointerDown={(e) => e.preventDefault()}
-                  onClick={insertNewline}
-                  className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2 text-10 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-6"
-                >
-                  {t('tasks.msgNewline')}
-                </button>
-              </Tooltip>
+              <button
+                type="button"
+                aria-label={t('tasks.msgNewline')}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={insertNewline}
+                className="hidden shrink-0 items-center justify-center rounded border border-edge/[0.1] px-2 text-10 text-neutral-400 transition-colors hover:border-blue-500/40 hover:text-blue-300 max-lg:inline-flex max-lg:h-6"
+              >
+                {t('tasks.msgNewline')}
+              </button>
               {/* 停止 / 发送（+ 通道下拉）：靠右；桌面 2 行网格、列自动增长
                   （4 枚钮 = 2×2，纵排太高——2026-11-11 用户圈注「适当换行，可以
                   2列」）；移动端横排一行不动（max-lg:flex 还原）。停止与事件链
@@ -2381,7 +2324,6 @@ export function SessionMessages({
                     （`h-6 w-6`、窄屏 `h-8 w-8`，与发送键和换行键同高）；**恒可点**
                     （宿主里 ESC 后面还要接 rewind，这一枚就是那记键），只在点完之后
                     冷却几秒——连发会把刚开的那层菜单也退掉。 */}
-                <Tooltip label={t('tasks.stopTooltip')}>
                 <button
                   type="button"
                   aria-label={t('tasks.stopTooltip')}
@@ -2402,10 +2344,8 @@ export function SessionMessages({
                     }
                   />
                 </button>
-                </Tooltip>
                 {/* 硬中断 = 一枚 Ctrl+C 键帽：与 ESC 同格同冷却口径（连发没有意义）。
                     不落转录标记，「停没停」判不了，只报送出。 */}
-                <Tooltip label={t('tasks.ctrlCTooltip')}>
                 <button
                   type="button"
                   aria-label={t('tasks.ctrlCTooltip')}
@@ -2436,11 +2376,9 @@ export function SessionMessages({
                     }
                   />
                 </button>
-                </Tooltip>
                 {/* 手动提交 = 一枚 Enter 键帽：提交宿主输入框里现成的内容（层② 自动
                     补打的手动版）。盲打回车提交的是整个输入框——框里若有别的东西会
                     一起出去，tooltip 如实说明。 */}
-                <Tooltip label={t('tasks.enterTooltip')}>
                 <button
                   type="button"
                   aria-label={t('tasks.enterTooltip')}
@@ -2462,7 +2400,6 @@ export function SessionMessages({
                     icon={<CornerDownLeft className="h-3 w-3" />}
                   />
                 </button>
-                </Tooltip>
                 {/* 发送 = split button：主体发送；桌面端贴一枚下拉箭头展开键序菜单
                     （发送/换行键序切换，全局偏好 localStorage 记住，placeholder 文案
                     跟着走）。移动端只有发送钮本体——换行有专门的键帽，键序无从谈起。 */}
@@ -2495,17 +2432,15 @@ export function SessionMessages({
                     /* flex：这层若是 block，inline-flex 按钮落在文本行盒里，descender
                        会把层撑高 1px——整组随之错位（主钮上浮、与键帽不齐）。 */
                     <div className="relative flex" ref={sendKeyMenuRef}>
-                      <Tooltip label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}>
-                        <button
-                          type="button"
-                          aria-label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
+                      <button
+                        type="button"
+                        aria-label={t('tasks.msgSendKeyToggle', { combo: sendCombo, other: newlineCombo })}
                         aria-expanded={sendKeyMenu}
                         onClick={() => setSendKeyMenu((v) => !v)}
                         className="inline-flex h-6 w-4 shrink-0 items-center justify-center rounded-r border-l border-blue-400/40 bg-blue-600/80 text-white transition-colors hover:bg-blue-500"
                       >
                         <ChevronDown className={cn('h-2.5 w-2.5', sendKeyMenu && 'rotate-180')} />
-                        </button>
-                      </Tooltip>
+                      </button>
                       {sendKeyMenu && (
                         <div
                           data-send-key-menu
@@ -2562,20 +2497,18 @@ export function SessionMessages({
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口。
             触屏同样可用——pointer capture + touch-none，grip 自身不吃滚动） */}
         {!embedded && !fullscreen && (
-          <Tooltip label={t('app.resizeDialog')}>
-            <div
-              role="separator"
-              aria-label={t('app.resizeDialog')}
-              onPointerDown={onGripDown}
-              onPointerMove={onGripMove}
-              onPointerUp={onGripUp}
-              onPointerCancel={onGripUp}
-              onClick={(e) => e.stopPropagation()}
-              className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none max-lg:h-6 max-lg:w-6"
-            >
-              <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20 max-lg:bottom-1.5 max-lg:right-1.5 max-lg:h-3 max-lg:w-3" />
-            </div>
-          </Tooltip>
+          <div
+            role="separator"
+            aria-label={t('app.resizeDialog')}
+            onPointerDown={onGripDown}
+            onPointerMove={onGripMove}
+            onPointerUp={onGripUp}
+            onPointerCancel={onGripUp}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none max-lg:h-6 max-lg:w-6"
+          >
+            <span className="pointer-events-none absolute bottom-1 right-1 h-2 w-2 rounded-br border-b border-r border-edge/20 max-lg:bottom-1.5 max-lg:right-1.5 max-lg:h-3 max-lg:w-3" />
+          </div>
         )}
 
         {/* 弹出菜单：气泡右键一项「多选」／分享图片两项（复制 / 下载）。 */}
@@ -2705,16 +2638,14 @@ export function SessionMessages({
               className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-6"
               onClick={() => setLightbox(null)}
             >
-              <Tooltip label={t('tasks.msgImagePreview')} side="top">
-                <button
-                  type="button"
-                  aria-label={t('tasks.msgImagePreview')}
-                  onClick={() => setLightbox(null)}
-                  className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-900 text-neutral-300 hover:text-neutral-100"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </Tooltip>
+              <button
+                type="button"
+                aria-label={t('tasks.msgImagePreview')}
+                onClick={() => setLightbox(null)}
+                className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.15] bg-neutral-900 text-neutral-300 hover:text-neutral-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
               <img
                 src={`${API_BASE}/images/${lightbox.id}`}
                 alt={lightbox.name}
