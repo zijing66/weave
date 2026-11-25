@@ -920,7 +920,92 @@ export function SessionMessages({
               </p>
             </div>
           </div>
-          <div className="col-start-3 row-start-2 flex min-w-0 items-center justify-end gap-1 max-lg:overflow-x-auto">
+          {/* 弹出：右上角独立格（与功能按钮排同列右对齐、跨行同右缘） */}
+          {onPopout && (
+            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
+              <button
+                type="button"
+                aria-label={t('tasks.panePopout')}
+                onClick={onPopout}
+                className="inline-flex shrink-0 items-center rounded p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+          {/* 框架页窗控（pane 形态）：头部右上角独立格——切回（留主窗占位）在
+              关闭（释放 pane）左侧，样式与「弹出」同款镜像（图标反向、桌面带文字、
+              移动端纯图标），语义不同不并进功能按钮排。 */}
+          {pane && (onFrameReclaim || onFrameClose) && (
+            <div className="col-start-3 row-start-1 flex shrink-0 items-center gap-1 justify-self-end">
+              {onFrameReclaim && (
+                <button
+                  type="button"
+                  aria-label={t('tasks.paneReclaim')}
+                  title={t('tasks.paneReclaim')}
+                  onClick={onFrameReclaim}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                >
+                  <Undo2 className="h-3 w-3 text-sky-400" />
+                  <span className="max-lg:hidden">{t('tasks.paneReclaimShort')}</span>
+                </button>
+              )}
+              {onFrameClose && (
+                <button
+                  type="button"
+                  aria-label={t('tasks.paneClose')}
+                  onClick={onFrameClose}
+                  className="inline-flex shrink-0 items-center rounded p-1 text-neutral-400 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 历史过滤：只改显示，不动手上的翻页游标与勾选；与功能按钮同一行。
+              整行归「Web 终端要盖住的区域」——覆盖壳从这里开始（下方壳注释）。 */}
+          </div>
+          </div>
+
+        {/* Web 终端要盖住的区域（过滤行 + 气泡区 + 分界条 + 输入区）的壳：
+            panel 面覆盖层铺满这里，头部标题行与状态行照常可见；「收起 Web 终端」
+            X 关 pane 后自然回落对话。pane 形态（弹出窗）不渲染——弹出窗的终端
+            走 attachFrameView（PaneFramePage 布局树），term-pane-store 是跨窗
+            共享账，这里再渲染一层会出现第二份终端与「弹出到新窗口」误弹。 */}
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {embedded && !pane && panelPaneIds.length > 0 && (
+          <div className="absolute inset-0 z-30 flex flex-col overflow-hidden rounded bg-neutral-900">
+            <TerminalPanes slot="panel" projectId={projectId} />
+          </div>
+        )}
+
+          <div className="mt-1 mb-2 flex shrink-0 items-center gap-1 max-lg:overflow-x-auto">
+          {CONV_FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFilter(f)}
+              className={cn(
+                'rounded border px-1.5 py-0.5 text-10 transition-colors',
+                filter === f
+                  ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
+                  : 'border-edge/[0.08] text-neutral-500 hover:text-neutral-300',
+              )}
+            >
+              {f === 'all'
+                ? t('tasks.convFilterAll')
+                : f === 'user'
+                  ? t('tasks.convFilterSent')
+                  : f === 'remote'
+                    ? t('tasks.convFilterRemote')
+                    : capability.harness}
+            </button>
+          ))}
+          <span className="ml-auto shrink-0 text-10 text-neutral-600">
+            {t('tasks.convCount', { n: convUnits(visible, selecting).filter((u) => u.kind !== 'rewind').length })}
+          </span>
+          <div className="flex shrink-0 items-center gap-1">
             {/* 嵌入形态：事件链不再占右栏，从这枚按钮开成弹窗 */}
             {embedded && (
               <>
@@ -1041,91 +1126,6 @@ export function SessionMessages({
               </>
             )}
           </div>
-          {/* 弹出：右上角独立格（与功能按钮排同列右对齐、跨行同右缘） */}
-          {onPopout && (
-            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
-              <button
-                type="button"
-                aria-label={t('tasks.panePopout')}
-                onClick={onPopout}
-                className="inline-flex shrink-0 items-center rounded p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-          {/* 框架页窗控（pane 形态）：头部右上角独立格——切回（留主窗占位）在
-              关闭（释放 pane）左侧，样式与「弹出」同款镜像（图标反向、桌面带文字、
-              移动端纯图标），语义不同不并进功能按钮排。 */}
-          {pane && (onFrameReclaim || onFrameClose) && (
-            <div className="col-start-3 row-start-1 flex shrink-0 items-center gap-1 justify-self-end">
-              {onFrameReclaim && (
-                <button
-                  type="button"
-                  aria-label={t('tasks.paneReclaim')}
-                  title={t('tasks.paneReclaim')}
-                  onClick={onFrameReclaim}
-                  className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
-                >
-                  <Undo2 className="h-3 w-3 text-sky-400" />
-                  <span className="max-lg:hidden">{t('tasks.paneReclaimShort')}</span>
-                </button>
-              )}
-              {onFrameClose && (
-                <button
-                  type="button"
-                  aria-label={t('tasks.paneClose')}
-                  onClick={onFrameClose}
-                  className="inline-flex shrink-0 items-center rounded p-1 text-neutral-400 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* 历史过滤：只改显示，不动手上的翻页游标与勾选；与功能按钮同一行。
-              整行归「Web 终端要盖住的区域」——覆盖壳从这里开始（下方壳注释）。 */}
-          </div>
-          </div>
-
-        {/* Web 终端要盖住的区域（过滤行 + 气泡区 + 分界条 + 输入区）的壳：
-            panel 面覆盖层铺满这里，头部标题行与状态行照常可见；「收起 Web 终端」
-            X 关 pane 后自然回落对话。pane 形态（弹出窗）不渲染——弹出窗的终端
-            走 attachFrameView（PaneFramePage 布局树），term-pane-store 是跨窗
-            共享账，这里再渲染一层会出现第二份终端与「弹出到新窗口」误弹。 */}
-        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        {embedded && !pane && panelPaneIds.length > 0 && (
-          <div className="absolute inset-0 z-30 flex flex-col overflow-hidden rounded bg-neutral-900">
-            <TerminalPanes slot="panel" projectId={projectId} />
-          </div>
-        )}
-
-          <div className="flex shrink-0 items-center gap-1 max-lg:overflow-x-auto">
-          {CONV_FILTERS.map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={cn(
-                'rounded border px-1.5 py-0.5 text-10 transition-colors',
-                filter === f
-                  ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
-                  : 'border-edge/[0.08] text-neutral-500 hover:text-neutral-300',
-              )}
-            >
-              {f === 'all'
-                ? t('tasks.convFilterAll')
-                : f === 'user'
-                  ? t('tasks.convFilterSent')
-                  : f === 'remote'
-                    ? t('tasks.convFilterRemote')
-                    : capability.harness}
-            </button>
-          ))}
-          <span className="ml-auto shrink-0 text-10 text-neutral-600">
-            {t('tasks.convCount', { n: convUnits(visible, selecting).filter((u) => u.kind !== 'rewind').length })}
-          </span>
           </div>
 
         {/* 对话 = 用户投递 + 每轮 Stop 的最终总结（历史查事件流，不落库）；
