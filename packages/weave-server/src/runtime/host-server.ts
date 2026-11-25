@@ -106,7 +106,7 @@ export class RuntimeHostServer {
       lastAt = now;
       const payload: import('./protocol.js').ResourceReportPayload = {
         hostId: this.hostId,
-        hostCpuPercent: elapsed > 0 ? Math.round((usage.user + usage.system) / 1e6 / elapsed * 10000) / 100 : 0,
+        hostCpuPercent: elapsed > 0 ? Math.round((usage.user + usage.system) / 1e6 / elapsed * 1000) / 10 : 0,
         hostMemRssBytes: process.memoryUsage().rss,
         instances: this.manager.resourceSummaries(),
         at: now,
