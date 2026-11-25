@@ -16,6 +16,10 @@ import type { SessionTitleSurface } from '../driver.js';
 interface TitleReg {
   sessionId: string;
   name: string | null;
+  /** 名字来源（宿主记账）：`user` = 宿主内 /rename、`hook` = weave 下发生效、
+   *  `derived` = 宿主派生默认名。user/hook 都是**用户意志已落盘**的权威记号，
+   *  压过 hook 上报的滞后内存名。 */
+  nameSource: string | null;
 }
 
 /** 文件名 → 解析结果；mtime+size 不变就复用（hook 每条事件都会查一次）。 */
@@ -33,14 +37,28 @@ function parseTitleReg(text: string): TitleReg | null {
   } catch {
     return null;
   }
-  const reg = raw as { sessionId?: unknown; name?: unknown };
+  const reg = raw as { sessionId?: unknown; name?: unknown; nameSource?: unknown };
   if (typeof reg?.sessionId !== 'string' || !reg.sessionId) return null;
   const name = typeof reg.name === 'string' && reg.name.trim() ? reg.name.trim() : null;
-  return { sessionId: reg.sessionId, name };
+  const nameSource =
+    typeof reg.nameSource === 'string' && reg.nameSource.trim() ? reg.nameSource.trim() : null;
+  return { sessionId: reg.sessionId, name, nameSource };
 }
 
 /** 宿主侧当前名；查无登记/无名/目录缺失一律 null。同一会话多份登记取最新一份。 */
 export function claudeSessionTitleOf(sessionId: string, home?: string): string | null {
+  return claudeTitleRegOf(sessionId, home)?.name ?? null;
+}
+
+/**
+ * 宿主侧名字 + 记账来源（claudeSessionTitleOf 的带来源版）：diff 仲裁用——
+ * `user`/`hook` = 名字已按用户意志落盘，压过 hook 上报的滞后内存名；
+ * `derived` = 宿主自派生（没有用户意志参与，hook 上报可与它争）。
+ */
+export function claudeTitleRegOf(
+  sessionId: string,
+  home?: string,
+): { name: string; nameSource: string | null } | null {
   const dir = claudeSessionsDir(home);
   if (!dir) return null;
   let files: string[];
@@ -49,7 +67,7 @@ export function claudeSessionTitleOf(sessionId: string, home?: string): string |
   } catch {
     return null;
   }
-  let best: { mtimeMs: number; name: string } | null = null;
+  let best: { mtimeMs: number; name: string; nameSource: string | null } | null = null;
   for (const file of files) {
     if (!file.endsWith('.json')) continue;
     const full = join(dir, file);
@@ -78,14 +96,18 @@ export function claudeSessionTitleOf(sessionId: string, home?: string): string |
       regCache.set(full, { mtimeMs: st.mtimeMs, size: st.size, reg });
     }
     if (reg.sessionId !== sessionId || !reg.name) continue;
-    if (!best || st.mtimeMs >= best.mtimeMs) best = { mtimeMs: st.mtimeMs, name: reg.name };
+    if (!best || st.mtimeMs >= best.mtimeMs)
+      best = { mtimeMs: st.mtimeMs, name: reg.name, nameSource: reg.nameSource };
   }
-  return best?.name ?? null;
+  return best ? { name: best.name, nameSource: best.nameSource } : null;
 }
 
 export const CLAUDE_TITLES: SessionTitleSurface = {
   harness: 'claude',
   async sessionTitleOf(sessionId) {
     return claudeSessionTitleOf(sessionId);
+  },
+  async titleSourceOf(sessionId) {
+    return claudeTitleRegOf(sessionId)?.nameSource ?? null;
   },
 };

@@ -1436,6 +1436,10 @@ export interface SessionTitleSurface {
   readonly harness: Harness;
   /** 宿主侧当前名（自定义或宿主派生）；无名/无文件返回 null（宿主清除名字时置空串 → null）。 */
   sessionTitleOf(sessionId: string): Promise<string | null>;
+  /** 当前名的记账来源（宿主 `nameSource`）：`user`/`hook` = 用户意志已落盘（权威，
+   *  压过 hook 上报的滞后内存名）；`derived`/null = 宿主派生或未记账。缺位 = 该
+   *  harness 不区分来源。 */
+  titleSourceOf?(sessionId: string): Promise<string | null>;
   /** 经官方通道写宿主侧名字；trim 后空串抛错，宿主拒绝/超时/协议不认识抛错。
    *  缺位 = 该 harness 的写另有通道（claude = hook 回执 pending）。 */
   setSessionTitle?(sessionId: string, name: string): Promise<void>;

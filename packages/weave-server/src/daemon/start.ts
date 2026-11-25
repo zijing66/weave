@@ -223,6 +223,10 @@ export async function startDaemon(): Promise<void> {
       const src = hookEvents.listBySession(sessionId, 1).at(-1)?.source;
       return isHarness(src) ? (harnesses.get(src)?.titles?.sessionTitleOf(sessionId) ?? null) : null;
     },
+    titleSourceOf: async (sessionId) => {
+      const src = hookEvents.listBySession(sessionId, 1).at(-1)?.source;
+      return isHarness(src) ? (harnesses.get(src)?.titles?.titleSourceOf?.(sessionId) ?? null) : null;
+    },
   });
   // 内置仓落地必须先于装载：内置规则包装载根与工具包扫描根都指向 <dataDir>/market/weave。
   void ensureBuiltinMarket({ libraries })

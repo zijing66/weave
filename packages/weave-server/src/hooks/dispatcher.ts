@@ -159,6 +159,9 @@ export class HookDispatcher {
        * 通道恒 null）。读方向 diff 采纳：TUI 改名后下一次 hook 事件反显前端。
        */
       sessionTitleOf?: (sessionId: string) => Promise<string | null>;
+      /** 当前名的记账来源（titles 面 `titleSourceOf`）：`user`/`hook` = 用户意志
+       *  已落盘——hook 上报的滞后内存名不再回写（否则与已生效的改名拉锯跳变）。 */
+      titleSourceOf?: (sessionId: string) => Promise<string | null>;
     },
   ) {}
 
@@ -195,8 +198,26 @@ export class HookDispatcher {
             // 宿主侧读失败不拦 ingest
           }
         }
-        const effectiveTitle = reported ?? hostTitle;
-        if (effectiveTitle !== null && this.deps.sessions.applyReportedTitle(ctx.sessionId, effectiveTitle)) {
+        // diff 仲裁：宿主注册表已记账 `user`/`hook`（用户意志落盘）时，hook 上报的
+        // 旧内存名不作数，改采注册表名——宿主消费到下发值前每条 UPS 都带旧名，
+        // 照单采纳会与已生效的改名来回拉锯（列表名反复跳变，2026-11-24 实测）。
+        // derived/无记账（titleSourceOf 缺位或 null）不仲裁，上报名照常采纳。
+        let overrideTitle: string | null = null;
+        if (reported !== null && this.deps.titleSourceOf) {
+          try {
+            const src = await this.deps.titleSourceOf(ctx.sessionId);
+            if ((src === 'user' || src === 'hook') && this.deps.sessionTitleOf) {
+              overrideTitle = await this.deps.sessionTitleOf(ctx.sessionId);
+            }
+          } catch {
+            // 读失败不拦 ingest
+          }
+        }
+        const effectiveTitle = overrideTitle ?? reported ?? hostTitle;
+        if (
+          effectiveTitle !== null &&
+          this.deps.sessions.applyReportedTitle(ctx.sessionId, effectiveTitle)
+        ) {
           // 更名生效确认：pending 落地/外部改名被采纳 → 广播，dashboard 校验
           // 「实际是否更名」并把待生效徽标切换为新名字。
           this.deps.bus.emit({

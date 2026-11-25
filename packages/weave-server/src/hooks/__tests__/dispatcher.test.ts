@@ -451,6 +451,47 @@ describe('HookDispatcher', () => {
     expect(titleCalls).toBe(5);
   });
 
+  it('titles 仲裁：注册表 nameSource=user/hook 时 hook 上报的滞后名不回写', async () => {
+    const sessions = new SessionRepository(db);
+    sessions.touch('s1', project.id);
+    let hostName: string | null = null;
+    let hostSource: string | null = null;
+    const dispatcher2 = new HookDispatcher({
+      registry,
+      dispatches,
+      bus,
+      projects,
+      sessions,
+      sessionTitleOf: () => Promise.resolve(hostName),
+      titleSourceOf: () => Promise.resolve(hostSource),
+    });
+    const reportedCtx = () => ({
+      ...ctx(),
+      payload: payload({
+        eventType: 'UserPromptSubmit',
+        raw: { session_title: '旧内存名' },
+      }),
+    });
+
+    // derived 来源 → 上报名照常采纳
+    hostSource = 'derived';
+    await dispatcher2.onIngest(reportedCtx());
+    expect(sessions.getBySessionId('s1')?.title).toBe('旧内存名');
+
+    // user 来源（宿主内 /rename 已落盘）→ 滞后的上报名被压下
+    sessions.touch('s1', project.id);
+    hostName = '宿主侧新名';
+    hostSource = 'user';
+    await dispatcher2.onIngest(reportedCtx());
+    expect(sessions.getBySessionId('s1')?.title).toBe('宿主侧新名');
+
+    // hook 来源（weave 下发已生效）→ 旧内存名不再回写
+    sessions.touch('s1', project.id);
+    sessions.setPendingTitle('s1', '下发名');
+    await dispatcher2.onIngest(reportedCtx());
+    expect(sessions.getBySessionId('s1')).toMatchObject({ title: '下发名', pendingTitle: null });
+  });
+
   it('titles 读方向：注入面抛错不拦 ingest', async () => {
     const sessions = new SessionRepository(db);
     sessions.touch('s1', project.id);
