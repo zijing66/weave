@@ -2771,12 +2771,17 @@ export function SessionMessages({
           />
         )}
 
-        {/* 旁路会话（claude = /btw）：问句只有 weave 自己记，回答由采集事件认领回来 */}
+        {/* 旁路会话（claude = /btw）：问句只有 weave 自己记，回答由采集事件认领回来。
+            关弹窗即知会服务端发一记 Esc 收掉 TUI 里的 btw 面板（fire-and-forget，
+            不挡关窗；失败静默—— settle 通道还会兜一次）。 */}
         {sideOpen && (
           <SideQuestionDialog
             sessionId={sessionId}
             label={label}
-            onClose={() => setSideOpen(false)}
+            onClose={() => {
+              setSideOpen(false);
+              void api.closeSideQuestion(sessionId).catch(() => {});
+            }}
           />
         )}
       </div>

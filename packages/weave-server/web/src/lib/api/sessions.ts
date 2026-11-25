@@ -411,6 +411,9 @@ export const sessionApi = {
       method: 'POST',
       body: JSON.stringify({ question }),
     }),
+  /** 关闭旁路会话（web 弹窗退场时调）：恰发一记 Esc 关掉 TUI 里的 /btw 面板。 */
+  closeSideQuestion: (sessionId: string): Promise<{ ok: boolean }> =>
+    apiFetch(`/sessions/${encodeURIComponent(sessionId)}/side-question/close`, { method: 'POST' }),
   /** 旁路历史（倒序游标翻页；`beforeId` = 上一页最早那条的 id）。 */
   listSideQuestions: (
     sessionId: string,

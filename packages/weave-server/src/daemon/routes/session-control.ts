@@ -337,5 +337,21 @@ export async function handleSessionControlRoutes(
     return true;
   }
 
+  // 关闭旁路会话（web 弹窗退场时调）：TUI 的 /btw 面板还开着会一直吃键盘——
+  // 恰发一记 Kitty 编码 Esc（closeSidePanel 单发、不走 interrupt 键梯子）。
+  // 已有 pending 行被稳定窗 settle 关过就幂等（面板已关 = 这记无害，残余代价
+  // 照旧口径：只打一次、不重试）。
+  const sideCloseMatch = pathname.match(/^\/sessions\/([^/]+)\/side-question\/close$/);
+  if (sideCloseMatch && req.method === 'POST') {
+    if (!deps.messageDeliverer) {
+      sendJson(res, 503, { error: 'Messaging subsystem unavailable' });
+      return true;
+    }
+    const sessionId = decodeURIComponent(sideCloseMatch[1]!);
+    const result = await deps.messageDeliverer.closeSidePanel(sessionId);
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: result.error });
+    return true;
+  }
+
   return false;
 }
