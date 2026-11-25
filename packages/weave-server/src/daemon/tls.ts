@@ -95,6 +95,9 @@ export async function ensureDaemonCert(
 
   const pems = await generate([{ name: 'commonName', value: 'weave-daemon' }], {
     keySize: 2048,
+    // sha256 必须显式给：selfsigned 缺省 sha1，Chromium 对 SHA-1 签名的证书
+    // 直接判 ERR_CERT_INVALID（连「继续前往」都不给，其他主机打不开的真凶）。
+    algorithm: 'sha256',
     notAfterDate: new Date(now.getTime() + 825 * 86400_000),
     extensions: [
       // 自签即信任锚：手机/其他主机手动装的那份证书必须本身是一张 CA 证书

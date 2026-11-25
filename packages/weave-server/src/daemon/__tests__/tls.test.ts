@@ -44,6 +44,11 @@ describe('ensureDaemonCert', () => {
     expect(x509.subjectAltName).toContain('DNS:localhost');
     expect(x509.subjectAltName).toContain('DNS:box');
     expect(sanIps(cert.cert)).toEqual(expect.arrayContaining(['127.0.0.1', '10.0.0.5']));
+    // sha256 显式给（selfsigned 缺省 sha1，Chromium 判 ERR_CERT_INVALID）：
+    // DER 里算法 OID 是 1.2.840.113549.1.1.11（sha256WithRSAEncryption）；
+    // sha1 是 1.2.840.113549.1.1.5。比对 PEM 解码后的 OID 首部。
+    const der = Buffer.from(cert.cert.replace(/-----[^-]+-----/g, ''), 'base64');
+    expect(der.includes(Buffer.from([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b]))).toBe(true);
     // key 0600 写盘（POSIX 位；Windows 上 ACL 语义不同，只验证内容落盘）
     expect(readFileSync(path.join(dir, 'host.crt'), 'utf-8')).toBe(cert.cert);
   });
