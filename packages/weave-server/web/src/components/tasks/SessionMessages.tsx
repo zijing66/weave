@@ -278,6 +278,9 @@ export function SessionMessages({
   const [staged, setStaged] = useState<StagedFile[]>([]);
   /** 点开的大图（缩略图点击）；null = 没开。 */
   const [lightbox, setLightbox] = useState<UploadFile | null>(null);
+  /** 「滚到最下」按钮：距底超过一屏小半（240px）才显——上翻阅读时的回底入口，
+   *  贴底跟随在场时它没有存在意义。onScroll 里同步置态（滚动高频，不进 render）。 */
+  const [showJump, setShowJump] = useState(false);
   /** 附件面收哪些类型（daemon 还没升级时这个字段缺席：当「不收」处理，按钮置灰
    *  而不是整扇对话崩掉）。 */
   const attachKinds = capability.attachKinds ?? [];
@@ -1106,6 +1109,9 @@ export function SessionMessages({
             if (el && el.clientHeight > 0) {
               const bottom = atBottom();
               lastScroll.current = { top: el.scrollTop, atBottom: bottom };
+              setShowJump(
+                el.scrollHeight - el.scrollTop - el.clientHeight > 240,
+              );
               // 布局性 scroll（迟加载内容撑高把视口顶走）不是用户意图：用户没
               // 滚过时 stick 维持 true，贴底补拍才能接住迟加载（hook userScrolled 注）
               if (!userScrolled.current) stick.current = true;
@@ -1761,6 +1767,31 @@ export function SessionMessages({
           </div>
 
         </div>
+
+        {/* 「滚到最下」：上翻超过 240px 才显（onScroll 置态）。absolute 挂 relative
+            壳（与状态条同层）右下角——点击贴底，跟随逻辑接管。 */}
+        {showJump && (
+          <Tooltip label={t('tasks.convJumpBottom')}>
+            <button
+              type="button"
+              aria-label={t('tasks.convJumpBottom')}
+              onClick={() => {
+                const el = threadRef.current;
+                if (!el) return;
+                stick.current = true;
+                userScrolled.current = false;
+                el.scrollTop = el.scrollHeight;
+                setShowJump(false);
+              }}
+              className={cn(
+                'absolute right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-edge/[0.12] bg-neutral-900/90 text-neutral-400 shadow-mac transition-colors hover:text-neutral-200',
+                (answerPending || generating || interrupted) ? 'bottom-12' : 'bottom-2',
+              )}
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          </Tooltip>
+        )}
 
         {/* 生成中/中断/待答状态条：悬浮在气泡区底部。absolute 挂在**外层 relative
             壳**（threadRef 是滚动容器，absolute 放它内部会随内容滚走——bottom-0
