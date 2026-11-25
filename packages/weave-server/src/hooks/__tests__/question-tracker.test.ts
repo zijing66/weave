@@ -199,12 +199,24 @@ describe('QuestionTracker 状态机', () => {
   });
 
   it('真权限对话框（归属非阻塞工具）不受抑制——该覆盖就覆盖', () => {
-    feed(SESSION, preTool('AskUserQuestion', AUA_INPUT));
     feed(SESSION, preTool('PowerShell', { command: 'npm publish' }));
     feed(SESSION, notification('permission_prompt'));
     const entry = tracker.get(SESSION)!;
     expect(entry.kind).toBe('permission');
     expect(entry.questions[0]!.question).toContain('PowerShell');
+  });
+
+  it('question 态在场的 permission_prompt 不覆盖（并行后台任务洗掉 lastPreTool 后仍不顶掉真问句，2026-11-25 实测）', () => {
+    feed(SESSION, preTool('AskUserQuestion', AUA_INPUT));
+    // 并行后台任务的工具事件混入同一 session_id 的流：lastPreTool 被洗成非阻塞工具
+    feed(SESSION, preTool('mcp__codegraph__codegraph_explore', {}));
+    feed(SESSION, notification('permission_prompt')); // claude 对问答恒补发的噪声
+    const entry = tracker.get(SESSION)!;
+    expect(entry.kind).toBe('question');
+    expect(entry.questions[0]!.question).toBe('Which library?');
+    // 真问句没被顶掉 ⇒ 后续非阻塞 PostToolUse 也不会把面清空
+    feed(SESSION, postTool('mcp__codegraph__codegraph_explore'));
+    expect(tracker.get(SESSION)).not.toBeNull();
   });
 
   it('bypassPermissions 的 permission_prompt 是真对话框（危险命令确认仍弹，2026-11-10 实测）→ 摆 2 行面', () => {

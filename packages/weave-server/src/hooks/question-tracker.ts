@@ -128,7 +128,14 @@ export class QuestionTracker {
         const mode = this.permissionMode.get(sessionId);
         if (mode != null && spec.silentPermissionModes.includes(mode)) return;
         // 阻塞工具自己等输入期间补发的噪声提醒：别改写问题面（见类注释）。
-        // 判据 = lastPreTool 是阻塞工具：真权限对话框归属的是要批的那个工具
+        // 判据① = pending 已是 question 态就不覆盖——宿主单模态框，问答弹着时
+        // 不可能同时弹权限框；而并行后台任务的工具事件（同一 session_id）会把
+        // lastPreTool 洗成非阻塞工具，噪声提醒被误判成真权限框、把真问句顶掉
+        // （2026-11-25 实测：AskUserQuestion 弹出 6s 后 codegraph 的 Pre/Post
+        // 事件混入 → permission_prompt 覆盖 → 下一拍 PostToolUse 又把面清空，
+        // 模态框还开着、待答面已没了）。
+        if (this.pending.get(sessionId)?.kind === 'question') return;
+        // 判据② = lastPreTool 是阻塞工具：真权限对话框归属的是要批的那个工具
         // （PreToolUse(PowerShell) → permission_prompt → PostToolUse(PowerShell)），
         // 归属非阻塞工具，照常置位，不会被误吞。不要求 pending 里还是 question 态——
         // daemon 重启重放（SEED_WINDOW 截窗）或中断摘面之后，噪声提醒一到就会把
