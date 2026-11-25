@@ -178,6 +178,12 @@ const send = (): void => {
   const doneStaged = staged.filter((s) => s.state === 'done' && s.upload);
   const files = doneStaged.map((s) => s.upload!);
   if (!text && files.length === 0) return;
+  // 上传中不发：此刻发出去等于把还在传的附件悄悄丢掉（按钮已置灰，这里闸住
+  // 回车路径；error 格不算在传——没传上的附件本来就不该拖住正文）。
+  if (staged.some((s) => s.state === 'uploading')) {
+    show('error', t('tasks.msgAttachUploading'));
+    return;
+  }
   // 硬顶预检：不发请求、不建乐观行，草稿与附件原样留着（拆小或改引用文件再发）
   if (promptLimits && text.length > promptLimits.maxChars) {
     show('error', t('tasks.msgTooLong', { max: String(promptLimits.maxChars) }));

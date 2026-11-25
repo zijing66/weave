@@ -28,6 +28,7 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { useBackPop } from '@/lib/back-pop';
 import { cssPx } from '@/lib/font-scale';
 import { PROJECTS_QUERY } from '@/hooks/use-projects';
+import { useShuttleData } from './use-shuttle-data';
 import { useTheme } from '@/lib/theme';
 import { FilePicker, type PickTarget } from './FilePicker';
 import { SessionShuttlePicker } from './SessionShuttlePicker';
@@ -256,11 +257,6 @@ export function SessionMessages({
   const paneEntry = paneQuestionEntries.find((e) => e.sessionId === sessionId) ?? null;
   const asking = pane ? paneEntry != null : questions.has(sessionId);
   const answerPending = pane ? asking : answerPendingProp ?? false;
-  /** 项目名表（`#` 选择器逐行标所属项目；TanStack 缓存域与列表页同一份）。
-   *  pane 形态不拉（`enabled:false`——选择器的跨项目标注定向主窗的列表缓存，
-   *  弹出窗里少一发全量清单请求）。 */
-  const projectsQuery = useQuery({ ...PROJECTS_QUERY, enabled: !pane });
-  const projects = pane ? undefined : projectsQuery.data;
   const lifecycle: HarnessLifecycle = HARNESS_LIFECYCLE[capability.harness];
   // 对话数据域：翻页/SSE 增量/投递认领/贴底跟随（数据形状与刷新节奏都在 hook 里）
   const {
@@ -427,6 +423,13 @@ export function SessionMessages({
     setPicker,
   });
 
+  // 项目 + 联邦账（`#` 选择器的数据面）：主窗常拉 TanStack 缓存；pane 每窗拉一次
+  // 项目清单（staleTime Infinity + sessionStorage 种子先行，很轻）。
+  const shuttle = useShuttleData(pane === true);
+  const federatedMain = useFederatedPeerBuckets(!pane && sessionPickerOpen);
+  const projectsMainQuery = useQuery({ ...PROJECTS_QUERY, enabled: !pane });
+  const projects = pane ? shuttle.projects : projectsMainQuery.data;
+
   /** 草稿此刻的命令形态（`!` bash 模式 / `/` 命令）：输入框据此换色——这些形态
    *  宿主自己执行、不当作 prompt 提交，发出去之前就该看得出来（claude 同款）。 */
   const draftMode = useMemo(() => commandModeOf(draft, inputModes), [draft, inputModes]);
@@ -447,9 +450,7 @@ export function SessionMessages({
     () => (sessions ?? []).filter((s) => s.sessionId !== sessionId),
     [sessions, sessionId],
   );
-  /** 联邦分组（`#` 选择器的跨机半边）：选择器开着才拉（peers + 逐 peer 会话账，
-   *  对端不可达 = 离线灰置不炸）；staleTime 内缓存复用，不逐键打爆。 */
-  const federatedPeers = useFederatedPeerBuckets(sessionPickerOpen);
+  const federatedPeers = pane ? shuttle.federatedPeers : federatedMain;
   const shuttleProjects = useMemo(() => projects ?? [], [projects]);
   const shuttleProjectId = useMemo(
     () => sessions?.find((s) => s.sessionId === sessionId)?.projectId ?? null,
@@ -942,7 +943,7 @@ export function SessionMessages({
                 <button
                   type="button"
                   aria-label={t('tasks.chainTitle')}
-                  onClick={onOpenChain}
+                  onClick={pane ? () => setPaneChainOpen(true) : onOpenChain}
                   className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
                 >
                   <Activity className="h-3 w-3 text-rose-400" />
@@ -1010,6 +1011,18 @@ export function SessionMessages({
                 {fullscreen ? t('tasks.convExitFullscreen') : t('tasks.convFullscreen')}
               </span>
             </button>
+            {/* 弹出：桌面并入本排最右；<lg 右上角独立格（与关闭钮同款，见下） */}
+            {onPopout && (
+              <button
+                type="button"
+                aria-label={t('tasks.panePopout')}
+                onClick={onPopout}
+                className="max-lg:hidden inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200"
+              >
+                <ExternalLink className="h-3 w-3 text-sky-400" />
+                <span>{t('tasks.panePopoutShort')}</span>
+              </button>
+            )}
             {/* 嵌入形态没有挂起/关闭：右栏就是这扇对话，关掉等于把这块地方空出来 */}
             {!embedded && (
               <>
@@ -1032,17 +1045,16 @@ export function SessionMessages({
               </>
             )}
           </div>
-          {/* 弹出独立框架页：独立摆在右上角（不混进功能按钮组），分隔线隔开 */}
+          {/* 弹出独立框架页（<lg）：右上角独立格，与关闭钮同款（桌面版在标题行内） */}
           {onPopout && (
-            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end">
+            <div className="col-start-3 row-start-1 flex shrink-0 items-center justify-self-end max-lg:flex lg:hidden">
               <button
                 type="button"
                 aria-label={t('tasks.panePopout')}
                 onClick={onPopout}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
+                className="inline-flex shrink-0 items-center rounded p-1 text-neutral-500 transition-colors hover:bg-edge/[0.06] hover:text-neutral-200"
               >
-                <ExternalLink className="h-3 w-3 text-sky-400" />
-                <span className="max-lg:hidden">{t('tasks.panePopoutShort')}</span>
+                <ExternalLink className="h-3.5 w-3.5" />
               </button>
             </div>
           )}
@@ -1051,15 +1063,6 @@ export function SessionMessages({
               移动端纯图标），语义不同不并进功能按钮排。 */}
           {pane && (onFrameReclaim || onFrameClose) && (
             <div className="col-start-3 row-start-1 flex shrink-0 items-center gap-1 justify-self-end">
-              <button
-                type="button"
-                aria-label={t('tasks.chainTitle')}
-                onClick={() => setPaneChainOpen(true)}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-edge/[0.08] px-1.5 py-0.5 text-10 text-neutral-400 transition-colors hover:border-edge/[0.16] hover:text-neutral-200 max-lg:h-6 max-lg:w-6 max-lg:justify-center max-lg:px-0"
-              >
-                <Activity className="h-3 w-3 text-rose-400" />
-                <span className="max-lg:hidden">{t('tasks.chainTitle')}</span>
-              </button>
               {onFrameReclaim && (
                 <button
                   type="button"
@@ -2526,16 +2529,15 @@ export function SessionMessages({
         )}
 
         {/* 状态栏条（输入框下方、贴底边）：只读，配置入口在个性化配置里；
-            一块都渲染不出（配置里的块都要宿主 stdin 字段）就不摆（见 StatuslineBar）。
-            pane 形态不摆——配置入口在主窗，弹出窗里没有可改的地方。 */}
-        {!pane && <StatuslineBar
+            一块都渲染不出（配置里的块都要宿主 stdin 字段）就不摆（见 StatuslineBar）。 */}
+        <StatuslineBar
           projectId={projectId}
           sessionName={sessionRow?.title ?? label}
           model={modelDisplay}
           effort={sessionRow?.effort ?? null}
           contextTokens={sessionRow?.contextTokens ?? null}
           contextPercent={contextPercent}
-        />}
+        />
 
         {/* 拖角改大小（浮窗限定：嵌入右栏时尺寸归布局；全屏时尺寸归视口。
             触屏同样可用——pointer capture + touch-none，grip 自身不吃滚动） */}
