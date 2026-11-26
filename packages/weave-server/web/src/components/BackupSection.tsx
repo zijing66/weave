@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArchiveRestore, DatabaseBackup, HardDriveDownload, Loader2, X } from 'lucide-react';
-import { api, type BackupStatusBundle } from '@/lib/api';
+import { api, type BackupStatusBundle, type BackupStatus } from '@/lib/api';
 import { useT } from '@/i18n/I18nProvider';
 import { errorText } from '@/lib/action-feedback';
 import { useToast } from '@/components/Toast';
@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { FieldHint } from '@/components/ui/field-hint';
 import { NumberStepper } from '@/components/ui/number-stepper';
 import { Tooltip } from '@/components/ui/tooltip';
+import { subscribePush } from '@/lib/sse';
 
 /**
  * 每日自动备份设置段（设置页 data 区之后）：开关/时刻/历史域勾选 + 手动触发 +
@@ -46,12 +47,18 @@ export function BackupSection() {
     void refresh();
   }, [refresh]);
 
-  // 备份进行中轮询进度（1s；完成即刷新清单 + 收 loading）
+  // 进度走服务端 push（`backupStatus` 帧，与 BackupOverlay 同一份）：载荷只有
+  // status，故「运行中 → 落定」那一拍重拉一次拿新包清单。
+  const wasRunning = useRef(false);
   useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => void refresh(), 1000);
-    return () => clearInterval(timer);
-  }, [running, refresh]);
+    return subscribePush<{ status: BackupStatus }>('backupStatus', (p) => {
+      if (!p?.status) return;
+      setBundle((cur) => (cur ? { ...cur, status: p.status } : cur));
+      setRunning(p.status.running);
+      if (wasRunning.current && !p.status.running) void refresh();
+      wasRunning.current = p.status.running;
+    });
+  }, [refresh]);
 
   if (!available) return null;
 
